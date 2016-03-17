@@ -4,23 +4,71 @@
 
 #include <map>
 #include <vector>
+#include <tuple>
 #include <algorithm>
+#include <memory>
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
 #include "log.h"
-
-#pragma GCC diagnostic ignored "-fpermissive"
+#include "epoch.h"
 
 namespace db_backup {
 
-struct TxnKey;
+// keys in the index data structure
+struct BaseIndexKey {
+  VarStr *k;
+  bool operator<(const BaseIndexKey &rhs) const;
+  bool operator==(const BaseIndexKey &rhs) const;
+  bool operator!=(const BaseIndexKey &rhs) const { return !(*this == rhs); }
 
-struct IndexKey {
-  TxnKey *k;
-  bool operator<(const IndexKey &rhs) const;
-  bool operator==(const IndexKey &rhs) const;
-  IndexKey(TxnKey *key) : k(key) {}
+  BaseIndexKey(VarStr *key) : k(key) {}
+  BaseIndexKey(const BaseIndexKey &key) = delete;
+  BaseIndexKey(BaseIndexKey &&rhs) {
+    k = rhs.k;
+    rhs.k = nullptr;
+  }
+};
+
+struct IndexKey : public BaseIndexKey {
+  IndexKey(VarStr *key) : BaseIndexKey(key) {}
+  ~IndexKey() { delete k; }
+};
+
+// used for on-stack zero copy index keys
+struct ConstIndexKey : public BaseIndexKey {
+  ConstIndexKey(VarStr *key) : BaseIndexKey(key) {}
+  ~ConstIndexKey() {}
+};
+
+class TxnValidator {
+  unsigned int key_crc, value_crc;
+  size_t value_size;
+  static std::atomic<unsigned long> tot_validated;
+  std::vector<std::vector<uint8_t>> data;
+public:
+  TxnValidator() :
+    key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
+    value_size(0){}
+
+  void CaptureWrite(const BaseIndexKey &k, VarStr *obj);
+  void Validate(const Txn &tx);
+};
+
+
+// we need this class because we need to handle read local-write scenario.
+class CommitBuffer {
+  typedef std::map<std::tuple<int, BaseIndexKey>, std::pair<int, VarStr *>> BufferMap;
+
+  BufferMap buf;
+  std::vector<BufferMap::iterator> write_seq;
+  const Txn *tx;
+public:
+  CommitBuffer(Txn *txn) : tx(txn) {}
+
+  void Put(int fid, IndexKey && key, VarStr *obj);
+  VarStr *Get(int fid, const ConstIndexKey &k);
+  void Commit(uint64_t sid, TxnValidator *validator = nullptr);
 };
 
 // Relations is an index or a table. Both are associates between keys and
@@ -36,54 +84,43 @@ protected:
     uint64_t new_key_cnt;
     uint64_t key_cnt;
   } stat;
+  int id;
 public:
   BaseRelation() { ClearStat(); }
   void ClearStat() { memset(&stat, 0, sizeof(stat)); }
   void LogStat() const;
+
+  void set_id(int relation_id) { id = relation_id; }
+  int relation_id() { return id; }
 };
 
-template <template<typename> class IndexPolicy, class VersioningPolicy>
-class Relation : public BaseRelation,
-		 public IndexPolicy<typename VersioningPolicy::VHandle>,
-		 public VersioningPolicy {
+class RelationManagerBase {
 public:
-  void SetupReExec(const IndexKey &k, uint64_t sid) {
-    auto handle = this->Search(k);
-    if (handle == nullptr) {
-      handle = this->CreateVHandle();
-      this->Insert(k, handle);
-      stat.new_key_cnt++;
+  RelationManagerBase();
+  int LookupRelationId(std::string name) const {
+    auto it = relation_id_map.find(name);
+    if (it == relation_id_map.end()) {
+      logger->critical("Cannot find relation {}", name);
+      std::abort();
     }
-    stat.key_cnt++;
-    this->AppendNewVersion(handle, sid);
+    return it->second;
   }
 
-  void *Get(const IndexKey &k, uint64_t sid) {
-    auto handle = this->Search(k);
-    assert(handle);
-    return this->ReadWithVerion(handle, sid);
-  }
-
-  void Put(const IndexKey &k, uint64_t sid, void *obj) {
-    auto handle = this->Search(k);
-    assert(handle);
-    this->WriteWithVersion(handle, sid, obj);
-  }
-
-  void Scan(const IndexKey &k, uint64_t sid,
-	    std::function<bool (const IndexKey &k, const void *v)> callback) {
-  }
+private:
+  std::map<std::string, int> relation_id_map;
 };
 
 template <class T>
-class RelationManager {
-  std::vector<T> relations;
+class RelationManagerPolicy : public RelationManagerBase {
+  static const int kMaxNrRelations = 256;
+  std::array<T, kMaxNrRelations> relations;
 public:
+  RelationManagerPolicy() {
+    for (int i = 0; i < kMaxNrRelations; i++) relations[i].set_id(i);
+  }
+
   T &GetRelationOrCreate(int fid) {
-    if (fid >= relations.size()) {
-      for (int i = relations.size(); i <= fid; i++)
-	relations.emplace(relations.end(), std::move(T()));
-    }
+    assert(fid < kMaxNrRelations);
     return relations[fid];
   }
   void LogStat() {
@@ -94,67 +131,205 @@ public:
   }
 };
 
+
+#define PENDING_VALUE 0xFFFFFFF9E11D1110 // hope this pointer is weird enough
+
+template <template<typename> class IndexPolicy, class VHandle>
+class RelationPolicy : public BaseRelation,
+		       public IndexPolicy<VHandle> {
+public:
+  void SetupReExec(IndexKey &&k, uint64_t sid, VarStr *obj = (VarStr *) PENDING_VALUE) {
+    auto handle = this->Search(k);
+    if (handle == nullptr) {
+      handle = this->Insert(std::move(k), std::move(VHandle()));
+      // compile may perform copy-elision optimization, therefore, our move
+      // behavior might not be called at all.
+      stat.new_key_cnt++;
+      assert(handle != nullptr);
+    }
+    stat.key_cnt++;
+    handle->AppendNewVersion(sid);
+    if (obj != (void *) PENDING_VALUE) {
+      handle->WriteWithVersion(sid, obj);
+    }
+  }
+
+  VarStr *Get(const ConstIndexKey &k, uint64_t sid, CommitBuffer &buffer) {
+    // read your own write
+    VarStr *o = buffer.Get(id, k);
+    if (o != nullptr) return o;
+
+    auto handle = this->Search(k);
+    assert(handle);
+    return handle->ReadWithVersion(sid);
+  }
+
+  template <typename T>
+  const T Get(const ConstIndexKey &k, uint64_t sid, CommitBuffer &buffer) {
+    T instance;
+    instance.DecodeFrom(Get(k, sid, buffer));
+    return instance;
+  }
+
+  void Put(IndexKey &&k, VarStr *obj, CommitBuffer &buffer) {
+    buffer.Put(id, std::move(k), obj);
+  }
+
+  void CommitPut(IndexKey &&k, uint64_t sid, VarStr *obj) {
+    auto handle = this->Search(k);
+    if (handle == nullptr) {
+      handle = this->Insert(std::move(k), std::move(VHandle{}));
+      assert(handle != nullptr);
+    }
+    handle->WriteWithVersion(sid, obj);
+  }
+
+  void Scan(const ConstIndexKey &k, uint64_t sid, CommitBuffer &buffer,
+	    std::function<bool (const BaseIndexKey &k, const VarStr *v)> callback) {
+    CallScanCallback(this->SearchIterator(k), sid, buffer, callback);
+  }
+
+  void Scan(const ConstIndexKey &start, const ConstIndexKey &end, uint64_t sid,
+	    CommitBuffer &buffer,
+	    std::function<bool (const BaseIndexKey &k, const VarStr *v)> callback) {
+    CallScanCallback(this->SearchIterator(start, end), sid, buffer, callback);
+  }
+
+  typename IndexPolicy<VHandle>::Iterator SearchIterator(const BaseIndexKey &k) {
+    return this->IndexSearchIterator(k, id);
+  }
+
+  typename IndexPolicy<VHandle>::Iterator SearchIterator(const BaseIndexKey &start, const BaseIndexKey &end) {
+    return this->IndexSearchIterator(start, end, id);
+  }
+
+
+private:
+  void CallScanCallback(typename IndexPolicy<VHandle>::Iterator it, uint64_t sid,
+			CommitBuffer &buffer,
+			std::function<bool (const BaseIndexKey &k, const VarStr *v)> callback) {
+    while (it.IsValid()) {
+      const BaseIndexKey &key = it.key();
+      const VarStr *value = it.ReadVersion(sid, buffer);
+      bool should_continue = callback(key, value);
+      if (!should_continue) break;
+      it.Next();
+    }
+  }
+};
+
 template <class VHandle>
 class StdMapIndex {
-  std::map<IndexKey, VHandle*> map;
-public:
-  void Insert(const IndexKey &k, VHandle *vhandle) {
-    map.insert(std::make_pair(k, vhandle));
-  }
-  VHandle *Search(const IndexKey &k) {
-    auto it = map.find(k);
-    if (it == map.end()) return nullptr;
-    return it->second;
-  }
-};
+  std::map<BaseIndexKey, VHandle> map;
+protected:
+  struct Iterator {
+    typename std::map<BaseIndexKey, VHandle>::iterator current, end;
+    int relation_id;
 
-class SortedArrayVersioning {
-public:
-  struct VHandle {
-    std::vector<uint64_t> versions;
-    std::vector<uintptr_t> objects;
+    void Next() { ++current; }
+    bool IsValid() const { return current != end; }
+
+    VarStr *ReadVersion(uint64_t sid, CommitBuffer &buffer) {
+      VarStr *o = buffer.Get(relation_id, key().k);
+      if (o) return o;
+      return vhandle().ReadWithVersion(sid);
+    }
+
+    template <typename T>
+    T ReadVersion(uint64_t sid, CommitBuffer &buffer) {
+      T instance;
+      instance.DecodeFrom(ReadVersion(sid, buffer));
+      return instance;
+    }
+
+    const BaseIndexKey &key() const { return current->first; }
+    const VHandle &vhandle() const { return current->second; }
+    VHandle &vhandle() { return current->second; }
   };
 
-  VHandle *CreateVHandle() {
-    return new VHandle();
+public:
+  VHandle *Insert(IndexKey &&k, VHandle &&vhandle) {
+    auto p = map.emplace(std::move(k), std::move(vhandle));
+    return &p.first->second;
   }
 
-  void AppendNewVersion(VHandle *ver_vec, uint64_t sid) {
+protected:
+  Iterator IndexSearchIterator(const BaseIndexKey &k, int relation_id) {
+    return Iterator {map.lower_bound(k), map.end(), relation_id};
+  }
+  Iterator IndexSearchIterator(const BaseIndexKey &start, const BaseIndexKey &end, int relation_id) {
+    return Iterator {map.lower_bound(start), map.upper_bound(end), relation_id};
+  }
+
+  VHandle *Search(const BaseIndexKey &k) {
+    auto it = map.find(k);
+    if (it == map.end()) return nullptr;
+    return &it->second;
+  }
+
+};
+
+class SortedArrayVHandle {
+public:
+  std::vector<uint64_t> versions;
+  std::vector<uintptr_t> objects;
+
+  void AppendNewVersion(uint64_t sid) {
     // we're single thread, and we are assuming sid is monotoniclly increasing
-    ver_vec->versions.push_back(sid);
-    // nullptr is the dummy object
-    ver_vec->objects.emplace_back(0);
+    versions.push_back(sid);
+    objects.emplace_back(PENDING_VALUE);
   }
 
-  volatile uintptr_t *WithVersion(VHandle *ver_vec, uint64_t sid) {
-    auto it = std::lower_bound(ver_vec->versions.begin(),
-			       ver_vec->versions.end(), sid);
+  volatile uintptr_t *WithVersion(uint64_t sid) {
+    assert(versions.size() > 0);
 
-    if (it == ver_vec->versions.end()) {
-      if (ver_vec->versions.empty()) {
-	logger->alert("Cannot read version in tx {}, where version vector is empty!",
-		      sid);
-      } else {
-	logger->alert("Cannot read version in tx {}, where the lowest is {}", sid,
-		      ver_vec->versions[0]);
-      }
-      abort();
+    if (versions.size() == 1) {
+      assert(versions[0] < sid);
+      return &objects[0];
     }
-    return &ver_vec->objects[it - ver_vec->versions.begin()];
+
+    auto it = std::lower_bound(versions.begin(),
+			       versions.end(), sid);
+    if (it == versions.begin()) {
+      logger->critical("Going way too back. GC bug");
+      std::abort();
+    }
+    --it;
+    return &objects[it - versions.begin()];
   }
 
-  void *ReadWithVerion(VHandle *ver_vec, uint64_t sid) {
-    volatile uintptr_t *addr = WithVersion(ver_vec, sid);
-    while (*addr != 0); // TODO: this is spinning. use futex for waiting?
-    return (void *) *addr;
+  VarStr *ReadWithVersion(uint64_t sid) {
+    if (versions.size() > 0) assert(versions[0] == 0);
+    volatile uintptr_t *addr = WithVersion(sid);
+    while (*addr == PENDING_VALUE); // TODO: this is spinning. use futex for waiting?
+    return (VarStr *) *addr;
   }
 
-  void *WriteWithVersion(VHandle *ver_vec, uint64_t sid, void *obj) {
-    // I will be the only thread writing to this pointer! Yeah!
-    volatile uintptr_t *addr = WithVersion(ver_vec, sid);
+  void WriteWithVersion(uint64_t sid, VarStr *obj) {
+    // Writing to exact location
+    auto it = std::lower_bound(versions.begin(), versions.end(), sid);
+    if (*it != sid) {
+      logger->critical("Diverging outcomes!");
+      std::abort();
+    }
+    volatile uintptr_t *addr = &objects[it - versions.begin()];
     *addr = (uintptr_t) obj;
   }
+
+  void GarbageCollect(uint64_t max_allowed_version) {
+    /*
+    for (int i = 0; i < versions.size(); i++) {
+      if (versions[i] >= max_allowed_version) return;
+    }
+    */
+  }
 };
+
+// current relation implementation
+
+typedef RelationPolicy<StdMapIndex, SortedArrayVHandle> Relation;
+
+typedef RelationManagerPolicy<Relation> RelationManager;
 
 }
 
