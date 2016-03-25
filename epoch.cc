@@ -15,30 +15,75 @@
 
 using util::Instance;
 
-namespace db_backup {
+namespace dolly {
 
 uint64_t Epoch::kGlobSID = 0ULL;
 
-Epoch::Epoch(int fd)
+struct TxnTimeStamp
 {
-  uint64_t tot_size = 0;
-  ParseBuffer::FillDataFromFD(fd, &tot_size, sizeof(uint64_t));
+  uint64_t commit_ts;
+  int64_t skew_ts;
 
-  logger->info("epoch size {}", tot_size);
+  uint64_t logical_commit_ts() const {
+    return skew_ts == -1 ? commit_ts : skew_ts;
+  }
 
-  tot_size -= sizeof(uint64_t);
+  bool operator<(const TxnTimeStamp &rhs) const {
+    if (logical_commit_ts() != rhs.logical_commit_ts()) {
+      return logical_commit_ts() < rhs.logical_commit_ts();
+    }
+    return skew_ts < rhs.skew_ts;
+  }
+};
 
-  if (tot_size == 0)
-    return;
+Epoch::Epoch(int *fds, ParseBuffer *buffers)
+{
+  int nr_threads = Worker::kNrThreads;
+  for (int i = 0; i < nr_threads; i++) {
+    uint64_t tot_size = 0;
+    ParseBuffer::FillDataFromFD(fds[i], &tot_size, sizeof(uint64_t));
+    uint8_t *ptr = nullptr;
+    if (tot_size != 0) {
+      tot_size -= sizeof(uint64_t);
+      ptr = (uint8_t *) malloc(tot_size);
+      ParseBuffer::FillDataFromFD(fds[i], ptr, tot_size);
+    }
+    new (&buffers[i]) ParseBuffer(ptr, tot_size);
+  }
 
-  uint8_t *ptr = (uint8_t *) malloc(tot_size);
-  ParseBuffer::FillDataFromFD(fd, ptr, tot_size);
-  ParseBuffer buffer(ptr, tot_size);
+  typedef std::tuple<TxnTimeStamp, int> HeapElement;
+  std::vector<HeapElement> heap;
+  std::greater<HeapElement> heap_comp;
 
-  while (!buffer.is_empty()) {
-    logger->debug("receiving request");
-    BaseRequest *req = BaseRequest::CreateRequestFromBuffer(++kGlobSID, buffer);
+  for (int i = 0; i < nr_threads; i++) {
+    if (buffers[i].is_empty()) continue;
+
+    TxnTimeStamp ts;
+    buffers[i].Read(&ts.commit_ts, sizeof(uint64_t));
+    buffers[i].Read(&ts.skew_ts, sizeof(int64_t));
+    heap.push_back(std::make_tuple(ts, i));
+  }
+
+  std::make_heap(heap.begin(), heap.end(), heap_comp);
+
+  while (!heap.empty()) {
+    // then let's pop from the heap!
+    std::pop_heap(heap.begin(), heap.end(), heap_comp);
+    int chn = std::get<1>(heap.back());
+
+    logger->debug("receiving request from channel {}", chn);
+    BaseRequest *req = BaseRequest::CreateRequestFromBuffer(++kGlobSID, buffers[chn]);
     txns.push_back(req);
+
+    if (!buffers[chn].is_empty()) {
+      TxnTimeStamp ts;
+      buffers[chn].Read(&ts.commit_ts, sizeof(uint64_t));
+      buffers[chn].Read(&ts.skew_ts, sizeof(int64_t));
+      heap.back() = std::make_tuple(ts, chn);
+      std::push_heap(heap.begin(), heap.end(), heap_comp);
+    } else {
+      heap.pop_back();
+    }
   }
 
   logger->info("epoch contains {} txns", txns.size());

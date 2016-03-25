@@ -13,7 +13,7 @@
 #include "sqltypes.h"
 #include "csum.h"
 
-namespace db_backup {
+namespace dolly {
 
 typedef sql::VarStr VarStr;
 
@@ -73,7 +73,7 @@ class Request : public BaseRequest, public T {
 
 class Epoch {
 public:
-  Epoch(int fd);
+  Epoch(int *fds, ParseBuffer *buffers);
 private:
   std::vector<Txn*> txns;
 
