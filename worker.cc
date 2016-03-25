@@ -4,9 +4,9 @@
 #include "util.h"
 #include "log.h"
 
-namespace db_backup {
+namespace dolly {
 
-const int Worker::kNrThreads = 16; // TODO: get number of CPUs
+const int Worker::kNrThreads = 32; // TODO: get number of CPUs
 
 void Worker::PinCurrentThread(int cpu_id)
 {
@@ -66,9 +66,9 @@ WorkerManager::WorkerManager()
 namespace util {
 
 template <>
-db_backup::WorkerManager &Instance()
+dolly::WorkerManager &Instance()
 {
-  static db_backup::WorkerManager mgr;
+  static dolly::WorkerManager mgr;
   return mgr;
 }
 

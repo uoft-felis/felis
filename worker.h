@@ -11,7 +11,7 @@
 #include <functional>
 #include <future>
 
-namespace db_backup {
+namespace dolly {
 
 class Txn;
 

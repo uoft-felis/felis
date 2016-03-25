@@ -13,7 +13,7 @@
 #include "log.h"
 #include "epoch.h"
 
-namespace db_backup {
+namespace dolly {
 
 // keys in the index data structure
 struct BaseIndexKey {

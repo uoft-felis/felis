@@ -6,7 +6,7 @@
 using util::MixIn;
 using util::Instance;
 
-namespace db_backup {
+namespace dolly {
 
 template<>
 void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(ParseBuffer &buffer)
@@ -37,7 +37,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(Pars
 }
 
 template<>
-void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(db_backup::ParseBuffer &buffer)
+void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(dolly::ParseBuffer &buffer)
 {
   buffer.Read(&warehouse_id, 4);
   buffer.Read(&district_id, 4);
@@ -99,7 +99,7 @@ static tpcc::loaders::Loader<TLN> CreateLoader(unsigned long seed)
 
 static void LoadTPCCDataSet()
 {
-  auto &mgr = Instance<db_backup::WorkerManager>();
+  auto &mgr = Instance<dolly::WorkerManager>();
   std::future<void> tasks[] = {
     mgr.SelectWorker().AddTask(CreateLoader<tpcc::loaders::Warehouse>(9324)),
     mgr.SelectWorker().AddTask(CreateLoader<tpcc::loaders::Item>(235443)),

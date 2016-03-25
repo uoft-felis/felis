@@ -24,9 +24,9 @@
 #include "tpcc.h"
 #include "worker.h"
 
-using db_backup::Relation;
-using db_backup::RelationManager;
-using db_backup::Worker;
+using dolly::Relation;
+using dolly::RelationManager;
+using dolly::Worker;
 using util::MixIn;
 using util::Instance;
 
@@ -415,7 +415,7 @@ void TPCCTableHandles::InitiateTable(TPCCTable table)
 
 static TPCCTableHandles *global_table_handles;
 
-db_backup::Relation &TPCCMixIn::relation(TPCCTable table, unsigned int wid)
+dolly::Relation &TPCCMixIn::relation(TPCCTable table, unsigned int wid)
 {
   assert(wid > 0); // wid starting from 1
   int idx = static_cast<int>(table) * NumWarehouses() + wid - 1;
@@ -733,7 +733,7 @@ void Loader<TPCCLoader::Order>::operator()()
 }
 }
 
-namespace db_backup {
+namespace dolly {
 
 using namespace tpcc;
 

@@ -10,17 +10,17 @@ using util::Instance;
 // export global variables
 namespace util {
 
-static db_backup::RelationManager mgr;
+static dolly::RelationManager mgr;
 
 template <>
-db_backup::RelationManager &Instance()
+dolly::RelationManager &Instance()
 {
   return mgr;
 }
 
 }
 
-namespace db_backup {
+namespace dolly {
 
 std::atomic<unsigned long> TxnValidator::tot_validated;
 
@@ -74,7 +74,7 @@ RelationManagerBase::RelationManagerBase()
   }
 }
 
-void TxnValidator::CaptureWrite(const db_backup::BaseIndexKey &k, VarStr *obj)
+void TxnValidator::CaptureWrite(const dolly::BaseIndexKey &k, VarStr *obj)
 {
   update_crc32(k.k->data, k.k->len, &key_crc);
 
@@ -109,7 +109,7 @@ void TxnValidator::Validate(const Txn &tx)
 	       tot_validated.fetch_add(1), value_size);
 }
 
-void CommitBuffer::Put(int fid, db_backup::IndexKey &&key, VarStr *obj)
+void CommitBuffer::Put(int fid, dolly::IndexKey &&key, VarStr *obj)
 {
   std::tuple<int, BaseIndexKey> tup(fid, std::move(key));
 

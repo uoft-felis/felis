@@ -6,7 +6,7 @@
 
 #include "net-io.h"
 
-namespace db_backup {
+namespace dolly {
 
 void ParseBuffer::FillDataFromFD(int fd, void *p, size_t size)
 {

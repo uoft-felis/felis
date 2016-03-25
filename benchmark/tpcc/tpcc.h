@@ -410,7 +410,7 @@ static const char *kTPCCTableNames[] = {
 
 class TPCCMixIn {
 protected:
-  db_backup::Relation &relation(TPCCTable table, unsigned int wid);
+  dolly::Relation &relation(TPCCTable table, unsigned int wid);
 };
 
 
