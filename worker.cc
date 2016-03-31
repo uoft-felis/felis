@@ -6,7 +6,7 @@
 
 namespace dolly {
 
-const int Worker::kNrThreads = 32; // TODO: get number of CPUs
+int Worker::kNrThreads = 16; // TODO: get number of CPUs
 
 void Worker::PinCurrentThread(int cpu_id)
 {

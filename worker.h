@@ -17,7 +17,7 @@ class Txn;
 
 class Worker {
 public:
-  static const int kNrThreads;
+  static int kNrThreads;
 
   static void PinCurrentThread(int cpu_id);
   static int CurrentThreadId() {

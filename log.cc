@@ -5,7 +5,7 @@ std::shared_ptr<spdlog::logger> logger = spdlog::stdout_logger_mt("console");
 
 void InitializeLogger()
 {
-  spdlog::set_level(spdlog::level::info); // or info
+  spdlog::set_level(spdlog::level::debug); // or info
 }
 
 PerfLog::PerfLog()
