@@ -396,6 +396,7 @@ class Schemas : public T,
 		public Compare<Targs...>,
 		public Serializer<Targs...> {
 public:
+  using T::T;
   Schemas(Targs... args) : T {args...} {}
   Schemas() : T{} {}
 

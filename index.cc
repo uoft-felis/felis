@@ -24,26 +24,11 @@ namespace dolly {
 
 std::atomic<unsigned long> TxnValidator::tot_validated;
 
-bool BaseIndexKey::operator<(const BaseIndexKey &rhs) const
-{
-  if (rhs.k == nullptr) return false;
-  if (k == nullptr) return true;
-  int r = memcmp(k->data, rhs.k->data, std::min(k->len, rhs.k->len));
-  return r < 0 || (r == 0 && k->len < rhs.k->len);
-}
-
-bool BaseIndexKey::operator==(const BaseIndexKey &rhs) const
-{
-  if (rhs.k == nullptr && k == nullptr) return true;
-  else if (rhs.k == nullptr || k == nullptr) return false;
-
-  return k->len == rhs.k->len && memcmp(k->data, rhs.k->data, k->len) == 0;
-}
-
 void BaseRelation::LogStat() const
 {
-  logger->debug("NewKeyCnt: {}", stat.new_key_cnt);
-  logger->debug("KeyCnt: {}", stat.key_cnt);
+  if (stat.key_cnt == 0) return;
+  logger->info("NewKeyCnt: {}", stat.new_key_cnt);
+  logger->info("KeyCnt: {}", stat.key_cnt);
 }
 
 RelationManagerBase::RelationManagerBase()
@@ -105,8 +90,8 @@ void TxnValidator::Validate(const Txn &tx)
     }
     std::abort();
   }
-  logger->info("Valid! Total {} txns data size {} bytes",
-	       tot_validated.fetch_add(1), value_size);
+  logger->debug("Valid! Total {} txns data size {} bytes",
+		tot_validated.fetch_add(1), value_size);
 }
 
 void CommitBuffer::Put(int fid, dolly::IndexKey &&key, VarStr *obj)

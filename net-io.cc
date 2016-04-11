@@ -17,6 +17,8 @@ void ParseBuffer::FillDataFromFD(int fd, void *p, size_t size)
     if (len < 0) {
       perror("read");
       continue;
+    } else if (len == 0) {
+      throw ParseBufferEOF();
     }
     cur += len;
   }

@@ -4,6 +4,10 @@ project(dolly)
 
 add_definitions(-std=c++11 -pthread)
 
+# although won't work very well
+set_property(GLOBAL PROPERTY INTERPROCEDURAL_OPTIMIZATION True)
+set(CMAKE_CXX_FLAGS_RELEASE "-Ofast")
+
 add_library(dolly SHARED net-io.cc epoch.cc log.cc index.cc worker.cc json11/json11.cpp)
 target_link_libraries(dolly numa pthread)
 

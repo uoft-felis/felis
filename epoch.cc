@@ -39,6 +39,7 @@ struct TxnTimeStamp
 Epoch::Epoch(int *fds, ParseBuffer *buffers)
 {
   int nr_threads = Worker::kNrThreads;
+  PerfLog p;
   for (int i = 0; i < nr_threads; i++) {
     uint64_t tot_size = 0;
     ParseBuffer::FillDataFromFD(fds[i], &tot_size, sizeof(uint64_t));
@@ -87,9 +88,10 @@ Epoch::Epoch(int *fds, ParseBuffer *buffers)
   }
 
   logger->info("epoch contains {} txns", txns.size());
+  p.Show("Parsing from network takes");
 
   // phase two: SetupReExec()
-  PerfLog p;
+  p = PerfLog();
   for (auto t: txns) {
     t->SetupReExec();
   }
@@ -97,6 +99,7 @@ Epoch::Epoch(int *fds, ParseBuffer *buffers)
 
   Instance<RelationManager>().LogStat();
 
+  p = PerfLog();
   // phase three: re-run in parallel
   std::vector<std::future<void>> txn_futures;
   for (auto &t: txns) {
@@ -108,6 +111,7 @@ Epoch::Epoch(int *fds, ParseBuffer *buffers)
   for (auto &f: txn_futures) {
     f.wait();
   }
+  p.Show("ReExec takes");
 }
 
 void Txn::Initialize(uint64_t id, ParseBuffer &buffer, uint16_t key_pkt_len)
@@ -147,14 +151,17 @@ void Txn::Initialize(uint64_t id, ParseBuffer &buffer, uint16_t key_pkt_len)
 
 void Txn::SetupReExec()
 {
+  auto &mgr = Instance<RelationManager>();
   for (auto kptr : keys) {
-    auto &relation = Instance<RelationManager>().GetRelationOrCreate(kptr->fid);
+    auto &relation = mgr.GetRelationOrCreate(kptr->fid);
     // although we don't delete kptr->str, but since we need to move this data
     // into the database, we need IndexKey, rather than ConstIndexKey
     IndexKey index_key(&kptr->str);
     relation.SetupReExec(std::move(index_key), sid);
     index_key.k = nullptr;
   }
+  mgr.LogStat();
+  mgr.ClearStat();
 }
 
 BaseRequest *BaseRequest::CreateRequestFromBuffer(uint64_t sid, ParseBuffer &buffer)

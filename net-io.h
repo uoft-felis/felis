@@ -11,8 +11,16 @@
 #include <sys/types.h>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 
 namespace dolly {
+
+class ParseBufferEOF : public std::exception {
+public:
+  virtual const char *what() const noexcept {
+    return "ParseBuffer EOF";
+  }
+};
 
 class ParseBuffer {
   uint8_t *ptr;

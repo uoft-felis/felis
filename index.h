@@ -18,8 +18,19 @@ namespace dolly {
 // keys in the index data structure
 struct BaseIndexKey {
   VarStr *k;
-  bool operator<(const BaseIndexKey &rhs) const;
-  bool operator==(const BaseIndexKey &rhs) const;
+  bool operator<(const BaseIndexKey &rhs) const {
+    if (rhs.k == nullptr) return false;
+    if (k == nullptr) return true;
+    int r = memcmp(k->data, rhs.k->data, std::min(k->len, rhs.k->len));
+    return r < 0 || (r == 0 && k->len < rhs.k->len);
+  }
+
+  bool operator==(const BaseIndexKey &rhs) const {
+    if (rhs.k == nullptr && k == nullptr) return true;
+    else if (rhs.k == nullptr || k == nullptr) return false;
+
+    return k->len == rhs.k->len && memcmp(k->data, rhs.k->data, k->len) == 0;
+  }
   bool operator!=(const BaseIndexKey &rhs) const { return !(*this == rhs); }
 
   BaseIndexKey(VarStr *key) : k(key) {}
@@ -218,34 +229,43 @@ private:
   }
 };
 
+template <class IteratorImpl>
+struct IndexIterator : public IteratorImpl {
+  using IteratorImpl::IteratorImpl;
+
+  VarStr *ReadVersion(uint64_t sid, CommitBuffer &buffer) {
+    VarStr *o = buffer.Get(this->relation_id, this->key().k);
+    if (o) return o;
+    return this->vhandle().ReadWithVersion(sid);
+  }
+  template <typename T>
+  T ReadVersion(uint64_t sid, CommitBuffer &buffer) {
+    T instance;
+    instance.DecodeFrom(ReadVersion(sid, buffer));
+    return instance;
+  }
+};
+
 template <class VHandle>
 class StdMapIndex {
   std::map<BaseIndexKey, VHandle> map;
 protected:
-  struct Iterator {
-    typename std::map<BaseIndexKey, VHandle>::iterator current, end;
-    int relation_id;
+  struct StdMapIteratorImpl {
+    typedef typename std::map<BaseIndexKey, VHandle>::iterator MapIterator;
+    StdMapIteratorImpl(MapIterator current_it, MapIterator end_it, int rid)
+      : current(current_it), end(end_it), relation_id(rid) {}
 
     void Next() { ++current; }
     bool IsValid() const { return current != end; }
 
-    VarStr *ReadVersion(uint64_t sid, CommitBuffer &buffer) {
-      VarStr *o = buffer.Get(relation_id, key().k);
-      if (o) return o;
-      return vhandle().ReadWithVersion(sid);
-    }
-
-    template <typename T>
-    T ReadVersion(uint64_t sid, CommitBuffer &buffer) {
-      T instance;
-      instance.DecodeFrom(ReadVersion(sid, buffer));
-      return instance;
-    }
-
     const BaseIndexKey &key() const { return current->first; }
     const VHandle &vhandle() const { return current->second; }
     VHandle &vhandle() { return current->second; }
+    MapIterator current, end;
+    int relation_id;
   };
+
+  typedef IndexIterator<StdMapIteratorImpl> Iterator;
 
 public:
   VHandle *Insert(IndexKey &&k, VHandle &&vhandle) {
@@ -255,10 +275,10 @@ public:
 
 protected:
   Iterator IndexSearchIterator(const BaseIndexKey &k, int relation_id) {
-    return Iterator {map.lower_bound(k), map.end(), relation_id};
+    return Iterator(map.lower_bound(k), map.end(), relation_id);
   }
   Iterator IndexSearchIterator(const BaseIndexKey &start, const BaseIndexKey &end, int relation_id) {
-    return Iterator {map.lower_bound(start), map.upper_bound(end), relation_id};
+    return Iterator(map.lower_bound(start), map.upper_bound(end), relation_id);
   }
 
   VHandle *Search(const BaseIndexKey &k) {
@@ -299,7 +319,7 @@ public:
   }
 
   VarStr *ReadWithVersion(uint64_t sid) {
-    if (versions.size() > 0) assert(versions[0] == 0);
+    // if (versions.size() > 0) assert(versions[0] == 0);
     volatile uintptr_t *addr = WithVersion(sid);
     while (*addr == PENDING_VALUE); // TODO: this is spinning. use futex for waiting?
     return (VarStr *) *addr;

@@ -19,7 +19,7 @@ void DoDumpNetwork(int fds[])
     fout[i] = new std::ofstream(std::string("dolly-net.") + std::to_string(i) + ".dump");
   }
 
-  logger->debug("Dumping the network packets into dolly-net.*.dump");
+  logger->info("Dumping the network packets into dolly-net.*.dump");
 
   int max_fd = -1;
   fd_set fset;
@@ -90,6 +90,7 @@ void show_usage(const char *progname)
   printf("Usage: %s [-t core_count] [-d]\n\n", progname);
   puts("\t-t\tnumber of cores used");
   puts("\t-d\tdump only");
+  puts("\t-r\treplay from trace files");
 
   std::exit(-1);
 }
@@ -97,12 +98,16 @@ void show_usage(const char *progname)
 int main(int argc, char *argv[])
 {
   int opt;
-  bool dump_only;
+  bool dump_only = false;
+  bool replay_from_file = false;
 
-  while ((opt = getopt(argc, argv, "dt:")) != -1) {
+  while ((opt = getopt(argc, argv, "drt:")) != -1) {
     switch (opt) {
     case 'd':
       dump_only = true;
+      break;
+    case 'r':
+      replay_from_file = true;
       break;
     case 't':
       dolly::Worker::kNrThreads = atoi(optarg);
@@ -112,6 +117,8 @@ int main(int argc, char *argv[])
       break;
     }
   }
+
+  // check
 
   InitializeLogger();
 
@@ -127,9 +134,14 @@ int main(int argc, char *argv[])
   dolly::ParseBuffer *buffers = new dolly::ParseBuffer[dolly::Worker::kNrThreads];
 
   for (int i = 0; i < dolly::Worker::kNrThreads; i++) {
-    if ((peer_fd = accept(fd, (struct sockaddr *) &addr, &addrlen)) < 0) {
-      perror("accept");
-      std::abort();
+    if (replay_from_file) {
+      std::string filename = std::string("dolly-net.") + std::to_string(i) + ".dump";
+      peer_fd = open(filename.c_str(), O_RDONLY);
+    } else {
+      if ((peer_fd = accept(fd, (struct sockaddr *) &addr, &addrlen)) < 0) {
+	perror("accept");
+	std::abort();
+      }
     }
     peer_fds[i] = peer_fd;
   }
@@ -142,9 +154,14 @@ int main(int argc, char *argv[])
   }
 
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
-  while (true) {
-    dolly::Epoch epoch(peer_fds, buffers);
-    logger->info("received a complete epoch");
+
+  try {
+    while (true) {
+      dolly::Epoch epoch(peer_fds, buffers);
+      logger->info("received a complete epoch");
+    }
+  } catch (dolly::ParseBufferEOF &ex) {
+    logger->info("EOF");
   }
 
   delete [] peer_fds;
