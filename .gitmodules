@@ -1,3 +1,6 @@
 [submodule "json11"]
 	path = json11
 	url = https://github.com/dropbox/json11.git
+[submodule "masstree"]
+	path = masstree
+	url = git@github.com:mikeandmore/masstree-beta.git
