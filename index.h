@@ -12,6 +12,7 @@
 #include <atomic>
 #include "log.h"
 #include "epoch.h"
+#include "util.h"
 
 namespace dolly {
 
@@ -81,7 +82,6 @@ private:
 template <class T>
 class RelationManagerPolicy : public RelationManagerBase {
 public:
-
   static const int kMaxNrRelations = 256;
 
   RelationManagerPolicy() {
@@ -192,12 +192,38 @@ struct IndexIterator : public IteratorImpl {
 class SortedArrayVHandle {
 public:
   std::atomic_bool locked;
-  std::vector<uint64_t> versions;
-  std::vector<uintptr_t> objects;
+  int64_t last_gc_epoch;
+  size_t capacity;
+  size_t size;
+  uint64_t *versions;
+  uintptr_t *objects;
 
-  SortedArrayVHandle() : locked(false) {}
+  SortedArrayVHandle() : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber()) {
+    capacity = 4;
+    size = 0;
+    versions = (uint64_t *) malloc(capacity * sizeof(uint64_t));
+    objects = (uintptr_t *) malloc(capacity * sizeof(uintptr_t));
+  }
+
   SortedArrayVHandle(SortedArrayVHandle &&rhs)
-    : versions(std::move(rhs.versions)), objects(std::move(rhs.objects)), locked(false) {}
+    : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber()) {
+    capacity = rhs.capacity;
+    size = rhs.size;
+    versions = rhs.versions;
+    objects = rhs.objects;
+
+    rhs.capacity = rhs.size = 0;
+    rhs.versions = nullptr;
+    rhs.objects = nullptr;
+  }
+
+  void EnsureSpace() {
+    if (unlikely(size == capacity)) {
+      capacity *= 2;
+      versions = (uint64_t *) realloc(versions, capacity * sizeof(uint64_t));
+      objects = (uintptr_t *) realloc(objects, capacity * sizeof(uintptr_t));
+    }
+  }
 
   void AppendNewVersion(uint64_t sid) {
     // we're single thread, and we are assuming sid is monotoniclly increasing
@@ -207,69 +233,74 @@ public:
       expected = false;
     }
 
-    versions.push_back(sid);
-    objects.emplace_back(PENDING_VALUE);
+    uint64_t ep = Epoch::CurrentEpochNumber();
+    if (ep > last_gc_epoch) {
+      // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
+      GarbageCollect();
+      last_gc_epoch = ep;
+    }
+
+    size++;
+    EnsureSpace();
+    versions[size - 1] = sid;
+    objects[size - 1] = PENDING_VALUE;
 
     // now we need to swap backwards... hope this won't take too long...
-    for (auto it = versions.rbegin(); it != versions.rend(); ++it) {
-      auto prev = it;
-      ++prev;
-      if (prev == versions.rend())
-	break;
-      if (*prev > *it) {
-	std::swap(*prev, *it);
-      } else {
-	break;
-      }
+    for (int i = size - 1; i > 0; i--) {
+      if (versions[i - 1] > versions[i]) std::swap(versions[i - 1], versions[i]);
+      else break;
     }
     locked.store(false);
   }
 
   volatile uintptr_t *WithVersion(uint64_t sid) {
-    assert(versions.size() > 0);
+    assert(size > 0);
 
-    if (versions.size() == 1) {
+    if (size == 1) {
       assert(versions[0] < sid);
       return &objects[0];
     }
 
-    auto it = std::lower_bound(versions.begin(),
-			       versions.end(), sid);
-    if (it == versions.begin()) {
-      logger->critical("Going way too back. GC bug");
+    auto it = std::lower_bound(versions, versions + size, sid);
+    if (it == versions) {
+      logger->critical("Going way too back. GC bug. ver {} sid {}", *it, sid);
       std::abort();
     }
     --it;
-    return &objects[it - versions.begin()];
+    return &objects[it - versions];
   }
 
   VarStr *ReadWithVersion(uint64_t sid) {
     // if (versions.size() > 0) assert(versions[0] == 0);
     volatile uintptr_t *addr = WithVersion(sid);
-    while (*addr == PENDING_VALUE); // TODO: this is spinning. use futex for waiting?
+    // TODO: this is spinning. we should do a u-context switch to other txns
+    while (*addr == PENDING_VALUE);
     return (VarStr *) *addr;
   }
 
   void WriteWithVersion(uint64_t sid, VarStr *obj) {
     // Writing to exact location
-    auto it = std::lower_bound(versions.begin(), versions.end(), sid);
-    if (sid == 7) {
-      logger->info("WTF {} {}", versions.size(), obj->len);
-    }
+    auto it = std::lower_bound(versions, versions + size, sid);
     if (*it != sid) {
       logger->critical("Diverging outcomes!");
       std::abort();
     }
-    volatile uintptr_t *addr = &objects[it - versions.begin()];
+    volatile uintptr_t *addr = &objects[it - versions];
     *addr = (uintptr_t) obj;
   }
 
-  void GarbageCollect(uint64_t max_allowed_version) {
-    /*
-    for (int i = 0; i < versions.size(); i++) {
-      if (versions[i] >= max_allowed_version) return;
+  void GarbageCollect() {
+    if (size < 2) return;
+    uint64_t latest_version = versions[size - 1];
+    uintptr_t latest_object = objects[size - 1];
+
+    for (int i = size - 2; i >= 0; i--) {
+      VarStr *o = (VarStr *) objects[i];
+      free(o);
     }
-    */
+    versions[0] = latest_version;
+    objects[0] = latest_object;
+    size = 1;
   }
 };
 

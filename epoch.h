@@ -76,6 +76,7 @@ class Request : public BaseRequest, public T {
 class Epoch {
 public:
   Epoch(int *fds, ParseBuffer *buffers);
+  static uint64_t CurrentEpochNumber();
 private:
   std::vector<Txn*> txns;
 

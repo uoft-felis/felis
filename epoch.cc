@@ -37,8 +37,11 @@ struct TxnTimeStamp
   }
 };
 
+static uint64_t gGlobalEpoch;
+
 Epoch::Epoch(int *fds, ParseBuffer *buffers)
 {
+  ++gGlobalEpoch;
   int nr_threads = Worker::kNrThreads;
   PerfLog p;
   for (int i = 0; i < nr_threads; i++) {
@@ -118,6 +121,11 @@ Epoch::Epoch(int *fds, ParseBuffer *buffers)
     f.wait();
   }
   p.Show("ReExec takes");
+}
+
+uint64_t Epoch::CurrentEpochNumber()
+{
+  return gGlobalEpoch;
 }
 
 void Txn::Initialize(uint64_t id, ParseBuffer &buffer, uint16_t key_pkt_len)
