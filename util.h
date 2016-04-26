@@ -21,6 +21,11 @@
 #define unlikely(x) __builtin_expect((x),0)
 #endif
 
+#ifndef container_of
+#define container_of(ptr, type, member) ({			\
+      (type *)((char *)ptr - offsetof(type, member)); })
+#endif
+
 namespace util {
 
 // padded, aligned primitives
@@ -124,6 +129,28 @@ private:
   }
 
   unsigned long seed;
+};
+
+// link list headers. STL is too slow
+struct ListNode {
+  ListNode *prev, *next;
+
+  void InsertAfter(ListNode *parent) {
+    prev = parent;
+    next = parent->next;
+    parent->next->prev = this;
+    parent->next = this;
+  }
+
+  void Remove() {
+    prev->next = next;
+    next->prev = prev;
+    prev = next = nullptr; // detached
+  }
+
+  void Initialize() {
+    prev = next = this;
+  }
 };
 
 template <class... M>

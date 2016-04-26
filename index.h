@@ -30,16 +30,53 @@ public:
   void Validate(const Txn &tx);
 };
 
+using util::ListNode;
 
 // we need this class because we need to handle read local-write scenario.
 class CommitBuffer {
-  typedef std::map<std::tuple<int, VarStr>, std::pair<int, VarStr *>> BufferMap;
-
-  BufferMap buf;
-  std::vector<BufferMap::iterator> write_seq;
   const Txn *tx;
+  struct CommitBufferEntry {
+    ListNode ht_node;
+    ListNode lru_node;
+
+    int fid;
+    const VarStr *key;
+    VarStr *obj;
+    CommitBufferEntry(int id, const VarStr *k, VarStr *o) : fid(id), key(k), obj(o) {}
+  };
+  ListNode lru;
+  ListNode *htable;
+  static const int kHashTableSize = 37;
 public:
-  CommitBuffer(Txn *txn) : tx(txn) {}
+  CommitBuffer(Txn *txn) : tx(txn) {
+    htable = new ListNode[kHashTableSize];
+    for (int i = 0; i < kHashTableSize; i++) {
+      htable[i].Initialize();
+    }
+    lru.Initialize();
+  }
+  CommitBuffer(const CommitBuffer &rhs) = delete;
+  CommitBuffer(CommitBuffer &&rhs) = delete;
+  ~CommitBuffer() {
+    delete [] htable;
+  }
+
+  unsigned int Hash(int fid, const VarStr *key) {
+    unsigned int h = fid;
+    unsigned int l = key->len;
+    const uint8_t *p = key->data;
+    while (l >= 8) {
+      h ^= *((const uint64_t *) p);
+      p += 8;
+      l -= 8;
+    }
+    if (l > 0) {
+      uint64_t extra = 0xFFFFFFFFFFFFFFFFUL;
+      memcpy(&extra, p, l);
+      h ^= extra;
+    }
+    return h;
+  }
 
   void Put(int fid, const VarStr *key, VarStr *obj);
   VarStr *Get(int fid, const VarStr *k);

@@ -92,55 +92,71 @@ void TxnValidator::Validate(const Txn &tx)
 
 void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
 {
-  std::tuple<int, VarStr> tup(fid, *key);
+  unsigned int h = Hash(fid, key);
+  ListNode *head = &htable[h % kHashTableSize];
+  ListNode *node = head->next;
+  while (node != head) {
+    auto entry = container_of(node, CommitBufferEntry, ht_node);
+    if (entry->fid != fid)
+      goto next;
+    if (*entry->key != *key)
+      goto next;
 
-  auto it = buf.find(tup);
-  if (it != buf.end()) {
-    it->second.first++;
-    it->second.second = obj;
-    write_seq.push_back(it);
-  } else {
-    auto result = buf.emplace(std::move(tup), std::move(std::make_pair(1, obj)));
-    write_seq.push_back(result.first);
+    // update this node
+    free((void *) entry->key);
+    free(entry->obj);
+
+    entry->key = key;
+    entry->obj = obj;
+    entry->lru_node.Remove();
+    entry->lru_node.InsertAfter(&lru);
+    return;
+  next:
+    node = node->next;
   }
+  auto entry = new CommitBufferEntry(fid, key, obj);
+  entry->ht_node.InsertAfter(head);
+  entry->lru_node.InsertAfter(&lru);
 }
 
-VarStr *CommitBuffer::Get(int fid, const VarStr *k)
+VarStr *CommitBuffer::Get(int fid, const VarStr *key)
 {
-  auto tup = std::tuple<int, VarStr>(fid, *k);
-  auto it = buf.find(tup);
-  if (it == buf.end()) {
-    return nullptr;
+  unsigned int h = Hash(fid, key);
+  ListNode *head = &htable[h % kHashTableSize];
+  ListNode *node = head->next;
+  while (node != head) {
+    auto entry = container_of(node, CommitBufferEntry, ht_node);
+    if (entry->fid != fid)
+      goto next;
+    if (*entry->key != *key)
+      goto next;
+
+    return entry->obj;
+  next:
+    node = node->next;
   }
-  return it->second.second;
+  return nullptr;
 }
 
 void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 {
-  std::vector<uint8_t *> kptrs;
+  ListNode *head = &lru;
+  ListNode *node = head->prev;
+  auto &mgr = Instance<RelationManager>();
 
-  for (auto &it: write_seq) {
-    int refcnt = --it->second.first;
-    if (refcnt > 0) continue;
-    assert(refcnt == 0);
+  while (node != head) {
+    ListNode *prev = node->prev;
+    auto entry = container_of(node, CommitBufferEntry, lru_node);
 
-    auto &tup = it->first;
-    const VarStr &key = std::get<1>(tup);
-    int fid = std::get<0>(tup);
-    VarStr *obj = it->second.second;
+    mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
 
-    if (validator != nullptr)
-      validator->CaptureWrite(&key, obj);
-    Instance<RelationManager>().GetRelationOrCreate(fid)
-      .CommitPut(&key, sid, obj);
-    kptrs.push_back((uint8_t *) key.data - sizeof(VarStr));
+    free((void *) entry->key);
+    delete entry;
+    node = prev;
   }
 
   if (validator)
     validator->Validate(*tx);
-  for (auto p: kptrs) {
-    delete p;
-  }
 }
 
 }
