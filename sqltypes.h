@@ -3,6 +3,7 @@
 #ifndef SQLTYPES_H
 #define SQLTYPES_H
 
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -378,17 +379,35 @@ struct VarStr {
   static VarStr *New(uint16_t length) {
     VarStr *ins = (VarStr *) malloc(NewSize(length));
     ins->len = length;
+    ins->data = (uint8_t *) ins + sizeof(VarStr);
     return ins;
   }
 
   static VarStr *FromAlloca(void *ptr, uint16_t length) {
     VarStr *str = static_cast<VarStr *>(ptr);
     str->len = length;
+    str->data = (uint8_t *) str + sizeof(VarStr);
     return str;
   }
 
   uint16_t len;
-  uint8_t data[];
+  const uint8_t *data;
+
+  bool operator<(const VarStr &rhs) const {
+    if (data == nullptr) return true;
+    else if (rhs.data == nullptr) return false;
+
+    return len == rhs.len ? memcmp(data, rhs.data, len) < 0 : len < rhs.len;
+  }
+
+  bool operator==(const VarStr &rhs) const {
+    if (len != rhs.len) return false;
+    return memcmp(data, rhs.data, len) == 0;
+  }
+
+  bool operator!=(const VarStr &rhs) const {
+    return !(*this == rhs);
+  }
 };
 
 template <typename T, typename ...Targs>
@@ -414,12 +433,11 @@ public:
     Serializer<Targs...>::Encode(buf, (const uint8_t *) this);
   }
 
-  VarStr *Encode(VarStr *str) const {
-    Encode(str->data);
-    return str;
-  }
-
   VarStr *Encode() const { return Encode(VarStr::New(EncodeSize())); }
+
+  VarStr *EncodeFromAlloca(void *base_ptr) const {
+    return Encode(VarStr::FromAlloca(base_ptr, EncodeSize()));
+  }
 
   size_t EncodeSize() const {
     return Serializer<Targs...>::EncodeSize((const uint8_t *) this);
@@ -431,6 +449,11 @@ public:
 
   void DecodeFrom(const VarStr *str) {
     DecodeFrom(str->data);
+  }
+private:
+  VarStr *Encode(VarStr *str) const {
+    Encode((uint8_t *) str + sizeof(VarStr));
+    return str;
   }
 };
 

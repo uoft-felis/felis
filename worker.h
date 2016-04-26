@@ -15,6 +15,7 @@ namespace dolly {
 
 class Txn;
 
+// each worker represent one thread
 class Worker {
 public:
   static int kNrThreads;
@@ -23,18 +24,33 @@ public:
   static int CurrentThreadId() {
     return pthread_self();
   }
+  static Worker *CurrentThreadWorker();
 
-  Worker() {}
-  Worker(Worker &&rhs) {}
+  Worker() : data_ptr(nullptr) {}
+  Worker(Worker &&rhs) : data_ptr(rhs.data_ptr) {
+    rhs.data_ptr = nullptr;
+  }
 
   void Start();
 
   std::future<void> AddTask(std::function<void ()> func);
 
+  template <typename T>
+  T *worker_data() const { return static_cast<T *>(data_ptr); }
+
+  template <typename T>
+  void set_worker_data(T *p) { data_ptr = p; }
+
+  int index() const { return thread_index; }
+  void set_index(int tindex) { thread_index = tindex; }
+
 private:
   std::queue<std::packaged_task<void()>> task_queue;
   std::mutex mutex;
   std::condition_variable cond;
+
+  void *data_ptr;
+  int thread_index; // mainly used for threadinfo in masstree
 };
 
 class WorkerManager {
@@ -45,6 +61,7 @@ public:
   Worker &SelectWorker() {
     return workers[current_worker++ % workers.size()];
   }
+  Worker &GetWorker(int hash) { return workers[hash % workers.size()]; }
 };
 
 }

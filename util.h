@@ -14,8 +14,12 @@
 #define CACHE_PADOUT \
   char __XCONCAT(__padout, __COUNTER__)[0] __attribute__((aligned(CACHELINE_SIZE)))
 
+#ifndef likely
 #define likely(x) __builtin_expect((x),1)
+#endif
+#ifndef unlikely
 #define unlikely(x) __builtin_expect((x),0)
+#endif
 
 namespace util {
 

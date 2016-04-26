@@ -4,14 +4,17 @@ project(dolly)
 
 add_definitions(-std=c++11 -pthread)
 
-# although won't work very well
-set_property(GLOBAL PROPERTY INTERPROCEDURAL_OPTIMIZATION True)
 set(CMAKE_CXX_FLAGS_RELEASE "-Ofast")
+set(CMAKE_CXX_FLAGS_RELEASE "-flto")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-flto")
 
-add_library(dolly SHARED net-io.cc epoch.cc log.cc index.cc worker.cc json11/json11.cpp)
-target_link_libraries(dolly numa pthread)
+# set(CMAKE_CXX_FLAGS "-fsanitize=address -fno-omit-frame-pointer")
+# set(CMAKE_EXE_LINKER_FLAGS "-fsanitize=address")
+
+add_library(dolly SHARED net-io.cc epoch.cc log.cc index.cc worker.cc json11/json11.cpp masstree_index_impl.cc)
+target_link_libraries(dolly numa pthread masstree)
 
 add_executable(db-backup-node main.cc)
-target_link_libraries(db-backup-node dl dolly pthread ${JSON11_LIBRARIES})
+target_link_libraries(db-backup-node dl dolly masstree pthread)
 
 add_subdirectory(benchmark/tpcc/)

@@ -39,6 +39,7 @@ public:
 
   uint64_t serializable_id() const { return sid; }
   virtual void Run() = 0;
+  virtual int CoreAffinity() const = 0;
 };
 
 class BaseRequest : public Txn {
@@ -69,6 +70,7 @@ template <class T>
 class Request : public BaseRequest, public T {
   virtual void ParseFromBuffer(ParseBuffer &buffer);
   virtual void Run();
+  virtual int CoreAffinity() const;
 };
 
 class Epoch {

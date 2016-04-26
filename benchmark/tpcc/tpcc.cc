@@ -428,6 +428,7 @@ namespace loaders {
 template <>
 void Loader<TPCCLoader::Warehouse>::operator()()
 {
+  void *large_buf = alloca(1024);
   for (uint i = 1; i <= NumWarehouses(); i++) {
     auto k = Warehouse::Key(i);
     auto v = Warehouse::Value();
@@ -450,7 +451,7 @@ void Loader<TPCCLoader::Warehouse>::operator()()
 
     Checker::SanityCheckWarehouse(&k, &v);
 
-    relation(TPCCTable::Warehouse, i).SetupReExec(k.Encode(), 0, v.Encode());
+    relation(TPCCTable::Warehouse, i).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
   }
   logger->info("Warehouse Table loading done.");
 }
@@ -458,6 +459,7 @@ void Loader<TPCCLoader::Warehouse>::operator()()
 template <>
 void Loader<TPCCLoader::Item>::operator()()
 {
+  void *large_buf = alloca(1024);
   for (uint i = 1; i <= NumItems(); i++) {
     // items don't "belong" to a certain warehouse, so no pinning
     const Item::Key k(i);
@@ -481,7 +483,7 @@ void Loader<TPCCLoader::Item>::operator()()
 
     Checker::SanityCheckItem(&k, &v);
     relation(TPCCTable::Item, 1)
-      .SetupReExec(k.Encode(), 0, v.Encode());
+      .SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
   }
   logger->info("Item Table loading done.");
 }
@@ -489,6 +491,7 @@ void Loader<TPCCLoader::Item>::operator()()
 template <>
 void Loader<TPCCLoader::Stock>::operator()()
 {
+  void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     Worker::PinCurrentThread(PartitionId(w));
 
@@ -526,8 +529,8 @@ void Loader<TPCCLoader::Stock>::operator()()
 
       Checker::SanityCheckStock(&k, &v);
 
-      relation(TPCCTable::Stock, w).SetupReExec(k.Encode(), 0, v.Encode());
-      relation(TPCCTable::StockData, w).SetupReExec(k_data.Encode(), 0, v_data.Encode());
+      relation(TPCCTable::Stock, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
+      relation(TPCCTable::StockData, w).SetupReExec(k_data.EncodeFromAlloca(large_buf), 0, v_data.Encode());
     }
   }
   logger->info("Stock Table loading done.");
@@ -536,6 +539,7 @@ void Loader<TPCCLoader::Stock>::operator()()
 template <>
 void Loader<TPCCLoader::District>::operator()()
 {
+  void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     Worker::PinCurrentThread(PartitionId(w));
 
@@ -554,7 +558,7 @@ void Loader<TPCCLoader::District>::operator()()
 
       Checker::SanityCheckDistrict(&k, &v);
 
-      relation(TPCCTable::District, w).SetupReExec(k.Encode(), 0, v.Encode());
+      relation(TPCCTable::District, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
     }
   }
   logger->info("District Table loading done.");
@@ -577,6 +581,7 @@ static uint32_t GetCurrentTimeMillis()
 template <>
 void Loader<TPCCLoader::Customer>::operator()()
 {
+  void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     Worker::PinCurrentThread(PartitionId(w));
 
@@ -616,7 +621,7 @@ void Loader<TPCCLoader::Customer>::operator()()
 	v.c_data.assign(RandomStr(r, RandomNumber(r, 300, 500)));
 
 	Checker::SanityCheckCustomer(&k, &v);
-	relation(TPCCTable::Customer, w).SetupReExec(k.Encode(), 0, v.Encode());
+	relation(TPCCTable::Customer, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
 
 	// customer name index
 	CustomerNameIdx::Key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -625,7 +630,7 @@ void Loader<TPCCLoader::Customer>::operator()()
 	// index structure is:
 	// (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-	relation(TPCCTable::CustomerNameIdx, w).SetupReExec(k_idx.Encode(), 0,
+	relation(TPCCTable::CustomerNameIdx, w).SetupReExec(k_idx.EncodeFromAlloca(large_buf), 0,
 							    v_idx.Encode());
 
 	History::Key k_hist;
@@ -641,7 +646,7 @@ void Loader<TPCCLoader::Customer>::operator()()
 	v_hist.h_amount = 10;
 	v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
 
-	relation(TPCCTable::History, w).SetupReExec(k_hist.Encode(), 0, v_hist.Encode());
+	relation(TPCCTable::History, w).SetupReExec(k_hist.EncodeFromAlloca(large_buf), 0, v_hist.Encode());
       }
     }
   }
@@ -655,6 +660,7 @@ static size_t NumOrderLinesPerCustomer(util::FastRandom &r)
 template <>
 void Loader<TPCCLoader::Order>::operator()()
 {
+  void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     Worker::PinCurrentThread(PartitionId(w));
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -687,12 +693,12 @@ void Loader<TPCCLoader::Order>::operator()()
 
 	Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
-	relation(TPCCTable::OOrder, w).SetupReExec(k_oo.Encode(), 0, v_oo.Encode());
+	relation(TPCCTable::OOrder, w).SetupReExec(k_oo.EncodeFromAlloca(large_buf), 0, v_oo.Encode());
 
 	const OOrderCIdIdx::Key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
 	OOrderCIdIdx::Value v_oo_idx{0};
 
-	relation(TPCCTable::OOrderCIdIdx, w).SetupReExec(k_oo_idx.Encode(), 0, v_oo_idx.Encode());
+	relation(TPCCTable::OOrderCIdIdx, w).SetupReExec(k_oo_idx.EncodeFromAlloca(large_buf), 0, v_oo_idx.Encode());
 
 	if (c >= 2101) {
 	  NewOrder::Key k_no(w, d, c);
@@ -700,7 +706,7 @@ void Loader<TPCCLoader::Order>::operator()()
 
 	  Checker::SanityCheckNewOrder(&k_no, &v_no);
 
-	  relation(TPCCTable::NewOrder, w).SetupReExec(k_no.Encode(), 0, v_no.Encode());
+	  relation(TPCCTable::NewOrder, w).SetupReExec(k_no.EncodeFromAlloca(large_buf), 0, v_no.Encode());
 	}
 
 	for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -723,7 +729,7 @@ void Loader<TPCCLoader::Order>::operator()()
 	  //v_ol.ol_dist_info = RandomStr(r, 24);
 
 	  Checker::SanityCheckOrderLine(&k_ol, &v_ol);
-	  relation(TPCCTable::OrderLine, w).SetupReExec(k_ol.Encode(), 0, v_ol.Encode());
+	  relation(TPCCTable::OrderLine, w).SetupReExec(k_ol.EncodeFromAlloca(large_buf), 0, v_ol.Encode());
 	}
       }
     }
@@ -785,14 +791,14 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::Run()
 
   const Customer::Key k_c(warehouse_id, district_id, customer_id);
   auto v_c = relation(TPCCTable::Customer, warehouse_id)
-    .Get<Customer::Value>(k_c.Encode(VarStr::FromAlloca(large_buf, k_c.EncodeSize())),
+    .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
 			  serializable_id(),
 			  buffer);
   Checker::SanityCheckCustomer(&k_c, &v_c);
 
   const Warehouse::Key k_w(warehouse_id);
   auto v_w = relation(TPCCTable::Warehouse, warehouse_id)
-    .Get<Warehouse::Value>(k_w.Encode(VarStr::FromAlloca(large_buf, k_w.EncodeSize())),
+    .Get<Warehouse::Value>(k_w.EncodeFromAlloca(large_buf),
 			   serializable_id(),
 			   buffer);
 
@@ -800,7 +806,7 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::Run()
 
   const District::Key k_d(warehouse_id, district_id);
   auto v_d = relation(TPCCTable::District, warehouse_id)
-    .Get<District::Value>(k_d.Encode(VarStr::FromAlloca(large_buf, k_d.EncodeSize())),
+    .Get<District::Value>(k_d.EncodeFromAlloca(large_buf),
 			  serializable_id(),
 			  buffer);
 
@@ -837,14 +843,14 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::Run()
 
     const Item::Key k_i(ol_i_id);
     auto v_i = relation(TPCCTable::Item, 1)
-      .Get<Item::Value>(k_i.Encode(VarStr::FromAlloca(large_buf, k_i.EncodeSize())),
+      .Get<Item::Value>(k_i.EncodeFromAlloca(large_buf),
 			serializable_id(),
 			buffer);
     Checker::SanityCheckItem(&k_i, &v_i);
 
     const Stock::Key k_s(ol_supply_w_id, ol_i_id);
     auto v_s = relation(TPCCTable::Stock, ol_supply_w_id)
-      .Get<Stock::Value>(k_s.Encode(VarStr::FromAlloca(large_buf, k_s.EncodeSize())),
+      .Get<Stock::Value>(k_s.EncodeFromAlloca(large_buf),
 			 serializable_id(),
 			 buffer);
     Checker::SanityCheckStock(&k_s, &v_s);
@@ -907,11 +913,11 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::Run()
 
     // scan on the index
     relation(TPCCTable::NewOrder, warehouse_id)
-      .Scan(k_no_0.Encode(VarStr::FromAlloca(large_buf, k_no_0.EncodeSize())),
+      .Scan(k_no_0.EncodeFromAlloca(large_buf),
 	    serializable_id(),
 	    buffer,
-	    [&k_no, &k_no_found] (const BaseIndexKey &k, const VarStr *v) -> bool {
-	      k_no.DecodeFrom(k.k);
+	    [&k_no, &k_no_found] (const VarStr *k, const VarStr *v) -> bool {
+	      k_no.DecodeFrom(k);
 	      k_no_found = true;
 	      NewOrder::Value v_no;
 	      v_no.DecodeFrom(v);
@@ -930,7 +936,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::Run()
     // we will read the oorder entry: in this case the txn will abort,
     // but we're simply bailing out early
     auto v_oo = relation(TPCCTable::OOrder, warehouse_id)
-      .Get<OOrder::Value>(k_oo.Encode(VarStr::FromAlloca(large_buf, k_oo.EncodeSize())),
+      .Get<OOrder::Value>(k_oo.EncodeFromAlloca(large_buf),
 			  serializable_id(), buffer);
     Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
@@ -940,20 +946,16 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::Run()
 
     float sum = 0.0;
     auto it = relation(TPCCTable::OrderLine, warehouse_id)
-      .SearchIterator(
-	ConstIndexKey(
-	  k_oo_0.Encode(VarStr::FromAlloca(large_buf, k_oo_0.EncodeSize()))),
-	ConstIndexKey(
-	  k_oo_1.Encode(VarStr::FromAlloca(
-			  (uint8_t *) large_buf + k_oo_0.EncodeSize() + sizeof(VarStr) + 1,
-			  k_oo_1.EncodeSize()))));
+      .SearchIterator(k_oo_0.EncodeFromAlloca(large_buf),
+		      k_oo_1.EncodeFromAlloca((uint8_t *) large_buf + k_oo_0.EncodeSize()
+					      + sizeof(VarStr) + 1));
 
     for (size_t i = 0; it.IsValid() && i < 15; i++, it.Next()) {
       const auto v_ol = it.ReadVersion<OrderLine::Value>(serializable_id(), buffer);
 
 // #ifdef CHECK_INVARIANTS
       OrderLine::Key k_ol;
-      k_ol.DecodeFrom(it.key().k);
+      k_ol.DecodeFrom(&it.key());
 
       Checker::SanityCheckOrderLine(&k_ol, &v_ol);
 // #endif
@@ -985,7 +987,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::Run()
     // update customer
     const Customer::Key k_c(warehouse_id, d, c_id);
     const auto v_c = relation(TPCCTable::Customer, warehouse_id)
-      .Get<Customer::Value>(k_c.Encode(VarStr::FromAlloca(large_buf, k_c.EncodeSize())),
+      .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
 			    serializable_id(),
 			    buffer);
 
@@ -1042,7 +1044,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::Run()
   // select * from customer with random C_ID
   Customer::Key k_c(customer_warehouse_id, customer_district_id, customer_id);
   const auto v_c = relation(TPCCTable::Customer, customer_warehouse_id)
-    .Get<Customer::Value>(k_c.Encode(VarStr::FromAlloca(large_buf, k_c.EncodeSize())),
+    .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
 			  serializable_id(),
 			  buffer);
   Checker::SanityCheckCustomer(&k_c, &v_c);
@@ -1056,20 +1058,18 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::Run()
 
   auto it = relation(TPCCTable::NewOrder, warehouse_id)
     .SearchIterator(
-      ConstIndexKey(
-	k_no_0.Encode(VarStr::FromAlloca(large_buf, k_no_0.EncodeSize()))),
-      ConstIndexKey(
-	k_no_1.Encode(VarStr::FromAlloca((uint8_t *) large_buf + k_no_0.EncodeSize() + sizeof(VarStr) + 1, k_no_1.EncodeSize()))));
+      k_no_0.EncodeFromAlloca(large_buf),
+      k_no_1.EncodeFromAlloca((uint8_t *) large_buf + k_no_0.EncodeSize() + sizeof(VarStr) + 1));
 
   double sum = 0;
   for (; it.IsValid(); it.Next())
   {
     NewOrder::Key k_no;
-    k_no.DecodeFrom(it.key().k);
+    k_no.DecodeFrom(&it.key());
 
     OOrder::Key k_oo(warehouse_id, district_id, k_no.no_o_id);
     auto v_oo = relation(TPCCTable::OOrder, warehouse_id)
-      .Get<OOrder::Value>(k_oo.Encode(VarStr::FromAlloca(large_buf, k_oo.EncodeSize())),
+      .Get<OOrder::Value>(k_oo.EncodeFromAlloca(large_buf),
 			  serializable_id(),
 			  buffer);
 
@@ -1083,13 +1083,11 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::Run()
 
     relation(TPCCTable::OrderLine, warehouse_id)
       .Scan(
-	ConstIndexKey(
-	  k_ol_0.Encode(VarStr::FromAlloca(large_buf, k_ol_0.EncodeSize()))),
-	ConstIndexKey(
-	  k_ol_1.Encode(VarStr::FromAlloca((uint8_t *) large_buf + k_ol_0.EncodeSize() + sizeof(VarStr) + 1, k_ol_1.EncodeSize()))),
+	k_ol_0.EncodeFromAlloca(large_buf),
+	k_ol_1.EncodeFromAlloca((uint8_t *) large_buf + k_ol_0.EncodeSize() + sizeof(VarStr) + 1),
 	serializable_id(),
 	buffer,
-	[&sum] (const BaseIndexKey &k, const VarStr *v) -> bool {
+	[&sum] (const VarStr *k, const VarStr *v) -> bool {
 	  OrderLine::Value v_ol;
 	  v_ol.DecodeFrom(v);
 	  sum += v_ol.ol_amount;
@@ -1135,7 +1133,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::Run()
 
   const Warehouse::Key k_w(warehouse_id);
   auto v_w = relation(TPCCTable::Warehouse, warehouse_id)
-    .Get<Warehouse::Value>(k_w.Encode(VarStr::FromAlloca(large_buf, k_w.EncodeSize())),
+    .Get<Warehouse::Value>(k_w.EncodeFromAlloca(large_buf),
 			   serializable_id(),
 			   buffer);
   Checker::SanityCheckWarehouse(&k_w, &v_w);
@@ -1147,7 +1145,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::Run()
 
   District::Key k_d(warehouse_id, district_id);
   auto v_d = relation(TPCCTable::District, warehouse_id)
-    .Get<District::Value>(k_d.Encode(VarStr::FromAlloca(large_buf, k_d.EncodeSize())),
+    .Get<District::Value>(k_d.EncodeFromAlloca(large_buf),
 			  serializable_id(),
 			  buffer);
   Checker::SanityCheckDistrict(&k_d, &v_d);
@@ -1184,13 +1182,11 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::Run()
     std::vector<uint32_t> customer_ids;
     relation(TPCCTable::CustomerNameIdx, customer_warehouse_id)
       .Scan(
-	ConstIndexKey(
-	  k_c_idx_0.Encode(VarStr::FromAlloca(large_buf, k_c_idx_0.EncodeSize()))),
-	ConstIndexKey(
-	  k_c_idx_1.Encode(VarStr::FromAlloca((uint8_t *) large_buf + k_c_idx_0.EncodeSize() + sizeof(VarStr) + 1, k_c_idx_1.EncodeSize()))),
+	k_c_idx_0.EncodeFromAlloca(large_buf),
+	k_c_idx_1.EncodeFromAlloca((uint8_t *) large_buf + k_c_idx_0.EncodeSize() + sizeof(VarStr) + 1),
 	serializable_id(),
 	buffer,
-	[&customer_ids] (const BaseIndexKey &k, const VarStr *v) -> bool {
+	[&customer_ids] (const VarStr *k, const VarStr *v) -> bool {
 	  CustomerNameIdx::Value name_idx;
 	  name_idx.DecodeFrom(v);
 	  customer_ids.push_back(name_idx.c_id);
@@ -1201,14 +1197,14 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::Run()
 
     k_c.c_id = customer_ids[(customer_ids.size() - 1) / 2];
     v_c = relation(TPCCTable::Customer, customer_warehouse_id)
-      .Get<Customer::Value>(k_c.Encode(VarStr::FromAlloca(large_buf, k_c.EncodeSize())),
+      .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
 			    serializable_id(),
 			    buffer);
   } else {
     // cust by ID
     k_c.c_id = by.customer_id;
     v_c = relation(TPCCTable::Customer, customer_warehouse_id)
-      .Get<Customer::Value>(k_c.Encode(VarStr::FromAlloca(large_buf, k_c.EncodeSize())),
+      .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
 			    serializable_id(),
 			    buffer);
   }

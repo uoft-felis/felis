@@ -2,6 +2,7 @@
 #include "epoch.h"
 #include "log.h"
 #include "util.h"
+#include "index.h"
 
 using util::MixIn;
 using util::Instance;
@@ -25,6 +26,12 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(Pars
 }
 
 template<>
+int Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::CoreAffinity() const
+{
+  return warehouse_id;
+}
+
+template<>
 void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(ParseBuffer &buffer)
 {
   buffer.Read(&warehouse_id, 4);
@@ -37,6 +44,12 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(Pars
 }
 
 template<>
+int Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::CoreAffinity() const
+{
+  return warehouse_id;
+}
+
+template<>
 void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(dolly::ParseBuffer &buffer)
 {
   buffer.Read(&warehouse_id, 4);
@@ -44,6 +57,12 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(d
   buffer.Read(&customer_warehouse_id, 4);
   buffer.Read(&customer_district_id, 4);
   buffer.Read(&customer_id, 4);
+}
+
+template<>
+int Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::CoreAffinity() const
+{
+  return warehouse_id;
 }
 
 template<>
@@ -58,6 +77,13 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::ParseFromBuffer(Parse
   buffer.Read(&is_by_name, 1);
   buffer.Read(&by, 16);
 }
+
+template<>
+int Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::CoreAffinity() const
+{
+  return warehouse_id;
+}
+
 
 static const uint8_t kTPCCNewOrderTx = 1;
 static const uint8_t kTPCCDeliveryTx = 2;

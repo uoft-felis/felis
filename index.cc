@@ -10,11 +10,10 @@ using util::Instance;
 // export global variables
 namespace util {
 
-static dolly::RelationManager mgr;
-
 template <>
 dolly::RelationManager &Instance()
 {
+  static dolly::RelationManager mgr;
   return mgr;
 }
 
@@ -23,13 +22,6 @@ dolly::RelationManager &Instance()
 namespace dolly {
 
 std::atomic<unsigned long> TxnValidator::tot_validated;
-
-void BaseRelation::LogStat() const
-{
-  if (stat.key_cnt == 0) return;
-  logger->info("NewKeyCnt: {}", stat.new_key_cnt);
-  logger->info("KeyCnt: {}", stat.key_cnt);
-}
 
 RelationManagerBase::RelationManagerBase()
 {
@@ -59,9 +51,10 @@ RelationManagerBase::RelationManagerBase()
   }
 }
 
-void TxnValidator::CaptureWrite(const dolly::BaseIndexKey &k, VarStr *obj)
+void TxnValidator::CaptureWrite(const VarStr *k, VarStr *obj)
 {
-  update_crc32(k.k->data, k.k->len, &key_crc);
+#ifdef VALIDATE_TXN
+  update_crc32(k->data, k->len, &key_crc);
 
   if (obj != nullptr) {
     // size_t dummy_size = obj->len;
@@ -70,10 +63,12 @@ void TxnValidator::CaptureWrite(const dolly::BaseIndexKey &k, VarStr *obj)
     data.push_back(std::vector<uint8_t>{obj->data, obj->data + obj->len});
     value_size += obj->len;
   }
+#endif
 }
 
 void TxnValidator::Validate(const Txn &tx)
 {
+#ifdef VALIDATE_TXN
   assert(tx.key_checksum() == key_crc);
   if (tx.value_checksum() != value_crc) {
     logger->alert("value csum mismatch, type {:d}", tx.type);
@@ -92,11 +87,12 @@ void TxnValidator::Validate(const Txn &tx)
   }
   logger->debug("Valid! Total {} txns data size {} bytes",
 		tot_validated.fetch_add(1), value_size);
+#endif
 }
 
-void CommitBuffer::Put(int fid, dolly::IndexKey &&key, VarStr *obj)
+void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
 {
-  std::tuple<int, BaseIndexKey> tup(fid, std::move(key));
+  std::tuple<int, VarStr> tup(fid, *key);
 
   auto it = buf.find(tup);
   if (it != buf.end()) {
@@ -109,9 +105,9 @@ void CommitBuffer::Put(int fid, dolly::IndexKey &&key, VarStr *obj)
   }
 }
 
-VarStr *CommitBuffer::Get(int fid, const ConstIndexKey &k)
+VarStr *CommitBuffer::Get(int fid, const VarStr *k)
 {
-  auto tup = std::tuple<int, BaseIndexKey>(fid, k.k);
+  auto tup = std::tuple<int, VarStr>(fid, *k);
   auto it = buf.find(tup);
   if (it == buf.end()) {
     return nullptr;
@@ -121,26 +117,30 @@ VarStr *CommitBuffer::Get(int fid, const ConstIndexKey &k)
 
 void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 {
+  std::vector<uint8_t *> kptrs;
+
   for (auto &it: write_seq) {
     int refcnt = --it->second.first;
     if (refcnt > 0) continue;
     assert(refcnt == 0);
 
     auto &tup = it->first;
-    const BaseIndexKey &base_k = std::get<1>(tup);
+    const VarStr &key = std::get<1>(tup);
     int fid = std::get<0>(tup);
-
-    IndexKey ikey(base_k.k);
     VarStr *obj = it->second.second;
 
     if (validator != nullptr)
-      validator->CaptureWrite(ikey, obj);
+      validator->CaptureWrite(&key, obj);
     Instance<RelationManager>().GetRelationOrCreate(fid)
-      .CommitPut(std::move(ikey), sid, obj);
+      .CommitPut(&key, sid, obj);
+    kptrs.push_back((uint8_t *) key.data - sizeof(VarStr));
   }
 
   if (validator)
     validator->Validate(*tx);
+  for (auto p: kptrs) {
+    delete p;
+  }
 }
 
 }

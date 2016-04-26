@@ -1,5 +1,6 @@
 #include <cassert>
 #include <fstream>
+#include <future>
 #include <dlfcn.h>
 #include "log.h"
 
@@ -91,20 +92,25 @@ Epoch::Epoch(int *fds, ParseBuffer *buffers)
   p.Show("Parsing from network takes");
 
   // phase two: SetupReExec()
+  std::vector<std::future<void>> txn_futures;
   p = PerfLog();
   for (auto t: txns) {
-    t->SetupReExec();
+    txn_futures.push_back(
+      Instance<WorkerManager>().GetWorker(t->CoreAffinity()).AddTask([t]() {
+	  t->SetupReExec();
+	}));
+  }
+  for (auto &f: txn_futures) {
+    f.wait();
   }
   p.Show("SetupReExec takes");
 
-  Instance<RelationManager>().LogStat();
-
   p = PerfLog();
   // phase three: re-run in parallel
-  std::vector<std::future<void>> txn_futures;
+  txn_futures.clear();
   for (auto &t: txns) {
     txn_futures.push_back(
-      Instance<WorkerManager>().SelectWorker().AddTask([t]() {
+      Instance<WorkerManager>().GetWorker(t->CoreAffinity()).AddTask([t]() {
 	t->Run();
 	}));
   }
@@ -129,7 +135,9 @@ void Txn::Initialize(uint64_t id, ParseBuffer &buffer, uint16_t key_pkt_len)
     TxnKey *k = (TxnKey *) malloc(sizeof(TxnKey) + len);
     k->fid = fid;
     k->str.len = len;
-    buffer.Read(k->str.data, k->str.len);
+    uint8_t *ptr = (uint8_t *) k + sizeof(TxnKey);
+    k->str.data = ptr;
+    buffer.Read(ptr, len);
     // logger->debug("  key data {}", (const char *) k->data);
     cur += sizeof(uint16_t) + sizeof(uint8_t) + k->str.len;
     update_crc32(k->str.data, k->str.len, &key_crc);
@@ -154,14 +162,8 @@ void Txn::SetupReExec()
   auto &mgr = Instance<RelationManager>();
   for (auto kptr : keys) {
     auto &relation = mgr.GetRelationOrCreate(kptr->fid);
-    // although we don't delete kptr->str, but since we need to move this data
-    // into the database, we need IndexKey, rather than ConstIndexKey
-    IndexKey index_key(&kptr->str);
-    relation.SetupReExec(std::move(index_key), sid);
-    index_key.k = nullptr;
+    relation.SetupReExec(&kptr->str, sid);
   }
-  mgr.LogStat();
-  mgr.ClearStat();
 }
 
 BaseRequest *BaseRequest::CreateRequestFromBuffer(uint64_t sid, ParseBuffer &buffer)

@@ -8,6 +8,8 @@ namespace dolly {
 
 int Worker::kNrThreads = 16; // TODO: get number of CPUs
 
+static __thread Worker *TLSWorker;
+
 void Worker::PinCurrentThread(int cpu_id)
 {
   auto node = numa_node_of_cpu(cpu_id);
@@ -28,6 +30,7 @@ std::future<void> Worker::AddTask(std::function<void ()> func)
 void Worker::Start()
 {
   std::thread th([this]() {
+      TLSWorker = this;
       logger->info("worker thread started, {}", (void *) this);
       try {
 	while (true) {
@@ -44,9 +47,12 @@ void Worker::Start()
       } catch (std::system_error &ex) {
 	logger->critical(ex.what());
       }
+      TLSWorker = nullptr;
     });
   th.detach();
 }
+
+Worker *Worker::CurrentThreadWorker() { return TLSWorker; }
 
 WorkerManager::WorkerManager()
 {

@@ -4,6 +4,7 @@
 #define TPCC_H
 
 #include <map>
+#include <array>
 #include <string>
 #include <vector>
 #include <cassert>
@@ -415,15 +416,12 @@ protected:
 
 
 class TPCCTableHandles {
-  std::map<int, int> table_handles;
+  int table_handles[dolly::RelationManager::kMaxNrRelations];
 public:
   TPCCTableHandles();
   int table_handle(int idx) const {
-    auto it = table_handles.find(idx);
-    if (it == table_handles.end()) {
-      std::abort();
-    }
-    return it->second;
+    assert(idx < dolly::RelationManager::kMaxNrRelations);
+    return table_handles[idx];
   }
 
   void InitiateTable(TPCCTable table);
