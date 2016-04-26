@@ -4,9 +4,8 @@ project(dolly)
 
 add_definitions(-std=c++11 -pthread)
 
-set(CMAKE_CXX_FLAGS_RELEASE "-Ofast")
-set(CMAKE_CXX_FLAGS_RELEASE "-flto")
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-flto")
+set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -flto")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-flto -fwhole-program")
 
 # set(CMAKE_CXX_FLAGS "-fsanitize=address -fno-omit-frame-pointer")
 # set(CMAKE_EXE_LINKER_FLAGS "-fsanitize=address")
