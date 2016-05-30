@@ -98,13 +98,16 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
 
   logger->info("epoch contains {} txns", tss.size());
   p.Show("Parsing and sorting from network takes");
+}
 
+void Epoch::Setup()
+{
   // phase two: SetupReExec()
   int counter = 0;
   std::mutex m;
   std::condition_variable cv;
 
-  p = PerfLog();
+  auto p = PerfLog();
   for (auto t: txns) {
     int aff = t->CoreAffinity();
     Instance<WorkerManager>().GetWorker(aff).AddTask([t]() {
@@ -126,13 +129,20 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   }
 
   p.Show("SetupReExec takes");
+}
 
-  p = PerfLog();
+void Epoch::ReExec()
+{
+  int counter = 0;
+  std::mutex m;
+  std::condition_variable cv;
+
+  auto p = PerfLog();
   for (auto &t: txns) {
     int aff = t->CoreAffinity();
     Instance<WorkerManager>().GetWorker(aff).AddTask([t]() {
 	t->Run();
-      });
+      }, true);
   }
   for (int i = 0; i < Worker::kNrThreads; i++) {
     Instance<WorkerManager>().GetWorker(i).AddTask([&m, &cv, &counter]() {
@@ -155,6 +165,8 @@ uint64_t Epoch::CurrentEpochNumber()
   return gGlobalEpoch;
 }
 
+// #define VALIDATE_TXN_KEY 1
+
 void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len)
 {
   int cur = 0;
@@ -174,7 +186,9 @@ void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len)
     channel->Read(ptr, len);
     // logger->debug("  key data {}", (const char *) k->data);
     cur += sizeof(uint16_t) + sizeof(uint8_t) + k->str.len;
+#ifdef VALIDATE_TXN_KEY
     update_crc32(k->str.data, k->str.len, &key_crc);
+#endif
 
     keys.push_back(k);
   }
@@ -184,7 +198,9 @@ void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len)
   cur += 8; // including the checksums
 
   assert(cur == key_pkt_len);
+#ifdef VALIDATE_TXN_KEY
   assert(orig_key_crc == key_crc);
+#endif
 
   value_crc = orig_val_crc;
 

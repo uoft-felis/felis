@@ -170,14 +170,16 @@ int main(int argc, char *argv[])
 
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
 
-  auto epoch_routine = go::Make([peer_fds, replay_from_file]{
+  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(20);
+
+  auto epoch_routine = go::Make([peer_fds, replay_from_file, epoch_ch]{
       try {
 	std::vector<go::EpollSocket *> socks;
 
 	for (int i = 0; i < dolly::Worker::kNrThreads; i++) {
 	  auto sock = new go::EpollSocket(peer_fds[i], go::GlobalEpoll(),
-				    new go::InputSocketChannel(32 << 20),
-				    new go::OutputSocketChannel(4096));
+					  new go::InputSocketChannel(32 << 20),
+					  new go::OutputSocketChannel(4096));
 	  if (replay_from_file) {
 	    auto out = sock->output_channel();
 	    std::stringstream ss;
@@ -187,11 +189,7 @@ int main(int argc, char *argv[])
 	    uint8_t ch;
 	    int line_len = 0;
 	    while (in->Read(&ch)) {
-	      /*
-	      if (ch > 128) std::abort();
-	      putchar(ch);
-	      */
-	      if (ch == '\r')	{
+	      if (ch == '\r') {
 		continue;
 	      } else if (ch == '\n') {
 		if (line_len == 0) break;
@@ -205,21 +203,37 @@ int main(int argc, char *argv[])
 	  socks.push_back(sock);
 	}
 	while (true) {
-	  dolly::Epoch epoch(socks);
+	  auto epoch = new dolly::Epoch(socks);
 	  logger->info("received a complete epoch");
+	  epoch_ch->Write(epoch);
 	}
       } catch (dolly::ParseBufferEOF &ex) {
 	logger->info("EOF");
+	epoch_ch->Close();
       }
     });
 
-  go::InitThreadPool();
+  auto epoch_executor = go::Make([epoch_ch] {
+      PerfLog p;
+      while (true) {
+	bool eof = false;
+	auto epoch = epoch_ch->Read(eof);
+	if (eof)
+	  break;
+	epoch->Setup();
+	epoch->ReExec();
+      }
+      p.Show("Epoch Executor total");
+    });
+
+  go::InitThreadPool(2);
   go::CreateGlobalEpoll();
 
   auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });
   t.detach();
 
   epoch_routine->StartOn(1);
+  epoch_executor->StartOn(2);
   go::WaitThreadPool();
 
   delete [] peer_fds;

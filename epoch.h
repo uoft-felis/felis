@@ -81,6 +81,10 @@ class Epoch {
 public:
   Epoch(std::vector<go::EpollSocket *> socks);
   static uint64_t CurrentEpochNumber();
+
+  void Setup();
+  void ReExec();
+
 private:
   std::vector<Txn*> txns;
 
