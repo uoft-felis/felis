@@ -22,32 +22,16 @@ public:
   }
 };
 
-class ParseBuffer {
-  uint8_t *ptr;
-  size_t offset;
-  size_t size;
+void ReadFrom(int fd, void *p, size_t size);
+
+// later on this should be replaced with a CSP style channel
+class InputChannel {
+  int fd;
 public:
-  static void FillDataFromFD(int fd, void *ptr, size_t size);
+  InputChannel(int file_desc) : fd(file_desc) {}
 
-  ParseBuffer(uint8_t *data, size_t sz) : ptr(data), offset(0), size(sz) {}
-  ParseBuffer() : ptr(nullptr), offset(0), size(0) {}
-
-  const uint8_t *data() const { return ptr + offset; }
-  const bool is_empty() const { return offset == size; }
-
-  void Advance(size_t sz) {
-    offset += sz;
-    if (offset > size) abort();
-  }
-
-  void Read(void *p, size_t sz) {
-    if (offset + sz > size) abort();
-    memcpy(p, ptr + offset, sz);
-    Advance(sz);
-  }
-
+  void Read(void *p, size_t size) { ReadFrom(fd, p, size); }
 };
-
 int SetupServer();
 
 }

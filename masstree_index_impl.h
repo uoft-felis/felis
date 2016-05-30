@@ -54,17 +54,23 @@ protected:
 
     MasstreeMapIteratorImpl(typename MasstreeMap::forward_scan_iterator &&scan_it,
 			    const VarStr *terminate_key,
-			    int relation_id)
+			    int relation_id, uint64_t sid, CommitBuffer &buffer)
       : end_key(terminate_key), it(std::move(scan_it)), relation_id(relation_id) {
       AdaptKey();
       ti = &MasstreeIndex<VHandle>::GetThreadInfo();
+      if (IsValid()) {
+	if (ShouldSkip(sid, buffer)) Next(sid, buffer);
+      }
     }
 
     MasstreeMapIteratorImpl(typename MasstreeMap::forward_scan_iterator &&scan_it,
-			    int relation_id)
+			    int relation_id, uint64_t sid, CommitBuffer &buffer)
       : end_key(nullptr), it(std::move(scan_it)), relation_id(relation_id) {
       AdaptKey();
       ti = &MasstreeIndex<VHandle>::GetThreadInfo();
+      if (IsValid()) {
+	if (ShouldSkip(sid, buffer)) Next(sid, buffer);
+      }
     }
 
     void AdaptKey() {
@@ -76,9 +82,11 @@ protected:
       }
     }
 
-    void Next() {
-      it.next(*ti);
-      AdaptKey();
+    void Next(uint64_t sid, CommitBuffer &buffer) {
+      do {
+	it.next(*ti);
+	AdaptKey();
+      } while (IsValid() && ShouldSkip(sid, buffer));
     }
 
     bool IsValid() const {
@@ -91,15 +99,20 @@ protected:
     const VarStr &key() const {
       return cur_key;
     }
-    const VHandle &vhandle() const {
-      return *it.value();
+
+    const VarStr *object() const {
+      return obj;
     }
-    VHandle &vhandle() {
-      return *it.value();
+  private:
+    bool ShouldSkip(uint64_t sid, CommitBuffer &buffer) {
+      obj = buffer.Get(relation_id, &key());
+      if (!obj) obj = it.value()->ReadWithVersion(sid);
+      return obj == nullptr;
     }
+    const VarStr *obj;
   };
 public:
-  typedef IndexIterator<MasstreeMapIteratorImpl> Iterator;
+  typedef MasstreeMapIteratorImpl Iterator;
   void Initialize(threadinfo &ti) {
     map.initialize(ti);
   }
@@ -108,12 +121,14 @@ protected:
   static threadinfo &GetThreadInfo();
 
   VHandle *Insert(const VarStr *k, VHandle &&vhandle) {
+    VHandle *result = Search(k);
+    if (result) return result;
     auto &ti = GetThreadInfo();
     typename MasstreeMap::cursor_type cursor(map, k->data, k->len);
     bool found = cursor.find_insert(ti);
     if (!found)
       cursor.value() = new VHandle(std::move(vhandle));
-    VHandle *result = cursor.value();
+    result = cursor.value();
     cursor.finish(1, ti);
     assert(result != nullptr);
     return result;
@@ -126,11 +141,14 @@ protected:
     return result;
   }
 
-  Iterator IndexSearchIterator(const VarStr *k, int relation_id) {
-    return Iterator(std::move(map.find_iterator(lcdf::Str(k->data, k->len), GetThreadInfo())), relation_id);
+  Iterator IndexSearchIterator(const VarStr *k, int relation_id, uint64_t sid, CommitBuffer &buffer) {
+    return Iterator(std::move(map.find_iterator(lcdf::Str(k->data, k->len), GetThreadInfo())),
+		    relation_id, sid, buffer);
   }
-  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end, int relation_id) {
-    return Iterator(std::move(map.find_iterator(lcdf::Str(start->data, start->len), GetThreadInfo())), end, relation_id);
+  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end, int relation_id, uint64_t sid,
+			       CommitBuffer &buffer) {
+    return Iterator(std::move(map.find_iterator(lcdf::Str(start->data, start->len), GetThreadInfo())),
+		    end, relation_id, sid, buffer);
   }
 };
 

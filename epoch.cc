@@ -1,6 +1,7 @@
 #include <cassert>
 #include <fstream>
 #include <future>
+#include <sstream>
 #include <dlfcn.h>
 #include "log.h"
 
@@ -11,6 +12,9 @@
 #include "worker.h"
 
 #include "json11/json11.hpp"
+
+#include "goplusplus/gopp.h"
+#include "goplusplus/epoll-channel.h"
 
 #include "csum.h"
 
@@ -24,101 +28,124 @@ struct TxnTimeStamp
 {
   uint64_t commit_ts;
   int64_t skew_ts;
+  Txn *txn;
 
   uint64_t logical_commit_ts() const {
-    return skew_ts == -1 ? commit_ts : skew_ts;
+    return skew_ts == 0 ? commit_ts : skew_ts - 1;
   }
 
   bool operator<(const TxnTimeStamp &rhs) const {
     if (logical_commit_ts() != rhs.logical_commit_ts()) {
       return logical_commit_ts() < rhs.logical_commit_ts();
     }
-    return skew_ts < rhs.skew_ts;
+    return commit_ts < rhs.commit_ts;
   }
 };
 
 static uint64_t gGlobalEpoch;
 
-Epoch::Epoch(int *fds, ParseBuffer *buffers)
+Epoch::Epoch(std::vector<go::EpollSocket *> socks)
 {
   ++gGlobalEpoch;
   int nr_threads = Worker::kNrThreads;
   PerfLog p;
-  for (int i = 0; i < nr_threads; i++) {
-    uint64_t tot_size = 0;
-    ParseBuffer::FillDataFromFD(fds[i], &tot_size, sizeof(uint64_t));
-    uint8_t *ptr = nullptr;
-    if (tot_size != 0) {
-      tot_size -= sizeof(uint64_t);
-      ptr = (uint8_t *) malloc(tot_size);
-      ParseBuffer::FillDataFromFD(fds[i], ptr, tot_size);
-    }
-    new (&buffers[i]) ParseBuffer(ptr, tot_size);
-  }
-
-  typedef std::tuple<TxnTimeStamp, int> HeapElement;
-  std::vector<HeapElement> heap;
-  std::greater<HeapElement> heap_comp;
+  std::vector<bool> eop_bitmap;
 
   for (int i = 0; i < nr_threads; i++) {
-    if (buffers[i].is_empty()) continue;
-
-    TxnTimeStamp ts;
-    buffers[i].Read(&ts.commit_ts, sizeof(uint64_t));
-    buffers[i].Read(&ts.skew_ts, sizeof(int64_t));
-    heap.push_back(std::make_tuple(ts, i));
+    eop_bitmap.push_back(false);
   }
 
-  std::make_heap(heap.begin(), heap.end(), heap_comp);
+  std::vector<TxnTimeStamp> tss;
 
-  while (!heap.empty()) {
-    // then let's pop from the heap!
-    std::pop_heap(heap.begin(), heap.end(), heap_comp);
-    int chn = std::get<1>(heap.back());
+  while (true) {
+    int empty_cnt = 0;
+    for (int i = 0; i < nr_threads; i++) {
+      if (eop_bitmap[i]) {
+	empty_cnt++;
+	continue;
+      }
 
-    logger->debug("receiving request from channel {}", chn);
-    BaseRequest *req = BaseRequest::CreateRequestFromBuffer(++kGlobSID, buffers[chn]);
-    txns.push_back(req);
+      auto *channel = socks[i]->input_channel();
+      uint64_t commit_ts;
+      int64_t skew_ts;
 
-    if (!buffers[chn].is_empty()) {
-      TxnTimeStamp ts;
-      buffers[chn].Read(&ts.commit_ts, sizeof(uint64_t));
-      buffers[chn].Read(&ts.skew_ts, sizeof(int64_t));
-      heap.back() = std::make_tuple(ts, chn);
-      std::push_heap(heap.begin(), heap.end(), heap_comp);
-    } else {
-      heap.pop_back();
+      if (!channel->Read(&commit_ts, sizeof(uint64_t)))
+	throw ParseBufferEOF();
+
+      if (commit_ts == 0) {
+	eop_bitmap[i] = true;
+	continue;
+      }
+      if (!channel->Read(&skew_ts, sizeof(int64_t)))
+	throw ParseBufferEOF();
+
+      logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
+      auto req = BaseRequest::CreateRequestFromChannel(channel);
+      tss.emplace_back(TxnTimeStamp{commit_ts, skew_ts, req});
     }
+    if (empty_cnt == nr_threads)
+      break;
+  }
+  std::sort(tss.begin(), tss.end());
+
+  for (auto &ts: tss) {
+    ts.txn->set_serializable_id(++kGlobSID);
+    logger->debug("txn sid {} type 0x{:x} value csum 0x{:x} timestamp commit_ts {} skew_ts {}",
+		  ts.txn->serializable_id(), ts.txn->type, ts.txn->value_checksum(),
+		  ts.commit_ts, ts.skew_ts);
+    txns.push_back(ts.txn);
   }
 
-  logger->info("epoch contains {} txns", txns.size());
-  p.Show("Parsing from network takes");
+  logger->info("epoch contains {} txns", tss.size());
+  p.Show("Parsing and sorting from network takes");
 
   // phase two: SetupReExec()
-  std::vector<std::future<void>> txn_futures;
+  int counter = 0;
+  std::mutex m;
+  std::condition_variable cv;
+
   p = PerfLog();
   for (auto t: txns) {
-    txn_futures.push_back(
-      Instance<WorkerManager>().GetWorker(t->CoreAffinity()).AddTask([t]() {
-	  t->SetupReExec();
-	}));
+    int aff = t->CoreAffinity();
+    Instance<WorkerManager>().GetWorker(aff).AddTask([t]() {
+	t->SetupReExec();
+      }, true);
   }
-  for (auto &f: txn_futures) {
-    f.wait();
+  for (int i = 0; i < Worker::kNrThreads; i++) {
+    Instance<WorkerManager>().GetWorker(i).AddTask([&m, &cv, &counter]() {
+	std::lock_guard<std::mutex> l(m);
+	counter++;
+	cv.notify_one();
+      });
   }
+  {
+    std::unique_lock<std::mutex> l(m);
+    while (counter < Worker::kNrThreads)
+      cv.wait(l);
+    counter = 0;
+  }
+
   p.Show("SetupReExec takes");
 
   p = PerfLog();
-  // phase three: re-run in parallel
-  txn_futures.clear();
   for (auto &t: txns) {
-    txn_futures.push_back(
-      Instance<WorkerManager>().GetWorker(t->CoreAffinity()).AddTask([t]() {
+    int aff = t->CoreAffinity();
+    Instance<WorkerManager>().GetWorker(aff).AddTask([t]() {
 	t->Run();
-	}));
+      });
   }
-  for (auto &f: txn_futures) {
-    f.wait();
+  for (int i = 0; i < Worker::kNrThreads; i++) {
+    Instance<WorkerManager>().GetWorker(i).AddTask([&m, &cv, &counter]() {
+	std::lock_guard<std::mutex> l(m);
+	counter++;
+	cv.notify_one();
+      });
+  }
+  {
+    std::unique_lock<std::mutex> l(m);
+    while (counter < Worker::kNrThreads)
+      cv.wait(l);
+    counter = 0;
   }
   p.Show("ReExec takes");
 }
@@ -128,16 +155,15 @@ uint64_t Epoch::CurrentEpochNumber()
   return gGlobalEpoch;
 }
 
-void Txn::Initialize(uint64_t id, ParseBuffer &buffer, uint16_t key_pkt_len)
+void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len)
 {
-  sid = id;
   int cur = 0;
   uint32_t orig_key_crc = 0, orig_val_crc = 0;
   while (cur < key_pkt_len - 8) {
     uint16_t fid;
     uint8_t len;
-    buffer.Read(&fid, sizeof(uint16_t));
-    buffer.Read(&len, sizeof(uint8_t));
+    channel->Read(&fid, sizeof(uint16_t));
+    channel->Read(&len, sizeof(uint8_t));
     assert(len > 0);
     // logger->debug("  key len {0:d} in table {0:d}", len, fid);
     TxnKey *k = (TxnKey *) malloc(sizeof(TxnKey) + len);
@@ -145,7 +171,7 @@ void Txn::Initialize(uint64_t id, ParseBuffer &buffer, uint16_t key_pkt_len)
     k->str.len = len;
     uint8_t *ptr = (uint8_t *) k + sizeof(TxnKey);
     k->str.data = ptr;
-    buffer.Read(ptr, len);
+    channel->Read(ptr, len);
     // logger->debug("  key data {}", (const char *) k->data);
     cur += sizeof(uint16_t) + sizeof(uint8_t) + k->str.len;
     update_crc32(k->str.data, k->str.len, &key_crc);
@@ -153,8 +179,8 @@ void Txn::Initialize(uint64_t id, ParseBuffer &buffer, uint16_t key_pkt_len)
     keys.push_back(k);
   }
 
-  buffer.Read(&orig_key_crc, sizeof(uint32_t));
-  buffer.Read(&orig_val_crc, sizeof(uint32_t));
+  channel->Read(&orig_key_crc, sizeof(uint32_t));
+  channel->Read(&orig_val_crc, sizeof(uint32_t));
   cur += 8; // including the checksums
 
   assert(cur == key_pkt_len);
@@ -174,20 +200,20 @@ void Txn::SetupReExec()
   }
 }
 
-BaseRequest *BaseRequest::CreateRequestFromBuffer(uint64_t sid, ParseBuffer &buffer)
+BaseRequest *BaseRequest::CreateRequestFromChannel(go::InputSocketChannel *channel)
 {
   uint8_t type = 0;
-  buffer.Read(&type, 1);
+  channel->Read(&type, 1);
   assert(type != 0);
   assert(type <= GetGlobalFactoryMap().rbegin()->first);
   logger->debug("txn req type {0:d}", type);
   auto req = GetGlobalFactoryMap().at(type)();
   req->type = type;
   uint16_t key_pkt_size;
-  req->ParseFromBuffer(buffer);
-  buffer.Read(&key_pkt_size, sizeof(uint16_t));
+  req->ParseFromChannel(channel);
+  channel->Read(&key_pkt_size, sizeof(uint16_t));
   logger->debug("receiving keys, total len {}", key_pkt_size);
-  req->Initialize(sid, buffer, key_pkt_size);
+  req->Initialize(channel, key_pkt_size);
 
   return req;
 }

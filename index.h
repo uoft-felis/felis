@@ -61,7 +61,7 @@ public:
     delete [] htable;
   }
 
-  unsigned int Hash(int fid, const VarStr *key) {
+  unsigned int __attribute__ ((noinline)) Hash(int fid, const VarStr *key) {
     unsigned int h = fid;
     unsigned int l = key->len;
     const uint8_t *p = key->data;
@@ -149,49 +149,49 @@ public:
     }
   }
 
-  VarStr *Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
-    // read your own write
-    VarStr *o = buffer.Get(id, k);
-    if (o != nullptr) return o;
-
-    auto handle = this->Search(k);
-    assert(handle);
-    return handle->ReadWithVersion(sid);
+  const VarStr *Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
+    const VarStr *o = buffer.Get(id, k);
+    if (!o) o = this->Search(k)->ReadWithVersion(sid);
+    return o;
   }
 
   template <typename T>
   const T Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
-    T instance;
-    instance.DecodeFrom(Get(k, sid, buffer));
-    return instance;
+    const VarStr *o = Get(k, sid, buffer);
+    return o->ToType<T>();
   }
 
-  void Put(const VarStr *k, VarStr *obj, CommitBuffer &buffer) {
+  void Put(const VarStr *k, uint64_t sid, VarStr *obj, CommitBuffer &buffer) {
     buffer.Put(id, std::move(k), obj);
+#ifndef NDEBUG
+    // dry run to test
+    this->Search(k)->WriteWithVersion(sid, obj, true);
+#endif
   }
 
   void CommitPut(const VarStr *k, uint64_t sid, VarStr *obj) {
-    auto handle = this->Insert(k, std::move(VHandle{}));
-    handle->WriteWithVersion(sid, obj);
+    this->Search(k)->WriteWithVersion(sid, obj);
   }
 
   void Scan(const VarStr *k, uint64_t sid, CommitBuffer &buffer,
 	    std::function<bool (const VarStr *k, const VarStr *v)> callback) {
-    CallScanCallback(this->SearchIterator(k), sid, buffer, callback);
+    CallScanCallback(this->SearchIterator(k, sid, buffer), sid, buffer, callback);
   }
 
   void Scan(const VarStr *start, const VarStr *end, uint64_t sid,
 	    CommitBuffer &buffer,
 	    std::function<bool (const VarStr *k, const VarStr *v)> callback) {
-    CallScanCallback(this->SearchIterator(start, end), sid, buffer, callback);
+    CallScanCallback(this->SearchIterator(start, end, sid, buffer), sid, buffer, callback);
   }
 
-  typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *k) {
-    return std::move(this->IndexSearchIterator(k, id));
+  typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *k, uint64_t sid,
+							 CommitBuffer &buffer) {
+    return std::move(this->IndexSearchIterator(k, id, sid, buffer));
   }
 
-  typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *start, const VarStr *end) {
-    return std::move(this->IndexSearchIterator(start, end, id));
+  typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *start, const VarStr *end,
+							 uint64_t sid, CommitBuffer &buffer) {
+    return std::move(this->IndexSearchIterator(start, end, id, sid, buffer));
   }
 
 
@@ -201,30 +201,16 @@ private:
 			std::function<bool (const VarStr *k, const VarStr *v)> callback) {
     while (it.IsValid()) {
       const VarStr &key = it.key();
-      const VarStr *value = it.ReadVersion(sid, buffer);
+      const VarStr *value = it.object();
+
       bool should_continue = callback(&key, value);
       if (!should_continue) break;
-      it.Next();
+
+      it.Next(sid, buffer);
     }
   }
 };
 
-template <class IteratorImpl>
-struct IndexIterator : public IteratorImpl {
-  using IteratorImpl::IteratorImpl;
-
-  VarStr *ReadVersion(uint64_t sid, CommitBuffer &buffer) {
-    VarStr *o = buffer.Get(this->relation_id, &this->key());
-    if (o) return o;
-    return this->vhandle().ReadWithVersion(sid);
-  }
-  template <typename T>
-  T ReadVersion(uint64_t sid, CommitBuffer &buffer) {
-    T instance;
-    instance.DecodeFrom(ReadVersion(sid, buffer));
-    return instance;
-  }
-};
 
 class SortedArrayVHandle {
 public:
@@ -262,7 +248,7 @@ public:
     }
   }
 
-  void AppendNewVersion(uint64_t sid) {
+  void __attribute__((noinline)) AppendNewVersion(uint64_t sid) {
     // we're single thread, and we are assuming sid is monotoniclly increasing
     bool expected = false;
     while (!locked.compare_exchange_weak(expected, true, std::memory_order_release,
@@ -293,15 +279,13 @@ public:
   volatile uintptr_t *WithVersion(uint64_t sid) {
     assert(size > 0);
 
-    if (size == 1) {
-      assert(versions[0] < sid);
-      return &objects[0];
-    }
-
     auto it = std::lower_bound(versions, versions + size, sid);
     if (it == versions) {
-      logger->critical("Going way too back. GC bug. ver {} sid {}", *it, sid);
-      std::abort();
+      // it's likely a read-your-own-insert happened here.
+      // it should be served from the CommitBuffer.
+      // if not in the CommitBuffer (Get() shouldn't lead you here, but Scan() could),
+      // we should return as if this record is deleted
+      return nullptr;
     }
     --it;
     return &objects[it - versions];
@@ -310,23 +294,30 @@ public:
   VarStr *ReadWithVersion(uint64_t sid) {
     // if (versions.size() > 0) assert(versions[0] == 0);
     volatile uintptr_t *addr = WithVersion(sid);
+    if (!addr) return nullptr;
+
     // TODO: this is spinning. we should do a u-context switch to other txns
     while (*addr == PENDING_VALUE);
     return (VarStr *) *addr;
   }
 
-  void WriteWithVersion(uint64_t sid, VarStr *obj) {
+  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false) {
+    assert(this);
     // Writing to exact location
     auto it = std::lower_bound(versions, versions + size, sid);
-    if (*it != sid) {
-      logger->critical("Diverging outcomes!");
+    if (it == versions + size || *it != sid) {
+      logger->critical("Diverging outcomes! sid {} pos {}/{}", sid, it - versions, size);
+      sleep(1);
       std::abort();
     }
-    volatile uintptr_t *addr = &objects[it - versions];
-    *addr = (uintptr_t) obj;
+    if (!dry_run) {
+      volatile uintptr_t *addr = &objects[it - versions];
+      *addr = (uintptr_t) obj;
+    }
   }
 
   void GarbageCollect() {
+    return;
     if (size < 2) return;
     uint64_t latest_version = versions[size - 1];
     uintptr_t latest_object = objects[size - 1];

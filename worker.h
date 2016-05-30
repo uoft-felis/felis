@@ -8,8 +8,9 @@
 #include <vector>
 #include <queue>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <functional>
-#include <future>
 
 namespace dolly {
 
@@ -33,7 +34,7 @@ public:
 
   void Start();
 
-  std::future<void> AddTask(std::function<void ()> func);
+  void AddTask(std::function<void ()> func, bool batch = false);
 
   template <typename T>
   T *worker_data() const { return static_cast<T *>(data_ptr); }
@@ -45,7 +46,7 @@ public:
   void set_index(int tindex) { thread_index = tindex; }
 
 private:
-  std::queue<std::packaged_task<void()>> task_queue;
+  std::queue<std::function<void ()> > task_queue;
   std::mutex mutex;
   std::condition_variable cond;
 

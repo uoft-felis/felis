@@ -17,14 +17,12 @@ void Worker::PinCurrentThread(int cpu_id)
   sched_yield();
 }
 
-std::future<void> Worker::AddTask(std::function<void ()> func)
+void Worker::AddTask(std::function<void ()> func, bool batch)
 {
   std::lock_guard<std::mutex> _(mutex);
-  std::packaged_task<void()> task(func);
-  auto future = task.get_future();
-  task_queue.emplace(std::move(task));
-  cond.notify_all();
-  return future;
+  task_queue.emplace(std::move(func));
+  if (!batch || task_queue.size() > 1024)
+    cond.notify_one();
 }
 
 void Worker::Start()
@@ -38,7 +36,7 @@ void Worker::Start()
 	  while (task_queue.empty()) {
 	    cond.wait(lock);
 	  }
-	  std::packaged_task<void()> task(std::move(task_queue.front()));
+	  auto task = task_queue.front();
 	  task_queue.pop();
 	  lock.unlock();
 

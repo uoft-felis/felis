@@ -1,11 +1,20 @@
 #include <sys/time.h>
 #include "log.h"
 
+#ifdef NDEBUG
+// std::shared_ptr<spdlog::logger> logger = spdlog::rotating_logger_mt("file_logger", "log", 1048576 * 5, 3);
 std::shared_ptr<spdlog::logger> logger = spdlog::stdout_logger_mt("console");
+#else
+std::shared_ptr<spdlog::logger> logger = spdlog::daily_logger_mt("daily_logger", "debug/log", 2, 30);
+#endif
 
 void InitializeLogger()
 {
-  spdlog::set_level(spdlog::level::info); // or info
+#ifdef NDEBUG
+  spdlog::set_level(spdlog::level::info);
+#else
+  spdlog::set_level(spdlog::level::debug);
+#endif
   spdlog::set_pattern("[%H:%M:%S] [thread %t] %v");
 }
 

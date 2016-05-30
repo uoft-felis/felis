@@ -408,6 +408,13 @@ struct VarStr {
   bool operator!=(const VarStr &rhs) const {
     return !(*this == rhs);
   }
+
+  template <typename T>
+  const T ToType() const {
+    T instance;
+    instance.DecodeFrom(this);
+    return instance;
+  }
 };
 
 template <typename T, typename ...Targs>

@@ -3,9 +3,13 @@
 #include <iostream>
 #include <fstream>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include "net-io.h"
 #include "epoch.h"
 #include "worker.h"
+#include "goplusplus/gopp.h"
+#include "goplusplus/epoll-channel.h"
 
 #include "log.h"
 
@@ -95,6 +99,9 @@ void show_usage(const char *progname)
   std::exit(-1);
 }
 
+static const char *kDummyWebServerHost = "127.0.0.1";
+static const int kDummyWebServerPort = 8000;
+
 int main(int argc, char *argv[])
 {
   int opt;
@@ -130,13 +137,21 @@ int main(int argc, char *argv[])
 
   // we assume each core is creating a connection
   int *peer_fds = new int[dolly::Worker::kNrThreads];
-  // per-core buffer
-  dolly::ParseBuffer *buffers = new dolly::ParseBuffer[dolly::Worker::kNrThreads];
+
+  if (replay_from_file) {
+    memset(&addr, 0, addrlen);
+    addr.sin_addr.s_addr = inet_addr(kDummyWebServerHost);
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(kDummyWebServerPort);
+  }
 
   for (int i = 0; i < dolly::Worker::kNrThreads; i++) {
     if (replay_from_file) {
-      std::string filename = std::string("dolly-net.") + std::to_string(i) + ".dump";
-      peer_fd = open(filename.c_str(), O_RDONLY);
+      peer_fd = socket(AF_INET, SOCK_STREAM, 0);
+      if (connect(peer_fd, (struct sockaddr *) &addr, addrlen) < 0) {
+	perror("connect");
+	std::abort();
+      }
     } else {
       if ((peer_fd = accept(fd, (struct sockaddr *) &addr, &addrlen)) < 0) {
 	perror("accept");
@@ -155,14 +170,57 @@ int main(int argc, char *argv[])
 
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
 
-  try {
-    while (true) {
-      dolly::Epoch epoch(peer_fds, buffers);
-      logger->info("received a complete epoch");
-    }
-  } catch (dolly::ParseBufferEOF &ex) {
-    logger->info("EOF");
-  }
+  auto epoch_routine = go::Make([peer_fds, replay_from_file]{
+      try {
+	std::vector<go::EpollSocket *> socks;
+
+	for (int i = 0; i < dolly::Worker::kNrThreads; i++) {
+	  auto sock = new go::EpollSocket(peer_fds[i], go::GlobalEpoll(),
+				    new go::InputSocketChannel(32 << 20),
+				    new go::OutputSocketChannel(4096));
+	  if (replay_from_file) {
+	    auto out = sock->output_channel();
+	    std::stringstream ss;
+	    ss << "GET /dolly-net." << i << ".dump HTTP/1.0\r\n\r\n";
+	    out->Write(ss.str().c_str(), ss.str().length());
+	    auto in = sock->input_channel();
+	    uint8_t ch;
+	    int line_len = 0;
+	    while (in->Read(&ch)) {
+	      /*
+	      if (ch > 128) std::abort();
+	      putchar(ch);
+	      */
+	      if (ch == '\r')	{
+		continue;
+	      } else if (ch == '\n') {
+		if (line_len == 0) break;
+		line_len = 0;
+	      } else {
+		line_len++;
+	      }
+	    }
+	  }
+
+	  socks.push_back(sock);
+	}
+	while (true) {
+	  dolly::Epoch epoch(socks);
+	  logger->info("received a complete epoch");
+	}
+      } catch (dolly::ParseBufferEOF &ex) {
+	logger->info("EOF");
+      }
+    });
+
+  go::InitThreadPool();
+  go::CreateGlobalEpoll();
+
+  auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });
+  t.detach();
+
+  epoch_routine->StartOn(1);
+  go::WaitThreadPool();
 
   delete [] peer_fds;
 

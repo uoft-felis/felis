@@ -5,6 +5,8 @@
 #include "util.h"
 #include "json11/json11.hpp"
 
+// #define VALIDATE_TXN 1
+
 using util::Instance;
 
 // export global variables
@@ -69,7 +71,6 @@ void TxnValidator::CaptureWrite(const VarStr *k, VarStr *obj)
 void TxnValidator::Validate(const Txn &tx)
 {
 #ifdef VALIDATE_TXN
-  assert(tx.key_checksum() == key_crc);
   if (tx.value_checksum() != value_crc) {
     logger->alert("value csum mismatch, type {:d}", tx.type);
     logger->alert("tx csum 0x{:x}, result csum 0x{:x}. Dumping:",
@@ -83,10 +84,11 @@ void TxnValidator::Validate(const Txn &tx)
       }
       logger->alert(str);
     }
+    sleep(1);
     std::abort();
   }
-  logger->debug("Valid! Total {} txns data size {} bytes",
-		tot_validated.fetch_add(1), value_size);
+  logger->debug("txn sid {} valid! Total {} txns data size {} bytes",
+		tx.serializable_id(), tot_validated.fetch_add(1), value_size);
 #endif
 }
 
@@ -148,6 +150,8 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
     ListNode *prev = node->prev;
     auto entry = container_of(node, CommitBufferEntry, lru_node);
 
+    if (validator)
+      validator->CaptureWrite(entry->key, entry->obj);
     mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
 
     free((void *) entry->key);

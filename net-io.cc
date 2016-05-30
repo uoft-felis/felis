@@ -8,7 +8,7 @@
 
 namespace dolly {
 
-void ParseBuffer::FillDataFromFD(int fd, void *p, size_t size)
+void ReadFrom(int fd, void *p, size_t size)
 {
   uint8_t *ptr = (uint8_t *) p;
   size_t cur = 0;
