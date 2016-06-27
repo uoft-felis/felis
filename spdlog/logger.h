@@ -1,26 +1,7 @@
-/*************************************************************************/
-/* spdlog - an extremely fast and easy to use c++11 logging library.     */
-/* Copyright (c) 2014 Gabi Melman.                                       */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+//
+// Copyright(c) 2015 Gabi Melman.
+// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+//
 
 #pragma once
 
@@ -31,18 +12,16 @@
 // 2. Format the message using the formatter function
 // 3. Pass the formatted message to its sinks to performa the actual logging
 
-#include<vector>
-#include<memory>
-#include "sinks/base_sink.h"
-#include "common.h"
+#include <spdlog/sinks/base_sink.h>
+#include <spdlog/common.h>
+#include <spdlog/details/line_logger_fwd.h>
+
+#include <vector>
+#include <memory>
+#include <string>
 
 namespace spdlog
 {
-
-namespace details
-{
-class line_logger;
-}
 
 class logger
 {
@@ -61,6 +40,9 @@ public:
 
     const std::string& name() const;
     bool should_log(level::level_enum) const;
+
+    // automatically call flush() after a message of level log_level or higher is emitted
+    void flush_on(level::level_enum log_level);
 
     // logger.info(cppformat_string, arg1, arg2, arg3, ...) call style
     template <typename... Args> details::line_logger trace(const char* fmt, const Args&... args);
@@ -107,7 +89,7 @@ public:
     void set_pattern(const std::string&);
     void set_formatter(formatter_ptr);
 
-    void flush();
+    virtual void flush();
 
 protected:
     virtual void _log_msg(details::log_msg&);
@@ -124,9 +106,11 @@ protected:
     std::string _name;
     std::vector<sink_ptr> _sinks;
     formatter_ptr _formatter;
-    std::atomic_int _level;
-
+    spdlog::level_t _level;
+    spdlog::level_t _flush_level;
 };
 }
 
-#include "./details/logger_impl.h"
+#include <spdlog/details/logger_impl.h>
+#include <spdlog/details/line_logger_impl.h>
+

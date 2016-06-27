@@ -60,6 +60,7 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   while (true) {
     int empty_cnt = 0;
     for (int i = 0; i < nr_threads; i++) {
+    again:
       if (eop_bitmap[i]) {
 	empty_cnt++;
 	continue;
@@ -82,10 +83,13 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
       logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
       auto req = BaseRequest::CreateRequestFromChannel(channel);
       tss.emplace_back(TxnTimeStamp{commit_ts, skew_ts, req});
+      goto again;
     }
     if (empty_cnt == nr_threads)
       break;
   }
+  p.Show("Reading txn takes");
+  p = PerfLog();
   std::sort(tss.begin(), tss.end());
 
   for (auto &ts: tss) {
@@ -97,7 +101,7 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   }
 
   logger->info("epoch contains {} txns", tss.size());
-  p.Show("Parsing and sorting from network takes");
+  p.Show("Sorting txn takes");
 }
 
 void Epoch::Setup()
@@ -165,7 +169,7 @@ uint64_t Epoch::CurrentEpochNumber()
   return gGlobalEpoch;
 }
 
-// #define VALIDATE_TXN_KEY 1
+#define VALIDATE_TXN_KEY 1
 
 void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len)
 {

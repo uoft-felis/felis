@@ -1,42 +1,26 @@
-/*************************************************************************/
-/* spdlog - an extremely fast and easy to use c++11 logging library.     */
-/* Copyright (c) 2014 Gabi Melman.                                       */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+//
+// Copyright(c) 2015 Gabi Melman.
+// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+//
 
 #pragma once
+
 // Loggers registy of unique name->logger pointer
-// An attempt to create a logger with an alreasy existing name will be ignored
+// An attempt to create a logger with an already existing name will be ignored
 // If user requests a non existing logger, nullptr will be returned
 // This class is thread safe
 
-#include <string>
-#include <mutex>
-#include <unordered_map>
-#include <functional>
+#include <spdlog/details/null_mutex.h>
+#include <spdlog/logger.h>
+#include <spdlog/async_logger.h>
+#include <spdlog/common.h>
 
-#include "./null_mutex.h"
-#include "../logger.h"
-#include "../async_logger.h"
-#include "../common.h"
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace spdlog
 {
@@ -49,7 +33,9 @@ public:
     void register_logger(std::shared_ptr<logger> logger)
     {
         std::lock_guard<Mutex> lock(_mutex);
-        register_logger_impl(logger);
+        auto logger_name = logger->name();
+        throw_if_exists(logger_name);
+        _loggers[logger_name] = logger;
     }
 
 
@@ -63,14 +49,11 @@ public:
     template<class It>
     std::shared_ptr<logger> create(const std::string& logger_name, const It& sinks_begin, const It& sinks_end)
     {
-
-        std::shared_ptr<logger> new_logger;
-
         std::lock_guard<Mutex> lock(_mutex);
-
-
+        throw_if_exists(logger_name);
+        std::shared_ptr<logger> new_logger;
         if (_async_mode)
-            new_logger = std::make_shared<async_logger>(logger_name, sinks_begin, sinks_end, _async_q_size, _overflow_policy, _worker_warmup_cb, _flush_interval_ms);
+            new_logger = std::make_shared<async_logger>(logger_name, sinks_begin, sinks_end, _async_q_size, _overflow_policy, _worker_warmup_cb, _flush_interval_ms, _worker_teardown_cb);
         else
             new_logger = std::make_shared<logger>(logger_name, sinks_begin, sinks_end);
 
@@ -78,7 +61,8 @@ public:
             new_logger->set_formatter(_formatter);
 
         new_logger->set_level(_level);
-        register_logger_impl(new_logger);
+        //Add to registry
+        _loggers[logger_name] = new_logger;
         return new_logger;
     }
 
@@ -128,7 +112,7 @@ public:
         _level = log_level;
     }
 
-    void set_async_mode(size_t q_size, const async_overflow_policy overflow_policy, const std::function<void()>& worker_warmup_cb, const std::chrono::milliseconds& flush_interval_ms)
+    void set_async_mode(size_t q_size, const async_overflow_policy overflow_policy, const std::function<void()>& worker_warmup_cb, const std::chrono::milliseconds& flush_interval_ms, const std::function<void()>& worker_teardown_cb)
     {
         std::lock_guard<Mutex> lock(_mutex);
         _async_mode = true;
@@ -136,6 +120,7 @@ public:
         _overflow_policy = overflow_policy;
         _worker_warmup_cb = worker_warmup_cb;
         _flush_interval_ms = flush_interval_ms;
+        _worker_teardown_cb = worker_teardown_cb;
     }
 
     void set_sync_mode()
@@ -151,16 +136,15 @@ public:
     }
 
 private:
-    void register_logger_impl(std::shared_ptr<logger> logger)
-    {
-        auto logger_name = logger->name();
-        if (_loggers.find(logger_name) != std::end(_loggers))
-            throw spdlog_ex("logger with name " + logger_name + " already exists");
-        _loggers[logger->name()] = logger;
-    }
-    registry_t<Mutex>(){}
+    registry_t<Mutex>() {}
     registry_t<Mutex>(const registry_t<Mutex>&) = delete;
     registry_t<Mutex>& operator=(const registry_t<Mutex>&) = delete;
+
+    void throw_if_exists(const std::string &logger_name)
+    {
+        if (_loggers.find(logger_name) != _loggers.end())
+            throw spdlog_ex("logger with name '" + logger_name + "' already exists");
+    }
     Mutex _mutex;
     std::unordered_map <std::string, std::shared_ptr<logger>> _loggers;
     formatter_ptr _formatter;
@@ -170,6 +154,7 @@ private:
     async_overflow_policy _overflow_policy = async_overflow_policy::block_retry;
     std::function<void()> _worker_warmup_cb = nullptr;
     std::chrono::milliseconds _flush_interval_ms;
+    std::function<void()> _worker_teardown_cb = nullptr;
 };
 #ifdef SPDLOG_NO_REGISTRY_MUTEX
 typedef registry_t<spdlog::details::null_mutex> registry;

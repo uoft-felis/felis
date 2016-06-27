@@ -1,34 +1,14 @@
-/*************************************************************************/
-/* spdlog - an extremely fast and easy to use c++11 logging library.     */
-/* Copyright (c) 2014 Gabi Melman.                                       */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+//
+// Copyright(c) 2015 Gabi Melman.
+// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+//
 
 #pragma once
-//
-// Logger implementation
-//
 
-#include "./line_logger.h"
+#include <spdlog/logger.h>
 
+#include <memory>
+#include <string>
 
 // create logger with given name, sinks and the default pattern formatter
 // all other ctors will call this one
@@ -41,6 +21,7 @@ inline spdlog::logger::logger(const std::string& logger_name, const It& begin, c
 
     // no support under vs2013 for member initialization for std::atomic
     _level = level::info;
+    _flush_level = level::off;
 }
 
 // ctor with sinks as init list
@@ -50,7 +31,8 @@ inline spdlog::logger::logger(const std::string& logger_name, sinks_init_list si
 
 // ctor with single sink
 inline spdlog::logger::logger(const std::string& logger_name, spdlog::sink_ptr single_sink) :
-    logger(logger_name, {
+    logger(logger_name,
+{
     single_sink
 }) {}
 
@@ -285,6 +267,11 @@ inline void spdlog::logger::set_level(spdlog::level::level_enum log_level)
     _level.store(log_level);
 }
 
+inline void spdlog::logger::flush_on(level::level_enum log_level)
+{
+    _flush_level.store(log_level);
+}
+
 inline spdlog::level::level_enum spdlog::logger::level() const
 {
     return static_cast<spdlog::level::level_enum>(_level.load(std::memory_order_relaxed));
@@ -303,6 +290,10 @@ inline void spdlog::logger::_log_msg(details::log_msg& msg)
     _formatter->format(msg);
     for (auto &sink : _sinks)
         sink->log(msg);
+
+    const auto flush_level = _flush_level.load(std::memory_order_relaxed);
+    if (msg.level >= flush_level)
+        flush();
 }
 
 inline void spdlog::logger::_set_pattern(const std::string& pattern)
@@ -314,7 +305,8 @@ inline void spdlog::logger::_set_formatter(formatter_ptr msg_formatter)
     _formatter = msg_formatter;
 }
 
-inline void spdlog::logger::flush() {
+inline void spdlog::logger::flush()
+{
     for (auto& sink : _sinks)
         sink->flush();
 }

@@ -1,37 +1,19 @@
-/*************************************************************************/
-/* spdlog - an extremely fast and easy to use c++11 logging library.     */
-/* Copyright (c) 2014 Gabi Melman.                                       */
-/* Copyright (c) 2015 Ruslan Baratov.                                    */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+//
+// Copyright(c) 2015 Gabi Melman.
+// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+//
 
 #pragma once
 
 #if defined(__ANDROID__)
 
-#include <mutex>
-#include "base_sink.h"
-#include "../details/null_mutex.h"
+#include <spdlog/sinks/base_sink.h>
+#include <spdlog/details/null_mutex.h>
 
 #include <android/log.h>
+
+#include <mutex>
+#include <string>
 
 namespace spdlog
 {
@@ -58,8 +40,8 @@ protected:
         const android_LogPriority priority = convert_to_android(msg.level);
         const int expected_size = msg.formatted.size();
         const int size = __android_log_write(
-            priority, _tag.c_str(), msg.formatted.c_str()
-        );
+                             priority, _tag.c_str(), msg.formatted.c_str()
+                         );
         if (size > expected_size)
         {
             // Will write a little bit more than original message
@@ -75,16 +57,26 @@ private:
     {
         switch(level)
         {
-            case spdlog::level::trace: return ANDROID_LOG_VERBOSE;
-            case spdlog::level::debug: return ANDROID_LOG_DEBUG;
-            case spdlog::level::info: return ANDROID_LOG_INFO;
-            case spdlog::level::notice: return ANDROID_LOG_INFO;
-            case spdlog::level::warn: return ANDROID_LOG_WARN;
-            case spdlog::level::err: return ANDROID_LOG_ERROR;
-            case spdlog::level::critical: return ANDROID_LOG_FATAL;
-            case spdlog::level::alert: return ANDROID_LOG_FATAL;
-            case spdlog::level::emerg: return ANDROID_LOG_FATAL;
-            default: throw spdlog_ex("Incorrect level value");
+        case spdlog::level::trace:
+            return ANDROID_LOG_VERBOSE;
+        case spdlog::level::debug:
+            return ANDROID_LOG_DEBUG;
+        case spdlog::level::info:
+            return ANDROID_LOG_INFO;
+        case spdlog::level::notice:
+            return ANDROID_LOG_INFO;
+        case spdlog::level::warn:
+            return ANDROID_LOG_WARN;
+        case spdlog::level::err:
+            return ANDROID_LOG_ERROR;
+        case spdlog::level::critical:
+            return ANDROID_LOG_FATAL;
+        case spdlog::level::alert:
+            return ANDROID_LOG_FATAL;
+        case spdlog::level::emerg:
+            return ANDROID_LOG_FATAL;
+        default:
+            throw spdlog_ex("Incorrect level value");
         }
     }
 
