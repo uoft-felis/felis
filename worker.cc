@@ -1,4 +1,5 @@
 #include <sched.h>
+#include <pthread.h>
 #include "numa.h"
 #include "worker.h"
 #include "util.h"
@@ -12,8 +13,10 @@ static __thread Worker *TLSWorker;
 
 void Worker::PinCurrentThread(int cpu_id)
 {
-  auto node = numa_node_of_cpu(cpu_id);
-  numa_run_on_node(node);
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  CPU_SET(cpu_id * 2, &set);
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
   sched_yield();
 }
 
@@ -64,6 +67,13 @@ WorkerManager::WorkerManager()
   }
 }
 
+WorkerManager *mgr;
+
+void InitWorkerManager()
+{
+  mgr = new WorkerManager();
+}
+
 }
 
 // exports global variable
@@ -72,8 +82,7 @@ namespace util {
 template <>
 dolly::WorkerManager &Instance()
 {
-  static dolly::WorkerManager mgr;
-  return mgr;
+  return *dolly::mgr;
 }
 
 }

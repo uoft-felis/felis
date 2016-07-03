@@ -24,14 +24,6 @@ public:
 
 void ReadFrom(int fd, void *p, size_t size);
 
-// later on this should be replaced with a CSP style channel
-class InputChannel {
-  int fd;
-public:
-  InputChannel(int file_desc) : fd(file_desc) {}
-
-  void Read(void *p, size_t size) { ReadFrom(fd, p, size); }
-};
 int SetupServer();
 
 }

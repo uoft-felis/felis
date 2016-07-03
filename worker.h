@@ -65,6 +65,8 @@ public:
   Worker &GetWorker(int hash) { return workers[hash % workers.size()]; }
 };
 
+void InitWorkerManager();
+
 }
 
 #endif /* WORKER_H */

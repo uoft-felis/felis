@@ -14,16 +14,33 @@ namespace dolly {
 template<>
 void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::InputSocketChannel *channel)
 {
-  channel->Read(&warehouse_id, 4);
-  channel->Read(&district_id, 4);
-  channel->Read(&customer_id, 4);
-  channel->Read(&nr_items, 4);
-  channel->Read(&ts_now, 4);
+  struct {
+    uint warehouse_id;
+    uint district_id;
+    uint customer_id;
+    uint nr_items;
+    uint ts_now;
+  } __attribute__((packed)) header;
+
+  channel->Read(&header, sizeof(header));
+  warehouse_id = header.warehouse_id;
+  district_id = header.district_id;
+  customer_id = header.customer_id;
+  nr_items = header.nr_items;
+  ts_now = header.ts_now;
+
+  struct {
+    uint item_id;
+    uint sup_warehouse_id;
+    uint order_quantity;
+  } __attribute__((packed)) items[nr_items];
+
+  channel->Read(&items, sizeof(uint) * 3 * nr_items);
 
   for (uint i = 0; i < nr_items; i++) {
-    channel->Read(&item_id[i], sizeof(uint));
-    channel->Read(&supplier_warehouse_id[i], sizeof(uint));
-    channel->Read(&order_quantities[i], sizeof(uint));
+    item_id[i] = items[i].item_id;
+    supplier_warehouse_id[i] = items[i].sup_warehouse_id;
+    order_quantities[i] = items[i].order_quantity;
   }
 }
 
@@ -36,13 +53,16 @@ int Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::CoreAffinity() const
 template<>
 void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::InputSocketChannel *channel)
 {
-  channel->Read(&warehouse_id, 4);
-  channel->Read(&o_carrier_id, 4);
-  channel->Read(&ts, 4);
-
-  for (int i = 0; i < 10; i++) {
-    channel->Read(&last_no_o_ids[i], sizeof(int32_t));
-  }
+  struct {
+    uint warehouse_id;
+    uint o_carrier_id;
+    uint32_t ts;
+  } __attribute__((packed)) header;
+  channel->Read(&header, sizeof(header));
+  warehouse_id = header.warehouse_id;
+  o_carrier_id = header.o_carrier_id;
+  ts = header.ts;
+  channel->Read(last_no_o_ids, sizeof(uint32_t) * 10);
 }
 
 template<>
@@ -70,14 +90,27 @@ int Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::CoreAffinity() con
 template<>
 void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::InputSocketChannel *channel)
 {
-  channel->Read(&warehouse_id, 4);
-  channel->Read(&district_id, 4);
-  channel->Read(&customer_warehouse_id, 4);
-  channel->Read(&customer_district_id, 4);
-  channel->Read(&payment_amount, 4);
-  channel->Read(&ts, 4);
-  channel->Read(&is_by_name, 1);
-  channel->Read(&by, 16);
+  struct {
+    uint warehouse_id;
+    uint district_id;
+    uint customer_warehouse_id;
+    uint customer_district_id;
+    float payment_amount;
+    uint32_t ts;
+    uint8_t is_by_name;
+    uint8_t by_buf[16];
+  } __attribute__((packed)) header;
+  channel->Read(&header, sizeof(header));
+
+  warehouse_id = header.warehouse_id;
+  district_id = header.district_id;
+  customer_warehouse_id = header.customer_warehouse_id;
+  customer_district_id = header.customer_district_id;
+  payment_amount = header.payment_amount;
+  ts = header.ts;
+
+  is_by_name = header.is_by_name;
+  memcpy(&by, header.by_buf, 16);
 }
 
 template<>
@@ -93,28 +126,41 @@ static const uint8_t kTPCCCreditCheckTx = 3;
 static const uint8_t kTPCCPaymentTx = 4;
 static const uint8_t kMaxType = 5;
 
+static void *AllocBaseRequest(Epoch *e, size_t size)
+{
+  return e->AllocFromBrk(go::Scheduler::CurrentThreadPoolId() - 1, size);
+}
+
 static const BaseRequest::FactoryMap kTPCCFactoryMap = {
   {kTPCCNewOrderTx,
-   [] () {
-      return new Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>;
+   [] (Epoch *e) {
+      return new
+      (AllocBaseRequest(e, sizeof(Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>)))
+      Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>();
     }
   },
 
   {kTPCCDeliveryTx,
-   [] () {
-      return new Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>;
+   [] (Epoch *e) {
+      return new
+      (AllocBaseRequest(e, sizeof(Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>)))
+      Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>();
     }
   },
 
   {kTPCCCreditCheckTx,
-   [] () {
-      return new Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>;
+   [] (Epoch *e) {
+      return new
+      (AllocBaseRequest(e, sizeof(Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>)))
+      Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>();
     }
   },
 
   {kTPCCPaymentTx,
-   [] () {
-      return new Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>;
+   [] (Epoch *e) {
+      return new
+      (AllocBaseRequest(e, sizeof(Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>)))
+      Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>();
     }
   },
 };

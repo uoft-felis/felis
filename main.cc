@@ -129,6 +129,7 @@ int main(int argc, char *argv[])
   // check
 
   InitializeLogger();
+  dolly::InitWorkerManager();
 
   int fd = dolly::SetupServer();
   int peer_fd = -1;
@@ -169,23 +170,32 @@ int main(int argc, char *argv[])
     std::exit(0);
   }
 
+  logger->info("setting up memory pools");
+  dolly::Epoch::pool = new mem::LargePool<dolly::Epoch::kBrkSize>(2 * dolly::Worker::kNrThreads);
+  logger->info("memory pool ready");
+
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
 
-  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(20);
+  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(0);
+  std::mutex m;
+  m.lock();
 
-  auto epoch_routine = go::Make([peer_fds, replay_from_file, epoch_ch]{
+  auto epoch_routine = go::Make([peer_fds, replay_from_file, epoch_ch, &m] {
       try {
 	std::vector<go::EpollSocket *> socks;
 
 	for (int i = 0; i < dolly::Worker::kNrThreads; i++) {
 	  auto sock = new go::EpollSocket(peer_fds[i], go::GlobalEpoll(),
-					  new go::InputSocketChannel(32 << 20),
+					  new go::InputSocketChannel(16 << 20),
 					  new go::OutputSocketChannel(4096));
+	  sock->input_channel()->buffer_mutex().Disable();
+	  sock->output_channel()->buffer_mutex().Disable();
 	  if (replay_from_file) {
 	    auto out = sock->output_channel();
 	    std::stringstream ss;
 	    ss << "GET /dolly-net." << i << ".dump HTTP/1.0\r\n\r\n";
 	    out->Write(ss.str().c_str(), ss.str().length());
+	    out->Flush();
 	    auto in = sock->input_channel();
 	    uint8_t ch;
 	    int line_len = 0;
@@ -210,7 +220,9 @@ int main(int argc, char *argv[])
 	}
       } catch (dolly::ParseBufferEOF &ex) {
 	logger->info("EOF");
+	epoch_ch->Flush();
 	epoch_ch->Close();
+	m.unlock();
       }
     });
 
@@ -218,23 +230,27 @@ int main(int argc, char *argv[])
       PerfLog p;
       while (true) {
 	bool eof = false;
+	logger->info("executor waiting...");
 	auto epoch = epoch_ch->Read(eof);
 	if (eof)
 	  break;
 	epoch->Setup();
 	epoch->ReExec();
+	delete epoch;
       }
       p.Show("Epoch Executor total");
     });
 
-  go::InitThreadPool(2);
+  go::InitThreadPool(dolly::Worker::kNrThreads);
   go::CreateGlobalEpoll();
 
   auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });
   t.detach();
 
   epoch_routine->StartOn(1);
-  epoch_executor->StartOn(2);
+  epoch_executor->StartOn(1);
+
+  m.lock(); // waits
   go::WaitThreadPool();
 
   delete [] peer_fds;
