@@ -248,8 +248,7 @@ public:
     }
   }
 
-  void __attribute__((noinline)) AppendNewVersion(uint64_t sid) {
-    // we're single thread, and we are assuming sid is monotoniclly increasing
+  void AppendNewVersion(uint64_t sid) {
     bool expected = false;
     while (!locked.compare_exchange_weak(expected, true, std::memory_order_release,
 					 std::memory_order_relaxed)) {
