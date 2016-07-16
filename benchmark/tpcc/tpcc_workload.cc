@@ -166,38 +166,26 @@ static const BaseRequest::FactoryMap kTPCCFactoryMap = {
 };
 
 template <enum tpcc::loaders::TPCCLoader TLN>
-static tpcc::loaders::Loader<TLN> CreateLoader(unsigned long seed)
+static tpcc::loaders::Loader<TLN> *CreateLoader(unsigned long seed, std::mutex *m,
+						std::atomic_int *count_down, int cpu)
 {
-  return tpcc::loaders::Loader<TLN>(seed);
+  return new tpcc::loaders::Loader<TLN>(seed, m, count_down, cpu);
 }
 
 static void LoadTPCCDataSet()
 {
-  auto &mgr = Instance<dolly::WorkerManager>();
   std::mutex m;
-  int counter = 0;
-  std::condition_variable cv;
+  std::atomic_int count_down(6);
+  m.lock(); // use as a semaphore
 
-  auto task = [&m, &cv, &counter](std::function<void ()> func) {
-    func();
-    std::lock_guard<std::mutex> _(m);
-    counter++;
-    cv.notify_one();
-  };
+  CreateLoader<tpcc::loaders::Warehouse>(9324, &m, &count_down, 0)->StartOn(1);
+  CreateLoader<tpcc::loaders::Item>(235443, &m, &count_down, 1)->StartOn(2);
+  CreateLoader<tpcc::loaders::Stock>(89785943, &m, &count_down, 2)->StartOn(3);
+  CreateLoader<tpcc::loaders::District>(129856349, &m, &count_down, 3)->StartOn(4);
+  CreateLoader<tpcc::loaders::Customer>(923587856425, &m, &count_down, 4)->StartOn(5);
+  CreateLoader<tpcc::loaders::Order>(2343352, &m, &count_down, 5)->StartOn(6);
 
-  mgr.SelectWorker().AddTask(std::bind(task, CreateLoader<tpcc::loaders::Warehouse>(9324)));
-  mgr.SelectWorker().AddTask(std::bind(task, CreateLoader<tpcc::loaders::Item>(235443)));
-  mgr.SelectWorker().AddTask(std::bind(task, CreateLoader<tpcc::loaders::Stock>(89785943)));
-  mgr.SelectWorker().AddTask(std::bind(task, CreateLoader<tpcc::loaders::District>(129856349)));
-  mgr.SelectWorker().AddTask(std::bind(task, CreateLoader<tpcc::loaders::Customer>(923587856425)));
-  mgr.SelectWorker().AddTask(std::bind(task, CreateLoader<tpcc::loaders::Order>(2343352)));
-
-  {
-    std::unique_lock<std::mutex> l(m);
-    while (counter < 6)
-      cv.wait(l);
-    counter = 0;
-  }
+  m.lock(); // waits
 }
 
 extern "C" void InitializeWorkload()

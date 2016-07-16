@@ -18,8 +18,6 @@
 #include "masstree/kvthread.hh"
 #include "masstree/timestamp.hh"
 
-#include "worker.h"
-
 namespace dolly {
 
 template <class VHandle>
@@ -168,20 +166,14 @@ public:
   threadinfo *GetThreadInfo() { return ti; }
 };
 
+static __thread threadinfo *TLSThreadInfo;
+
 template <class VHandle>
 threadinfo &MasstreeIndex<VHandle>::GetThreadInfo()
 {
-  Worker *cur_worker = Worker::CurrentThreadWorker();
-  if (cur_worker == nullptr) {
-    // not a worker
-    return *util::Instance<RelationManager>().GetThreadInfo();
-  }
-  threadinfo *ti = cur_worker->worker_data<threadinfo>();
-  if (ti == nullptr) {
-    ti = threadinfo::make(threadinfo::TI_PROCESS, cur_worker->index());
-    cur_worker->set_worker_data(ti);
-  }
-  return *ti;
+  if (TLSThreadInfo == nullptr)
+    TLSThreadInfo = threadinfo::make(threadinfo::TI_PROCESS, go::Scheduler::CurrentThreadPoolId());
+  return *TLSThreadInfo;
 }
 
 }

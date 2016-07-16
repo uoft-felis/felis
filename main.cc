@@ -8,7 +8,6 @@
 #include <sys/socket.h>
 #include "net-io.h"
 #include "epoch.h"
-#include "worker.h"
 #include "goplusplus/gopp.h"
 #include "goplusplus/epoll-channel.h"
 
@@ -16,7 +15,7 @@
 
 void DoDumpNetwork(int fds[])
 {
-  int nfds = dolly::Worker::kNrThreads;
+  int nfds = dolly::Epoch::kNrThreads;
   std::ofstream **fout = new std::ofstream*[nfds];
   char *buffer = new char[4096];
 
@@ -109,16 +108,13 @@ int main(int argc, char *argv[])
   bool dump_only = false;
   bool replay_from_file = false;
 
-  while ((opt = getopt(argc, argv, "drt:")) != -1) {
+  while ((opt = getopt(argc, argv, "dr")) != -1) {
     switch (opt) {
     case 'd':
       dump_only = true;
       break;
     case 'r':
       replay_from_file = true;
-      break;
-    case 't':
-      dolly::Worker::kNrThreads = atoi(optarg);
       break;
     default:
       show_usage(argv[0]);
@@ -129,7 +125,6 @@ int main(int argc, char *argv[])
   // check
 
   InitializeLogger();
-  dolly::InitWorkerManager();
 
   int fd = dolly::SetupServer();
   int peer_fd = -1;
@@ -138,7 +133,7 @@ int main(int argc, char *argv[])
   struct sockaddr_in addr;
 
   // we assume each core is creating a connection
-  int *peer_fds = new int[dolly::Worker::kNrThreads];
+  int *peer_fds = new int[dolly::Epoch::kNrThreads];
 
   if (replay_from_file) {
     memset(&addr, 0, addrlen);
@@ -147,7 +142,7 @@ int main(int argc, char *argv[])
     addr.sin_port = htons(kDummyWebServerPort);
   }
 
-  for (int i = 0; i < dolly::Worker::kNrThreads; i++) {
+  for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
     if (replay_from_file) {
       peer_fd = socket(AF_INET, SOCK_STREAM, 0);
       if (connect(peer_fd, (struct sockaddr *) &addr, addrlen) < 0) {
@@ -162,7 +157,7 @@ int main(int argc, char *argv[])
     }
     peer_fds[i] = peer_fd;
   }
-  logger->info("replica received {} connections\n", dolly::Worker::kNrThreads);
+  logger->info("replica received {} connections\n", dolly::Epoch::kNrThreads);
   logger->info("replica ready!");
 
   if (dump_only) {
@@ -171,9 +166,13 @@ int main(int argc, char *argv[])
   }
 
   logger->info("setting up memory pools");
-  dolly::Epoch::pool = new mem::LargePool<dolly::Epoch::kBrkSize>(2 * dolly::Worker::kNrThreads);
+  dolly::Epoch::pool = new mem::LargePool<dolly::Epoch::kBrkSize>(8 * dolly::Epoch::kNrThreads);
   logger->info("memory pool ready");
 
+  logger->info("setting up co-routine thread pool");
+  go::InitThreadPool(dolly::Epoch::kNrThreads);
+
+  logger->info("loading base dataset");
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
 
   auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(0);
@@ -184,7 +183,7 @@ int main(int argc, char *argv[])
       try {
 	std::vector<go::EpollSocket *> socks;
 
-	for (int i = 0; i < dolly::Worker::kNrThreads; i++) {
+	for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
 	  auto sock = new go::EpollSocket(peer_fds[i], go::GlobalEpoll(),
 					  new go::InputSocketChannel(16 << 20),
 					  new go::OutputSocketChannel(4096));
@@ -241,7 +240,6 @@ int main(int argc, char *argv[])
       p.Show("Epoch Executor total");
     });
 
-  go::InitThreadPool(dolly::Worker::kNrThreads);
   go::CreateGlobalEpoll();
 
   auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });

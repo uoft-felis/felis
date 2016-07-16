@@ -60,7 +60,9 @@ WorkerManager::WorkerManager()
   int nthreads = Worker::kNrThreads;
   // int nthreads = 1;
   for (int i = 0; i < nthreads; i++) {
-    workers.push_back(std::move(Worker()));
+    auto w = Worker();
+    w.set_index(i + 1);
+    workers.push_back(std::move(w));
   }
   for (auto &worker: workers) {
     worker.Start();

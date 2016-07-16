@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <functional>
 #include <cassert>
+#include <unistd.h>
 
 #define CACHELINE_SIZE 64
 #define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))
@@ -158,6 +159,17 @@ class MixIn : public M... {};
 
 // instance of a global object. So that we don't need the ugly extern.
 template <class O> O &Instance();
+
+// CPU pinning
+static void PinToCPU(int cpu)
+{
+  // linux only
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  CPU_SET(cpu % sysconf(_SC_NPROCESSORS_CONF), &set);
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
+  pthread_yield();
+}
 
 }
 

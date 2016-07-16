@@ -22,11 +22,10 @@
 #include "util.h"
 
 #include "tpcc.h"
-#include "worker.h"
 
 using dolly::Relation;
 using dolly::RelationManager;
-using dolly::Worker;
+using dolly::Epoch;
 using util::MixIn;
 using util::Instance;
 
@@ -162,7 +161,7 @@ static int NMaxCustomerIdxScanElems = 512;
 static inline unsigned int PartitionId(unsigned int wid)
 {
   assert(wid >= 1 && wid <= NumWarehouses());
-  int nthreads = Worker::kNrThreads;
+  int nthreads = Epoch::kNrThreads;
   wid -= 1; // 0-idx
   if (NumWarehouses() <= nthreads)
     // more workers than partitions, so its easy
@@ -384,7 +383,7 @@ TPCCTableHandles::TPCCTableHandles()
 void TPCCTableHandles::InitiateTable(TPCCTable table)
 {
   logger->info("Initialize TPCC Table {}", (int) table);
-  int nthreads = Worker::kNrThreads;
+  int nthreads = Epoch::kNrThreads;
   RelationManager &mgr = Instance<RelationManager>();
   std::string name = kTPCCTableNames[static_cast<int>(table)];
 
@@ -426,7 +425,7 @@ dolly::Relation &TPCCMixIn::relation(TPCCTable table, unsigned int wid)
 namespace loaders {
 
 template <>
-void Loader<TPCCLoader::Warehouse>::operator()()
+void Loader<TPCCLoader::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= NumWarehouses(); i++) {
@@ -457,7 +456,7 @@ void Loader<TPCCLoader::Warehouse>::operator()()
 }
 
 template <>
-void Loader<TPCCLoader::Item>::operator()()
+void Loader<TPCCLoader::Item>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= NumItems(); i++) {
@@ -489,11 +488,11 @@ void Loader<TPCCLoader::Item>::operator()()
 }
 
 template <>
-void Loader<TPCCLoader::Stock>::operator()()
+void Loader<TPCCLoader::Stock>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
-    Worker::PinCurrentThread(PartitionId(w));
+    util::PinToCPU(PartitionId(w));
 
     for(size_t i = 1; i <= NumItems(); i++) {
       const Stock::Key k(w, i);
@@ -537,11 +536,11 @@ void Loader<TPCCLoader::Stock>::operator()()
 }
 
 template <>
-void Loader<TPCCLoader::District>::operator()()
+void Loader<TPCCLoader::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
-    Worker::PinCurrentThread(PartitionId(w));
+    util::PinToCPU(PartitionId(w));
 
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       const District::Key k(w, d);
@@ -579,11 +578,11 @@ static uint32_t GetCurrentTimeMillis()
 }
 
 template <>
-void Loader<TPCCLoader::Customer>::operator()()
+void Loader<TPCCLoader::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
-    Worker::PinCurrentThread(PartitionId(w));
+    util::PinToCPU(PartitionId(w));
 
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       for (uint cidx0 = 0; cidx0 < NumCustomersPerDistrict(); cidx0++) {
@@ -658,11 +657,11 @@ static size_t NumOrderLinesPerCustomer(util::FastRandom &r)
 }
 
 template <>
-void Loader<TPCCLoader::Order>::operator()()
+void Loader<TPCCLoader::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
-    Worker::PinCurrentThread(PartitionId(w));
+    util::PinToCPU(PartitionId(w));
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;
@@ -750,12 +749,12 @@ using namespace tpcc;
 // Request<util::MixIn<tpcc::CreditCheckStruct, TPCCMixIn>>
 // Request<util::MixIn<tpcc::PaymentStruct, TPCCMixIn>>
 //
-// We only implement the Run() method. ParseFromBuffer() method are implemented
+// We only implement the RunTxn() method. ParseFromBuffer() method are implemented
 // under tpcc_workload.cc, which is the main entrance of this workload support
 // module.
 
 template<>
-void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::Run()
+void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
 {
   bool all_local = true;
 
@@ -885,7 +884,7 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::Run()
 }
 
 template<>
-void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::Run()
+void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 {
   // worst case txn profile:
   //   10 times:
@@ -1014,7 +1013,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::Run()
 }
 
 template<>
-void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::Run()
+void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
 {
   /*
     Note: Cahill's credit check transaction to introduce SI's anomaly.
@@ -1132,7 +1131,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::Run()
 }
 
 template<>
-void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::Run()
+void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
 {
   // output from txn counters:
   //   max_absent_range_set_size : 0

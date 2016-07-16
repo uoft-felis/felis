@@ -9,6 +9,7 @@
 #include <map>
 #include <mutex>
 #include <functional>
+#include <atomic>
 
 #include "net-io.h"
 #include "sqltypes.h"
@@ -31,16 +32,24 @@ struct TxnKey {
 
 class Epoch;
 
-class Txn {
+class Txn : public go::Routine {
   TxnKey *keys;
   uint16_t sz_key_buf;
   unsigned int key_crc;
   unsigned int value_crc;
   uint64_t sid;
+  bool is_setup;
+
+  go::BufferChannel<uint8_t> *wait_channel;
+  int *count_down;
+
 public:
   uint8_t type;
 
-  Txn() : key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE) {}
+  Txn() : key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
+	  is_setup(true), wait_channel(nullptr) {
+    set_reuse(true);
+  }
 
   void Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len, Epoch *epoch);
   void SetupReExec();
@@ -50,8 +59,27 @@ public:
 
   void set_serializable_id(uint64_t id) { sid = id; }
   uint64_t serializable_id() const { return sid; }
-  virtual void Run() = 0;
+
+  void set_wait_channel(go::BufferChannel<uint8_t> *ch) { wait_channel = ch; }
+  void set_count_down(int *c) { count_down = c; }
+
+  virtual void RunTxn() = 0;
   virtual int CoreAffinity() const = 0;
+protected:
+  virtual void Run() {
+    if (is_setup) {
+      SetupReExec();
+      is_setup = false;
+    } else {
+      RunTxn();
+    }
+    --(*count_down);
+    // fprintf(stderr, "countdown %d\n", *count_down);
+    if (*count_down == 0 && wait_channel) {
+      // fprintf(stderr, "done, notify control thread\n");
+      wait_channel->Write(uint8_t{0});
+    }
+  }
 };
 
 class BaseRequest : public Txn {
@@ -80,8 +108,26 @@ private:
 template <class T>
 class Request : public BaseRequest, public T {
   virtual void ParseFromChannel(go::InputSocketChannel *channel);
-  virtual void Run();
+  virtual void RunTxn();
   virtual int CoreAffinity() const;
+};
+
+struct TxnTimeStamp
+{
+  uint64_t commit_ts;
+  int64_t skew_ts;
+  Txn *txn;
+
+  uint64_t logical_commit_ts() const {
+    return skew_ts == 0 ? commit_ts : skew_ts - 1;
+  }
+
+  bool operator<(const TxnTimeStamp &rhs) const {
+    if (logical_commit_ts() != rhs.logical_commit_ts()) {
+      return logical_commit_ts() < rhs.logical_commit_ts();
+    }
+    return commit_ts < rhs.commit_ts;
+  }
 };
 
 class Epoch {
@@ -95,12 +141,13 @@ public:
 
   void *AllocFromBrk(int cpu, size_t sz) {
     void *p = brks[cpu].addr + brks[cpu].offset;
-    __builtin_prefetch(p);
     brks[cpu].offset += sz;
     if (brks[cpu].offset > kBrkSize)
       std::abort();
     return p;
   }
+
+  static const int kNrThreads = 16;
 
 private:
   void InitBrks();
@@ -110,8 +157,12 @@ private:
   struct {
     uint8_t *addr;
     int offset;
-  } brks[31]; // hack: max nr cpu
-  std::vector<Txn *> txns;
+  } brks[kNrThreads];
+
+  int count_downs[kNrThreads];
+  go::BufferChannel<uint8_t> *wait_channel;
+  std::vector<TxnTimeStamp> tss[kNrThreads];
+
 protected:
   static uint64_t kGlobSID;
 public:

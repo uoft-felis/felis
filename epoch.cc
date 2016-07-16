@@ -9,7 +9,6 @@
 #include "net-io.h"
 #include "index.h"
 #include "util.h"
-#include "worker.h"
 
 #include "json11/json11.hpp"
 
@@ -23,24 +22,6 @@ using util::Instance;
 namespace dolly {
 
 uint64_t Epoch::kGlobSID = 0ULL;
-
-struct TxnTimeStamp
-{
-  uint64_t commit_ts;
-  int64_t skew_ts;
-  Txn *txn;
-
-  uint64_t logical_commit_ts() const {
-    return skew_ts == 0 ? commit_ts : skew_ts - 1;
-  }
-
-  bool operator<(const TxnTimeStamp &rhs) const {
-    if (logical_commit_ts() != rhs.logical_commit_ts()) {
-      return logical_commit_ts() < rhs.logical_commit_ts();
-    }
-    return commit_ts < rhs.commit_ts;
-  }
-};
 
 static uint64_t gGlobalEpoch;
 
@@ -84,21 +65,22 @@ protected:
   }
 };
 
+const int Epoch::kNrThreads;
+
 Epoch::Epoch(std::vector<go::EpollSocket *> socks)
 {
   ++gGlobalEpoch;
   InitBrks();
 
-  int nr_threads = Worker::kNrThreads;
   PerfLog p;
-  std::vector<TxnTimeStamp> tss[nr_threads];
-  size_t tss_offset[nr_threads];
-  TxnIOReader *readers[nr_threads];
-  auto wait_channel = new go::BufferChannel<uint8_t>(nr_threads);
+  size_t tss_offset[kNrThreads];
+  TxnIOReader *readers[kNrThreads];
+  wait_channel = new go::BufferChannel<uint8_t>(kNrThreads);
 
-  for (int i = 0; i < nr_threads; i++) {
+  for (int i = 0; i < kNrThreads; i++) {
     auto sock = socks[i];
     tss_offset[i] = 0;
+
     readers[i] = new TxnIOReader(&tss[i], socks[i], wait_channel, this);
     readers[i]->StartOn(i + 1);
   }
@@ -106,21 +88,21 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   {
     bool eof = false;
     bool need_throw = false;
-    for (int i = 0; i < nr_threads; i++) {
+    for (int i = 0; i < kNrThreads; i++) {
       uint8_t ch = wait_channel->Read(eof);
       if (ch) need_throw = true;
     }
     if (need_throw) throw ParseBufferEOF();
   }
   p.Show("IO takes");
+
   p = PerfLog();
   logger->info("merge sorting...");
   int nr_total = 0;
-  int nr_done = 0;
-  while (nr_done < nr_threads) {
+  while (true) {
     TxnTimeStamp ts;
     int ts_idx = -1;
-    for (int i = 0; i < nr_threads; i++) {
+    for (int i = 0; i < kNrThreads; i++) {
       if (tss_offset[i] == tss[i].size()) continue;
 
       if (ts_idx == -1 || tss[i][tss_offset[i]] < ts) {
@@ -132,13 +114,14 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
     tss_offset[ts_idx]++;
     nr_total++;
 
-    ts.txn->set_serializable_id(++kGlobSID);
-    logger->debug("txn sid {} type 0x{:x} value csum 0x{:x} timestamp commit_ts {} skew_ts {}",
-		  ts.txn->serializable_id(), ts.txn->type, ts.txn->value_checksum(),
-		  ts.commit_ts, ts.skew_ts);
-    txns.push_back(ts.txn);
-  }
+    auto t = ts.txn;
+    t->set_serializable_id(++kGlobSID);
+    t->set_wait_channel(wait_channel);
+    t->set_count_down(&count_downs[ts_idx]);
 
+    logger->debug("txn sid {} type 0x{:x} value csum 0x{:x} timestamp commit_ts {} skew_ts {}",
+		  t->serializable_id(), t->type, t->value_checksum(), ts.commit_ts, ts.skew_ts);
+  }
   logger->info("epoch contains {} txns", nr_total);
   p.Show("Sorting takes");
 }
@@ -149,7 +132,7 @@ mem::LargePool<Epoch::kBrkSize> *Epoch::pool;
 void Epoch::InitBrks()
 {
   std::unique_lock<std::mutex> l(pool_mutex);
-  for (int i = 0; i < Worker::kNrThreads; i++) {
+  for (int i = 0; i < kNrThreads; i++) {
     brks[i].addr = (uint8_t *) pool->Alloc();
     brks[i].offset = 0;
   }
@@ -159,67 +142,49 @@ void Epoch::DestroyBrks()
 {
   logger->info("deleting epoch and its mem");
   std::unique_lock<std::mutex> l(pool_mutex);
-  for (int i = 0; i < Worker::kNrThreads; i++) {
+  for (int i = 0; i < kNrThreads; i++) {
     pool->Free(brks[i].addr);
   }
 }
 
 void Epoch::Setup()
 {
-  // phase two: SetupReExec()
-  int counter = 0;
-  std::mutex m;
-  std::condition_variable cv;
-
+  logger->info("setting up epoch");
   auto p = PerfLog();
-  for (auto t: txns) {
-    int aff = t->CoreAffinity();
-    Instance<WorkerManager>().GetWorker(aff).AddTask([t]() {
-	t->SetupReExec();
-      }, true);
-  }
-  for (int i = 0; i < Worker::kNrThreads; i++) {
-    Instance<WorkerManager>().GetWorker(i).AddTask([&m, &cv, &counter]() {
-	std::lock_guard<std::mutex> l(m);
-	counter++;
-	cv.notify_one();
-      });
-  }
-  {
-    std::unique_lock<std::mutex> l(m);
-    while (counter < Worker::kNrThreads)
-      cv.wait(l);
-    counter = 0;
+
+  for (int i = 0; i < kNrThreads; i++) {
+    count_downs[i] = tss[i].size();
+    auto sched = go::GetSchedulerFromPool(i + 1);
+     for (auto &t: tss[i]) {
+       sched->WakeUp(t.txn, true);
+    }
+    sched->Signal();
   }
 
+  for (int i = 0; i < kNrThreads; i++) {
+    bool eof = false;
+    uint8_t ch = wait_channel->Read(eof);
+  }
   p.Show("SetupReExec takes");
 }
 
 void Epoch::ReExec()
 {
-  int counter = 0;
-  std::mutex m;
-  std::condition_variable cv;
-
+  logger->info("replaying");
   auto p = PerfLog();
-  for (auto &t: txns) {
-    int aff = t->CoreAffinity();
-    Instance<WorkerManager>().GetWorker(aff).AddTask([t]() {
-	t->Run();
-      }, true);
+  for (int i = 0; i < kNrThreads; i++) {
+    count_downs[i] = tss[i].size();
+    auto sched = go::GetSchedulerFromPool(i + 1);
+    for (auto &t: tss[i]) {
+      if (!t.txn->is_detached()) std::abort();
+      t.txn->Reset();
+      sched->WakeUp(t.txn, true);
+    }
+    sched->Signal();
   }
-  for (int i = 0; i < Worker::kNrThreads; i++) {
-    Instance<WorkerManager>().GetWorker(i).AddTask([&m, &cv, &counter]() {
-	std::lock_guard<std::mutex> l(m);
-	counter++;
-	cv.notify_one();
-      });
-  }
-  {
-    std::unique_lock<std::mutex> l(m);
-    while (counter < Worker::kNrThreads)
-      cv.wait(l);
-    counter = 0;
+  for (int i = 0; i < kNrThreads; i++) {
+    bool eof = false;
+    uint8_t ch = wait_channel->Read(eof);
   }
   p.Show("ReExec takes");
 }

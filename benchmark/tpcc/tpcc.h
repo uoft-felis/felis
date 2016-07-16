@@ -9,7 +9,6 @@
 #include <vector>
 #include <cassert>
 
-#include "worker.h"
 #include "index.h"
 #include "util.h"
 #include "sqltypes.h"
@@ -436,11 +435,21 @@ enum TPCCLoader {
 };
 
 template <enum TPCCLoader TLN>
-class Loader : public tpcc::TPCCMixIn {
+class Loader : public go::Routine, public tpcc::TPCCMixIn {
   util::FastRandom r;
+  std::mutex *m;
+  std::atomic_int *count_down;
+  int cpu;
 public:
-  Loader(unsigned long seed) : r(seed) {}
-  void operator()();
+  Loader(unsigned long seed, std::mutex *w, std::atomic_int *c, int pin)
+    : r(seed), m(w), count_down(c), cpu(pin) {}
+  void DoLoad();
+  virtual void Run() {
+    DoLoad();
+    if (count_down->fetch_sub(1) == 1)
+      m->unlock();
+    util::PinToCPU(cpu);
+  }
 };
 
 }
