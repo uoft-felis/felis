@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
   std::mutex m;
   m.lock();
 
-  auto epoch_routine = go::Make([peer_fds, replay_from_file, epoch_ch, &m] {
+  auto epoch_routine = go::Make([peer_fds, replay_from_file, epoch_ch] {
       try {
 	std::vector<go::EpollSocket *> socks;
 
@@ -221,18 +221,19 @@ int main(int argc, char *argv[])
 	logger->info("EOF");
 	epoch_ch->Flush();
 	epoch_ch->Close();
-	m.unlock();
       }
     });
 
-  auto epoch_executor = go::Make([epoch_ch] {
+  auto epoch_executor = go::Make([epoch_ch, &m] {
       PerfLog p;
       while (true) {
 	bool eof = false;
 	logger->info("executor waiting...");
 	auto epoch = epoch_ch->Read(eof);
-	if (eof)
+	if (eof) {
+	  m.unlock();
 	  break;
+	}
 	epoch->Setup();
 	epoch->ReExec();
 	delete epoch;
@@ -246,7 +247,7 @@ int main(int argc, char *argv[])
   t.detach();
 
   epoch_routine->StartOn(1);
-  epoch_executor->StartOn(1);
+  epoch_executor->StartOn(2);
 
   m.lock(); // waits
   go::WaitThreadPool();

@@ -290,7 +290,7 @@ public:
     return &objects[it - versions];
   }
 
-  VarStr *ReadWithVersion(uint64_t sid) {
+  VarStr *ReadWithVersion(uint64_t sid) __attribute__((noinline)){
     // if (versions.size() > 0) assert(versions[0] == 0);
     volatile uintptr_t *addr = WithVersion(sid);
     if (!addr) return nullptr;
