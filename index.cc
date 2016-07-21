@@ -3,7 +3,9 @@
 #include "index.h"
 #include "epoch.h"
 #include "util.h"
+#include "mem.h"
 #include "json11/json11.hpp"
+#include "goplusplus/gopp.h"
 
 // #define VALIDATE_TXN 1
 
@@ -161,6 +163,128 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 
   if (validator)
     validator->Validate(*tx);
+}
+
+const int SortedArrayVHandle::kMaxRetry;
+
+SortedArrayVHandle::SortedArrayVHandle()
+  : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber())
+{
+  alloc_by_coreid = go::Scheduler::CurrentThreadPoolId() - 1;
+  capacity = 4;
+  size = 0;
+
+  const size_t len = capacity * sizeof(uint64_t);
+  uint8_t *p = (uint8_t *) malloc(2 * len);
+  // uint8_t *p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
+
+  versions = (uint64_t *) p;
+  objects = (uintptr_t *) (p + len);
+}
+
+void SortedArrayVHandle::EnsureSpace()
+{
+  if (unlikely(size == capacity)) {
+    capacity *= 2;
+    const size_t len = capacity * sizeof(uint64_t);
+    auto &r = mem::GetThreadLocalRegion(alloc_by_coreid);
+    void *old_p = versions;
+    uint8_t *p = (uint8_t *) malloc(2 * len);
+    // uint8_t *p = (uint8_t *) r.Alloc(2 * len);
+
+    memcpy(p, versions, len / 2);
+    memcpy(p + len, objects, len / 2);
+
+    versions = (uint64_t *) p;
+    objects = (uintptr_t *) (p + len);
+
+    // r.Free(old_p, len);
+    free(old_p);
+  }
+}
+
+void SortedArrayVHandle::AppendNewVersion(uint64_t sid)
+{
+  bool expected = false;
+  while (!locked.compare_exchange_weak(expected, true, std::memory_order_release,
+				       std::memory_order_relaxed)) {
+    expected = false;
+  }
+
+  uint64_t ep = Epoch::CurrentEpochNumber();
+  if (ep > last_gc_epoch) {
+    // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
+    GarbageCollect();
+    last_gc_epoch = ep;
+  }
+
+  size++;
+  EnsureSpace();
+  versions[size - 1] = sid;
+  objects[size - 1] = PENDING_VALUE;
+
+  // now we need to swap backwards... hope this won't take too long...
+  // TODO: replace this with a cleverer binary search if matters
+  for (int i = size - 1; i > 0; i--) {
+    if (versions[i - 1] > versions[i]) {
+      std::swap(versions[i - 1], versions[i]);
+    } else {
+      break;
+    }
+  }
+  locked.store(false);
+}
+
+volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
+{
+  assert(size > 0);
+  int pos;
+
+  auto it = std::lower_bound(versions, versions + size, sid);
+  if (it == versions) {
+    // it's likely a read-your-own-insert happened here.
+    // it should be served from the CommitBuffer.
+    // if not in the CommitBuffer (Get() shouldn't lead you here, but Scan() could),
+    // we should return as if this record is deleted
+    return nullptr;
+  }
+  pos = --it - versions;
+  return &objects[pos];
+}
+
+VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
+{
+  // if (versions.size() > 0) assert(versions[0] == 0);
+  volatile uintptr_t *addr = WithVersion(sid);
+  if (!addr) return nullptr;
+
+  // Locking + cv might be a bad idea. lock is too expensive for this critical path!
+  // So, let's just do an avoidance.
+  // Also, make sure this is running on a go::Routine
+  while (true) {
+    for (int i = 0; i < kMaxRetry; i++) {
+      if (*addr != PENDING_VALUE) {
+	return (VarStr *) *addr;
+      }
+    }
+    go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
+  }
+}
+
+void SortedArrayVHandle::GarbageCollect()
+{
+  return;
+  if (size < 2) return;
+  uint64_t latest_version = versions[size - 1];
+  uintptr_t latest_object = objects[size - 1];
+
+  for (int i = size - 2; i >= 0; i--) {
+    VarStr *o = (VarStr *) objects[i];
+    free(o);
+  }
+  versions[0] = latest_version;
+  objects[0] = latest_object;
+  size = 1;
 }
 
 }

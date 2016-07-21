@@ -126,14 +126,12 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   p.Show("Sorting takes");
 }
 
-std::mutex Epoch::pool_mutex;
-mem::LargePool<Epoch::kBrkSize> *Epoch::pool;
+Epoch::BrkPool *Epoch::pools;
 
 void Epoch::InitBrks()
 {
-  std::unique_lock<std::mutex> l(pool_mutex);
   for (int i = 0; i < kNrThreads; i++) {
-    brks[i].addr = (uint8_t *) pool->Alloc();
+    brks[i].addr = (uint8_t *) pools[i / mem::kNrCorePerNode].Alloc(); // malloc(kBrkSize);
     brks[i].offset = 0;
   }
 }
@@ -141,9 +139,9 @@ void Epoch::InitBrks()
 void Epoch::DestroyBrks()
 {
   logger->info("deleting epoch and its mem");
-  std::unique_lock<std::mutex> l(pool_mutex);
   for (int i = 0; i < kNrThreads; i++) {
-    pool->Free(brks[i].addr);
+    pools[i / mem::kNrCorePerNode].Free(brks[i].addr);
+    // free(brks[i].addr);
   }
 }
 
@@ -242,7 +240,6 @@ void Txn::SetupReExec()
 BaseRequest *BaseRequest::CreateRequestFromChannel(go::InputSocketChannel *channel, Epoch *epoch)
 {
   uint8_t type = 0;
-  __builtin_prefetch(epoch);
   channel->Read(&type, 1);
   assert(type != 0);
   assert(type <= GetGlobalFactoryMap().rbegin()->first);

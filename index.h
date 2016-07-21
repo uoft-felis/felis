@@ -141,8 +141,7 @@ class RelationPolicy : public BaseRelation,
 		       public IndexPolicy<VHandle> {
 public:
   void SetupReExec(const VarStr *k, uint64_t sid, VarStr *obj = (VarStr *) PENDING_VALUE) {
-    // TODO: get rid of stat?
-    auto handle = this->Insert(k, std::move(VHandle()));
+    auto handle = this->InsertOrCreate(k);
     handle->AppendNewVersion(sid);
     if (obj != (void *) PENDING_VALUE) {
       handle->WriteWithVersion(sid, obj);
@@ -211,9 +210,9 @@ private:
   }
 };
 
-
 class SortedArrayVHandle {
 public:
+  int alloc_by_coreid;
   std::atomic_bool locked;
   int64_t last_gc_epoch;
   size_t capacity;
@@ -221,15 +220,13 @@ public:
   uint64_t *versions;
   uintptr_t *objects;
 
-  SortedArrayVHandle() : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber()) {
-    capacity = 4;
-    size = 0;
-    versions = (uint64_t *) malloc(capacity * sizeof(uint64_t));
-    objects = (uintptr_t *) malloc(capacity * sizeof(uintptr_t));
-  }
+  static const int kMaxRetry = 3;
+
+  SortedArrayVHandle();
 
   SortedArrayVHandle(SortedArrayVHandle &&rhs)
     : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber()) {
+    alloc_by_coreid = rhs.alloc_by_coreid;
     capacity = rhs.capacity;
     size = rhs.size;
     versions = rhs.versions;
@@ -240,65 +237,12 @@ public:
     rhs.objects = nullptr;
   }
 
-  void EnsureSpace() {
-    if (unlikely(size == capacity)) {
-      capacity *= 2;
-      versions = (uint64_t *) realloc(versions, capacity * sizeof(uint64_t));
-      objects = (uintptr_t *) realloc(objects, capacity * sizeof(uintptr_t));
-    }
-  }
+  void EnsureSpace();
 
-  void AppendNewVersion(uint64_t sid) {
-    bool expected = false;
-    while (!locked.compare_exchange_weak(expected, true, std::memory_order_release,
-					 std::memory_order_relaxed)) {
-      expected = false;
-    }
+  void AppendNewVersion(uint64_t sid) __attribute__((noinline));
 
-    uint64_t ep = Epoch::CurrentEpochNumber();
-    if (ep > last_gc_epoch) {
-      // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
-      GarbageCollect();
-      last_gc_epoch = ep;
-    }
-
-    size++;
-    EnsureSpace();
-    versions[size - 1] = sid;
-    objects[size - 1] = PENDING_VALUE;
-
-    // now we need to swap backwards... hope this won't take too long...
-    for (int i = size - 1; i > 0; i--) {
-      if (versions[i - 1] > versions[i]) std::swap(versions[i - 1], versions[i]);
-      else break;
-    }
-    locked.store(false);
-  }
-
-  volatile uintptr_t *WithVersion(uint64_t sid) {
-    assert(size > 0);
-
-    auto it = std::lower_bound(versions, versions + size, sid);
-    if (it == versions) {
-      // it's likely a read-your-own-insert happened here.
-      // it should be served from the CommitBuffer.
-      // if not in the CommitBuffer (Get() shouldn't lead you here, but Scan() could),
-      // we should return as if this record is deleted
-      return nullptr;
-    }
-    --it;
-    return &objects[it - versions];
-  }
-
-  VarStr *ReadWithVersion(uint64_t sid) __attribute__((noinline)){
-    // if (versions.size() > 0) assert(versions[0] == 0);
-    volatile uintptr_t *addr = WithVersion(sid);
-    if (!addr) return nullptr;
-
-    // TODO: this is spinning. we should do a u-context switch to other txns
-    while (*addr == PENDING_VALUE);
-    return (VarStr *) *addr;
-  }
+  volatile uintptr_t *WithVersion(uint64_t sid) __attribute__((noinline));
+  VarStr *ReadWithVersion(uint64_t sid) __attribute__((noinline));
 
   void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false) {
     assert(this);
@@ -315,20 +259,7 @@ public:
     }
   }
 
-  void GarbageCollect() {
-    return;
-    if (size < 2) return;
-    uint64_t latest_version = versions[size - 1];
-    uintptr_t latest_object = objects[size - 1];
-
-    for (int i = size - 2; i >= 0; i--) {
-      VarStr *o = (VarStr *) objects[i];
-      free(o);
-    }
-    versions[0] = latest_version;
-    objects[0] = latest_object;
-    size = 1;
-  }
+  void GarbageCollect();
 };
 
 }

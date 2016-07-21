@@ -118,15 +118,15 @@ public:
 protected:
   static threadinfo &GetThreadInfo();
 
-  VHandle *Insert(const VarStr *k, VHandle &&vhandle) {
-    VHandle *result = Search(k);
-    if (result) return result;
+  VHandle *InsertOrCreate(const VarStr *k) {
+    // VHandle *result = Search(k);
+    // if (result) return result;
     auto &ti = GetThreadInfo();
     typename MasstreeMap::cursor_type cursor(map, k->data, k->len);
     bool found = cursor.find_insert(ti);
     if (!found)
-      cursor.value() = new VHandle(std::move(vhandle));
-    result = cursor.value();
+      cursor.value() = new VHandle();
+    VHandle *result = cursor.value();
     cursor.finish(1, ti);
     assert(result != nullptr);
     return result;

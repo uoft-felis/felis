@@ -165,9 +165,25 @@ int main(int argc, char *argv[])
     std::exit(0);
   }
 
-  logger->info("setting up memory pools");
-  dolly::Epoch::pool = new mem::LargePool<dolly::Epoch::kBrkSize>(8 * dolly::Epoch::kNrThreads);
-  logger->info("memory pool ready");
+  const int tot_nodes = dolly::Epoch::kNrThreads / mem::kNrCorePerNode;
+  logger->info("setting up memory pools and regions. {} NUMA nodes in total", tot_nodes);
+
+  dolly::Epoch::pools = (dolly::Epoch::BrkPool *)
+    malloc(sizeof(dolly::Epoch::BrkPool) * tot_nodes);
+  for (int nid = 0; nid < tot_nodes; nid++) {
+    new (&dolly::Epoch::pools[nid])
+      dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 8 * dolly::Epoch::kNrThreads, nid);
+  }
+// #if 0
+  mem::InitThreadLocalRegions(dolly::Epoch::kNrThreads);
+  for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
+    auto &r = mem::GetThreadLocalRegion(i);
+    // r.set_pool_capacity(64, 8 << 20);
+    // r.set_pool_capacity(128, 32 << 20);
+    r.InitPools(i / mem::kNrCorePerNode);
+  }
+// #endif
+  logger->info("memory ready");
 
   logger->info("setting up co-routine thread pool");
   go::InitThreadPool(dolly::Epoch::kNrThreads);

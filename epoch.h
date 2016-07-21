@@ -157,6 +157,7 @@ private:
   struct {
     uint8_t *addr;
     int offset;
+    char __padding__[4];
   } brks[kNrThreads];
 
   int count_downs[kNrThreads];
@@ -167,8 +168,8 @@ protected:
   static uint64_t kGlobSID;
 public:
   static const size_t kBrkSize = 32 << 20;
-  static std::mutex pool_mutex;
-  static mem::LargePool<kBrkSize> *pool;
+  typedef mem::Pool<true> BrkPool;
+  static BrkPool *pools;
 };
 
 }

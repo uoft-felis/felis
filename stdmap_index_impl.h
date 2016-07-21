@@ -44,13 +44,13 @@ private:
   std::map<VarStr, VHandle> map;
 protected:
 
-  VHandle *Insert(const VarStr *k, VHandle &&vhandle) {
+  VHandle *InsertOrCreate(const VarStr *k) {
     // implicit copy
     VarStr *key = VarStr::New(k->len);
     uint8_t *ptr = (uint8_t *) key + sizeof(VarStr);
     memcpy(ptr, k->data, k->len);
 
-    auto p = map.emplace(*key, std::move(vhandle));
+    auto p = map.emplace(*key, std::move(VHandle()));
     return &p.first->second;
   }
 
