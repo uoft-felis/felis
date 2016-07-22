@@ -493,6 +493,7 @@ void Loader<TPCCLoader::Stock>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     util::PinToCPU(PartitionId(w));
+    dolly::SortedArrayVHandle::SetAllocCoreHint(PartitionId(w));
 
     for(size_t i = 1; i <= NumItems(); i++) {
       const Stock::Key k(w, i);
@@ -532,6 +533,7 @@ void Loader<TPCCLoader::Stock>::DoLoad()
       relation(TPCCTable::StockData, w).SetupReExec(k_data.EncodeFromAlloca(large_buf), 0, v_data.Encode());
     }
   }
+  dolly::SortedArrayVHandle::SetAllocCoreHint(-1);
   logger->info("Stock Table loading done.");
 }
 
@@ -541,6 +543,7 @@ void Loader<TPCCLoader::District>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     util::PinToCPU(PartitionId(w));
+    dolly::SortedArrayVHandle::SetAllocCoreHint(PartitionId(w));
 
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       const District::Key k(w, d);
@@ -560,6 +563,7 @@ void Loader<TPCCLoader::District>::DoLoad()
       relation(TPCCTable::District, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
     }
   }
+  dolly::SortedArrayVHandle::SetAllocCoreHint(-1);
   logger->info("District Table loading done.");
 }
 
@@ -583,6 +587,7 @@ void Loader<TPCCLoader::Customer>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     util::PinToCPU(PartitionId(w));
+    dolly::SortedArrayVHandle::SetAllocCoreHint(PartitionId(w));
 
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       for (uint cidx0 = 0; cidx0 < NumCustomersPerDistrict(); cidx0++) {
@@ -649,6 +654,7 @@ void Loader<TPCCLoader::Customer>::DoLoad()
       }
     }
   }
+  dolly::SortedArrayVHandle::SetAllocCoreHint(-1);
 }
 
 static size_t NumOrderLinesPerCustomer(util::FastRandom &r)
@@ -662,6 +668,7 @@ void Loader<TPCCLoader::Order>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= NumWarehouses(); w++) {
     util::PinToCPU(PartitionId(w));
+    dolly::SortedArrayVHandle::SetAllocCoreHint(PartitionId(w));
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;
@@ -733,6 +740,7 @@ void Loader<TPCCLoader::Order>::DoLoad()
       }
     }
   }
+  dolly::SortedArrayVHandle::SetAllocCoreHint(-1);
 }
 
 }

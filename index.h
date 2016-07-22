@@ -222,6 +222,9 @@ public:
 
   static const int kMaxRetry = 3;
 
+  static void SetAllocCoreHint(int h);
+  static void SuppressRegionLocks(bool b);
+
   SortedArrayVHandle();
 
   SortedArrayVHandle(SortedArrayVHandle &&rhs)
@@ -237,7 +240,7 @@ public:
     rhs.objects = nullptr;
   }
 
-  void EnsureSpace();
+  void EnsureSpace() __attribute__((noinline));
 
   void AppendNewVersion(uint64_t sid) __attribute__((noinline));
 

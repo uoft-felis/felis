@@ -3,9 +3,11 @@
 
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <cstring>
 #include <string>
 #include <numaif.h>
 #include <mutex>
+#include <atomic>
 
 namespace mem {
 
@@ -16,17 +18,22 @@ class Pool {
   void *data;
   size_t len;
   void *head;
+  size_t capacity;
+  size_t consumed;
+
   std::mutex m;
 public:
   Pool() : data(nullptr), len(0) {}
 
-  Pool(size_t chunk_size, size_t cap, int numa_node = -1) : len(cap * chunk_size) {
-    auto flags = MAP_ANONYMOUS | MAP_PRIVATE;
+  Pool(size_t chunk_size, size_t cap, int numa_node = -1)
+    : len(cap * chunk_size), capacity(cap), consumed(0) {
+
+    int flags = MAP_ANONYMOUS | MAP_PRIVATE;
     if (len > (2 << 20))
       flags |= MAP_HUGETLB;
 
     data = mmap(nullptr, len, PROT_READ | PROT_WRITE, flags, -1, 0);
-    if (data == nullptr) {
+    if (data == (void *) -1) {
       perror("mmap");
       std::abort();
     }
@@ -38,8 +45,8 @@ public:
 	std::abort();
       }
     }
+#ifdef NDEBUG
     // manually prefault
-#if 0
     for (volatile uint8_t *p = (uint8_t *) data; p < (uint8_t *) data + len; p += 4096) {
       (*p) = 0;
     }
@@ -68,6 +75,7 @@ public:
 
     uintptr_t ptr = *(uintptr_t *) head;
     head = (void *) ptr;
+    consumed++;
     return r;
   }
 
@@ -75,20 +83,25 @@ public:
     std::unique_lock<std::mutex> l(m, std::defer_lock);
     if (LockRequired) l.lock();
 
+    assert(ptr >= data && ptr < (uint8_t *) data + len);
     *(uintptr_t *) ptr = (uintptr_t) head;
     head = ptr;
+    consumed--;
   }
+
+  size_t nr_consumed() const { return consumed; }
 };
 
 template <bool LockRequired = false>
 class Region {
   typedef Pool<LockRequired> PoolType;
-  PoolType pools[16];
-  size_t proposed_caps[16];
+  static const int kMaxPools = 20;
+  PoolType pools[32];
+  size_t proposed_caps[32];
 public:
   Region() {
-    for (int i = 0; i < 16; i++) {
-      proposed_caps[i] = (16 << 20) / (1 << (6 + i));
+    for (int i = 0; i < kMaxPools; i++) {
+      proposed_caps[i] = (128 << 20) / (1 << (6 + i));
     }
   }
 
@@ -96,27 +109,21 @@ public:
 
   static int SizeToClass(size_t sz) {
     int idx = 64 - __builtin_clzl(sz - 1) - 6;
-    assert(idx < 16);
+    assert(idx < kMaxPools);
     return idx < 0 ? 0 : idx;
   }
 
   void set_pool_capacity(size_t sz, size_t cap) {
-    fprintf(stderr, "capacity %d = %ld\n", SizeToClass(sz), cap);
     proposed_caps[SizeToClass(sz)] = cap;
   }
 
   void InitPools(int node = -1) {
-    for (int i = 64; i <= (2 << 20); i *= 2) {
-      int idx = SizeToClass(i);
-
-      assert(idx < 16);
-      fprintf(stderr, "init pools %d: %d %d on node %d\n", idx, i, proposed_caps[idx], node);
-      new (&pools[idx]) PoolType(i, proposed_caps[idx], node);
+    for (int i = 0; i < kMaxPools; i++) {
+      new (&pools[i]) PoolType(1 << (i + 6), proposed_caps[i], node);
     }
   }
 
   void *Alloc(size_t sz) {
-    assert(SizeToClass(sz) < 16 && SizeToClass(sz) >= 0);
     void * r = pools[SizeToClass(sz)].Alloc();
     if (r == nullptr) {
       fprintf(stderr, "size %ld on class %d has no more memory preallocated\n", sz, SizeToClass(sz));
@@ -131,7 +138,7 @@ public:
   }
 };
 
-typedef Region<false> ThreadLocalRegion;
+typedef Region<true> ThreadLocalRegion;
 
 void InitThreadLocalRegions(int tot);
 ThreadLocalRegion &GetThreadLocalRegion(int idx);

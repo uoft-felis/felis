@@ -167,7 +167,7 @@ private:
 protected:
   static uint64_t kGlobSID;
 public:
-  static const size_t kBrkSize = 32 << 20;
+  static const size_t kBrkSize = 16 << 20;
   typedef mem::Pool<true> BrkPool;
   static BrkPool *pools;
 };

@@ -240,7 +240,8 @@ void Txn::SetupReExec()
 BaseRequest *BaseRequest::CreateRequestFromChannel(go::InputSocketChannel *channel, Epoch *epoch)
 {
   uint8_t type = 0;
-  channel->Read(&type, 1);
+  if (!channel->Read(&type, 1))
+    std::abort();
   assert(type != 0);
   assert(type <= GetGlobalFactoryMap().rbegin()->first);
   logger->debug("txn req type {0:d}", type);

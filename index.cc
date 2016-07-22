@@ -167,16 +167,34 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 
 const int SortedArrayVHandle::kMaxRetry;
 
+static __thread int gSortedArrayAllocCoreHint = -1;
+
+void SortedArrayVHandle::SetAllocCoreHint(int h)
+{
+  if (h >= 0) h = h % Epoch::kNrThreads;
+  gSortedArrayAllocCoreHint = h;
+}
+
+static int SortedArrayCurrentCoreId()
+{
+  if (gSortedArrayAllocCoreHint != -1) {
+    return gSortedArrayAllocCoreHint;
+  } else {
+    return go::Scheduler::CurrentThreadPoolId() - 1;
+  }
+}
+
 SortedArrayVHandle::SortedArrayVHandle()
   : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber())
 {
-  alloc_by_coreid = go::Scheduler::CurrentThreadPoolId() - 1;
   capacity = 4;
   size = 0;
 
   const size_t len = capacity * sizeof(uint64_t);
-  uint8_t *p = (uint8_t *) malloc(2 * len);
-  // uint8_t *p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
+  alloc_by_coreid = SortedArrayCurrentCoreId();
+
+  // uint8_t *p = (uint8_t *) malloc(2 * len);
+  uint8_t *p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
 
   versions = (uint64_t *) p;
   objects = (uintptr_t *) (p + len);
@@ -187,10 +205,14 @@ void SortedArrayVHandle::EnsureSpace()
   if (unlikely(size == capacity)) {
     capacity *= 2;
     const size_t len = capacity * sizeof(uint64_t);
-    auto &r = mem::GetThreadLocalRegion(alloc_by_coreid);
+    auto old_id = alloc_by_coreid;
     void *old_p = versions;
-    uint8_t *p = (uint8_t *) malloc(2 * len);
-    // uint8_t *p = (uint8_t *) r.Alloc(2 * len);
+    uint8_t *p = nullptr;
+
+    alloc_by_coreid = SortedArrayCurrentCoreId();
+
+    // uint8_t *p = (uint8_t *) malloc(2 * len);
+    p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
 
     memcpy(p, versions, len / 2);
     memcpy(p + len, objects, len / 2);
@@ -198,8 +220,8 @@ void SortedArrayVHandle::EnsureSpace()
     versions = (uint64_t *) p;
     objects = (uintptr_t *) (p + len);
 
-    // r.Free(old_p, len);
-    free(old_p);
+    mem::GetThreadLocalRegion(old_id).Free(old_p, len);
+    // free(old_p);
   }
 }
 
