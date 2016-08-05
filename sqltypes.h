@@ -9,6 +9,8 @@
 #include <cstring>
 #include <cassert>
 
+#include "mem.h"
+
 namespace sql {
 
 // types that looks like a built-in C++ type, let's keep them all in lower-case!
@@ -377,10 +379,22 @@ struct VarStr {
   static size_t NewSize(uint16_t length) { return sizeof(VarStr) + length; }
 
   static VarStr *New(uint16_t length) {
-    VarStr *ins = (VarStr *) malloc(NewSize(length));
+    int region_id = mem::CurrentAllocAffinity();
+    VarStr *ins = (VarStr *) mem::GetThreadLocalRegion(region_id).Alloc(NewSize(length));
     ins->len = length;
+    ins->region_id = region_id;
     ins->data = (uint8_t *) ins + sizeof(VarStr);
     return ins;
+  }
+
+  static void operator delete(void *ptr) {
+    VarStr *ins = (VarStr *) ptr;
+    auto &r = mem::GetThreadLocalRegion(ins->region_id);
+    if (__builtin_expect(ins->data == (uint8_t *) ptr + sizeof(VarStr), 1)) {
+      r.Free(ptr, sizeof(VarStr) + ins->len);
+    } else {
+      r.Free(ptr, sizeof(VarStr)); // don't know who's gonna do that
+    }
   }
 
   static VarStr *FromAlloca(void *ptr, uint16_t length) {
@@ -391,6 +405,7 @@ struct VarStr {
   }
 
   uint16_t len;
+  int region_id;
   const uint8_t *data;
 
   bool operator<(const VarStr &rhs) const {

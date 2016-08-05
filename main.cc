@@ -6,8 +6,9 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include "net-io.h"
 #include "epoch.h"
+#include "index.h"
+#include "client.h"
 #include "goplusplus/gopp.h"
 #include "goplusplus/epoll-channel.h"
 
@@ -172,15 +173,21 @@ int main(int argc, char *argv[])
     malloc(sizeof(dolly::Epoch::BrkPool) * tot_nodes);
   for (int nid = 0; nid < tot_nodes; nid++) {
     new (&dolly::Epoch::pools[nid])
-      dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 3 * mem::kNrCorePerNode, nid);
+      dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 20 * mem::kNrCorePerNode, nid);
   }
   mem::InitThreadLocalRegions(dolly::Epoch::kNrThreads);
   for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
     auto &r = mem::GetThreadLocalRegion(i);
     r.set_pool_capacity(64, 16 << 20);
     r.set_pool_capacity(128, 16 << 20);
+    r.set_pool_capacity(256, 2 << 20);
+    r.set_pool_capacity(512, 1 << 20);
+    r.set_pool_capacity(1024, 1 << 20);
     r.InitPools(i / mem::kNrCorePerNode);
   }
+
+  dolly::SortedArrayVHandle::InitPools();
+
   logger->info("memory ready");
 
   logger->info("setting up co-routine thread pool");
@@ -189,71 +196,14 @@ int main(int argc, char *argv[])
   logger->info("loading base dataset");
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
 
-  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(0);
+  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(20);
   std::mutex m;
   m.lock();
 
-  auto epoch_routine = go::Make([peer_fds, replay_from_file, epoch_ch] {
-      try {
-	std::vector<go::EpollSocket *> socks;
+  auto epoch_routine = new dolly::ClientFetcher(peer_fds, epoch_ch);
+  auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m);
 
-	for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
-	  auto sock = new go::EpollSocket(peer_fds[i], go::GlobalEpoll(),
-					  new go::InputSocketChannel(16 << 20),
-					  new go::OutputSocketChannel(4096));
-	  sock->input_channel()->buffer_mutex().Disable();
-	  sock->output_channel()->buffer_mutex().Disable();
-	  if (replay_from_file) {
-	    auto out = sock->output_channel();
-	    std::stringstream ss;
-	    ss << "GET /dolly-net." << i << ".dump HTTP/1.0\r\n\r\n";
-	    out->Write(ss.str().c_str(), ss.str().length());
-	    out->Flush();
-	    auto in = sock->input_channel();
-	    uint8_t ch;
-	    int line_len = 0;
-	    while (in->Read(&ch)) {
-	      if (ch == '\r') {
-		continue;
-	      } else if (ch == '\n') {
-		if (line_len == 0) break;
-		line_len = 0;
-	      } else {
-		line_len++;
-	      }
-	    }
-	  }
-
-	  socks.push_back(sock);
-	}
-	while (true) {
-	  auto epoch = new dolly::Epoch(socks);
-	  logger->info("received a complete epoch");
-	  epoch_ch->Write(epoch);
-	}
-      } catch (dolly::ParseBufferEOF &ex) {
-	logger->info("EOF");
-	epoch_ch->Flush();
-	epoch_ch->Close();
-      }
-    });
-
-  auto epoch_executor = go::Make([epoch_ch, &m] {
-      PerfLog p;
-      while (true) {
-	bool eof = false;
-	logger->info("executor waiting...");
-	auto epoch = epoch_ch->Read(eof);
-	if (eof) {
-	  m.unlock();
-	  break;
-	}
-	epoch->Setup();
-	epoch->ReExec();
-	delete epoch;
-      }
-      p.Show("Epoch Executor total");
-    });
+  epoch_routine->set_replay_from_file(replay_from_file);
 
   go::CreateGlobalEpoll();
 

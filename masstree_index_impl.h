@@ -119,14 +119,12 @@ protected:
   static threadinfo &GetThreadInfo();
 
   VHandle *InsertOrCreate(const VarStr *k) {
-    // VHandle *result = Search(k);
-    // if (result) return result;
     auto &ti = GetThreadInfo();
     typename MasstreeMap::cursor_type cursor(map, k->data, k->len);
     bool found = cursor.find_insert(ti);
     if (!found)
-      cursor.value() = new VHandle();
-    VHandle *result = cursor.value();
+      cursor.value() = VHandle::New();
+    auto result = cursor.value();
     cursor.finish(1, ti);
     assert(result != nullptr);
     return result;

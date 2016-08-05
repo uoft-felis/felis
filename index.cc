@@ -107,8 +107,8 @@ void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
       goto next;
 
     // update this node
-    free((void *) entry->key);
-    free(entry->obj);
+    delete entry->key;
+    delete entry->obj;
 
     entry->key = key;
     entry->obj = obj;
@@ -156,7 +156,7 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
       validator->CaptureWrite(entry->key, entry->obj);
     mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
 
-    free((void *) entry->key);
+    delete entry->key;
     delete entry;
     node = prev;
   }
@@ -167,23 +167,6 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 
 const int SortedArrayVHandle::kMaxRetry;
 
-static __thread int gSortedArrayAllocCoreHint = -1;
-
-void SortedArrayVHandle::SetAllocCoreHint(int h)
-{
-  if (h >= 0) h = h % Epoch::kNrThreads;
-  gSortedArrayAllocCoreHint = h;
-}
-
-static int SortedArrayCurrentCoreId()
-{
-  if (gSortedArrayAllocCoreHint != -1) {
-    return gSortedArrayAllocCoreHint;
-  } else {
-    return go::Scheduler::CurrentThreadPoolId() - 1;
-  }
-}
-
 SortedArrayVHandle::SortedArrayVHandle()
   : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber())
 {
@@ -191,7 +174,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   size = 0;
 
   const size_t len = capacity * sizeof(uint64_t);
-  alloc_by_coreid = SortedArrayCurrentCoreId();
+  alloc_by_coreid = mem::CurrentAllocAffinity();
 
   // uint8_t *p = (uint8_t *) malloc(2 * len);
   uint8_t *p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
@@ -209,7 +192,7 @@ void SortedArrayVHandle::EnsureSpace()
     void *old_p = versions;
     uint8_t *p = nullptr;
 
-    alloc_by_coreid = SortedArrayCurrentCoreId();
+    alloc_by_coreid = mem::CurrentAllocAffinity();
 
     // uint8_t *p = (uint8_t *) malloc(2 * len);
     p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
@@ -262,6 +245,8 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
   assert(size > 0);
   int pos;
 
+  __builtin_prefetch(versions);
+
   auto it = std::lower_bound(versions, versions + size, sid);
   if (it == versions) {
     // it's likely a read-your-own-insert happened here.
@@ -302,11 +287,21 @@ void SortedArrayVHandle::GarbageCollect()
 
   for (int i = size - 2; i >= 0; i--) {
     VarStr *o = (VarStr *) objects[i];
-    free(o);
+    delete o;
   }
   versions[0] = latest_version;
   objects[0] = latest_object;
   size = 1;
+}
+
+mem::Pool<true> *SortedArrayVHandle::pools;
+
+void SortedArrayVHandle::InitPools()
+{
+  pools = (mem::Pool<true> *) malloc(sizeof(mem::Pool<true>) * Epoch::kNrThreads);
+  for (int i = 0; i < Epoch::kNrThreads; i++) {
+    new (&pools[i]) mem::Pool<true>(64, 16 << 20, i / mem::kNrCorePerNode);
+  }
 }
 
 }

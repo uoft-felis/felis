@@ -3,6 +3,7 @@
 
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <cassert>
 #include <cstring>
 #include <string>
 #include <numaif.h>
@@ -47,7 +48,10 @@ public:
     }
 #ifdef NDEBUG
     // manually prefault
-    for (volatile uint8_t *p = (uint8_t *) data; p < (uint8_t *) data + len; p += 4096) {
+    size_t pgsz = 4096;
+    if (len > (2 << 20))
+      pgsz = (2 << 20);
+    for (volatile uint8_t *p = (uint8_t *) data; p < (uint8_t *) data + len; p += pgsz) {
       (*p) = 0;
     }
 #endif
@@ -59,6 +63,7 @@ public:
       *(uintptr_t *) p = ptr;
     }
   }
+
   Pool(const Pool &rhs) = delete;
 
   ~Pool() {
@@ -142,6 +147,9 @@ typedef Region<true> ThreadLocalRegion;
 
 void InitThreadLocalRegions(int tot);
 ThreadLocalRegion &GetThreadLocalRegion(int idx);
+
+int CurrentAllocAffinity();
+void SetThreadLocalAllocAffinity(int h);
 
 }
 

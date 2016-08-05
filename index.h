@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
+#include "mem.h"
 #include "log.h"
 #include "epoch.h"
 #include "util.h"
@@ -222,8 +223,13 @@ public:
 
   static const int kMaxRetry = 3;
 
-  static void SetAllocCoreHint(int h);
-  static void SuppressRegionLocks(bool b);
+  static mem::Pool<true> *pools;
+
+  static void InitPools();
+
+  static SortedArrayVHandle *New() {
+    return new (pools[mem::CurrentAllocAffinity()].Alloc()) SortedArrayVHandle();
+  }
 
   SortedArrayVHandle();
 
@@ -245,9 +251,9 @@ public:
   void AppendNewVersion(uint64_t sid) __attribute__((noinline));
 
   volatile uintptr_t *WithVersion(uint64_t sid) __attribute__((noinline));
-  VarStr *ReadWithVersion(uint64_t sid) __attribute__((noinline));
+  VarStr *ReadWithVersion(uint64_t sid);
 
-  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false) {
+  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false) __attribute__((noinline)) {
     assert(this);
     // Writing to exact location
     auto it = std::lower_bound(versions, versions + size, sid);
@@ -264,6 +270,8 @@ public:
 
   void GarbageCollect();
 };
+
+static_assert(sizeof(SortedArrayVHandle) < 64, "SortedArrayVHandle is larger than a cache line");
 
 }
 
