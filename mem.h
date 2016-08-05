@@ -5,6 +5,7 @@
 #include <sys/mman.h>
 #include <cassert>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <numaif.h>
 #include <mutex>

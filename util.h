@@ -5,8 +5,11 @@
 
 #include <sys/types.h>
 #include <functional>
+#include <string>
 #include <cassert>
 #include <unistd.h>
+#include <sched.h>
+#include <pthread.h>
 
 #define CACHELINE_SIZE 64
 #define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))

@@ -4,11 +4,11 @@ project(dolly C CXX ASM)
 
 add_definitions(-std=c++11 -pthread)
 
-set(CMAKE_CXX_COMPILER "clang++")
-set(CMAKE_C_COMPILER "clang")
+# set(CMAKE_CXX_COMPILER "clang++")
+# set(CMAKE_C_COMPILER "clang")
 
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -g -flto -fno-omit-frame-pointer -DNDEBUG")
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-flto -fwhole-program -g -fno-omit-frame-pointer")
+set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -stdlib=libc++ -g -flto -fno-omit-frame-pointer -DNDEBUG")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-flto -stdlib=libc++ -fwhole-program -g -fno-omit-frame-pointer")
 
 #set(CMAKE_CXX_FLAGS "-fsanitize=address -fno-omit-frame-pointer")
 #set(CMAKE_EXE_LINKER_FLAGS "-fsanitize=address")
