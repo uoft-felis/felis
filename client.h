@@ -27,7 +27,7 @@ class ClientExecutor : public go::Routine {
   std::mutex *mp;
 public:
   ClientExecutor(go::BufferChannel<Epoch *> *ch, std::mutex *m) : epoch_ch(ch), mp(m) {
-    /* set_share(true); */
+    // set_share(true);
   }
 
   virtual void Run();

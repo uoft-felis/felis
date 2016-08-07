@@ -155,10 +155,10 @@ void Epoch::Setup()
   for (int i = 0; i < kNrThreads; i++) {
     count_downs[i] = tss[i].size();
     auto sched = go::GetSchedulerFromPool(i + 1);
-     for (auto &t: tss[i]) {
-       sched->WakeUp(t.txn, true);
+    for (int j = 0; j < tss[i].size(); j++) {
+      auto &t = tss[i][j];
+      sched->WakeUp(t.txn, j < tss[i].size() - 1);
     }
-    sched->Signal();
   }
 
   uint8_t ch[kNrThreads];
@@ -173,12 +173,12 @@ void Epoch::ReExec()
   for (int i = 0; i < kNrThreads; i++) {
     count_downs[i] = tss[i].size();
     auto sched = go::GetSchedulerFromPool(i + 1);
-    for (auto &t: tss[i]) {
+    for (int j = 0; j < tss[i].size(); j++) {
+      auto &t = tss[i][j];
       if (!t.txn->is_detached()) std::abort();
       t.txn->Reset();
-      sched->WakeUp(t.txn, true);
+      sched->WakeUp(t.txn, j < tss[i].size() - 1);
     }
-    sched->Signal();
   }
   uint8_t ch[kNrThreads];
   wait_channel->Read(ch, kNrThreads);

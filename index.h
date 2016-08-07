@@ -62,7 +62,7 @@ public:
     delete [] htable;
   }
 
-  unsigned int __attribute__ ((noinline)) Hash(int fid, const VarStr *key) {
+  unsigned int Hash(int fid, const VarStr *key) {
     unsigned int h = fid;
     unsigned int l = key->len;
     const uint8_t *p = key->data;
@@ -246,14 +246,14 @@ public:
     rhs.objects = nullptr;
   }
 
-  void EnsureSpace() __attribute__((noinline));
+  void EnsureSpace();
 
-  void AppendNewVersion(uint64_t sid) __attribute__((noinline));
+  void AppendNewVersion(uint64_t sid);
 
-  volatile uintptr_t *WithVersion(uint64_t sid) __attribute__((noinline));
+  volatile uintptr_t *WithVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid);
 
-  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false) __attribute__((noinline)) {
+  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false) {
     assert(this);
     // Writing to exact location
     auto it = std::lower_bound(versions, versions + size, sid);
