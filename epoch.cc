@@ -59,6 +59,8 @@ protected:
       logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
       auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
       ts_vec->emplace_back(TxnTimeStamp{commit_ts, skew_ts, req});
+      // if (ts_vec->size() % (16 << 10) == 0)
+      // VoluntarilyPreempt();
     }
     std::sort(ts_vec->begin(), ts_vec->end());
     wait_channel->Write((uint8_t) (pb_eof ? 1 : 0));
@@ -88,11 +90,11 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   {
     bool eof = false;
     bool need_throw = false;
-    for (int i = 0; i < kNrThreads; i++) {
-      uint8_t ch = wait_channel->Read(eof);
-      if (ch) need_throw = true;
-    }
-    if (need_throw) throw ParseBufferEOF();
+    uint8_t res[kNrThreads];
+
+    wait_channel->Read(res, kNrThreads);
+    for (int i = 0; i < kNrThreads; i++)
+      if (res[i] != 0) throw ParseBufferEOF();
   }
   p.Show("IO takes");
 
@@ -159,10 +161,8 @@ void Epoch::Setup()
     sched->Signal();
   }
 
-  for (int i = 0; i < kNrThreads; i++) {
-    bool eof = false;
-    uint8_t ch = wait_channel->Read(eof);
-  }
+  uint8_t ch[kNrThreads];
+  wait_channel->Read(ch, kNrThreads);
   p.Show("SetupReExec takes");
 }
 
@@ -180,10 +180,8 @@ void Epoch::ReExec()
     }
     sched->Signal();
   }
-  for (int i = 0; i < kNrThreads; i++) {
-    bool eof = false;
-    uint8_t ch = wait_channel->Read(eof);
-  }
+  uint8_t ch[kNrThreads];
+  wait_channel->Read(ch, kNrThreads);
   p.Show("ReExec takes");
 }
 

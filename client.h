@@ -13,7 +13,9 @@ class ClientFetcher : public go::Routine {
   int *peer_fds;
   go::BufferChannel<Epoch *> *epoch_ch;
 public:
-  ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch) : peer_fds(fds), epoch_ch(ch) {}
+  ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch) : peer_fds(fds), epoch_ch(ch) {
+    set_share(true);
+  }
 
   void set_replay_from_file(bool b) { replay_from_file = b; }
 
@@ -24,7 +26,9 @@ class ClientExecutor : public go::Routine {
   go::BufferChannel<Epoch *> *epoch_ch;
   std::mutex *mp;
 public:
-  ClientExecutor(go::BufferChannel<Epoch *> *ch, std::mutex *m) : epoch_ch(ch), mp(m) {}
+  ClientExecutor(go::BufferChannel<Epoch *> *ch, std::mutex *m) : epoch_ch(ch), mp(m) {
+    /* set_share(true); */
+  }
 
   virtual void Run();
 };

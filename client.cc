@@ -37,6 +37,8 @@ void ClientFetcher::Run()
       }
       socks.push_back(sock);
     }
+    // set_urgent(true);
+
     while (true) {
       logger->info("firing up an epoch");
       auto epoch = new dolly::Epoch(socks);
@@ -48,11 +50,13 @@ void ClientFetcher::Run()
     epoch_ch->Flush();
     epoch_ch->Close();
   }
+  fprintf(stderr, "exiting from %d\n", go::Scheduler::CurrentThreadPoolId());
 }
 
 void ClientExecutor::Run()
 {
   PerfLog p;
+  set_urgent(true);
   while (true) {
     bool eof = false;
     logger->info("executor waiting...");
