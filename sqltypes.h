@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <cstring>
 #include <cassert>
@@ -429,6 +430,16 @@ struct VarStr {
     T instance;
     instance.DecodeFrom(this);
     return instance;
+  }
+
+  std::string ToHex() const {
+    char buf[8];
+    std::stringstream ss;
+    for (int i = 0; i < len; i++) {
+      snprintf(buf, 8, "%x ", data[i]);
+      ss << buf;
+    }
+    return ss.str();
   }
 };
 

@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 #include <cassert>
+#include <atomic>
 #include <unistd.h>
 #include <sched.h>
 #include <pthread.h>
@@ -172,6 +173,23 @@ static void PinToCPU(int cpu)
   CPU_SET(cpu % sysconf(_SC_NPROCESSORS_CONF), &set);
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
   pthread_yield();
+}
+
+// Counter Stuff
+class Counter {
+  std::atomic_long cnt;
+  std::string name;
+public:
+  Counter(const char *n) : cnt(0), name(n) {}
+  ~Counter() {
+    fprintf(stderr, "%s: %ld\n", name.c_str(), cnt.load());
+  }
+  void Increment() { cnt.fetch_add(1); }
+};
+
+static void Trace(Counter &c)
+{
+  c.Increment();
 }
 
 }

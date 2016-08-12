@@ -18,8 +18,10 @@ void ClientFetcher::Run()
       if (replay_from_file) {
 	auto out = sock->output_channel();
 	std::stringstream ss;
-	ss << "GET /dolly-net." << i << ".dump HTTP/1.0\r\n\r\n";
+	ss << "GET /" << workload_name << "/" << Epoch::kNrThreads
+	   << "/dolly-net." << i << ".dump HTTP/1.0\r\n\r\n";
 	out->Write(ss.str().c_str(), ss.str().length());
+	// fprintf(stderr, "%s\n", ss.str().c_str());
 	out->Flush();
 	auto in = sock->input_channel();
 	uint8_t ch;

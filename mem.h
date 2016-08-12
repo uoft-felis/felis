@@ -10,6 +10,9 @@
 #include <numaif.h>
 #include <mutex>
 #include <atomic>
+#include <fstream>
+
+#include "json11/json11.hpp"
 
 namespace mem {
 
@@ -50,18 +53,21 @@ public:
 #ifdef NDEBUG
     // manually prefault
     size_t pgsz = 4096;
-    if (len > (2 << 20))
+    if (len > (2 << 20)) {
       pgsz = (2 << 20);
+    }
     for (volatile uint8_t *p = (uint8_t *) data; p < (uint8_t *) data + len; p += pgsz) {
+      fprintf(stderr, "prefaulting %s %lu%%\r", len > (2 << 20) ? "hugepage" : "        ",
+	      (p - (uint8_t *) data) * 100 / len);
       (*p) = 0;
     }
 #endif
     head = data;
     for (size_t i = 0; i < cap; i++) {
       uintptr_t p = (uintptr_t) head + i * chunk_size;
-      uintptr_t ptr = p + chunk_size;
-      if (i == cap - 1) ptr = 0;
-      *(uintptr_t *) p = ptr;
+      uintptr_t next = p + chunk_size;
+      if (i == cap - 1) next = 0;
+      *(uintptr_t *) p = next;
     }
   }
 
@@ -73,23 +79,26 @@ public:
   }
 
   void *Alloc() {
-    std::unique_lock<std::mutex> l(m, std::defer_lock);
-    if (LockRequired) l.lock();
+    std::unique_lock<std::mutex> l;
+    if (LockRequired) l = std::unique_lock<std::mutex>(m);
 
     void *r = head;
     if (r == nullptr) return nullptr;
 
-    uintptr_t ptr = *(uintptr_t *) head;
-    head = (void *) ptr;
+    if (r < data || r >= (uint8_t *) data + len)
+      std::abort();
+
+    uintptr_t next = *(uintptr_t *) head;
+    head = (void *) next;
+
     consumed++;
     return r;
   }
 
   void Free(void *ptr) {
-    std::unique_lock<std::mutex> l(m, std::defer_lock);
-    if (LockRequired) l.lock();
+    std::unique_lock<std::mutex> l;
+    if (LockRequired) l = std::unique_lock<std::mutex>(m);
 
-    assert(ptr >= data && ptr < (uint8_t *) data + len);
     *(uintptr_t *) ptr = (uintptr_t) head;
     head = ptr;
     consumed--;
@@ -117,6 +126,24 @@ public:
     int idx = 64 - __builtin_clzl(sz - 1) - 6;
     assert(idx < kMaxPools);
     return idx < 0 ? 0 : idx;
+  }
+
+  void ApplyFromConf(std::string filename) {
+    std::ifstream fin(filename);
+    std::string conf_text {std::istreambuf_iterator<char>(fin),
+	std::istreambuf_iterator<char>()};
+    std::string err;
+    json11::Json conf_doc = json11::Json::parse(conf_text, err);
+
+    if (!err.empty()) {
+      fprintf(stderr, "%s\n", err.c_str());
+      return;
+    }
+
+    auto json_map = conf_doc.object_items();
+    for (auto it = json_map.begin(); it != json_map.end(); ++it) {
+      set_pool_capacity(atoi(it->first.c_str()), it->second.int_value() << 20);
+    }
   }
 
   void set_pool_capacity(size_t sz, size_t cap) {

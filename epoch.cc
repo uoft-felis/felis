@@ -23,7 +23,7 @@ namespace dolly {
 
 uint64_t Epoch::kGlobSID = 0ULL;
 
-static uint64_t gGlobalEpoch;
+static uint64_t gGlobalEpoch = 0;
 
 class TxnIOReader : public go::Routine {
   std::vector<TxnTimeStamp> *ts_vec;
@@ -59,6 +59,7 @@ protected:
       logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
       auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
       ts_vec->emplace_back(TxnTimeStamp{commit_ts, skew_ts, req});
+
       // if (ts_vec->size() % (16 << 10) == 0)
       // VoluntarilyPreempt();
     }
@@ -71,7 +72,6 @@ const int Epoch::kNrThreads;
 
 Epoch::Epoch(std::vector<go::EpollSocket *> socks)
 {
-  ++gGlobalEpoch;
   InitBrks();
 
   PerfLog p;
@@ -117,6 +117,7 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
     nr_total++;
 
     auto t = ts.txn;
+
     t->set_serializable_id(++kGlobSID);
     t->set_wait_channel(wait_channel);
     t->set_count_down(&count_downs[ts_idx]);
@@ -133,23 +134,23 @@ Epoch::BrkPool *Epoch::pools;
 void Epoch::InitBrks()
 {
   for (int i = 0; i < kNrThreads; i++) {
-    brks[i].addr = (uint8_t *) pools[i / mem::kNrCorePerNode].Alloc(); // malloc(kBrkSize);
+    brks[i].addr = (uint8_t *) pools[i / mem::kNrCorePerNode].Alloc();
     brks[i].offset = 0;
   }
 }
 
 void Epoch::DestroyBrks()
 {
-  logger->info("deleting epoch and its mem");
   for (int i = 0; i < kNrThreads; i++) {
     pools[i / mem::kNrCorePerNode].Free(brks[i].addr);
-    // free(brks[i].addr);
   }
 }
 
 void Epoch::Setup()
 {
-  logger->info("setting up epoch");
+  gGlobalEpoch++;
+
+  logger->info("Setting up epoch {} {}", gGlobalEpoch, (void *) this);
   auto p = PerfLog();
 
   for (int i = 0; i < kNrThreads; i++) {
@@ -168,7 +169,6 @@ void Epoch::Setup()
 
 void Epoch::ReExec()
 {
-  logger->info("replaying");
   auto p = PerfLog();
   for (int i = 0; i < kNrThreads; i++) {
     count_downs[i] = tss[i].size();
@@ -195,6 +195,7 @@ uint64_t Epoch::CurrentEpochNumber()
 void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len, Epoch *epoch)
 {
   int cpu = go::Scheduler::CurrentThreadPoolId() - 1;
+  assert(key_pkt_len >= 8);
   uint8_t *buffer = (uint8_t *) epoch->AllocFromBrk(cpu, key_pkt_len);
 
   channel->Read(buffer, key_pkt_len);
@@ -231,6 +232,23 @@ void Txn::SetupReExec()
     var_str.data = kptr->data;
     auto &relation = mgr.GetRelationOrCreate(kptr->fid);
     relation.SetupReExec(&var_str, sid);
+    p += sizeof(TxnKey) + kptr->len;
+  }
+}
+
+void Txn::DebugKeys()
+{
+  uint8_t *key_buffer = (uint8_t *) keys;
+  uint8_t *p = key_buffer;
+  while (p < key_buffer + sz_key_buf) {
+    TxnKey *kptr = (TxnKey *) p;
+    std::stringstream ss;
+    for (int i = 0; i < kptr->len; i++) {
+      char buf[8];
+      snprintf(buf, 8, "0x%x ", kptr->data[i]);
+      ss << buf;
+    }
+    logger->debug("sid {} Debug Fid: {} Keys: {}", sid, kptr->fid, ss.str());
     p += sizeof(TxnKey) + kptr->len;
   }
 }

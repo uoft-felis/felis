@@ -1,6 +1,7 @@
 #ifndef CLIENT_H
 #define CLIENT_H
 
+#include <string>
 #include "goplusplus/gopp.h"
 #include "epoch.h"
 #include "util.h"
@@ -12,8 +13,10 @@ class ClientFetcher : public go::Routine {
   bool replay_from_file; // contact a local webserver
   int *peer_fds;
   go::BufferChannel<Epoch *> *epoch_ch;
+  std::string workload_name;
 public:
-  ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch) : peer_fds(fds), epoch_ch(ch) {
+  ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch, std::string name)
+    : peer_fds(fds), epoch_ch(ch), workload_name(name) {
     set_share(true);
   }
 

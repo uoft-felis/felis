@@ -100,7 +100,8 @@ void show_usage(const char *progname)
   std::exit(-1);
 }
 
-static const char *kDummyWebServerHost = "127.0.0.1";
+// static const char *kDummyWebServerHost = "127.0.0.1";
+static const char *kDummyWebServerHost = "142.150.234.186";
 static const int kDummyWebServerPort = 8000;
 
 int main(int argc, char *argv[])
@@ -108,8 +109,11 @@ int main(int argc, char *argv[])
   int opt;
   bool dump_only = false;
   bool replay_from_file = false;
+  std::string workload_name;
 
-  while ((opt = getopt(argc, argv, "dr")) != -1) {
+  InitializeLogger();
+
+  while ((opt = getopt(argc, argv, "drw:")) != -1) {
     switch (opt) {
     case 'd':
       dump_only = true;
@@ -117,15 +121,20 @@ int main(int argc, char *argv[])
     case 'r':
       replay_from_file = true;
       break;
+    case 'w':
+      workload_name = std::string(optarg);
+      break;
     default:
       show_usage(argv[0]);
       break;
     }
   }
 
-  // check
-
-  InitializeLogger();
+  if (workload_name == "") {
+    show_usage(argv[0]);
+    return -1;
+  }
+  logger->info("Running {} workload", workload_name);
 
   int fd = dolly::SetupServer();
   int peer_fd = -1;
@@ -173,16 +182,13 @@ int main(int argc, char *argv[])
     malloc(sizeof(dolly::Epoch::BrkPool) * tot_nodes);
   for (int nid = 0; nid < tot_nodes; nid++) {
     new (&dolly::Epoch::pools[nid])
-      dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 20 * mem::kNrCorePerNode, nid);
+      dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 2 * mem::kNrCorePerNode, nid);
   }
   mem::InitThreadLocalRegions(dolly::Epoch::kNrThreads);
   for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
     auto &r = mem::GetThreadLocalRegion(i);
-    r.set_pool_capacity(64, 16 << 20);
-    r.set_pool_capacity(128, 16 << 20);
-    r.set_pool_capacity(256, 2 << 20);
-    r.set_pool_capacity(512, 1 << 20);
-    r.set_pool_capacity(1024, 1 << 20);
+    r.ApplyFromConf("mem.json");
+    logger->info("setting up regions {}", i);
     r.InitPools(i / mem::kNrCorePerNode);
   }
 
@@ -196,11 +202,11 @@ int main(int argc, char *argv[])
   logger->info("loading base dataset");
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
 
-  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(20);
+  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(0);
   std::mutex m;
   m.lock();
 
-  auto epoch_routine = new dolly::ClientFetcher(peer_fds, epoch_ch);
+  auto epoch_routine = new dolly::ClientFetcher(peer_fds, epoch_ch, workload_name);
   auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m);
 
   epoch_routine->set_replay_from_file(replay_from_file);

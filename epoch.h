@@ -32,6 +32,10 @@ struct TxnKey {
 
 class Epoch;
 
+class DivergentOutputException : public std::exception {
+public:
+};
+
 class Txn : public go::Routine {
   TxnKey *keys;
   uint16_t sz_key_buf;
@@ -65,13 +69,20 @@ public:
 
   virtual void RunTxn() = 0;
   virtual int CoreAffinity() const = 0;
+
+  void DebugKeys();
 protected:
   virtual void Run() {
     if (is_setup) {
       SetupReExec();
       is_setup = false;
     } else {
-      RunTxn();
+      try {
+	RunTxn();
+      } catch (...) {
+	DebugKeys();
+	std::abort();
+      }
     }
     --(*count_down);
     // fprintf(stderr, "countdown %d\n", *count_down);
@@ -140,10 +151,9 @@ public:
   void ReExec();
 
   void *AllocFromBrk(int cpu, size_t sz) {
+    // if (brks[cpu].offset + sz >= kBrkSize) std::abort();
     void *p = brks[cpu].addr + brks[cpu].offset;
     brks[cpu].offset += sz;
-    if (brks[cpu].offset > kBrkSize)
-      std::abort();
     return p;
   }
 

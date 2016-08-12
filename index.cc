@@ -154,7 +154,12 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 
     if (validator)
       validator->CaptureWrite(entry->key, entry->obj);
-    mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
+    try {
+      mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
+    } catch (...) {
+      logger->critical("Error during commit key {}", entry->key->ToHex().c_str());
+      throw DivergentOutputException();
+    }
 
     delete entry->key;
     delete entry;
@@ -168,7 +173,7 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 const int SortedArrayVHandle::kMaxRetry;
 
 SortedArrayVHandle::SortedArrayVHandle()
-  : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber())
+  : lock(false), last_gc_epoch(Epoch::CurrentEpochNumber())
 {
   capacity = 4;
   size = 0;
@@ -181,6 +186,9 @@ SortedArrayVHandle::SortedArrayVHandle()
 
   versions = (uint64_t *) p;
   objects = (uintptr_t *) (p + len);
+
+  // slots = (TxnWaitSlot *) mem::GetThreadLocalRegion(alloc_by_coreid)
+  // .Alloc(sizeof(TxnWaitSlot) * capacity);
 }
 
 void SortedArrayVHandle::EnsureSpace()
@@ -194,8 +202,11 @@ void SortedArrayVHandle::EnsureSpace()
 
     alloc_by_coreid = mem::CurrentAllocAffinity();
 
+    auto &reg = mem::GetThreadLocalRegion(alloc_by_coreid);
+    auto &old_reg = mem::GetThreadLocalRegion(old_id);
+
     // uint8_t *p = (uint8_t *) malloc(2 * len);
-    p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
+    p = (uint8_t *) reg.Alloc(2 * len);
 
     memcpy(p, versions, len / 2);
     memcpy(p + len, objects, len / 2);
@@ -203,19 +214,30 @@ void SortedArrayVHandle::EnsureSpace()
     versions = (uint64_t *) p;
     objects = (uintptr_t *) (p + len);
 
-    mem::GetThreadLocalRegion(old_id).Free(old_p, len);
+    old_reg.Free(old_p, len);
+
+    // nobody's waiting on the slots right now anyway!
+    // old_reg.Free(slots, capacity / 2 * sizeof(TxnWaitSlot));
+    // slots = (TxnWaitSlot *) reg.Alloc(capacity * sizeof(TxnWaitSlot));
     // free(old_p);
+
+    // but we need to initialize them all because somebody need to use that
+    // any time later
+    // for (int i = 0; i < capacity; i++) {
+    // new (&slots[i]) TxnWaitSlot();
+    // }
   }
 }
 
 void SortedArrayVHandle::AppendNewVersion(uint64_t sid)
 {
   bool expected = false;
-  while (!locked.compare_exchange_weak(expected, true, std::memory_order_release,
-				       std::memory_order_relaxed)) {
+  while (!lock.compare_exchange_weak(expected, true,
+				     std::memory_order_release,
+				     std::memory_order_relaxed)) {
+    asm volatile("pause": : :"memory");
     expected = false;
   }
-
   uint64_t ep = Epoch::CurrentEpochNumber();
   if (ep > last_gc_epoch) {
     // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
@@ -230,14 +252,21 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid)
 
   // now we need to swap backwards... hope this won't take too long...
   // TODO: replace this with a cleverer binary search if matters
-  for (int i = size - 1; i > 0; i--) {
-    if (versions[i - 1] > versions[i]) {
-      std::swap(versions[i - 1], versions[i]);
+  uint64_t last = versions[size - 1];
+  for (int i = size - 1; i >= 0; i--) {
+    if (i > 0 && versions[i - 1] == last) {
+      size--;
+      goto done_sort; // duplicates!
+    } else if (i == 0 || versions[i - 1] < last) {
+      memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
+      versions[i] = last;
+      goto done_sort;
     } else {
-      break;
+      assert (objects[i - 1] == PENDING_VALUE);
     }
   }
-  locked.store(false);
+done_sort:
+  lock.store(false);
 }
 
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
@@ -259,6 +288,9 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
   return &objects[pos];
 }
 
+util::Counter gTxnSwitch("txn context switch");
+util::Counter gTxnNeedWait("txn wait on dummy");
+
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   // if (versions.size() > 0) assert(versions[0] == 0);
@@ -268,19 +300,25 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   // Locking + cv might be a bad idea. lock is too expensive for this critical path!
   // So, let's just do an avoidance.
   // Also, make sure this is running on a go::Routine
+
+  if (*addr != PENDING_VALUE) {
+    return (VarStr *) *addr;
+  }
+  util::Trace(gTxnNeedWait);
+
   while (true) {
     for (int i = 0; i < kMaxRetry; i++) {
       if (*addr != PENDING_VALUE) {
 	return (VarStr *) *addr;
       }
     }
+    util::Trace(gTxnSwitch);
     go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
   }
 }
 
 void SortedArrayVHandle::GarbageCollect()
 {
-  return;
   if (size < 2) return;
   uint64_t latest_version = versions[size - 1];
   uintptr_t latest_object = objects[size - 1];

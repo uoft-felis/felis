@@ -95,7 +95,7 @@ class BaseRelation {
 protected:
   int id;
 public:
-  BaseRelation() {}
+  BaseRelation() : id(-1) {}
 
   void set_id(int relation_id) { id = relation_id; }
   int relation_id() { return id; }
@@ -113,7 +113,7 @@ public:
     return it->second;
   }
 
-private:
+protected:
   std::map<std::string, int> relation_id_map;
 };
 
@@ -123,11 +123,20 @@ public:
   static const int kMaxNrRelations = 256;
 
   RelationManagerPolicy() {
-    for (int i = 0; i < kMaxNrRelations; i++) relations[i].set_id(i);
+    // for (int i = 0; i < kMaxNrRelations; i++) relations[i].set_id(i);
+    for (auto &p: relation_id_map) {
+      relations[p.second].set_id(p.second);
+    }
   }
 
   T &GetRelationOrCreate(int fid) {
     assert(fid < kMaxNrRelations);
+#ifndef NDEBUG
+    if (fid < 0 || fid >= kMaxNrRelations || relations[fid].relation_id() == -1) {
+      logger->critical("WTF is {}?", fid);
+      std::abort();
+    }
+#endif
     return relations[fid];
   }
 protected:
@@ -214,12 +223,17 @@ private:
 class SortedArrayVHandle {
 public:
   int alloc_by_coreid;
-  std::atomic_bool locked;
+  std::atomic_bool lock;
   int64_t last_gc_epoch;
   size_t capacity;
   size_t size;
   uint64_t *versions;
   uintptr_t *objects;
+  struct TxnWaitSlot {
+    std::mutex lock;
+    go::WaitSlot slot;
+  };
+  // TxnWaitSlot *slots;
 
   static const int kMaxRetry = 3;
 
@@ -233,18 +247,7 @@ public:
 
   SortedArrayVHandle();
 
-  SortedArrayVHandle(SortedArrayVHandle &&rhs)
-    : locked(false), last_gc_epoch(Epoch::CurrentEpochNumber()) {
-    alloc_by_coreid = rhs.alloc_by_coreid;
-    capacity = rhs.capacity;
-    size = rhs.size;
-    versions = rhs.versions;
-    objects = rhs.objects;
-
-    rhs.capacity = rhs.size = 0;
-    rhs.versions = nullptr;
-    rhs.objects = nullptr;
-  }
+  SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
   void EnsureSpace();
 
@@ -259,8 +262,12 @@ public:
     auto it = std::lower_bound(versions, versions + size, sid);
     if (it == versions + size || *it != sid) {
       logger->critical("Diverging outcomes! sid {} pos {}/{}", sid, it - versions, size);
-      sleep(1);
-      std::abort();
+      std::stringstream ss;
+      for (int i = 0; i < size; i++) {
+	ss << versions[i] << ' ';
+      }
+      logger->critical("Versions: {}", ss.str());
+      throw DivergentOutputException();
     }
     if (!dry_run) {
       volatile uintptr_t *addr = &objects[it - versions];
