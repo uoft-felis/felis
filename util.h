@@ -12,6 +12,8 @@
 #include <sched.h>
 #include <pthread.h>
 
+#include "goplusplus/gopp.h"
+
 #define CACHELINE_SIZE 64
 #define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))
 #define __XCONCAT(a, b) __XCONCAT2(a, b)
@@ -176,20 +178,32 @@ static void PinToCPU(int cpu)
 }
 
 // Counter Stuff
+template <int N>
 class Counter {
-  std::atomic_long cnt;
+  long cnt[N];
   std::string name;
 public:
-  Counter(const char *n) : cnt(0), name(n) {}
-  ~Counter() {
-    fprintf(stderr, "%s: %ld\n", name.c_str(), cnt.load());
+  Counter(const char *n) : name(n) {
+    memset(cnt, 0, sizeof(long) * N);
   }
-  void Increment() { cnt.fetch_add(1); }
+  ~Counter() {
+#ifdef TRACE_ENABLE
+    long sum = 0;
+    for (int i = 0; i < N; i++) sum += cnt[i];
+    fprintf(stderr, "%s: %ld\n", name.c_str(), sum);
+#endif
+  }
+  void Increment() {
+    cnt[go::Scheduler::CurrentThreadPoolId() - 1]++;
+  }
 };
 
-static void Trace(Counter &c)
+template <int N>
+static void Trace(Counter<N> &c)
 {
+#ifdef TRACE_ENABLE
   c.Increment();
+#endif
 }
 
 }
