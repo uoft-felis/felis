@@ -206,17 +206,17 @@ int main(int argc, char *argv[])
   std::mutex m;
   m.lock();
 
-  auto epoch_routine = new dolly::ClientFetcher(peer_fds, epoch_ch, workload_name);
-  auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m);
+  auto epoch_fetcher = new dolly::ClientFetcher(peer_fds, epoch_ch, workload_name);
+  auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m, epoch_fetcher);
 
-  epoch_routine->set_replay_from_file(replay_from_file);
+  epoch_fetcher->set_replay_from_file(replay_from_file);
 
   go::CreateGlobalEpoll();
 
   auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });
   t.detach();
 
-  epoch_routine->StartOn(1);
+  epoch_fetcher->StartOn(1);
   epoch_executor->StartOn(2);
 
   m.lock(); // waits

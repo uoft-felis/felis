@@ -53,11 +53,12 @@ public:
 #ifdef NDEBUG
     // manually prefault
     size_t pgsz = 4096;
-    if (len > (2 << 20)) {
+    if (flags & MAP_HUGETLB) {
       pgsz = (2 << 20);
     }
     for (volatile uint8_t *p = (uint8_t *) data; p < (uint8_t *) data + len; p += pgsz) {
-      fprintf(stderr, "prefaulting %s %lu%%\r", len > (2 << 20) ? "hugepage" : "        ",
+      fprintf(stderr, "prefaulting %s %lu%%\r",
+	      (flags & MAP_HUGETLB) ? "hugepage" : "        ",
 	      (p - (uint8_t *) data) * 100 / len);
       (*p) = 0;
     }
@@ -116,14 +117,14 @@ class Region {
 public:
   Region() {
     for (int i = 0; i < kMaxPools; i++) {
-      proposed_caps[i] = (128 << 20) / (1 << (6 + i));
+      proposed_caps[i] = 1 << (27 - 5 - i);
     }
   }
 
   Region(const Region &) = delete;
 
   static int SizeToClass(size_t sz) {
-    int idx = 64 - __builtin_clzl(sz - 1) - 6;
+    int idx = 64 - __builtin_clzl(sz - 1) - 5;
     assert(idx < kMaxPools);
     return idx < 0 ? 0 : idx;
   }
@@ -148,11 +149,14 @@ public:
 
   void set_pool_capacity(size_t sz, size_t cap) {
     proposed_caps[SizeToClass(sz)] = cap;
+    fprintf(stderr, "%lu, bin %d, cap %lu, estimate size %.1lfMB\n", sz,
+	    SizeToClass(sz), cap,
+	    (1 << (SizeToClass(sz) + 5)) * cap * 1. / 1024 / 1024);
   }
 
   void InitPools(int node = -1) {
     for (int i = 0; i < kMaxPools; i++) {
-      new (&pools[i]) PoolType(1 << (i + 6), proposed_caps[i], node);
+      new (&pools[i]) PoolType(1 << (i + 5), proposed_caps[i], node);
     }
   }
 

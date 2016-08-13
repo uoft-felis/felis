@@ -6,6 +6,7 @@
 #include "epoch.h"
 #include "util.h"
 #include "mem.h"
+#include "log.h"
 
 namespace dolly {
 
@@ -14,13 +15,16 @@ class ClientFetcher : public go::Routine {
   int *peer_fds;
   go::BufferChannel<Epoch *> *epoch_ch;
   std::string workload_name;
+
+  PerfLog *p;
 public:
   ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch, std::string name)
-    : peer_fds(fds), epoch_ch(ch), workload_name(name) {
+    : peer_fds(fds), epoch_ch(ch), workload_name(name), p(nullptr) {
     set_share(true);
   }
 
   void set_replay_from_file(bool b) { replay_from_file = b; }
+  PerfLog *perf_log() { return p; }
 
   virtual void Run();
 };
@@ -28,8 +32,10 @@ public:
 class ClientExecutor : public go::Routine {
   go::BufferChannel<Epoch *> *epoch_ch;
   std::mutex *mp;
+  ClientFetcher *fetcher;
 public:
-  ClientExecutor(go::BufferChannel<Epoch *> *ch, std::mutex *m) : epoch_ch(ch), mp(m) {
+  ClientExecutor(go::BufferChannel<Epoch *> *ch, std::mutex *m, ClientFetcher *cf)
+    : epoch_ch(ch), mp(m), fetcher(cf) {
     // set_share(true);
   }
 

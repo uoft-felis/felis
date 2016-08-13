@@ -177,6 +177,8 @@ static void PinToCPU(int cpu)
   pthread_yield();
 }
 
+// #define TRACE_ENABLE
+
 // Counter Stuff
 template <int N>
 class Counter {

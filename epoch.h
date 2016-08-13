@@ -157,7 +157,7 @@ public:
     return p;
   }
 
-  static const int kNrThreads = 16;
+  static const int kNrThreads = 24;
 
 private:
   void InitBrks();

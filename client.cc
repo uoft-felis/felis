@@ -41,8 +41,12 @@ void ClientFetcher::Run()
     }
     // set_urgent(true);
 
+    int nr = 0;
     while (true) {
       logger->info("firing up an epoch");
+
+      if (++nr == 30) p = new PerfLog();
+
       auto epoch = new dolly::Epoch(socks);
       logger->info("received a complete epoch");
       epoch_ch->Write(epoch);
@@ -57,7 +61,6 @@ void ClientFetcher::Run()
 
 void ClientExecutor::Run()
 {
-  PerfLog p;
   set_urgent(true);
   while (true) {
     bool eof = false;
@@ -71,7 +74,7 @@ void ClientExecutor::Run()
     epoch->ReExec();
     delete epoch;
   }
-  p.Show("Epoch Executor total");
+  fetcher->perf_log()->Show("Epoch Executor total");
 }
 
 }

@@ -256,24 +256,7 @@ public:
   volatile uintptr_t *WithVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid);
 
-  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false) {
-    assert(this);
-    // Writing to exact location
-    auto it = std::lower_bound(versions, versions + size, sid);
-    if (it == versions + size || *it != sid) {
-      logger->critical("Diverging outcomes! sid {} pos {}/{}", sid, it - versions, size);
-      std::stringstream ss;
-      for (int i = 0; i < size; i++) {
-	ss << versions[i] << ' ';
-      }
-      logger->critical("Versions: {}", ss.str());
-      throw DivergentOutputException();
-    }
-    if (!dry_run) {
-      volatile uintptr_t *addr = &objects[it - versions];
-      *addr = (uintptr_t) obj;
-    }
-  }
+  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
 
   void GarbageCollect();
 };

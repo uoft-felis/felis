@@ -288,8 +288,7 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
   return &objects[pos];
 }
 
-util::Counter gTxnSwitch("txn context switch");
-util::Counter gTxnNeedWait("txn wait on dummy");
+util::Counter<Epoch::kNrThreads> gTxnNeedWait("txn context switch");
 
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
@@ -297,23 +296,33 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   volatile uintptr_t *addr = WithVersion(sid);
   if (!addr) return nullptr;
 
-  // Locking + cv might be a bad idea. lock is too expensive for this critical path!
-  // So, let's just do an avoidance.
-  // Also, make sure this is running on a go::Routine
+  if (*addr != PENDING_VALUE) return (VarStr *) *addr;
 
-  if (*addr != PENDING_VALUE) {
-    return (VarStr *) *addr;
-  }
   util::Trace(gTxnNeedWait);
 
-  while (true) {
-    for (int i = 0; i < kMaxRetry; i++) {
-      if (*addr != PENDING_VALUE) {
-	return (VarStr *) *addr;
-      }
+  while (*addr == PENDING_VALUE) {
+    asm("pause" : : :"memory");
+  }
+  return (VarStr *) *addr;
+}
+
+void SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+{
+  assert(this);
+  // Writing to exact location
+  auto it = std::lower_bound(versions, versions + size, sid);
+  if (it == versions + size || *it != sid) {
+    logger->critical("Diverging outcomes! sid {} pos {}/{}", sid, it - versions, size);
+    std::stringstream ss;
+    for (int i = 0; i < size; i++) {
+      ss << versions[i] << ' ';
     }
-    util::Trace(gTxnSwitch);
-    go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
+    logger->critical("Versions: {}", ss.str());
+    throw DivergentOutputException();
+  }
+  if (!dry_run) {
+    volatile uintptr_t *addr = &objects[it - versions];
+    *addr = (uintptr_t) obj;
   }
 }
 
