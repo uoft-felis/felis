@@ -45,7 +45,7 @@ void ClientFetcher::Run()
     while (true) {
       logger->info("firing up an epoch");
 
-      if (++nr == 30) p = new PerfLog();
+      if (++nr == 31) p = new PerfLog();
 
       auto epoch = new dolly::Epoch(socks);
       logger->info("received a complete epoch");
