@@ -120,7 +120,7 @@ protected:
 template <class T>
 class RelationManagerPolicy : public RelationManagerBase {
 public:
-  static const int kMaxNrRelations = 256;
+  static const int kMaxNrRelations = 1024;
 
   RelationManagerPolicy() {
     // for (int i = 0; i < kMaxNrRelations; i++) relations[i].set_id(i);
@@ -235,7 +235,7 @@ public:
   };
   // TxnWaitSlot *slots;
 
-  static const int kMaxRetry = 3;
+  static const int kMaxRetry = 80000;
 
   static mem::Pool<true> *pools;
 

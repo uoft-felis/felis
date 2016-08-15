@@ -235,8 +235,8 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid)
   while (!lock.compare_exchange_weak(expected, true,
 				     std::memory_order_release,
 				     std::memory_order_relaxed)) {
-    asm volatile("pause": : :"memory");
     expected = false;
+    asm("pause" : : :"memory");
   }
   uint64_t ep = Epoch::CurrentEpochNumber();
   if (ep > last_gc_epoch) {
@@ -288,7 +288,8 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
   return &objects[pos];
 }
 
-util::Counter<Epoch::kNrThreads> gTxnNeedWait("txn context switch");
+util::Counter<Epoch::kNrThreads> gTxnNeedWait("txn need to wait");
+util::Counter<Epoch::kNrThreads> gLongWait("long txn wait");
 
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
@@ -300,10 +301,16 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 
   util::Trace(gTxnNeedWait);
 
-  while (*addr == PENDING_VALUE) {
+again:
+  for (int i = 0; i < kMaxRetry; i++) {
+    if (*addr != PENDING_VALUE) {
+      return (VarStr *) *addr;
+    }
     asm("pause" : : :"memory");
   }
-  return (VarStr *) *addr;
+  util::Trace(gLongWait);
+  // go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
+  goto again;
 }
 
 void SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)

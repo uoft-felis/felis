@@ -55,7 +55,7 @@ uint g_microbench_wr_rows = 0; // this number of rows to write
 // 100 - always use a random wh
 double g_wh_spread = 0;
 
-size_t g_tpcc_scale_factor = 16; // scale factor that's running on the client!
+size_t g_tpcc_scale_factor = dolly::Epoch::kNrThreads; // scale factor that's running on the client!
 
 // TPC-C workload mix
 // 0: NewOrder
@@ -67,7 +67,7 @@ size_t g_tpcc_scale_factor = 16; // scale factor that's running on the client!
 // 6: Microbenchmark - others will be set to 0 if g_microbench is set
 // 7: Microbenchmark-simple - just do one insert, get, and put
 // 8: Microbenchmark-random - same as Microbenchmark, but uses random read-set range
-unsigned g_txn_workload_mix[] = {41, 43, 4, 4, 4, 4, 0, 0, 0}; // default TPC-C workload mix
+// unsigned g_txn_workload_mix[] = {41, 43, 4, 4, 4, 4, 0, 0, 0}; // default TPC-C workload mix
 //static unsigned g_txn_workload_mix[] = {45, 43, 4, 4, 4, 0, 0, 0};
 //static unsigned g_txn_workload_mix[] = {0, 100, 0, 0, 0, 0, 0, 0};
 

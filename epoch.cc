@@ -25,15 +25,21 @@ uint64_t Epoch::kGlobSID = 0ULL;
 
 static uint64_t gGlobalEpoch = 0;
 
+#define TID_SORT 1
+
 class TxnIOReader : public go::Routine {
   std::vector<TxnTimeStamp> *ts_vec;
   go::EpollSocket *sock;
   go::BufferChannel<uint8_t> *wait_channel;
   Epoch *epoch;
+  int *count_downs;
+  int ts_idx;
 public:
-  TxnIOReader(std::vector<TxnTimeStamp> *tss, go::EpollSocket *s, go::BufferChannel<uint8_t> *ch,
-	      Epoch *e)
-    : ts_vec(tss), sock(s), wait_channel(ch), epoch(e) {}
+  TxnIOReader(std::vector<TxnTimeStamp> *tss, go::EpollSocket *s,
+	      go::BufferChannel<uint8_t> *ch, Epoch *e, int *count_down_array,
+	      int id)
+    : ts_vec(tss), sock(s), wait_channel(ch), epoch(e),
+      count_downs(count_down_array), ts_idx(id) {}
 
 protected:
   virtual void Run() {
@@ -62,6 +68,11 @@ protected:
 
       // if (ts_vec->size() % (16 << 10) == 0)
       // VoluntarilyPreempt();
+#ifdef TID_SORT
+      req->set_serializable_id(skew_ts == 0 ? commit_ts * 2 : skew_ts * 2 - 1);
+      req->set_wait_channel(wait_channel);
+      req->set_count_down(&count_downs[ts_idx]);
+#endif
     }
     std::sort(ts_vec->begin(), ts_vec->end());
     wait_channel->Write((uint8_t) (pb_eof ? 1 : 0));
@@ -75,6 +86,7 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   InitBrks();
 
   PerfLog p;
+  int nr_total;
   size_t tss_offset[kNrThreads];
   TxnIOReader *readers[kNrThreads];
   wait_channel = new go::BufferChannel<uint8_t>(kNrThreads);
@@ -83,7 +95,7 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
     auto sock = socks[i];
     tss_offset[i] = 0;
 
-    readers[i] = new TxnIOReader(&tss[i], socks[i], wait_channel, this);
+    readers[i] = new TxnIOReader(&tss[i], socks[i], wait_channel, this, count_downs, i);
     readers[i]->StartOn(i + 1);
   }
 
@@ -93,14 +105,16 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
     uint8_t res[kNrThreads];
 
     wait_channel->Read(res, kNrThreads);
-    for (int i = 0; i < kNrThreads; i++)
+    for (int i = 0; i < kNrThreads; i++) {
       if (res[i] != 0) throw ParseBufferEOF();
+      nr_total += tss[i].size();
+    }
   }
   p.Show("IO takes");
 
   p = PerfLog();
-  logger->info("merge sorting...");
-  int nr_total = 0;
+
+#ifdef LINEAR_MERGE_SORT
   while (true) {
     TxnTimeStamp ts;
     int ts_idx = -1;
@@ -114,7 +128,6 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
     }
     if (ts_idx == -1) break;
     tss_offset[ts_idx]++;
-    nr_total++;
 
     auto t = ts.txn;
 
@@ -125,6 +138,40 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
     logger->debug("txn sid {} type 0x{:x} value csum 0x{:x} timestamp commit_ts {} skew_ts {}",
 		  t->serializable_id(), t->type, t->value_checksum(), ts.commit_ts, ts.skew_ts);
   }
+#endif
+
+#ifdef HEAP_MERGE_SORT
+  typedef std::tuple<TxnTimeStamp, int> HeapItem;
+  typedef std::greater<HeapItem> HeapCompareType;
+  HeapCompareType heap_comp;
+  std::vector<HeapItem> heap;
+  for (int i = 0; i < kNrThreads; i++) {
+    if (!tss[i].empty()) heap.push_back(std::make_tuple(tss[i][0], i));
+  }
+  std::make_heap(heap.begin(), heap.end(), heap_comp);
+
+  while (!heap.empty()) {
+    std::pop_heap(heap.begin(), heap.end(), heap_comp);
+    auto &ts = std::get<0>(heap.back());
+    auto ts_idx = std::get<1>(heap.back());
+    auto t = ts.txn;
+
+    __builtin_prefetch(&tss[ts_idx][tss_offset[ts_idx] + 1]);
+
+    t->set_serializable_id(++kGlobSID);
+    t->set_wait_channel(wait_channel);
+    t->set_count_down(&count_downs[ts_idx]);
+
+    tss_offset[ts_idx]++;
+    if (__builtin_expect(tss_offset[ts_idx] == tss[ts_idx].size(), false)) {
+      heap.pop_back();
+    } else {
+      heap.back() = std::make_tuple(tss[ts_idx][tss_offset[ts_idx]], ts_idx);
+      std::push_heap(heap.begin(), heap.end(), heap_comp);
+    }
+  }
+#endif
+
   logger->info("epoch contains {} txns", nr_total);
   p.Show("Sorting takes");
 }
@@ -222,9 +269,18 @@ void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len, Epoc
 
 void Txn::SetupReExec()
 {
+  /*
+   * Here, we could have SetupReExec() synchronously. However, it might
+   * content on some workloads. So, let's do this asynchronously.
+   *
+   * Since kptr->fid should never be 0, let's clear that to 0 every time we
+   * sucessfully SetupReExec() one key.
+   */
   auto &mgr = Instance<RelationManager>();
+
   uint8_t *key_buffer = (uint8_t *) keys;
   uint8_t *p = key_buffer;
+
   while (p < key_buffer + sz_key_buf) {
     TxnKey *kptr = (TxnKey *) p;
     VarStr var_str;

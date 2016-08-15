@@ -157,22 +157,25 @@ public:
     return p;
   }
 
-  static const int kNrThreads = 24;
+#ifdef NR_THREADS
+  static const int kNrThreads = NR_THREADS;
+#endif
 
 private:
   void InitBrks();
   void DestroyBrks();
 
 private:
+  int count_downs[kNrThreads];
+  go::BufferChannel<uint8_t> *wait_channel;
+  std::vector<TxnTimeStamp> tss[kNrThreads];
+
   struct {
     uint8_t *addr;
     int offset;
     char __padding__[4];
   } brks[kNrThreads];
 
-  int count_downs[kNrThreads];
-  go::BufferChannel<uint8_t> *wait_channel;
-  std::vector<TxnTimeStamp> tss[kNrThreads];
 
 protected:
   static uint64_t kGlobSID;
