@@ -39,7 +39,7 @@ void ClientFetcher::Run()
       }
       socks.push_back(sock);
     }
-    // set_urgent(true);
+    set_urgent(true);
 
     int nr = 0;
     while (true) {
@@ -70,8 +70,8 @@ void ClientExecutor::Run()
       mp->unlock();
       break;
     }
-    epoch->Setup();
-    epoch->ReExec();
+    epoch->IssueReExec();
+    epoch->WaitForReExec();
     delete epoch;
   }
   fetcher->perf_log()->Show("Epoch Executor total");

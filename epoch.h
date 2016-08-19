@@ -10,6 +10,7 @@
 #include <mutex>
 #include <functional>
 #include <atomic>
+#include <limits.h>
 
 #include "net-io.h"
 #include "sqltypes.h"
@@ -36,6 +37,31 @@ class DivergentOutputException : public std::exception {
 public:
 };
 
+class Txn;
+
+struct TxnQueue {
+  Txn *t;
+  TxnQueue *next, *prev;
+
+  void Init() {
+    prev = next = this;
+  }
+
+  void Add(TxnQueue *parent) {
+    prev = parent;
+    next = parent->next;
+
+    next->prev = this;
+    prev->next = this;
+  }
+
+  void Detach() {
+    next->prev = prev;
+    prev->next = next;
+    prev = next = nullptr;
+  }
+};
+
 class Txn : public go::Routine {
   TxnKey *keys;
   uint16_t sz_key_buf;
@@ -44,14 +70,24 @@ class Txn : public go::Routine {
   uint64_t sid;
   bool is_setup;
 
-  go::BufferChannel<uint8_t> *wait_channel;
-  int *count_down;
+  go::WaitBarrier *barrier;
+  int *count;
+  int count_max;
+  Epoch *epoch;
+
+  TxnQueue node;
+  TxnQueue *reuse_q;
 
 public:
   uint8_t type;
 
+  struct FinishCounter {
+    int count = 0;
+    int max = INT_MAX;
+  } *fcnt;
+
   Txn() : key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
-	  is_setup(true), wait_channel(nullptr) {
+	  is_setup(true) {
     set_reuse(true);
   }
 
@@ -64,33 +100,22 @@ public:
   void set_serializable_id(uint64_t id) { sid = id; }
   uint64_t serializable_id() const { return sid; }
 
-  void set_wait_channel(go::BufferChannel<uint8_t> *ch) { wait_channel = ch; }
-  void set_count_down(int *c) { count_down = c; }
+  void set_wait_barrier(go::WaitBarrier *b) { barrier = b; }
+  void set_counter(FinishCounter *cnt) { fcnt = cnt; }
+  void set_epoch(Epoch *e) { epoch = e; }
+  void set_reuse_queue(TxnQueue *reuse_queue) { reuse_q = reuse_queue; }
+
+  void PushToReuseQueue() {
+    node.t = this;
+    node.Add(reuse_q->prev);
+  }
 
   virtual void RunTxn() = 0;
   virtual int CoreAffinity() const = 0;
 
   void DebugKeys();
 protected:
-  virtual void Run() {
-    if (is_setup) {
-      SetupReExec();
-      is_setup = false;
-    } else {
-      try {
-	RunTxn();
-      } catch (...) {
-	DebugKeys();
-	std::abort();
-      }
-    }
-    --(*count_down);
-    // fprintf(stderr, "countdown %d\n", *count_down);
-    if (*count_down == 0 && wait_channel) {
-      // fprintf(stderr, "done, notify control thread\n");
-      wait_channel->Write(uint8_t{0});
-    }
-  }
+  virtual void Run();
 };
 
 class BaseRequest : public Txn {
@@ -141,14 +166,13 @@ struct TxnTimeStamp
   }
 };
 
+class TxnIOReader;
+
 class Epoch {
 public:
   Epoch(std::vector<go::EpollSocket *> socks);
-  ~Epoch() { DestroyBrks(); }
+  ~Epoch();
   static uint64_t CurrentEpochNumber();
-
-  void Setup();
-  void ReExec();
 
   void *AllocFromBrk(int cpu, size_t sz) {
     // if (brks[cpu].offset + sz >= kBrkSize) std::abort();
@@ -157,8 +181,15 @@ public:
     return p;
   }
 
+  void IssueReExec();
+  void WaitForReExec();
+
+  go::BufferChannel<uint8_t> *channel() { return wait_channel; }
+
 #ifdef NR_THREADS
   static const int kNrThreads = NR_THREADS;
+#else
+  static const int kNrThreads = 16;
 #endif
 
 private:
@@ -166,9 +197,10 @@ private:
   void DestroyBrks();
 
 private:
-  int count_downs[kNrThreads];
   go::BufferChannel<uint8_t> *wait_channel;
-  std::vector<TxnTimeStamp> tss[kNrThreads];
+  TxnIOReader *readers[kNrThreads];
+  go::WaitBarrier *wait_barrier;
+  TxnQueue reuse_q[kNrThreads];
 
   struct {
     uint8_t *addr;

@@ -25,59 +25,125 @@ uint64_t Epoch::kGlobSID = 0ULL;
 
 static uint64_t gGlobalEpoch = 0;
 
-#define TID_SORT 1
-
 class TxnIOReader : public go::Routine {
-  std::vector<TxnTimeStamp> *ts_vec;
   go::EpollSocket *sock;
-  go::BufferChannel<uint8_t> *wait_channel;
+  go::WaitBarrier *barrier;
   Epoch *epoch;
-  int *count_downs;
-  int ts_idx;
+  Txn::FinishCounter fcnt;
+  TxnQueue *reuse_q;
+
 public:
-  TxnIOReader(std::vector<TxnTimeStamp> *tss, go::EpollSocket *s,
-	      go::BufferChannel<uint8_t> *ch, Epoch *e, int *count_down_array,
-	      int id)
-    : ts_vec(tss), sock(s), wait_channel(ch), epoch(e),
-      count_downs(count_down_array), ts_idx(id) {}
+  TxnIOReader(go::EpollSocket *s, go::WaitBarrier *bar, Epoch *e, TxnQueue *q)
+    : sock(s), barrier(bar), epoch(e), reuse_q(q) {
+    set_reuse(true);
+  }
 
 protected:
-  virtual void Run() {
-    auto *channel = sock->input_channel();
-    bool pb_eof = false;
-
-    uint64_t commit_ts;
-    int64_t skew_ts;
-    while (true) {
-      if (!channel->Read(&commit_ts, sizeof(uint64_t))) {
-	pb_eof = true;
-	break;
-      }
-
-      if (commit_ts == 0) {
-	break;
-      }
-
-      if (!channel->Read(&skew_ts, sizeof(int64_t))) {
-	pb_eof = true;
-	break;
-      }
-      logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
-      auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
-      ts_vec->emplace_back(TxnTimeStamp{commit_ts, skew_ts, req});
-
-      // if (ts_vec->size() % (16 << 10) == 0)
-      // VoluntarilyPreempt();
-#ifdef TID_SORT
-      req->set_serializable_id(skew_ts == 0 ? commit_ts * 2 : skew_ts * 2 - 1);
-      req->set_wait_channel(wait_channel);
-      req->set_count_down(&count_downs[ts_idx]);
-#endif
-    }
-    std::sort(ts_vec->begin(), ts_vec->end());
-    wait_channel->Write((uint8_t) (pb_eof ? 1 : 0));
-  }
+  virtual void Run();
 };
+
+void TxnIOReader::Run()
+{
+  /* Dealing with EOF and end of epoch is easy
+   * End of epoch: add another TxnIOReader, and return.
+   * EOF: just return
+   */
+  auto *channel = sock->input_channel();
+
+  uint64_t commit_ts;
+  int64_t skew_ts;
+  bool eof = false;
+  int count_max = 0;
+
+  while (true) {
+    if (!channel->Read(&commit_ts, sizeof(uint64_t))) {
+      eof = true;
+      break; // EOF
+    }
+
+    if (commit_ts == 0) {
+      break;
+    }
+
+    if (!channel->Read(&skew_ts, sizeof(int64_t))) {
+      eof = true;
+      break; // EOF
+    }
+    logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
+    auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
+
+    count_max++;
+    req->set_serializable_id(skew_ts == 0 ? commit_ts * 2 : skew_ts * 2 - 1);
+    req->set_wait_barrier(barrier);
+    req->set_counter(&fcnt);
+    req->set_epoch(epoch);
+    req->set_reuse_queue(reuse_q);
+
+    req->PushToReuseQueue();
+  }
+  fcnt.max = count_max; // should never be 0 here
+  if (eof)
+    epoch->channel()->Write(uint8_t{1});
+  else
+    epoch->channel()->Write(uint8_t{0});
+}
+
+class TxnRunner : public go::Routine {
+  TxnQueue *queue;
+public:
+  TxnRunner(TxnQueue *q) : queue(q) {}
+  virtual void Run();
+};
+
+void TxnRunner::Run()
+{
+  auto ent = queue->next;
+  int tot = 0;
+  while (ent != queue) {
+    auto next = ent->next;
+
+    ent->t->Reset();
+    ent->t->StartOn(go::Scheduler::CurrentThreadPoolId());
+    go::Scheduler::Current()->WakeUp(ent->t, next != queue);
+
+    ent->Detach();
+    ent = next;
+    tot++;
+  }
+  logger->info("{} issued another {}", go::Scheduler::CurrentThreadPoolId(), tot);
+}
+
+void Txn::Run()
+{
+  if (is_setup) {
+    SetupReExec();
+    is_setup = false;
+
+    // Run me later again for RunTxn(), but now, we'll exit.
+    // Exiting right now provide fastpath context switch.
+    PushToReuseQueue();
+
+    if (++fcnt->count == fcnt->max) {
+      fcnt->count = 0;
+      barrier->Wait();
+      auto runner = new TxnRunner(reuse_q);
+      runner->StartOn(go::Scheduler::CurrentThreadPoolId());
+      logger->info("{} has total {} txns", go::Scheduler::CurrentThreadPoolId(), fcnt->max);
+    }
+  } else {
+    try {
+      RunTxn();
+      // logger->info("{} done on thread {}", serializable_id(), go::Scheduler::CurrentThreadPoolId());
+    } catch (...) {
+      DebugKeys();
+      std::abort();
+    }
+    if (++fcnt->count == fcnt->max) {
+      // notify the driver thread, which only used to hold and free stuff...
+      epoch->channel()->Write(uint8_t{0});
+    }
+  }
+}
 
 const int Epoch::kNrThreads;
 
@@ -86,16 +152,14 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
   InitBrks();
 
   PerfLog p;
-  int nr_total;
-  size_t tss_offset[kNrThreads];
-  TxnIOReader *readers[kNrThreads];
   wait_channel = new go::BufferChannel<uint8_t>(kNrThreads);
+  wait_barrier = new go::WaitBarrier(kNrThreads);
 
   for (int i = 0; i < kNrThreads; i++) {
     auto sock = socks[i];
-    tss_offset[i] = 0;
+    reuse_q[i].Init();
 
-    readers[i] = new TxnIOReader(&tss[i], socks[i], wait_channel, this, count_downs, i);
+    readers[i] = new TxnIOReader(socks[i], wait_barrier, this, &reuse_q[i]);
     readers[i]->StartOn(i + 1);
   }
 
@@ -107,73 +171,33 @@ Epoch::Epoch(std::vector<go::EpollSocket *> socks)
     wait_channel->Read(res, kNrThreads);
     for (int i = 0; i < kNrThreads; i++) {
       if (res[i] != 0) throw ParseBufferEOF();
-      nr_total += tss[i].size();
     }
   }
   p.Show("IO takes");
+}
 
-  p = PerfLog();
-
-#ifdef LINEAR_MERGE_SORT
-  while (true) {
-    TxnTimeStamp ts;
-    int ts_idx = -1;
-    for (int i = 0; i < kNrThreads; i++) {
-      if (tss_offset[i] == tss[i].size()) continue;
-
-      if (ts_idx == -1 || tss[i][tss_offset[i]] < ts) {
-	ts = tss[i][tss_offset[i]];
-	ts_idx = i;
-      }
-    }
-    if (ts_idx == -1) break;
-    tss_offset[ts_idx]++;
-
-    auto t = ts.txn;
-
-    t->set_serializable_id(++kGlobSID);
-    t->set_wait_channel(wait_channel);
-    t->set_count_down(&count_downs[ts_idx]);
-
-    logger->debug("txn sid {} type 0x{:x} value csum 0x{:x} timestamp commit_ts {} skew_ts {}",
-		  t->serializable_id(), t->type, t->value_checksum(), ts.commit_ts, ts.skew_ts);
-  }
-#endif
-
-#ifdef HEAP_MERGE_SORT
-  typedef std::tuple<TxnTimeStamp, int> HeapItem;
-  typedef std::greater<HeapItem> HeapCompareType;
-  HeapCompareType heap_comp;
-  std::vector<HeapItem> heap;
+Epoch::~Epoch()
+{
+  delete wait_barrier;
   for (int i = 0; i < kNrThreads; i++) {
-    if (!tss[i].empty()) heap.push_back(std::make_tuple(tss[i][0], i));
+    delete readers[i];
   }
-  std::make_heap(heap.begin(), heap.end(), heap_comp);
+  DestroyBrks();
+}
 
-  while (!heap.empty()) {
-    std::pop_heap(heap.begin(), heap.end(), heap_comp);
-    auto &ts = std::get<0>(heap.back());
-    auto ts_idx = std::get<1>(heap.back());
-    auto t = ts.txn;
-
-    __builtin_prefetch(&tss[ts_idx][tss_offset[ts_idx] + 1]);
-
-    t->set_serializable_id(++kGlobSID);
-    t->set_wait_channel(wait_channel);
-    t->set_count_down(&count_downs[ts_idx]);
-
-    tss_offset[ts_idx]++;
-    if (__builtin_expect(tss_offset[ts_idx] == tss[ts_idx].size(), false)) {
-      heap.pop_back();
-    } else {
-      heap.back() = std::make_tuple(tss[ts_idx][tss_offset[ts_idx]], ts_idx);
-      std::push_heap(heap.begin(), heap.end(), heap_comp);
-    }
+void Epoch::IssueReExec()
+{
+  ++gGlobalEpoch;
+  for (int i = 0; i < kNrThreads; i++) {
+    auto runner = new TxnRunner(&reuse_q[i]);
+    runner->StartOn(i + 1);
   }
-#endif
+}
 
-  logger->info("epoch contains {} txns", nr_total);
-  p.Show("Sorting takes");
+void Epoch::WaitForReExec()
+{
+  uint8_t res[kNrThreads];
+  wait_channel->Read(res, kNrThreads);
 }
 
 Epoch::BrkPool *Epoch::pools;
@@ -191,45 +215,6 @@ void Epoch::DestroyBrks()
   for (int i = 0; i < kNrThreads; i++) {
     pools[i / mem::kNrCorePerNode].Free(brks[i].addr);
   }
-}
-
-void Epoch::Setup()
-{
-  gGlobalEpoch++;
-
-  logger->info("Setting up epoch {} {}", gGlobalEpoch, (void *) this);
-  auto p = PerfLog();
-
-  for (int i = 0; i < kNrThreads; i++) {
-    count_downs[i] = tss[i].size();
-    auto sched = go::GetSchedulerFromPool(i + 1);
-    for (int j = 0; j < tss[i].size(); j++) {
-      auto &t = tss[i][j];
-      sched->WakeUp(t.txn, j < tss[i].size() - 1);
-    }
-  }
-
-  uint8_t ch[kNrThreads];
-  wait_channel->Read(ch, kNrThreads);
-  p.Show("SetupReExec takes");
-}
-
-void Epoch::ReExec()
-{
-  auto p = PerfLog();
-  for (int i = 0; i < kNrThreads; i++) {
-    count_downs[i] = tss[i].size();
-    auto sched = go::GetSchedulerFromPool(i + 1);
-    for (int j = 0; j < tss[i].size(); j++) {
-      auto &t = tss[i][j];
-      if (!t.txn->is_detached()) std::abort();
-      t.txn->Reset();
-      sched->WakeUp(t.txn, j < tss[i].size() - 1);
-    }
-  }
-  uint8_t ch[kNrThreads];
-  wait_channel->Read(ch, kNrThreads);
-  p.Show("ReExec takes");
 }
 
 uint64_t Epoch::CurrentEpochNumber()
