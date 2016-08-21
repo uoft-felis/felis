@@ -13,8 +13,6 @@ void ClientFetcher::Run()
       auto sock = new go::EpollSocket(peer_fds[i], go::GlobalEpoll(),
 				      new go::InputSocketChannel(16 << 20),
 				      new go::OutputSocketChannel(4096));
-      sock->input_channel()->buffer_mutex().Disable();
-      sock->output_channel()->buffer_mutex().Disable();
       if (replay_from_file) {
 	auto out = sock->output_channel();
 	std::stringstream ss;
@@ -26,7 +24,12 @@ void ClientFetcher::Run()
 	auto in = sock->input_channel();
 	uint8_t ch;
 	int line_len = 0;
-	while (in->Read(&ch)) {
+	while (true) {
+	  bool rs = in->Read(&ch);
+	  if (!rs) {
+	    logger->critical("server returned EOF prematurely");
+	    std::abort();
+	  }
 	  if (ch == '\r') {
 	    continue;
 	  } else if (ch == '\n') {
@@ -70,8 +73,10 @@ void ClientExecutor::Run()
       mp->unlock();
       break;
     }
+    logger->info("issueing...");
     epoch->IssueReExec();
     epoch->WaitForReExec();
+    logger->info("all done for the epoch");
     delete epoch;
   }
   fetcher->perf_log()->Show("Epoch Executor total");

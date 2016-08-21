@@ -82,6 +82,8 @@ void TxnIOReader::Run()
     req->PushToReuseQueue();
   }
   fcnt.max = count_max; // should never be 0 here
+  // logger->info("finished, socket ptr {} on {}", (void *) sock,
+  // go::Scheduler::CurrentThreadPoolId());
   if (eof)
     epoch->channel()->Write(uint8_t{1});
   else
@@ -104,13 +106,17 @@ void TxnRunner::Run()
 
     ent->t->Reset();
     ent->t->StartOn(go::Scheduler::CurrentThreadPoolId());
-    go::Scheduler::Current()->WakeUp(ent->t, next != queue);
+    if (next == queue) {
+      go::Scheduler::Current()->WakeUp(ent->t);
+    } else {
+      go::Scheduler::Current()->WakeUp(ent->t, true);
+    }
 
     ent->Detach();
     ent = next;
     tot++;
   }
-  logger->info("{} issued another {}", go::Scheduler::CurrentThreadPoolId(), tot);
+  // logger->info("{} issued another {}", go::Scheduler::CurrentThreadPoolId(), tot);
 }
 
 void Txn::Run()
@@ -128,7 +134,7 @@ void Txn::Run()
       barrier->Wait();
       auto runner = new TxnRunner(reuse_q);
       runner->StartOn(go::Scheduler::CurrentThreadPoolId());
-      logger->info("{} has total {} txns", go::Scheduler::CurrentThreadPoolId(), fcnt->max);
+      // logger->info("{} has total {} txns", go::Scheduler::CurrentThreadPoolId(), fcnt->max);
     }
   } else {
     try {
