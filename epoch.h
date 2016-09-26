@@ -60,6 +60,8 @@ struct TxnQueue {
     prev->next = next;
     prev = next = nullptr;
   }
+
+  bool is_empty() const { return next == this && prev == this; }
 };
 
 class Txn : public go::Routine {
@@ -181,8 +183,8 @@ public:
     return p;
   }
 
-  void IssueReExec();
-  void WaitForReExec();
+  int IssueReExec();
+  void WaitForReExec(int total = kNrThreads);
 
   go::BufferChannel<uint8_t> *channel() { return wait_channel; }
 

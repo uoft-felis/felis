@@ -48,7 +48,7 @@ void ClientFetcher::Run()
     while (true) {
       logger->info("firing up an epoch");
 
-      if (++nr == 31) p = new PerfLog();
+      if (++nr == timer_skip_epoch + 1) p = new PerfLog();
 
       auto epoch = new dolly::Epoch(socks);
       logger->info("received a complete epoch");
@@ -74,8 +74,8 @@ void ClientExecutor::Run()
       break;
     }
     logger->info("issueing...");
-    epoch->IssueReExec();
-    epoch->WaitForReExec();
+    int nr_wait = epoch->IssueReExec();
+    epoch->WaitForReExec(nr_wait);
     logger->info("all done for the epoch");
     delete epoch;
   }

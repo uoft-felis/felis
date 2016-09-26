@@ -17,13 +17,15 @@ class ClientFetcher : public go::Routine {
   std::string workload_name;
 
   PerfLog *p;
+  int timer_skip_epoch;
 public:
   ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch, std::string name)
-    : peer_fds(fds), epoch_ch(ch), workload_name(name), p(nullptr) {
+    : peer_fds(fds), epoch_ch(ch), workload_name(name), p(nullptr), timer_skip_epoch(30) {
     set_share(true);
   }
 
   void set_replay_from_file(bool b) { replay_from_file = b; }
+  void set_timer_skip_epoch(int s) { timer_skip_epoch = s; }
   PerfLog *perf_log() { return p; }
 
   virtual void Run();

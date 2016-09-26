@@ -173,7 +173,7 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 const int SortedArrayVHandle::kMaxRetry;
 
 SortedArrayVHandle::SortedArrayVHandle()
-  : lock(false), last_gc_epoch(Epoch::CurrentEpochNumber())
+  : lock(false), last_gc_epoch(0)
 {
   capacity = 4;
   size = 0;
@@ -242,8 +242,11 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid)
   if (ep > last_gc_epoch) {
     // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
     GarbageCollect();
+    min_of_epoch = sid;
     last_gc_epoch = ep;
   }
+
+  if (min_of_epoch > sid) min_of_epoch = sid;
 
   size++;
   EnsureSpace();
@@ -260,9 +263,13 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid)
     } else if (i == 0 || versions[i - 1] < last) {
       memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
       versions[i] = last;
+      memmove(&objects[i + 1], &objects[i], sizeof(uintptr_t) * (size - i - 1));
+      objects[i] = PENDING_VALUE;
       goto done_sort;
     } else {
-      assert (objects[i - 1] == PENDING_VALUE);
+      // The following assertion means future epoch cannot commit back in time.
+      // It actually could!
+      // assert(objects[i - 1] == PENDING_VALUE);
     }
   }
 done_sort:
@@ -301,6 +308,9 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 
   util::Trace(gTxnNeedWait);
 
+  static const int kDeadlockThreshold = 80000;
+  int dt = 0;
+
 again:
   for (int i = 0; i < kMaxRetry; i++) {
     if (*addr != PENDING_VALUE) {
@@ -309,6 +319,14 @@ again:
     asm("pause" : : :"memory");
   }
   util::Trace(gLongWait);
+  if (++dt > kDeadlockThreshold) {
+    int pos = ((uintptr_t) addr - (uintptr_t) objects) / 8;
+    fprintf(stderr, "core %d deadlock detected 0x%lx wait for 0x%lx\n",
+	    go::Scheduler::CurrentThreadPoolId(),
+	    sid, versions[pos]);
+    sleep(32);
+    std::abort();
+  }
   // go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
   goto again;
 }
@@ -336,16 +354,19 @@ void SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_ru
 void SortedArrayVHandle::GarbageCollect()
 {
   if (size < 2) return;
-  uint64_t latest_version = versions[size - 1];
-  uintptr_t latest_object = objects[size - 1];
 
-  for (int i = size - 2; i >= 0; i--) {
-    VarStr *o = (VarStr *) objects[i];
-    delete o;
+  for (int i = 0; i < size; i++) {
+    if (versions[i] < min_of_epoch) {
+      VarStr *o = (VarStr *) objects[i];
+      delete o;
+    } else {
+      assert(versions[i] == min_of_epoch);
+      memmove(&versions[0], &versions[i], sizeof(int64_t) * (size - i));
+      memmove(&objects[0], &objects[i], sizeof(uintptr_t) * (size - i));
+      size -= i;
+      return;
+    }
   }
-  versions[0] = latest_version;
-  objects[0] = latest_object;
-  size = 1;
 }
 
 mem::Pool<true> *SortedArrayVHandle::pools;

@@ -225,10 +225,12 @@ public:
   int alloc_by_coreid;
   std::atomic_bool lock;
   int64_t last_gc_epoch;
+  int64_t min_of_epoch;
   size_t capacity;
   size_t size;
   uint64_t *versions;
   uintptr_t *objects;
+
   struct TxnWaitSlot {
     std::mutex lock;
     go::WaitSlot slot;

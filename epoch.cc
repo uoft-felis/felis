@@ -38,6 +38,8 @@ public:
     set_reuse(true);
   }
 
+  Txn::FinishCounter *finish_counter() { return &fcnt; }
+
 protected:
   virtual void Run();
 };
@@ -49,6 +51,8 @@ void TxnIOReader::Run()
    * EOF: just return
    */
   auto *channel = sock->input_channel();
+
+  uint64_t last_commit_ts = 0;
 
   uint64_t commit_ts;
   int64_t skew_ts;
@@ -70,10 +74,26 @@ void TxnIOReader::Run()
       break; // EOF
     }
     logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
+    if (commit_ts < last_commit_ts) {
+      logger->error("last commit ts {} commit_ts {}", last_commit_ts, commit_ts);
+      std::abort();
+    }
+    last_commit_ts = commit_ts;
+
     auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
 
     count_max++;
-    req->set_serializable_id(skew_ts == 0 ? commit_ts * 2 : skew_ts * 2 - 1);
+    uint64_t sid = skew_ts == 0 ? commit_ts * 2 : skew_ts * 2 - 1;
+
+    // for debugging
+/*
+    sid <<= 16;
+    sid |= (uint16_t) count_max - 1;
+    sid <<= 8;
+    sid |= (uint8_t) go::Scheduler::CurrentThreadPoolId();
+*/
+
+    req->set_serializable_id(sid);
     req->set_wait_barrier(barrier);
     req->set_counter(&fcnt);
     req->set_epoch(epoch);
@@ -82,8 +102,8 @@ void TxnIOReader::Run()
     req->PushToReuseQueue();
   }
   fcnt.max = count_max; // should never be 0 here
-  // logger->info("finished, socket ptr {} on {}", (void *) sock,
-  // go::Scheduler::CurrentThreadPoolId());
+  logger->info("finished, socket ptr {} on {} cnt {}", (void *) sock,
+	       go::Scheduler::CurrentThreadPoolId(), count_max);
   if (eof)
     epoch->channel()->Write(uint8_t{1});
   else
@@ -101,6 +121,7 @@ void TxnRunner::Run()
 {
   auto ent = queue->next;
   int tot = 0;
+  bool done = false;
   while (ent != queue) {
     auto next = ent->next;
 
@@ -116,7 +137,7 @@ void TxnRunner::Run()
     ent = next;
     tot++;
   }
-  // logger->info("{} issued another {}", go::Scheduler::CurrentThreadPoolId(), tot);
+  logger->info("{} issued {}", go::Scheduler::CurrentThreadPoolId(), tot);
 }
 
 void Txn::Run()
@@ -129,12 +150,15 @@ void Txn::Run()
     // Exiting right now provide fastpath context switch.
     PushToReuseQueue();
 
+    // logger->info("setting up {} done {}/{} on {}", serializable_id(), fcnt->count + 1,
+    //  		 fcnt->max, go::Scheduler::CurrentThreadPoolId());
+
     if (++fcnt->count == fcnt->max) {
       fcnt->count = 0;
       barrier->Wait();
       auto runner = new TxnRunner(reuse_q);
       runner->StartOn(go::Scheduler::CurrentThreadPoolId());
-      // logger->info("{} has total {} txns", go::Scheduler::CurrentThreadPoolId(), fcnt->max);
+      logger->info("{} has total {} txns", go::Scheduler::CurrentThreadPoolId(), fcnt->max);
     }
   } else {
     try {
@@ -146,6 +170,7 @@ void Txn::Run()
     }
     if (++fcnt->count == fcnt->max) {
       // notify the driver thread, which only used to hold and free stuff...
+      logger->info("all txn replayed done on thread {}", go::Scheduler::CurrentThreadPoolId());
       epoch->channel()->Write(uint8_t{0});
     }
   }
@@ -191,19 +216,31 @@ Epoch::~Epoch()
   DestroyBrks();
 }
 
-void Epoch::IssueReExec()
+int Epoch::IssueReExec()
 {
   ++gGlobalEpoch;
+  int nr_wait = 0;
+  uint64_t tot_txns = 0;
+  for (int i = 0; i < kNrThreads; i++) {
+    if (reuse_q[i].is_empty()) continue;
+    nr_wait++;
+  }
+
+  wait_barrier->Adjust(nr_wait);
+
   for (int i = 0; i < kNrThreads; i++) {
     auto runner = new TxnRunner(&reuse_q[i]);
     runner->StartOn(i + 1);
+    tot_txns += readers[i]->finish_counter()->max;
   }
+  logger->info("epoch contains {}", tot_txns);
+  return nr_wait;
 }
 
-void Epoch::WaitForReExec()
+void Epoch::WaitForReExec(int tot)
 {
-  uint8_t res[kNrThreads];
-  wait_channel->Read(res, kNrThreads);
+  uint8_t res[tot];
+  wait_channel->Read(res, tot);
 }
 
 Epoch::BrkPool *Epoch::pools;

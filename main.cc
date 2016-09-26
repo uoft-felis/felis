@@ -109,11 +109,12 @@ int main(int argc, char *argv[])
   int opt;
   bool dump_only = false;
   bool replay_from_file = false;
+  int timer_skip = 30;
   std::string workload_name;
 
   InitializeLogger();
 
-  while ((opt = getopt(argc, argv, "drw:")) != -1) {
+  while ((opt = getopt(argc, argv, "drw:s:")) != -1) {
     switch (opt) {
     case 'd':
       dump_only = true;
@@ -123,6 +124,9 @@ int main(int argc, char *argv[])
       break;
     case 'w':
       workload_name = std::string(optarg);
+      break;
+    case 's':
+      timer_skip = atoi(optarg);
       break;
     default:
       show_usage(argv[0]);
@@ -210,6 +214,8 @@ int main(int argc, char *argv[])
   auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m, epoch_fetcher);
 
   epoch_fetcher->set_replay_from_file(replay_from_file);
+  if (timer_skip > 0)
+    epoch_fetcher->set_timer_skip_epoch(timer_skip);
 
   go::CreateGlobalEpoll();
 
