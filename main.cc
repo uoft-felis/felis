@@ -134,7 +134,7 @@ int main(int argc, char *argv[])
     }
   }
 
-  if (workload_name == "") {
+  if (workload_name == "" && !dump_only) {
     show_usage(argv[0]);
     return -1;
   }
