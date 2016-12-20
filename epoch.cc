@@ -12,8 +12,8 @@
 
 #include "json11/json11.hpp"
 
-#include "goplusplus/gopp.h"
-#include "goplusplus/epoll-channel.h"
+#include "gopp/gopp.h"
+#include "gopp/epoll-channel.h"
 
 #include "csum.h"
 

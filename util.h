@@ -12,7 +12,7 @@
 #include <sched.h>
 #include <pthread.h>
 
-#include "goplusplus/gopp.h"
+#include "gopp/gopp.h"
 
 #define CACHELINE_SIZE 64
 #define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))
@@ -199,14 +199,6 @@ public:
     cnt[go::Scheduler::CurrentThreadPoolId() - 1]++;
   }
 };
-
-template <int N>
-static void Trace(Counter<N> &c)
-{
-#ifdef TRACE_ENABLE
-  c.Increment();
-#endif
-}
 
 }
 

@@ -1,11 +1,12 @@
 #include <fstream>
 #include <streambuf>
+#include <sys/sdt.h>
 #include "index.h"
 #include "epoch.h"
 #include "util.h"
 #include "mem.h"
 #include "json11/json11.hpp"
-#include "goplusplus/gopp.h"
+#include "gopp/gopp.h"
 
 // #define VALIDATE_TXN 1
 
@@ -170,8 +171,6 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
     validator->Validate(*tx);
 }
 
-const int SortedArrayVHandle::kMaxRetry;
-
 SortedArrayVHandle::SortedArrayVHandle()
   : lock(false), last_gc_epoch(0)
 {
@@ -276,11 +275,9 @@ done_sort:
   lock.store(false);
 }
 
-volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
+volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
   assert(size > 0);
-  int pos;
-
   __builtin_prefetch(versions);
 
   auto it = std::lower_bound(versions, versions + size, sid);
@@ -295,40 +292,35 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid)
   return &objects[pos];
 }
 
-util::Counter<Epoch::kNrThreads> gTxnNeedWait("txn need to wait");
-util::Counter<Epoch::kNrThreads> gLongWait("long txn wait");
-
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   // if (versions.size() > 0) assert(versions[0] == 0);
-  volatile uintptr_t *addr = WithVersion(sid);
+  int pos;
+  volatile uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
+
+  DTRACE_PROBE1(dolly, version_read, this);
 
   if (*addr != PENDING_VALUE) return (VarStr *) *addr;
 
-  util::Trace(gTxnNeedWait);
+  DTRACE_PROBE1(dolly, blocking_version_read, this);
 
-  static const int kDeadlockThreshold = 80000;
-  int dt = 0;
-
-again:
-  for (int i = 0; i < kMaxRetry; i++) {
+  static const uint64_t kDeadlockThreshold = 6400000000;
+  uint64_t dt = 0;
+  while ((dt++) < kDeadlockThreshold) {
     if (*addr != PENDING_VALUE) {
+      DTRACE_PROBE2(dolly, wait_jiffies, (void *) this, dt - 1);
       return (VarStr *) *addr;
     }
     asm("pause" : : :"memory");
   }
-  util::Trace(gLongWait);
-  if (++dt > kDeadlockThreshold) {
-    int pos = ((uintptr_t) addr - (uintptr_t) objects) / 8;
-    fprintf(stderr, "core %d deadlock detected 0x%lx wait for 0x%lx\n",
-	    go::Scheduler::CurrentThreadPoolId(),
-	    sid, versions[pos]);
-    sleep(32);
-    std::abort();
-  }
-  // go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
-  goto again;
+
+  // Deadlocked?
+  fprintf(stderr, "core %d deadlock detected 0x%lx wait for 0x%lx\n",
+	  go::Scheduler::CurrentThreadPoolId(),
+	  sid, versions[pos]);
+  sleep(32);
+  std::abort();
 }
 
 void SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)

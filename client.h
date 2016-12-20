@@ -2,7 +2,7 @@
 #define CLIENT_H
 
 #include <string>
-#include "goplusplus/gopp.h"
+#include "gopp/gopp.h"
 #include "epoch.h"
 #include "util.h"
 #include "mem.h"

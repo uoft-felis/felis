@@ -1,7 +1,7 @@
 #include <cassert>
 #include "util.h"
 #include "mem.h"
-#include "goplusplus/gopp.h"
+#include "gopp/gopp.h"
 
 namespace mem {
 

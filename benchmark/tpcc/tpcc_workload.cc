@@ -3,8 +3,8 @@
 #include "log.h"
 #include "util.h"
 #include "index.h"
-#include "goplusplus/gopp.h"
-#include "goplusplus/epoll-channel.h"
+#include "gopp/gopp.h"
+#include "gopp/epoll-channel.h"
 
 using util::MixIn;
 using util::Instance;

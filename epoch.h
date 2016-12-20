@@ -18,8 +18,8 @@
 
 #include "mem.h"
 
-#include "goplusplus/gopp.h"
-#include "goplusplus/epoll-channel.h"
+#include "gopp/gopp.h"
+#include "gopp/epoll-channel.h"
 
 namespace dolly {
 

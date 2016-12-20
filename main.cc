@@ -9,8 +9,8 @@
 #include "epoch.h"
 #include "index.h"
 #include "client.h"
-#include "goplusplus/gopp.h"
-#include "goplusplus/epoll-channel.h"
+#include "gopp/gopp.h"
+#include "gopp/epoll-channel.h"
 
 #include "log.h"
 

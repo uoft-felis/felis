@@ -237,8 +237,6 @@ public:
   };
   // TxnWaitSlot *slots;
 
-  static const int kMaxRetry = 80000;
-
   static mem::Pool<true> *pools;
 
   static void InitPools();
@@ -255,7 +253,7 @@ public:
 
   void AppendNewVersion(uint64_t sid);
 
-  volatile uintptr_t *WithVersion(uint64_t sid);
+  volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
   VarStr *ReadWithVersion(uint64_t sid);
 
   void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
