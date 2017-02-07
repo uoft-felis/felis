@@ -57,7 +57,12 @@ public:
     lru.Initialize();
   }
   CommitBuffer(const CommitBuffer &rhs) = delete;
-  CommitBuffer(CommitBuffer &&rhs) = delete;
+  CommitBuffer(CommitBuffer &&rhs) {
+    tx = rhs.tx;
+    lru = rhs.lru;
+    htable = rhs.htable;
+    rhs.htable = nullptr;
+  }
   ~CommitBuffer() {
     delete [] htable;
   }
@@ -84,6 +89,15 @@ public:
   void Commit(uint64_t sid, TxnValidator *validator = nullptr);
 };
 
+class Checkpoint {
+public:
+  // TODO: load checkpoint plugins dynamically?
+  // static void LoadPlugins();
+
+  static Checkpoint *LoadCheckpointImpl(const std::string &filename);
+  virtual void Export() = 0;
+};
+
 // Relations is an index or a table. Both are associates between keys and
 // rows.
 //
@@ -94,14 +108,21 @@ public:
 class BaseRelation {
 protected:
   int id;
+  size_t key_len;
 public:
   BaseRelation() : id(-1) {}
 
   void set_id(int relation_id) { id = relation_id; }
   int relation_id() { return id; }
+
+  void set_key_length(size_t l) { key_len = l; }
+  size_t key_length() const { return key_len; }
+
 };
 
 class RelationManagerBase {
+protected:
+  std::map<std::string, int> relation_id_map;
 public:
   RelationManagerBase();
   int LookupRelationId(std::string name) const {
@@ -113,8 +134,7 @@ public:
     return it->second;
   }
 
-protected:
-  std::map<std::string, int> relation_id_map;
+  std::map<std::string, int> relation_mapping() const { return relation_id_map; }
 };
 
 template <class T>
@@ -172,6 +192,9 @@ public:
 
   void Put(const VarStr *k, uint64_t sid, VarStr *obj, CommitBuffer &buffer) {
     buffer.Put(id, std::move(k), obj);
+    if (obj == nullptr) {
+      this->nr_keys.fetch_sub(1); // delete an object, this won't be checkpointed
+    }
 #ifndef NDEBUG
     // dry run to test
     this->Search(k)->WriteWithVersion(sid, obj, true);

@@ -110,11 +110,13 @@ int main(int argc, char *argv[])
   bool dump_only = false;
   bool replay_from_file = false;
   int timer_skip = 30;
+  bool chkpt = false;
+  std::string chkpt_format;
   std::string workload_name;
 
   InitializeLogger();
 
-  while ((opt = getopt(argc, argv, "drw:s:")) != -1) {
+  while ((opt = getopt(argc, argv, "drw:s:c:")) != -1) {
     switch (opt) {
     case 'd':
       dump_only = true;
@@ -127,6 +129,10 @@ int main(int argc, char *argv[])
       break;
     case 's':
       timer_skip = atoi(optarg);
+      break;
+    case 'c':
+      chkpt = true;
+      chkpt_format = std::string(optarg);
       break;
     default:
       show_usage(argv[0]);
@@ -206,27 +212,38 @@ int main(int argc, char *argv[])
   logger->info("loading base dataset");
   dolly::BaseRequest::LoadWorkloadSupportFromConf();
 
-  auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(0);
-  std::mutex m;
-  m.lock();
+  // FIXME:
+  // goto chkpt;
+  {
+    auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(0);
+    std::mutex m;
+    m.lock();
 
-  auto epoch_fetcher = new dolly::ClientFetcher(peer_fds, epoch_ch, workload_name);
-  auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m, epoch_fetcher);
+    auto epoch_fetcher = new dolly::ClientFetcher(peer_fds, epoch_ch, workload_name);
+    auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m, epoch_fetcher);
 
-  epoch_fetcher->set_replay_from_file(replay_from_file);
-  if (timer_skip > 0)
-    epoch_fetcher->set_timer_skip_epoch(timer_skip);
+    epoch_fetcher->set_replay_from_file(replay_from_file);
+    if (timer_skip > 0)
+      epoch_fetcher->set_timer_skip_epoch(timer_skip);
 
-  go::CreateGlobalEpoll();
+    go::CreateGlobalEpoll();
 
-  auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });
-  t.detach();
+    auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });
+    t.detach();
 
-  epoch_fetcher->StartOn(1);
-  epoch_executor->StartOn(2);
+    epoch_fetcher->StartOn(1);
+    epoch_executor->StartOn(2);
 
-  m.lock(); // waits
-  go::WaitThreadPool();
+    m.lock(); // waits
+    go::WaitThreadPool();
+  }
+// chkpt:
+  // go::WaitThreadPool();
+  // everybody quits. time to dump a checkpoint
+  if (chkpt) {
+    auto p_chkpt_impl = dolly::Checkpoint::LoadCheckpointImpl(chkpt_format);
+    p_chkpt_impl->Export();
+  }
 
   delete [] peer_fds;
 

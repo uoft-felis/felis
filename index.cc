@@ -1,6 +1,7 @@
 #include <fstream>
 #include <streambuf>
 #include <sys/sdt.h>
+#include <dlfcn.h>
 #include "index.h"
 #include "epoch.h"
 #include "util.h"
@@ -169,6 +170,15 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 
   if (validator)
     validator->Validate(*tx);
+}
+
+typedef Checkpoint* (*InitChkptFunc)(void);
+
+Checkpoint *Checkpoint::LoadCheckpointImpl(const std::string &filename)
+{
+  void *handle = dlopen(filename.c_str(), RTLD_LAZY);
+  InitChkptFunc func = (InitChkptFunc) dlsym(handle, "InitializeChkpt");
+  return func();
 }
 
 SortedArrayVHandle::SortedArrayVHandle()

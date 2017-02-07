@@ -452,6 +452,10 @@ void Loader<TPCCLoader::Warehouse>::DoLoad()
 
     relation(TPCCTable::Warehouse, i).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
   }
+
+  for (uint i = 1; i <= NumWarehouses(); i++) {
+    relation(TPCCTable::Warehouse, i).set_key_length(sizeof(Warehouse::KeyStruct));
+  }
   logger->info("Warehouse Table loading done.");
 }
 
@@ -484,6 +488,7 @@ void Loader<TPCCLoader::Item>::DoLoad()
     relation(TPCCTable::Item, 1)
       .SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
   }
+  relation(TPCCTable::Item, 1).set_key_length(sizeof(Item::KeyStruct));
   logger->info("Item Table loading done.");
 }
 
@@ -532,6 +537,8 @@ void Loader<TPCCLoader::Stock>::DoLoad()
       relation(TPCCTable::Stock, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
       relation(TPCCTable::StockData, w).SetupReExec(k_data.EncodeFromAlloca(large_buf), 0, v_data.Encode());
     }
+    relation(TPCCTable::Stock, w).set_key_length(sizeof(Stock::KeyStruct));
+    relation(TPCCTable::StockData, w).set_key_length(sizeof(StockData::KeyStruct));
   }
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Stock Table loading done.");
@@ -562,6 +569,7 @@ void Loader<TPCCLoader::District>::DoLoad()
 
       relation(TPCCTable::District, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
     }
+    relation(TPCCTable::District, w).set_key_length(sizeof(District::KeyStruct));
   }
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("District Table loading done.");
@@ -653,6 +661,10 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	relation(TPCCTable::History, w).SetupReExec(k_hist.EncodeFromAlloca(large_buf), 0, v_hist.Encode());
       }
     }
+
+    relation(TPCCTable::Customer, w).set_key_length(sizeof(Customer::KeyStruct));
+    relation(TPCCTable::CustomerNameIdx, w).set_key_length(sizeof(CustomerNameIdx::KeyStruct));
+    relation(TPCCTable::History, w).set_key_length(sizeof(History::KeyStruct));
   }
   mem::SetThreadLocalAllocAffinity(-1);
 }
@@ -739,6 +751,10 @@ void Loader<TPCCLoader::Order>::DoLoad()
 	}
       }
     }
+    relation(TPCCTable::OOrder, w).set_key_length(sizeof(OOrder::KeyStruct));
+    relation(TPCCTable::OOrderCIdIdx, w).set_key_length(sizeof(OOrderCIdIdx::KeyStruct));
+    relation(TPCCTable::NewOrder, w).set_key_length(sizeof(NewOrder::KeyStruct));
+    relation(TPCCTable::OrderLine, w).set_key_length(sizeof(OrderLine::KeyStruct));
   }
   mem::SetThreadLocalAllocAffinity(-1);
 }

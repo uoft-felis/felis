@@ -298,8 +298,9 @@ void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len, Epoc
 void Txn::SetupReExec()
 {
   /*
+   * TODO:
    * Here, we could have SetupReExec() synchronously. However, it might
-   * content on some workloads. So, let's do this asynchronously.
+   * contend on some workloads. So, let's do this asynchronously.
    *
    * Since kptr->fid should never be 0, let's clear that to 0 every time we
    * sucessfully SetupReExec() one key.

@@ -24,3 +24,4 @@ target_link_libraries(db-backup-node dl dolly masstree pthread tcmalloc)
 target_include_directories(db-backup-node PRIVATE ${CMAKE_SOURCE_DIR})
 
 add_subdirectory(benchmark/tpcc/)
+add_subdirectory(chkpt/)

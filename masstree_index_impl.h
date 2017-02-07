@@ -2,6 +2,7 @@
 #define MASSTREE_INDEX_IMPL_H
 
 #include <cstdio>
+#include <atomic>
 
 #include "index.h"
 #include "util.h"
@@ -118,12 +119,16 @@ public:
 protected:
   static threadinfo &GetThreadInfo();
 
+  std::atomic_ulong nr_keys;
+
   VHandle *InsertOrCreate(const VarStr *k) {
     auto &ti = GetThreadInfo();
     typename MasstreeMap::cursor_type cursor(map, k->data, k->len);
     bool found = cursor.find_insert(ti);
-    if (!found)
+    if (!found) {
       cursor.value() = VHandle::New();
+      nr_keys.fetch_add(1);
+    }
     auto result = cursor.value();
     cursor.finish(1, ti);
     assert(result != nullptr);
@@ -146,6 +151,9 @@ protected:
     return Iterator(std::move(map.find_iterator(lcdf::Str(start->data, start->len), GetThreadInfo())),
 		    end, relation_id, sid, buffer);
   }
+
+public:
+  size_t nr_unique_keys() const { return nr_keys.load(); }
 };
 
 // current relation implementation
