@@ -22,16 +22,15 @@ template <bool LockRequired = false>
 class Pool {
   void *data;
   size_t len;
-  void *head;
+  std::atomic<void *> head;
   size_t capacity;
-  size_t consumed;
+  unsigned char __pad__[32];
 
-  std::mutex m;
 public:
   Pool() : data(nullptr), len(0) {}
 
   Pool(size_t chunk_size, size_t cap, int numa_node = -1)
-    : len(cap * chunk_size), capacity(cap), consumed(0) {
+    : len(cap * chunk_size), capacity(cap) {
 
     int flags = MAP_ANONYMOUS | MAP_PRIVATE;
     if (len > (2 << 20))
@@ -65,7 +64,7 @@ public:
 #endif
     head = data;
     for (size_t i = 0; i < cap; i++) {
-      uintptr_t p = (uintptr_t) head + i * chunk_size;
+      uintptr_t p = (uintptr_t) head.load() + i * chunk_size;
       uintptr_t next = p + chunk_size;
       if (i == cap - 1) next = 0;
       *(uintptr_t *) p = next;
@@ -79,34 +78,40 @@ public:
       munmap(data, len);
   }
 
-  void *Alloc() {
-    std::unique_lock<std::mutex> l;
-    if (LockRequired) l = std::unique_lock<std::mutex>(m);
-
-    void *r = head;
+  void *Alloc() __attribute__((noinline)) {
+    void *r = nullptr, *next = nullptr;
+  again:
+    r = head.load();
     if (r == nullptr) return nullptr;
-
+    /*
     if (r < data || r >= (uint8_t *) data + len)
       std::abort();
+    */
+    next = (void *) *(uintptr_t *) head.load();
 
-    uintptr_t next = *(uintptr_t *) head;
-    head = (void *) next;
+    if (LockRequired) {
+      if (!head.compare_exchange_strong(r, next)) goto again;
+    } else {
+      if (!head.compare_exchange_weak(r, next)) goto again;
+    }
 
-    consumed++;
     return r;
   }
 
   void Free(void *ptr) {
-    std::unique_lock<std::mutex> l;
-    if (LockRequired) l = std::unique_lock<std::mutex>(m);
-
-    *(uintptr_t *) ptr = (uintptr_t) head;
-    head = ptr;
-    consumed--;
+    void *r = nullptr;
+  again:
+    r = head;
+    *(uintptr_t *) ptr = (uintptr_t) r;
+    if (LockRequired) {
+      if (!head.compare_exchange_strong(r, ptr)) goto again;
+    } else {
+      if (!head.compare_exchange_weak(r, ptr)) goto again;
+    }
   }
-
-  size_t nr_consumed() const { return consumed; }
 };
+
+static_assert(sizeof(Pool<true>) == 64, "Pool object size is not 64 bytes");
 
 template <bool LockRequired = false>
 class Region {

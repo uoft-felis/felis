@@ -33,22 +33,37 @@ public:
 
 using util::ListNode;
 
+struct CommitBufferEntry {
+  ListNode ht_node;
+  ListNode lru_node;
+  uint64_t epoch_nr;
+
+  int fid;
+  const VarStr *key;
+  VarStr *obj;
+  CommitBufferEntry(int id, const VarStr *k, VarStr *o)
+    : epoch_nr(Epoch::CurrentEpochNumber()), fid(id), key(k), obj(o) {}
+};
+
+class DeletedGarbageHeads {
+  ListNode garbage_heads[NR_THREADS];
+
+public:
+  DeletedGarbageHeads();
+
+  void AttachGarbage(CommitBufferEntry *g);
+  void CollectGarbage(uint64_t epoch_nr);
+};
+
 // we need this class because we need to handle read local-write scenario.
 class CommitBuffer {
   const Txn *tx;
-  struct CommitBufferEntry {
-    ListNode ht_node;
-    ListNode lru_node;
 
-    int fid;
-    const VarStr *key;
-    VarStr *obj;
-    CommitBufferEntry(int id, const VarStr *k, VarStr *o) : fid(id), key(k), obj(o) {}
-  };
   ListNode lru;
   ListNode *htable;
   static const int kHashTableSize = 37;
 public:
+
   CommitBuffer(Txn *txn) : tx(txn) {
     htable = new ListNode[kHashTableSize];
     for (int i = 0; i < kHashTableSize; i++) {
@@ -192,17 +207,18 @@ public:
 
   void Put(const VarStr *k, uint64_t sid, VarStr *obj, CommitBuffer &buffer) {
     buffer.Put(id, std::move(k), obj);
-    if (obj == nullptr) {
-      this->nr_keys.fetch_sub(1); // delete an object, this won't be checkpointed
-    }
 #ifndef NDEBUG
     // dry run to test
     this->Search(k)->WriteWithVersion(sid, obj, true);
 #endif
   }
 
-  void CommitPut(const VarStr *k, uint64_t sid, VarStr *obj) {
-    this->Search(k)->WriteWithVersion(sid, obj);
+  bool CommitPut(const VarStr *k, uint64_t sid, VarStr *obj) {
+    if (!this->Search(k)->WriteWithVersion(sid, obj)) {
+      this->nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++; // delete an object, this won't be checkpointed
+      return false;
+    }
+    return true;
   }
 
   void Scan(const VarStr *k, uint64_t sid, CommitBuffer &buffer,
@@ -243,10 +259,17 @@ private:
   }
 };
 
-class SortedArrayVHandle {
+class BaseVHandle {
 public:
-  int alloc_by_coreid;
+  static mem::Pool<true> *pools;
+  static void InitPools();
+};
+
+class SortedArrayVHandle : public BaseVHandle {
+  short alloc_by_coreid;
+  short this_coreid;
   std::atomic_bool lock;
+
   int64_t last_gc_epoch;
   int64_t min_of_epoch;
   size_t capacity;
@@ -260,31 +283,37 @@ public:
   };
   // TxnWaitSlot *slots;
 
-  static mem::Pool<true> *pools;
+public:
+  // static SortedArrayVHandle *New() {
+  //   return new (pools[mem::CurrentAllocAffinity()].Alloc()) SortedArrayVHandle();
+  // }
+  //
+  // static void Free(SortedArrayVHandle *ptr) {
+  //   pools[ptr->this_coreid].Free(ptr);
+  // }
 
-  static void InitPools();
+  static void *operator new(size_t nr_bytes) {
+    return pools[mem::CurrentAllocAffinity()].Alloc();
+  }
 
-  static SortedArrayVHandle *New() {
-    return new (pools[mem::CurrentAllocAffinity()].Alloc()) SortedArrayVHandle();
+  static void operator delete(void *ptr) {
+    SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
+    pools[phandle->this_coreid].Free(ptr);
   }
 
   SortedArrayVHandle();
-
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
-  void EnsureSpace();
-
   void AppendNewVersion(uint64_t sid);
-
-  volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
   VarStr *ReadWithVersion(uint64_t sid);
-
-  void WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
-
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
   void GarbageCollect();
+private:
+  void EnsureSpace();
+  volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 
-static_assert(sizeof(SortedArrayVHandle) < 64, "SortedArrayVHandle is larger than a cache line");
+static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
 
 }
 

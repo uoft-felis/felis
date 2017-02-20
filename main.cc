@@ -14,82 +14,6 @@
 
 #include "log.h"
 
-void DoDumpNetwork(int fds[])
-{
-  int nfds = dolly::Epoch::kNrThreads;
-  std::ofstream **fout = new std::ofstream*[nfds];
-  char *buffer = new char[4096];
-
-  for (int i = 0; i < nfds; i++) {
-    fout[i] = new std::ofstream(std::string("dolly-net.") + std::to_string(i) + ".dump");
-  }
-
-  logger->info("Dumping the network packets into dolly-net.*.dump");
-
-  int max_fd = -1;
-  fd_set fset;
-  fd_set eof_fset;
-  FD_ZERO(&fset);
-  FD_ZERO(&eof_fset);
-
-  // set sockets to async and watch for reading
-  for (int i = 0; i < nfds; i++) {
-    int opt = fcntl(fds[i], F_GETFL);
-    fcntl(fds[i], F_SETFL, opt | O_NONBLOCK);
-    FD_SET(fds[i], &fset);
-    max_fd = std::max(max_fd, fds[i] + 1);
-  }
-  int eof_count = 0;
-  while (true) {
-    int res = select(max_fd, &fset, NULL, NULL, NULL);
-    if (errno == EINTR || res == 0) continue;
-
-    if (res < 0) {
-      perror("select");
-      std::abort();
-    }
-    logger->debug("found {} connections readable", res);
-    max_fd = -1;
-    for (int i = 0; i < nfds; i++) {
-      int fd = fds[i];
-      if (!FD_ISSET(fd, &fset)) {
-	if (!FD_ISSET(fd, &eof_fset)) {
-	  FD_SET(fd, &fset);
-	  max_fd = std::max(max_fd, fd + 1);
-	}
-	continue;
-      }
-      int rsize = 0;
-      int rcount = 0;
-      int tot_rsize = 0;
-      while (++rcount < 160 && (rsize = read(fd, buffer, 4096)) > 0) {
-	fout[i]->write(buffer, rsize);
-	tot_rsize += rsize;
-      }
-      if (rsize < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-	perror("read");
-	std::abort();
-      }
-      if (rsize == 0) {
-	logger->debug("connection {} EOF", i);
-	FD_CLR(fd, &fset);
-	FD_SET(fd, &eof_fset);
-	eof_count++;
-      } else {
-	logger->debug("connection {} recv {} bytes", i, tot_rsize);
-	max_fd = std::max(max_fd, fd + 1);
-      }
-    }
-    if (eof_count == nfds)
-      break;
-  }
-  puts("Network dump all done!");
-  delete [] buffer;
-  for (int i = 0; i < nfds; i++)
-    delete fout[i];
-  delete [] fout;
-}
-
 void show_usage(const char *progname)
 {
   printf("Usage: %s [-t core_count] [-d]\n\n", progname);
@@ -107,7 +31,6 @@ static const int kDummyWebServerPort = 8000;
 int main(int argc, char *argv[])
 {
   int opt;
-  bool dump_only = false;
   bool replay_from_file = false;
   int timer_skip = 30;
   bool chkpt = false;
@@ -116,11 +39,8 @@ int main(int argc, char *argv[])
 
   InitializeLogger();
 
-  while ((opt = getopt(argc, argv, "drw:s:c:")) != -1) {
+  while ((opt = getopt(argc, argv, "rw:s:c:")) != -1) {
     switch (opt) {
-    case 'd':
-      dump_only = true;
-      break;
     case 'r':
       replay_from_file = true;
       break;
@@ -140,13 +60,12 @@ int main(int argc, char *argv[])
     }
   }
 
-  if (workload_name == "" && !dump_only) {
+  if (workload_name == "") {
     show_usage(argv[0]);
     return -1;
   }
   logger->info("Running {} workload", workload_name);
 
-  int fd = dolly::SetupServer();
   int peer_fd = -1;
 
   socklen_t addrlen = sizeof(struct sockaddr_in);
@@ -169,21 +88,11 @@ int main(int argc, char *argv[])
 	perror("connect");
 	std::abort();
       }
-    } else {
-      if ((peer_fd = accept(fd, (struct sockaddr *) &addr, &addrlen)) < 0) {
-	perror("accept");
-	std::abort();
-      }
     }
     peer_fds[i] = peer_fd;
   }
   logger->info("replica received {} connections\n", dolly::Epoch::kNrThreads);
   logger->info("replica ready!");
-
-  if (dump_only) {
-    DoDumpNetwork(peer_fds);
-    std::exit(0);
-  }
 
   const int tot_nodes = dolly::Epoch::kNrThreads / mem::kNrCorePerNode;
   logger->info("setting up memory pools and regions. {} NUMA nodes in total", tot_nodes);

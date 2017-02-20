@@ -34,6 +34,4 @@ int CurrentAllocAffinity()
   else return go::Scheduler::CurrentThreadPoolId() - 1;
 }
 
-
-
 }

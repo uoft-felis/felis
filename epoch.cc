@@ -112,8 +112,10 @@ void TxnIOReader::Run()
 
 class TxnRunner : public go::Routine {
   TxnQueue *queue;
+  bool collect_garbage;
 public:
-  TxnRunner(TxnQueue *q) : queue(q) {}
+  TxnRunner(TxnQueue *q) : queue(q), collect_garbage(false) {}
+  void set_collect_garbage(bool v) { collect_garbage = v; }
   virtual void Run();
 };
 
@@ -138,6 +140,9 @@ void TxnRunner::Run()
     tot++;
   }
   logger->info("{} issued {}", go::Scheduler::CurrentThreadPoolId(), tot);
+  if (collect_garbage) {
+    Instance<DeletedGarbageHeads>().CollectGarbage(Epoch::CurrentEpochNumber());
+  }
 }
 
 void Txn::Run()
@@ -230,6 +235,7 @@ int Epoch::IssueReExec()
 
   for (int i = 0; i < kNrThreads; i++) {
     auto runner = new TxnRunner(&reuse_q[i]);
+    // runner->set_collect_garbage(true);
     runner->StartOn(i + 1);
     tot_txns += readers[i]->finish_counter()->max;
   }

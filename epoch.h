@@ -210,7 +210,6 @@ private:
     char __padding__[4];
   } brks[kNrThreads];
 
-
 protected:
   static uint64_t kGlobSID;
 public:

@@ -96,6 +96,51 @@ void TxnValidator::Validate(const Txn &tx)
 #endif
 }
 
+static DeletedGarbageHeads gDeletedGarbage;
+
+DeletedGarbageHeads::DeletedGarbageHeads()
+{
+  for (int i = 0; i < NR_THREADS; i++) {
+    garbage_heads[i].Initialize();
+  }
+}
+
+void DeletedGarbageHeads::AttachGarbage(CommitBufferEntry *g)
+{
+#ifdef PROACTIVE_GC
+  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
+  g->lru_node.InsertAfter(&garbage_heads[idx]);
+#else
+  delete g->key;
+  delete g;
+#endif
+}
+
+void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
+{
+#ifdef PROACTIVE_GC
+  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
+  ListNode *head = &garbage_heads[idx];
+  ListNode *ent = head->prev;
+  size_t gc_count = 0;
+  auto &mgr = Instance<RelationManager>();
+  while (ent != head) {
+    auto prev = ent->prev;
+    CommitBufferEntry *entry = container_of(ent, CommitBufferEntry, lru_node);
+    if (epoch_nr - entry->epoch_nr < 2)
+      break;
+    mgr.GetRelationOrCreate(entry->fid).ImmediateDelete(entry->key);
+    gc_count++;
+    ent->Remove();
+    delete ent->key;
+    delete ent;
+
+    ent = prev;
+  }
+  logger->info("Proactive GC {} cleaned {} garbage keys", idx, gc_count);
+#endif
+}
+
 void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
 {
   unsigned int h = Hash(fid, key);
@@ -153,18 +198,23 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
   while (node != head) {
     ListNode *prev = node->prev;
     auto entry = container_of(node, CommitBufferEntry, lru_node);
+    bool is_garbage;
 
     if (validator)
       validator->CaptureWrite(entry->key, entry->obj);
     try {
-      mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
+      is_garbage = not mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
     } catch (...) {
       logger->critical("Error during commit key {}", entry->key->ToHex().c_str());
       throw DivergentOutputException();
     }
 
-    delete entry->key;
-    delete entry;
+    if (!is_garbage) {
+      delete entry->key;
+      delete entry;
+    } else {
+      gDeletedGarbage.AttachGarbage(entry);
+    }
     node = prev;
   }
 
@@ -188,7 +238,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   size = 0;
 
   const size_t len = capacity * sizeof(uint64_t);
-  alloc_by_coreid = mem::CurrentAllocAffinity();
+  this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
 
   // uint8_t *p = (uint8_t *) malloc(2 * len);
   uint8_t *p = (uint8_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * len);
@@ -333,7 +383,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   std::abort();
 }
 
-void SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
 {
   assert(this);
   // Writing to exact location
@@ -350,7 +400,12 @@ void SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_ru
   if (!dry_run) {
     volatile uintptr_t *addr = &objects[it - versions];
     *addr = (uintptr_t) obj;
+
+    if (obj == nullptr && it - versions == size - 1) {
+      return false;
+    }
   }
+  return true;
 }
 
 void SortedArrayVHandle::GarbageCollect()
@@ -371,14 +426,24 @@ void SortedArrayVHandle::GarbageCollect()
   }
 }
 
-mem::Pool<true> *SortedArrayVHandle::pools;
+mem::Pool<true> *BaseVHandle::pools;
 
-void SortedArrayVHandle::InitPools()
+void BaseVHandle::InitPools()
 {
   pools = (mem::Pool<true> *) malloc(sizeof(mem::Pool<true>) * Epoch::kNrThreads);
   for (int i = 0; i < Epoch::kNrThreads; i++) {
     new (&pools[i]) mem::Pool<true>(64, 16 << 20, i / mem::kNrCorePerNode);
   }
+}
+
+}
+
+namespace util {
+
+template <>
+dolly::DeletedGarbageHeads &Instance()
+{
+  return dolly::gDeletedGarbage;
 }
 
 }

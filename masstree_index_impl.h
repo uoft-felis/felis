@@ -119,15 +119,18 @@ public:
 protected:
   static threadinfo &GetThreadInfo();
 
-  std::atomic_ulong nr_keys;
+  struct {
+    uint64_t add_cnt;
+    uint64_t del_cnt;
+  } nr_keys [NR_THREADS]; // scalable counting
 
   VHandle *InsertOrCreate(const VarStr *k) {
     auto &ti = GetThreadInfo();
     typename MasstreeMap::cursor_type cursor(map, k->data, k->len);
     bool found = cursor.find_insert(ti);
     if (!found) {
-      cursor.value() = VHandle::New();
-      nr_keys.fetch_add(1);
+      cursor.value() = new VHandle();
+      nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].add_cnt++;
     }
     auto result = cursor.value();
     cursor.finish(1, ti);
@@ -153,7 +156,25 @@ protected:
   }
 
 public:
-  size_t nr_unique_keys() const { return nr_keys.load(); }
+  size_t nr_unique_keys() const {
+    size_t rs = 0;
+    for (int i = 0; i < NR_THREADS; i++) {
+      rs += nr_keys[i].add_cnt - nr_keys[i].del_cnt;
+    }
+    return rs;
+  }
+
+  void ImmediateDelete(const VarStr *k) {
+    auto &ti = GetThreadInfo();
+    typename MasstreeMap::cursor_type cursor(map, k->data, k->len);
+    bool found = cursor.find_locked(ti);
+    if (found) {
+      VHandle *phandle = cursor.value();
+      delete phandle;
+      cursor.value() = nullptr;
+    }
+    cursor.finish(-1, ti);
+  }
 };
 
 // current relation implementation
