@@ -78,7 +78,8 @@ public:
       munmap(data, len);
   }
 
-  void *Alloc() __attribute__((noinline)) {
+  // TODO: optimize this?
+  void *Alloc() {
     void *r = nullptr, *next = nullptr;
   again:
     r = head.load();
