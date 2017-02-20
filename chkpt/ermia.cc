@@ -45,9 +45,9 @@ struct ErmiaEntry {
   ErmiaObjectHeader object_hdr;
   ErmiaTupleHeader tuple_hdr;
   uint32_t key_size;
-  unsigned char key_data[kMaxKeyLength];
+  unsigned char *key_data;
   uint64_t value_storage_size;
-  unsigned char value_data[kMaxDataLength];
+  unsigned char *value_data;
 
   bool operator==(const ErmiaEntry &rhs) {
     return oid == rhs.oid;
@@ -187,6 +187,8 @@ void ReadStruct(FILE *fp, ErmiaEntry &rs)
   if (rs.oid == rs.max_oid) return;
 
   ReadStruct(fp, rs.key_size);
+  free(rs.key_data);
+  rs.key_data = (unsigned char *) malloc(rs.key_size);
   ABORT_IF(!fread(rs.key_data, rs.key_size, 1, fp));
   ReadStruct(fp, vscode);
   ReadStruct(fp, rs.object_hdr);
@@ -196,6 +198,8 @@ void ReadStruct(FILE *fp, ErmiaEntry &rs)
   size_t offset = sizeof(ErmiaObjectHeader) + sizeof(ErmiaTupleHeader);
 
   ABORT_IF(rs.value_storage_size < rs.tuple_hdr.size + offset);
+  free(rs.value_data);
+  rs.value_data = (unsigned char *) malloc(rs.value_storage_size - offset);
   ABORT_IF(!fread(rs.value_data, rs.value_storage_size - offset, 1, fp));
 }
 
@@ -308,9 +312,11 @@ ErmiaEntry &TableDataIterator<ErmiaEntry>::operator*()
     current_entry.object_hdr.pdest = (pos << 16) | 0x5000;
     current_entry.oid = current_oid;
     current_entry.key_size = key_size;
-    memcpy(current_entry.key_data, dolly_iter->key().data, key_size);
+    // memcpy(current_entry.key_data, dolly_iter->key().data, key_size);
+    current_entry.key_data = (unsigned char *) dolly_iter->key().data;
     current_entry.tuple_hdr.size = dolly_iter->object()->len;
-    memcpy(current_entry.value_data, dolly_iter->object()->data, dolly_iter->object()->len);
+    // memcpy(current_entry.value_data, dolly_iter->object()->data, dolly_iter->object()->len);
+    current_entry.value_data = (unsigned char *) dolly_iter->object()->data;
   }
   return current_entry;
 }

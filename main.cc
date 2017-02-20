@@ -150,8 +150,10 @@ int main(int argc, char *argv[])
   // go::WaitThreadPool();
   // everybody quits. time to dump a checkpoint
   if (chkpt) {
+    PerfLog p;
     auto p_chkpt_impl = dolly::Checkpoint::LoadCheckpointImpl(chkpt_format);
     p_chkpt_impl->Export();
+    p.Show("checkpoint takes");
   }
 
   delete [] peer_fds;

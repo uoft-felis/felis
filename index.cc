@@ -1,4 +1,6 @@
 #include <fstream>
+#include <limits>
+#include <cstdlib>
 #include <streambuf>
 #include <sys/sdt.h>
 #include <dlfcn.h>

@@ -162,6 +162,7 @@ void Txn::Run()
       fcnt->count = 0;
       barrier->Wait();
       auto runner = new TxnRunner(reuse_q);
+      runner->set_collect_garbage(true);
       runner->StartOn(go::Scheduler::CurrentThreadPoolId());
       logger->info("{} has total {} txns", go::Scheduler::CurrentThreadPoolId(), fcnt->max);
     }
@@ -235,7 +236,6 @@ int Epoch::IssueReExec()
 
   for (int i = 0; i < kNrThreads; i++) {
     auto runner = new TxnRunner(&reuse_q[i]);
-    // runner->set_collect_garbage(true);
     runner->StartOn(i + 1);
     tot_txns += readers[i]->finish_counter()->max;
   }
