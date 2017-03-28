@@ -18,12 +18,16 @@ static const size_t kBufferSize = 1 << 20;
 
 static void DoDumpNetwork(int nfds, int fds[], bool nullfile)
 {
-  std::ofstream **fout = new std::ofstream*[nfds];
+  FILE **fout = new FILE*[nfds];
+  char **fbuf = new char*[nfds];
   char *buffer = new char[kBufferSize];
 
   if (!nullfile) {
     for (int i = 0; i < nfds; i++) {
-      fout[i] = new std::ofstream(std::string("dolly-net.") + std::to_string(i) + ".dump");
+      std::string filename = std::string("dolly-net.") + std::to_string(i) + ".dump";
+      fout[i] = fopen(filename.c_str(), "w");
+      fbuf[i] = (char *) malloc(512 << 20);
+      setvbuf(fout[i], fbuf[i], _IOFBF, 512 << 20);
     }
   }
 
@@ -70,7 +74,7 @@ static void DoDumpNetwork(int nfds, int fds[], bool nullfile)
       int tot_rsize = 0;
       while (++rcount < 160 && (rsize = read(fd, buffer, kBufferSize)) > 0) {
 	if (!nullfile)
-	  fout[i]->write(buffer, rsize);
+	  fwrite(buffer, rsize, 1, fout[i]);
 	tot_rsize += rsize;
       }
       if (rsize < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -92,8 +96,10 @@ static void DoDumpNetwork(int nfds, int fds[], bool nullfile)
   }
   delete [] buffer;
   if (!nullfile) {
-    for (int i = 0; i < nfds; i++)
-      delete fout[i];
+    for (int i = 0; i < nfds; i++) {
+      fclose(fout[i]);
+      free(fbuf[i]);
+    }
   }
   delete [] fout;
 }

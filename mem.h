@@ -31,6 +31,7 @@ public:
 
   Pool(size_t chunk_size, size_t cap, int numa_node = -1)
     : len(cap * chunk_size), capacity(cap) {
+    if (cap == 0) return;
 
     int flags = MAP_ANONYMOUS | MAP_PRIVATE;
     if (len > (2 << 20))
@@ -118,6 +119,7 @@ template <bool LockRequired = false>
 class Region {
   typedef Pool<LockRequired> PoolType;
   static const int kMaxPools = 20;
+  // static const int kMaxPools = 12;
   PoolType pools[32];
   size_t proposed_caps[32];
 public:

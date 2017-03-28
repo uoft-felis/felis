@@ -95,7 +95,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::
     uint district_id;
     uint customer_warehouse_id;
     uint customer_district_id;
-    float payment_amount;
+    int payment_amount;
     uint32_t ts;
     uint8_t is_by_name;
     uint8_t by_buf[16];

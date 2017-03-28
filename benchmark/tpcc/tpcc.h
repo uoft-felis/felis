@@ -29,13 +29,13 @@ struct Customer {
   typedef sql::Schemas<KeyStruct, uint32_t, uint32_t, uint32_t> Key;
 
   struct ValueStruct {
-    float c_discount;
-    sql::inline_str_fixed< 2> c_credit;
+    int c_discount;
+    sql::inline_str_fixed<2> c_credit;
     sql::inline_str_8<16> c_last;
     sql::inline_str_8<16> c_first;
-    float c_credit_lim;
-    float c_balance;
-    float c_ytd_payment;
+    int c_credit_lim;
+    int c_balance;
+    int c_ytd_payment;
     int32_t c_payment_cnt;
     int32_t c_delivery_cnt;
     sql::inline_str_8<20> c_street_1;
@@ -50,11 +50,11 @@ struct Customer {
   } __attribute__((packed));
 
   typedef sql::Schemas<ValueStruct,
-		       float,
+		       sql::hint32,
 		       sql::inline_str_fixed<2>,
 		       sql::inline_str_base<uint8_t, 16>,
 		       sql::inline_str_base<uint8_t, 16>,
-		       float, float, float,
+		       sql::hint32, sql::hint32, sql::hint32,
 		       sql::hint32, sql::hint32,
 		       sql::inline_str_base<uint8_t, 20>,
 		       sql::inline_str_base<uint8_t, 20>,
@@ -105,8 +105,8 @@ struct District {
   typedef sql::Schemas<KeyStruct, uint32_t, uint32_t> Key;
 
   struct ValueStruct {
-    float d_ytd;
-    float d_tax;
+    int32_t d_ytd;
+    int32_t d_tax;
     uint32_t d_next_o_id;
     sql::inline_str_8<10> d_name;
     sql::inline_str_8<20> d_street_1;
@@ -117,7 +117,7 @@ struct District {
   } __attribute__((packed));
 
   typedef sql::Schemas<ValueStruct,
-		       float, float,
+		       sql::hint32, sql::hint32,
 		       sql::hint32,
 		       sql::inline_str_base<uint8_t, 10>,
 		       sql::inline_str_base<uint8_t, 20>,
@@ -151,12 +151,12 @@ struct History {
 		       uint32_t> Key;
 
   struct ValueStruct {
-    float h_amount;
+    int32_t h_amount;
     sql::inline_str_8<24> h_data;
   } __attribute__((packed));
 
   typedef sql::Schemas<ValueStruct,
-		       float, sql::inline_str_base<uint8_t, 24>> Value;
+		       sql::hint32, sql::inline_str_base<uint8_t, 24>> Value;
 
   static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
   static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
@@ -173,14 +173,14 @@ struct Item {
 
   struct ValueStruct {
     sql::inline_str_8<24> i_name;
-    float i_price;
+    int32_t i_price;
     sql::inline_str_8<50> i_data;
     int32_t i_im_id;
   } __attribute__((packed));
 
   typedef sql::Schemas<ValueStruct,
 		       sql::inline_str_base<uint8_t, 24>,
-		       float,
+		       sql::hint32,
 		       sql::inline_str_base<uint8_t, 50>,
 		       sql::hint32> Value;
 
@@ -271,7 +271,7 @@ struct OrderLine {
   struct ValueStruct {
     int32_t ol_i_id;
     uint32_t ol_delivery_d;
-    float ol_amount;
+    int32_t ol_amount;
     int32_t ol_supply_w_id;
     uint8_t ol_quantity;
   } __attribute__((packed)); // 8 + 4 + 4 + 1 = 17
@@ -279,7 +279,7 @@ struct OrderLine {
   typedef sql::Schemas<ValueStruct,
 		       sql::hint32,
 		       sql::hint32,
-		       float,
+		       sql::hint32,
 		       sql::hint32,
 		       uint8_t> Value;
 
@@ -299,14 +299,14 @@ struct Stock {
 
   struct ValueStruct {
     int16_t s_quantity;
-    float s_ytd;
+    int32_t s_ytd;
     int32_t s_order_cnt;
     int32_t s_remote_cnt;
   } __attribute__((packed)); // 2 + 4 + 8 = 14
 
   typedef sql::Schemas<ValueStruct,
 		       sql::hint16,
-		       float,
+		       sql::hint32,
 		       sql::hint32,
 		       sql::hint32> Value;
 
@@ -365,8 +365,8 @@ struct Warehouse {
   typedef sql::Schemas<KeyStruct, uint32_t> Key;
 
   struct ValueStruct {
-    float w_ytd;
-    float w_tax;
+    int32_t w_ytd;
+    int32_t w_tax;
     sql::inline_str_8<10> w_name;
     sql::inline_str_8<20> w_street_1;
     sql::inline_str_8<20> w_street_2;
@@ -376,7 +376,7 @@ struct Warehouse {
   } __attribute__((packed)); // 78+8+11 = 97
 
   typedef sql::Schemas<ValueStruct,
-		       float, float,
+		       sql::hint32, sql::hint32,
 		       sql::inline_str_base<uint8_t, 10>,
 		       sql::inline_str_base<uint8_t, 20>,
 		       sql::inline_str_base<uint8_t, 20>,
@@ -488,7 +488,7 @@ struct PaymentStruct {
   uint district_id;
   uint customer_warehouse_id;
   uint customer_district_id;
-  float payment_amount;
+  int payment_amount;
   uint32_t ts;
   bool is_by_name; // notice, there is an internal branch
   union {

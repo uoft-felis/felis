@@ -2,7 +2,7 @@
 #include <limits>
 #include <cstdlib>
 #include <streambuf>
-#include <sys/sdt.h>
+#include <iomanip>
 #include <dlfcn.h>
 #include "index.h"
 #include "epoch.h"
@@ -10,8 +10,6 @@
 #include "mem.h"
 #include "json11/json11.hpp"
 #include "gopp/gopp.h"
-
-// #define VALIDATE_TXN 1
 
 using util::Instance;
 
@@ -59,42 +57,80 @@ RelationManagerBase::RelationManagerBase()
   }
 }
 
-void TxnValidator::CaptureWrite(const VarStr *k, VarStr *obj)
+void TxnValidator::CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr *obj)
 {
 #ifdef VALIDATE_TXN
-  update_crc32(k->data, k->len, &key_crc);
+  if (k)
+    update_crc32(k->data, k->len, &key_crc);
 
+  TxnKey *kptr = (TxnKey *) keys_ptr;
+  if (!k || kptr->fid != fid || kptr->len != k->len
+      || memcmp(kptr->data, k->data, k->len) != 0) {
+    is_valid = false;
+    logger->alert("Out-of-Order Write. sid {} fid {}",
+		  tx.serializable_id(), kptr->fid);
+    VarStr real_k;
+    real_k.data = kptr->data;
+    real_k.len = kptr->len;
+
+    DebugVarStr("Expected Key", &real_k);
+    DebugVarStr("Actual Key", k);
+  }
+
+  keys_ptr += sizeof(TxnKey) + kptr->len;
+
+  unsigned int value_crc = INITIAL_CRC32_VALUE;
   if (obj != nullptr) {
-    // size_t dummy_size = obj->len;
-    // update_crc32(&dummy_size, sizeof(size_t), &value_crc);
     update_crc32(obj->data, obj->len, &value_crc);
-    data.push_back(std::vector<uint8_t>{obj->data, obj->data + obj->len});
     value_size += obj->len;
   }
+
+  if (value_crc != *(unsigned int *) keys_ptr) {
+    is_valid = false;
+    logger->alert("value csum mismatch, type {:d} sid {} fid {}, {} should be {}",
+		  tx.type, tx.serializable_id(), fid,
+		  value_crc, *(unsigned int *) keys_ptr);
+    std::stringstream prefix;
+
+    prefix << "Key sid " << tx.serializable_id() << " ";
+    DebugVarStr(prefix.str().c_str(), k);
+
+    prefix.str(std::string());
+    prefix << "Actual Value sid " << tx.serializable_id() << " ";
+    DebugVarStr(prefix.str().c_str(), obj);
+  }
+  keys_ptr += 4;
 #endif
+}
+
+void TxnValidator::DebugVarStr(const char *prefix, const VarStr *s)
+{
+  if (!s) {
+    logger->alert("{}: null", prefix);
+    return;
+  }
+
+  std::stringstream ss;
+  ss << std::hex << std::setfill('0') << std::setw(2);
+  for (int i = 0; i < s->len; i++) {
+    ss << "0x" << (int) s->data[i] << ' ';
+  }
+  logger->alert("{}: {}", prefix, ss.str());
 }
 
 void TxnValidator::Validate(const Txn &tx)
 {
 #ifdef VALIDATE_TXN
-  if (tx.value_checksum() != value_crc) {
-    logger->alert("value csum mismatch, type {:d}", tx.type);
-    logger->alert("tx csum 0x{:x}, result csum 0x{:x}. Dumping:",
-		  tx.value_checksum(), value_crc);
-    for (auto line_data: data) {
-      std::string str;
-      for (auto ch: line_data) {
-	char buf[1024];
-	snprintf(buf, 1024, "0x%.2x ", ch);
-	str.append(buf);
-      }
-      logger->alert(str);
-    }
-    sleep(1);
-    std::abort();
+  while (keys_ptr != tx.key_buffer() + tx.key_buffer_size()) {
+    logger->alert("left over keys!");
+    CaptureWrite(tx, -1, nullptr, nullptr);
   }
-  logger->debug("txn sid {} valid! Total {} txns data size {} bytes",
-		tx.serializable_id(), tot_validated.fetch_add(1), value_size);
+  if (is_valid) {
+    logger->debug("txn sid {} valid! Total {} txns data size {} bytes",
+		  tx.serializable_id(), tot_validated.fetch_add(1), value_size);
+  } else {
+    logger->alert("txn sid {} invalid!", tx.serializable_id());
+  }
 #endif
 }
 
@@ -106,6 +142,8 @@ DeletedGarbageHeads::DeletedGarbageHeads()
     garbage_heads[i].Initialize();
   }
 }
+
+// #define PROACTIVE_GC
 
 void DeletedGarbageHeads::AttachGarbage(CommitBufferEntry *g)
 {
@@ -134,11 +172,12 @@ void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
     mgr.GetRelationOrCreate(entry->fid).ImmediateDelete(entry->key);
     gc_count++;
     ent->Remove();
-    delete ent->key;
-    delete ent;
+    delete entry->key;
+    delete entry;
 
     ent = prev;
   }
+  DTRACE_PROBE1(dolly, deleted_gc_per_core, gc_count);
   logger->info("Proactive GC {} cleaned {} garbage keys", idx, gc_count);
 #endif
 }
@@ -161,8 +200,8 @@ void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
 
     entry->key = key;
     entry->obj = obj;
-    entry->lru_node.Remove();
-    entry->lru_node.InsertAfter(&lru);
+    // entry->lru_node.Remove();
+    // entry->lru_node.InsertAfter(&lru);
     return;
   next:
     node = node->next;
@@ -197,13 +236,15 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
   ListNode *node = head->prev;
   auto &mgr = Instance<RelationManager>();
 
+  if (validator)
+    validator->set_keys_ptr(tx->key_buffer());
   while (node != head) {
     ListNode *prev = node->prev;
     auto entry = container_of(node, CommitBufferEntry, lru_node);
     bool is_garbage;
 
     if (validator)
-      validator->CaptureWrite(entry->key, entry->obj);
+      validator->CaptureWrite(*tx, entry->fid, entry->key, entry->obj);
     try {
       is_garbage = not mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
     } catch (...) {
@@ -234,7 +275,7 @@ Checkpoint *Checkpoint::LoadCheckpointImpl(const std::string &filename)
 }
 
 SortedArrayVHandle::SortedArrayVHandle()
-  : lock(false), last_gc_epoch(0)
+  : lock(false)
 {
   capacity = 4;
   size = 0;
@@ -299,15 +340,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid)
     expected = false;
     asm("pause" : : :"memory");
   }
-  uint64_t ep = Epoch::CurrentEpochNumber();
-  if (ep > last_gc_epoch) {
-    // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
-    GarbageCollect();
-    min_of_epoch = sid;
-    last_gc_epoch = ep;
-  }
-
-  if (min_of_epoch > sid) min_of_epoch = sid;
+  gc_rule(*this, sid);
 
   size++;
   EnsureSpace();
@@ -354,6 +387,29 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   return &objects[pos];
 }
 
+static void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
+{
+  DTRACE_PROBE1(dolly, version_read, handle);
+  if (*addr != PENDING_VALUE) return;
+
+  DTRACE_PROBE1(dolly, blocking_version_read, handle);
+  static const uint64_t kDeadlockThreshold = 6400000000;
+  uint64_t dt = 0;
+  while ((dt++) < kDeadlockThreshold) {
+    if (*addr != PENDING_VALUE) {
+      DTRACE_PROBE2(dolly, wait_jiffies, handle, dt - 1);
+      return;
+    }
+    asm("pause" : : :"memory");
+  }
+  // Deadlocked?
+  fprintf(stderr, "core %d deadlock detected 0x%lx wait for 0x%lx\n",
+	  go::Scheduler::CurrentThreadPoolId(),
+	  sid, ver);
+  sleep(32);
+  std::abort();
+}
+
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   // if (versions.size() > 0) assert(versions[0] == 0);
@@ -361,28 +417,8 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   volatile uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
 
-  DTRACE_PROBE1(dolly, version_read, this);
-
-  if (*addr != PENDING_VALUE) return (VarStr *) *addr;
-
-  DTRACE_PROBE1(dolly, blocking_version_read, this);
-
-  static const uint64_t kDeadlockThreshold = 6400000000;
-  uint64_t dt = 0;
-  while ((dt++) < kDeadlockThreshold) {
-    if (*addr != PENDING_VALUE) {
-      DTRACE_PROBE2(dolly, wait_jiffies, (void *) this, dt - 1);
-      return (VarStr *) *addr;
-    }
-    asm("pause" : : :"memory");
-  }
-
-  // Deadlocked?
-  fprintf(stderr, "core %d deadlock detected 0x%lx wait for 0x%lx\n",
-	  go::Scheduler::CurrentThreadPoolId(),
-	  sid, versions[pos]);
-  sleep(32);
-  std::abort();
+  WaitForData(addr, sid, versions[pos], (void *) this);
+  return (VarStr *) *addr;
 }
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
@@ -415,11 +451,11 @@ void SortedArrayVHandle::GarbageCollect()
   if (size < 2) return;
 
   for (int i = 0; i < size; i++) {
-    if (versions[i] < min_of_epoch) {
+    if (versions[i] < gc_rule.min_of_epoch) {
       VarStr *o = (VarStr *) objects[i];
       delete o;
     } else {
-      assert(versions[i] == min_of_epoch);
+      assert(versions[i] == gc_rule.min_of_epoch);
       memmove(&versions[0], &versions[i], sizeof(int64_t) * (size - i));
       memmove(&objects[0], &objects[i], sizeof(uintptr_t) * (size - i));
       size -= i;
@@ -430,11 +466,114 @@ void SortedArrayVHandle::GarbageCollect()
 
 mem::Pool<true> *BaseVHandle::pools;
 
+static mem::Pool<true> *InitPerCorePool(size_t ele_size, size_t nr_ele)
+{
+  auto pools = (mem::Pool<true> *) malloc(sizeof(mem::Pool<true>) * Epoch::kNrThreads);
+  for (int i = 0; i < Epoch::kNrThreads; i++) {
+    new (&pools[i]) mem::Pool<true>(ele_size, nr_ele, i / mem::kNrCorePerNode);
+  }
+  return pools;
+}
+
 void BaseVHandle::InitPools()
 {
-  pools = (mem::Pool<true> *) malloc(sizeof(mem::Pool<true>) * Epoch::kNrThreads);
-  for (int i = 0; i < Epoch::kNrThreads; i++) {
-    new (&pools[i]) mem::Pool<true>(64, 16 << 20, i / mem::kNrCorePerNode);
+  pools = InitPerCorePool(64, 16 << 20);
+}
+
+LinkListVHandle::LinkListVHandle()
+  : this_coreid(mem::CurrentAllocAffinity()), lock(false), head(nullptr), size(0)
+{
+}
+
+mem::Pool<true> *LinkListVHandle::Entry::pools;
+
+void LinkListVHandle::Entry::InitPools()
+{
+  pools = InitPerCorePool(32, 16 << 20);
+}
+
+void LinkListVHandle::AppendNewVersion(uint64_t sid)
+{
+  bool expected = false;
+  while (!lock.compare_exchange_weak(expected, true, std::memory_order_release, std::memory_order_relaxed)) {
+    expected = false;
+    asm("pause" ::: "memory");
+  }
+
+  gc_rule(*this, sid);
+
+  Entry **p = &head;
+  Entry *cur = head;
+  Entry *n = nullptr;
+  while (cur) {
+    if (cur->version < sid) break;
+    if (cur->version == sid) goto done;
+    p = &cur->next;
+    cur = cur->next;
+  }
+  n = new Entry {cur, sid, PENDING_VALUE, mem::CurrentAllocAffinity()};
+  *p = n;
+  size++;
+done:
+  lock.store(false);
+}
+
+VarStr *LinkListVHandle::ReadWithVersion(uint64_t sid)
+{
+  Entry *p = head;
+  while (p && p->version >= sid) {
+    p = p->next;
+  }
+
+  if (!p) return nullptr;
+
+  volatile uintptr_t *addr = &p->object;
+  WaitForData(addr, sid, p->version, (void *) this);
+  return (VarStr *) *addr;
+}
+
+bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+{
+  assert(this);
+  Entry *p = head;
+  while (p && p->version != sid) {
+    p = p->next;
+  }
+  if (!p) {
+    logger->critical("Diverging outcomes! sid {}", sid);
+    throw DivergentOutputException();
+  }
+  if (!dry_run) {
+    volatile uintptr_t *addr = &p->object;
+    *addr = (uintptr_t) obj;
+    if (obj == nullptr && p->next == nullptr) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void LinkListVHandle::GarbageCollect()
+{
+  Entry *p = head;
+  Entry **pp = &head;
+  if (!p || p->next == nullptr) return;
+
+  while (p && p->version >= gc_rule.min_of_epoch) {
+    pp = &p->next;
+    p = p->next;
+  }
+
+  if (!p) return;
+
+  *pp = nullptr; // cut of the link list
+  while (p) {
+    Entry *next = p->next;
+    VarStr *o = (VarStr *) p->object;
+    delete o;
+    delete p;
+    p = next;
+    size--;
   }
 }
 

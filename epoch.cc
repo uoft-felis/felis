@@ -1,6 +1,7 @@
 #include <cassert>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <sstream>
 #include <dlfcn.h>
 #include "log.h"
@@ -44,6 +45,8 @@ protected:
   virtual void Run();
 };
 
+#define EPSILON_MAX 32768
+
 void TxnIOReader::Run()
 {
   /* Dealing with EOF and end of epoch is easy
@@ -51,7 +54,6 @@ void TxnIOReader::Run()
    * EOF: just return
    */
   auto *channel = sock->input_channel();
-
   uint64_t last_commit_ts = 0;
 
   uint64_t commit_ts;
@@ -83,16 +85,23 @@ void TxnIOReader::Run()
     auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
 
     count_max++;
-    uint64_t sid = skew_ts == 0 ? commit_ts * 2 : skew_ts * 2 - 1;
+    // uint64_t sid = skew_ts == 0 ? commit_ts << 6 : (skew_ts << 6) - go::Scheduler::CurrentThreadPoolId();
+#ifdef PROTO_OLD_SSI
+    uint64_t sid = skew_ts == 0 ? commit_ts * 2 : (skew_ts * 2) - 1;
+#else
+    uint64_t sid = commit_ts * EPSILON_MAX - skew_ts;
+    if (skew_ts > 0) {
+      DTRACE_PROBE1(dolly, commit_back_in_time, skew_ts);
+    }
+#endif
 
+#if 0
     // for debugging
-/*
-    sid <<= 16;
-    sid |= (uint16_t) count_max - 1;
-    sid <<= 8;
-    sid |= (uint8_t) go::Scheduler::CurrentThreadPoolId();
-*/
-
+    if (req->key_buffer_size() == 0) {
+      // but it doesn't seem to bother us?
+      logger->alert("type {}, sid {}", req->type, sid);
+    }
+#endif
     req->set_serializable_id(sid);
     req->set_wait_barrier(barrier);
     req->set_counter(&fcnt);
@@ -171,7 +180,6 @@ void Txn::Run()
       RunTxn();
       // logger->info("{} done on thread {}", serializable_id(), go::Scheduler::CurrentThreadPoolId());
     } catch (...) {
-      DebugKeys();
       std::abort();
     }
     if (++fcnt->count == fcnt->max) {
@@ -271,30 +279,28 @@ uint64_t Epoch::CurrentEpochNumber()
   return gGlobalEpoch;
 }
 
-// #define VALIDATE_TXN_KEY 1
-
 void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len, Epoch *epoch)
 {
   int cpu = go::Scheduler::CurrentThreadPoolId() - 1;
-  assert(key_pkt_len >= 8);
   uint8_t *buffer = (uint8_t *) epoch->AllocFromBrk(cpu, key_pkt_len);
 
   channel->Read(buffer, key_pkt_len);
 
-  keys = (TxnKey *) buffer;
-  sz_key_buf = key_pkt_len - 8;
-  value_crc = *(uint32_t *) (buffer + sz_key_buf + 4);
+  keys = buffer;
+  sz_key_buf = key_pkt_len;
 
 #ifdef VALIDATE_TXN_KEY
-  uint32_t orig_key_crc = *(uint32_t *) (buffer + sz_key_buf), key_crc = INITIAL_CRC32_VALUE;
+  sz_key_buf -= 4;
+  uint32_t orig_key_crc = *(uint32_t *) (buffer + sz_key_buf);
+
   uint8_t *p = buffer;
   while (p < buffer + sz_key_buf) {
     TxnKey *k = (TxnKey *) p;
-    update_crc32(k->str.data, k->str.len, &key_crc);
-    p += sizeof(TxnKey) + k->str.len;
+    update_crc32(k->data, k->len, &key_crc);
+    p += sizeof(TxnKey) + k->len + 4; // to skip the csum as well
   }
   if (orig_key_crc != key_crc) {
-    logger->critical("Key crc doesn't match!");
+    logger->critical("Key crc doesn't match! {} should be {}", key_crc, orig_key_crc);
     std::abort();
   }
   logger->debug("key csum {:x} matches", key_crc);
@@ -305,8 +311,6 @@ void Txn::SetupReExec()
 {
   /*
    * TODO:
-   * Here, we could have SetupReExec() synchronously. However, it might
-   * contend on some workloads. So, let's do this asynchronously.
    *
    * Since kptr->fid should never be 0, let's clear that to 0 every time we
    * sucessfully SetupReExec() one key.
@@ -321,26 +325,13 @@ void Txn::SetupReExec()
     VarStr var_str;
     var_str.len = kptr->len;
     var_str.data = kptr->data;
+    logger->debug("setup fid {}", kptr->fid);
     auto &relation = mgr.GetRelationOrCreate(kptr->fid);
     relation.SetupReExec(&var_str, sid);
     p += sizeof(TxnKey) + kptr->len;
-  }
-}
-
-void Txn::DebugKeys()
-{
-  uint8_t *key_buffer = (uint8_t *) keys;
-  uint8_t *p = key_buffer;
-  while (p < key_buffer + sz_key_buf) {
-    TxnKey *kptr = (TxnKey *) p;
-    std::stringstream ss;
-    for (int i = 0; i < kptr->len; i++) {
-      char buf[8];
-      snprintf(buf, 8, "0x%x ", kptr->data[i]);
-      ss << buf;
-    }
-    logger->debug("sid {} Debug Fid: {} Keys: {}", sid, kptr->fid, ss.str());
-    p += sizeof(TxnKey) + kptr->len;
+#ifdef VALIDATE_TXN
+    p += 4; // skip the csum as well
+#endif
   }
 }
 

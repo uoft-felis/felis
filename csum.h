@@ -9,9 +9,9 @@ static const unsigned int crctab[] = {
 };
 
 static inline void
-update_crc32(const void *data, unsigned int length, unsigned int *crc)
+update_crc32(const unsigned char *data, unsigned int length, unsigned int *crc)
 {
-  const unsigned char *p = (const unsigned char *) data;
+  const unsigned char *p = data;
   const unsigned int *crctabp = crctab;
   int i;
 

@@ -338,7 +338,7 @@ struct Checker {
   static inline  void
   SanityCheckItem(const Item::Key *k, const Item::Value *v) {
     assert(k->i_id >= 1 && static_cast<size_t>(k->i_id) <= NumItems());
-    assert(v->i_price >= 1.0 && v->i_price <= 100.0);
+    assert(v->i_price >= 100 && v->i_price <= 10000);
   }
 
   static inline  void
@@ -439,8 +439,8 @@ void Loader<TPCCLoader::Warehouse>::DoLoad()
     auto w_state = RandomStr(r, 3);
     auto w_zip = std::string("123456789");
 
-    v.w_ytd = 300000;
-    v.w_tax = (float) RandomNumber(r, 0, 2000) / 10000.0;
+    v.w_ytd = 30000000;
+    v.w_tax = RandomNumber(r, 0, 2000) / 100;
     v.w_name.assign(w_name);
     v.w_street_1.assign(w_street_1);
     v.w_street_2.assign(w_street_2);
@@ -470,7 +470,7 @@ void Loader<TPCCLoader::Item>::DoLoad()
 
     auto i_name = RandomStr(r, RandomNumber(r, 14, 24));
     v.i_name.assign(i_name);
-    v.i_price = (float) RandomNumber(r, 100, 10000) / 100.0;
+    v.i_price = RandomNumber(r, 100, 10000);
 
     const int len = RandomNumber(r, 26, 50);
     if (RandomNumber(r, 1, 100) > 10) {
@@ -555,8 +555,8 @@ void Loader<TPCCLoader::District>::DoLoad()
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       const District::Key k(w, d);
       District::Value v;
-      v.d_ytd = 30000;
-      v.d_tax = (float) (RandomNumber(r, 0, 2000) / 10000.0);
+      v.d_ytd = 3000000;
+      v.d_tax = RandomNumber(r, 0, 2000) / 100;
       v.d_next_o_id = 3001;
       v.d_name.assign(RandomStr(r, RandomNumber(r, 6, 10)));
       v.d_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
@@ -603,7 +603,7 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	Customer::Key k(w, d, c);
 	Customer::Value v;
 
-	v.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
+	v.c_discount = RandomNumber(r, 1, 5000) / 100;
 	if (RandomNumber(r, 1, 100) <= 10)
 	  v.c_credit.assign("BC");
 	else
@@ -617,8 +617,8 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	v.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
 	v.c_credit_lim = 50000;
 
-	v.c_balance = -10;
-	v.c_ytd_payment = 10;
+	v.c_balance = -1000;
+	v.c_ytd_payment = 1000;
 	v.c_payment_cnt = 1;
 	v.c_delivery_cnt = 0;
 
@@ -655,7 +655,7 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	k_hist.h_date = GetCurrentTimeMillis();
 
 	History::Value v_hist;
-	v_hist.h_amount = 10;
+	v_hist.h_amount = 1000;
 	v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
 
 	relation(TPCCTable::History, w).SetupReExec(k_hist.EncodeFromAlloca(large_buf), 0, v_hist.Encode());
@@ -738,7 +738,7 @@ void Loader<TPCCLoader::Order>::DoLoad()
 	  } else {
 	    v_ol.ol_delivery_d = 0;
 	    // random within [0.01 .. 9,999.99]
-	    v_ol.ol_amount = (float) (RandomNumber(r, 1, 999999) / 100.0);
+	    v_ol.ol_amount = RandomNumber(r, 1, 999999);
 	  }
 
 	  v_ol.ol_supply_w_id = k_ol.ol_w_id;
@@ -894,7 +894,7 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     const OrderLine::Key k_ol(warehouse_id, district_id, k_no.no_o_id, ol_number);
     const OrderLine::Value v_ol (ol_i_id, 0,
-				 (float) ol_quantity * v_i.i_price,
+				 ol_quantity * v_i.i_price,
 				 ol_supply_w_id, (uint8_t) ol_quantity);
 
     logger->debug("NewOrder sid {} Put OrderLine {} {} {} {}", serializable_id(),
@@ -975,7 +975,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
     const OrderLine::Key k_oo_0(warehouse_id, d, k_no.no_o_id, 0);
     const OrderLine::Key k_oo_1(warehouse_id, d, k_no.no_o_id, std::numeric_limits<int32_t>::max());
 
-    float sum = 0.0;
+    int sum = 0;
     auto it = relation(TPCCTable::OrderLine, warehouse_id)
       .SearchIterator(k_oo_0.EncodeFromAlloca(large_buf),
 		      k_oo_1.EncodeFromAlloca((uint8_t *) large_buf + k_oo_0.EncodeSize()
@@ -1018,7 +1018,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
       .Put(k_oo.Encode(), serializable_id(), v_oo_new.Encode(), buffer);
 
     const uint c_id = v_oo.o_c_id;
-    const float ol_total = sum;
+    const int ol_total = sum;
 
     // update customer
     const Customer::Key k_c(warehouse_id, d, c_id);
@@ -1027,9 +1027,12 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 			    serializable_id(),
 			    buffer);
 
-    logger->debug("Delivery sid {} Put Customer {} {} {}", serializable_id(), warehouse_id, d, c_id);
     Customer::Value v_c_new(v_c);
     v_c_new.c_balance += ol_total;
+
+    logger->debug("Delivery sid {} Put Customer {} {} {} c_balance {} + {} = {}",
+		  serializable_id(), warehouse_id, d, c_id, v_c.c_balance, ol_total, v_c_new.c_balance);
+
     relation(TPCCTable::Customer, warehouse_id)
       .Put(k_c.Encode(), serializable_id(), v_c_new.Encode(), buffer);
   }
@@ -1266,7 +1269,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
 
   if (strncmp(v_c.c_credit.data(), "BC", 2) == 0) {
     char buf[501];
-    int n = snprintf(buf, sizeof(buf), "%d %d %d %d %d %f | %s",
+    int n = snprintf(buf, sizeof(buf), "%d %d %d %d %d %d | %s",
 		     k_c.c_id,
 		     k_c.c_d_id,
 		     k_c.c_w_id,
@@ -1278,6 +1281,8 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
       std::min(static_cast<size_t>(n), v_c_new.c_data.max_size()));
     memcpy((void *) v_c_new.c_data.data(), &buf[0], v_c_new.c_data.size());
   }
+  logger->debug("Payment sid {} Put Customer {} {} {} c_balance {} - {} = {}", serializable_id(),
+		k_c.c_w_id, k_c.c_d_id, k_c.c_id, v_c.c_balance, payment_amount, v_c_new.c_balance);
   relation(TPCCTable::Customer, customer_warehouse_id)
     .Put(k_c.Encode(), serializable_id(), v_c_new.Encode(), buffer);
 

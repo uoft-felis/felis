@@ -111,7 +111,7 @@ int main(int argc, char *argv[])
     r.InitPools(i / mem::kNrCorePerNode);
   }
 
-  dolly::SortedArrayVHandle::InitPools();
+  dolly::VHandle::InitPools();
 
   logger->info("memory ready");
 

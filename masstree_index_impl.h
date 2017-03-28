@@ -105,7 +105,14 @@ protected:
   private:
     bool ShouldSkip(uint64_t sid, CommitBuffer &buffer) {
       obj = buffer.Get(relation_id, &key());
-      if (!obj) obj = it.value()->ReadWithVersion(sid);
+      if (!obj) {
+	if (__builtin_expect(sid == std::numeric_limits<int64_t>::max(), 0)) {
+	  DTRACE_PROBE2(dolly, chkpt_scan,
+			it.value()->nr_versions(),
+			it.value()->last_update_epoch());
+	}
+	obj = it.value()->ReadWithVersion(sid);
+      }
       return obj == nullptr;
     }
     const VarStr *obj;
@@ -178,7 +185,9 @@ public:
 };
 
 // current relation implementation
-typedef RelationPolicy<MasstreeIndex, SortedArrayVHandle> Relation;
+using VHandle = SortedArrayVHandle;
+// using VHandle = LinkListVHandle;
+typedef RelationPolicy<MasstreeIndex, VHandle> Relation;
 
 class RelationManager : public RelationManagerPolicy<Relation> {
   threadinfo *ti;

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8)
 
 project(dolly C CXX ASM)
 
-add_definitions(-std=c++11 -pthread -DNR_THREADS=${NR_THREADS})
+add_definitions(-std=c++11 -pthread -Wstrict-aliasing -DNR_THREADS=${NR_THREADS})
 
 # set(CMAKE_CXX_COMPILER "g++")
 # set(CMAKE_C_COMPILER "gcc")

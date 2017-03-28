@@ -10,10 +10,13 @@
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
+
 #include "mem.h"
 #include "log.h"
 #include "epoch.h"
 #include "util.h"
+
+#include <sys/sdt.h>
 
 namespace dolly {
 
@@ -21,21 +24,25 @@ class TxnValidator {
   unsigned int key_crc, value_crc;
   size_t value_size;
   static std::atomic<unsigned long> tot_validated;
-  std::vector<std::vector<uint8_t>> data;
+  uint8_t *keys_ptr;
+  bool is_valid;
 public:
   TxnValidator() :
     key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
-    value_size(0){}
+    value_size(0), keys_ptr(nullptr), is_valid(true) {}
 
-  void CaptureWrite(const VarStr *k, VarStr *obj);
+  void set_keys_ptr(uint8_t *kptr) { keys_ptr = kptr; }
+  void CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr *obj);
   void Validate(const Txn &tx);
+
+  static void DebugVarStr(const char *prefix, const VarStr *s);
 };
 
 using util::ListNode;
 
 struct CommitBufferEntry {
   ListNode ht_node;
-  ListNode lru_node;
+  ListNode lru_node; // fifo_node? for ERMIA 2.0?
   uint64_t epoch_nr;
 
   int fid;
@@ -165,7 +172,6 @@ public:
   }
 
   T &GetRelationOrCreate(int fid) {
-    assert(fid < kMaxNrRelations);
 #ifndef NDEBUG
     if (fid < 0 || fid >= kMaxNrRelations || relations[fid].relation_id() == -1) {
       logger->critical("WTF is {}?", fid);
@@ -208,8 +214,8 @@ public:
   void Put(const VarStr *k, uint64_t sid, VarStr *obj, CommitBuffer &buffer) {
     buffer.Put(id, std::move(k), obj);
 #ifndef NDEBUG
-    // dry run to test
-    this->Search(k)->WriteWithVersion(sid, obj, true);
+    // dry run to test ??
+    // this->Search(k)->WriteWithVersion(sid, obj, true);
 #endif
   }
 
@@ -259,19 +265,41 @@ private:
   }
 };
 
+struct ErmiaEpochGCRule {
+  uint64_t last_gc_epoch;
+  uint64_t min_of_epoch;
+
+  ErmiaEpochGCRule() : last_gc_epoch(0), min_of_epoch(0) {}
+
+  template <typename VHandle>
+  void operator()(VHandle &handle, uint64_t sid) {
+    uint64_t ep = Epoch::CurrentEpochNumber();
+    if (ep > last_gc_epoch) {
+      // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
+      handle.GarbageCollect();
+      DTRACE_PROBE3(dolly, versions_per_epoch_on_gc, &handle, ep - 1, handle.nr_versions());
+      min_of_epoch = sid;
+      last_gc_epoch = ep;
+    }
+
+    if (min_of_epoch > sid) min_of_epoch = sid;
+  }
+};
+
 class BaseVHandle {
 public:
   static mem::Pool<true> *pools;
   static void InitPools();
+protected:
+  ErmiaEpochGCRule gc_rule;
+public:
+  uint64_t last_update_epoch() const { return gc_rule.last_gc_epoch; }
 };
 
 class SortedArrayVHandle : public BaseVHandle {
   short alloc_by_coreid;
   short this_coreid;
   std::atomic_bool lock;
-
-  int64_t last_gc_epoch;
-  int64_t min_of_epoch;
   size_t capacity;
   size_t size;
   uint64_t *versions;
@@ -308,12 +336,69 @@ public:
   VarStr *ReadWithVersion(uint64_t sid);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
   void GarbageCollect();
+
+  const size_t nr_versions() const { return size; }
 private:
   void EnsureSpace();
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 
 static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
+
+class LinkListVHandle : public BaseVHandle {
+  int this_coreid;
+  std::atomic_bool lock;
+
+  struct Entry {
+    struct Entry *next;
+    uint64_t version;
+    uintptr_t object;
+    int alloc_by_coreid;
+
+    static mem::Pool<true> *pools;
+
+    static void *operator new(size_t nr_bytes) {
+      return pools[mem::CurrentAllocAffinity()].Alloc();
+    }
+
+    static void operator delete(void *ptr) {
+      Entry *p = (Entry *) ptr;
+      pools[p->alloc_by_coreid].Free(ptr);
+    }
+
+    static void InitPools();
+  };
+
+  static_assert(sizeof(Entry) <= 32, "LinkList VHandle Entry is too large");
+
+  Entry *head; // head is the largest!
+  size_t size;
+
+public:
+  static void *operator new(size_t nr_bytes) {
+    return pools[mem::CurrentAllocAffinity()].Alloc();
+  }
+
+  static void operator delete(void *ptr) {
+    auto *phandle = (LinkListVHandle *) ptr;
+    pools[phandle->this_coreid].Free(ptr);
+  }
+
+  static void InitPools() {
+    BaseVHandle::InitPools();
+    Entry::InitPools();
+  }
+
+  LinkListVHandle();
+  LinkListVHandle(LinkListVHandle &&rhs) = delete;
+
+  void AppendNewVersion(uint64_t sid);
+  VarStr *ReadWithVersion(uint64_t sid);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
+  void GarbageCollect();
+
+  const size_t nr_versions() const { return size; }
+};
 
 }
 

@@ -21,6 +21,9 @@
 #include "gopp/gopp.h"
 #include "gopp/epoll-channel.h"
 
+// #define VALIDATE_TXN 1
+// #define VALIDATE_TXN_KEY 1
+
 namespace dolly {
 
 typedef sql::VarStr VarStr;
@@ -65,10 +68,9 @@ struct TxnQueue {
 };
 
 class Txn : public go::Routine {
-  TxnKey *keys;
+  uint8_t *keys;
   uint16_t sz_key_buf;
   unsigned int key_crc;
-  unsigned int value_crc;
   uint64_t sid;
   bool is_setup;
 
@@ -88,8 +90,7 @@ public:
     int max = INT_MAX;
   } *fcnt;
 
-  Txn() : key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
-	  is_setup(true) {
+  Txn() : key_crc(INITIAL_CRC32_VALUE), is_setup(true) {
     set_reuse(true);
   }
 
@@ -97,7 +98,6 @@ public:
   void SetupReExec();
 
   unsigned int key_checksum() const { return key_crc; }
-  unsigned int value_checksum() const { return value_crc; }
 
   void set_serializable_id(uint64_t id) { sid = id; }
   uint64_t serializable_id() const { return sid; }
@@ -115,7 +115,8 @@ public:
   virtual void RunTxn() = 0;
   virtual int CoreAffinity() const = 0;
 
-  void DebugKeys();
+  uint8_t *key_buffer() const { return keys; }
+  uint16_t key_buffer_size() const { return sz_key_buf; }
 protected:
   virtual void Run();
 };
@@ -148,24 +149,6 @@ class Request : public BaseRequest, public T {
   virtual void ParseFromChannel(go::InputSocketChannel *channel);
   virtual void RunTxn();
   virtual int CoreAffinity() const;
-};
-
-struct TxnTimeStamp
-{
-  uint64_t commit_ts;
-  int64_t skew_ts;
-  Txn *txn;
-
-  uint64_t logical_commit_ts() const {
-    return skew_ts == 0 ? commit_ts : skew_ts - 1;
-  }
-
-  bool operator<(const TxnTimeStamp &rhs) const {
-    if (logical_commit_ts() != rhs.logical_commit_ts()) {
-      return logical_commit_ts() < rhs.logical_commit_ts();
-    }
-    return commit_ts < rhs.commit_ts;
-  }
 };
 
 class TxnIOReader;
