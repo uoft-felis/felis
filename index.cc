@@ -143,7 +143,7 @@ DeletedGarbageHeads::DeletedGarbageHeads()
   }
 }
 
-// #define PROACTIVE_GC
+#define PROACTIVE_GC
 
 void DeletedGarbageHeads::AttachGarbage(CommitBufferEntry *g)
 {
@@ -521,9 +521,13 @@ done:
 VarStr *LinkListVHandle::ReadWithVersion(uint64_t sid)
 {
   Entry *p = head;
+  int search_count = 1;
   while (p && p->version >= sid) {
+    search_count++;
     p = p->next;
   }
+
+  DTRACE_PROBE2(dolly, linklist_search_read, search_count, size);
 
   if (!p) return nullptr;
 
@@ -536,9 +540,12 @@ bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
 {
   assert(this);
   Entry *p = head;
+  int search_count = 1;
   while (p && p->version != sid) {
+    search_count++;
     p = p->next;
   }
+  DTRACE_PROBE2(dolly, linklist_search_write, search_count, size);
   if (!p) {
     logger->critical("Diverging outcomes! sid {}", sid);
     throw DivergentOutputException();

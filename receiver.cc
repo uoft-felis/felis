@@ -16,7 +16,7 @@
 
 static const size_t kBufferSize = 1 << 20;
 
-static void DoDumpNetwork(int nfds, int fds[], bool nullfile)
+static void DoDumpNetwork(int nfds, int fds[], bool nullfile, size_t buffer_size = (512 << 20))
 {
   FILE **fout = new FILE*[nfds];
   char **fbuf = new char*[nfds];
@@ -26,8 +26,12 @@ static void DoDumpNetwork(int nfds, int fds[], bool nullfile)
     for (int i = 0; i < nfds; i++) {
       std::string filename = std::string("dolly-net.") + std::to_string(i) + ".dump";
       fout[i] = fopen(filename.c_str(), "w");
-      fbuf[i] = (char *) malloc(512 << 20);
-      setvbuf(fout[i], fbuf[i], _IOFBF, 512 << 20);
+      if (buffer_size == 0) {
+	fprintf(stderr, "IO buffer size is 0\n");
+	continue;
+      }
+      fbuf[i] = (char *) malloc(buffer_size);
+      setvbuf(fout[i], fbuf[i], _IOFBF, buffer_size);
     }
   }
 
@@ -156,7 +160,8 @@ int main(int argc, char *argv[])
   bool nullfile = false;
   std::string host;
   int port = 0;
-  while ((opt = getopt(argc, argv, "c:h:p:n")) != -1) {
+  size_t buffer_size = (512 << 20);
+  while ((opt = getopt(argc, argv, "c:h:p:n:b:")) != -1) {
     switch (opt) {
     case 'c':
       nfds = atoi(optarg);
@@ -169,6 +174,9 @@ int main(int argc, char *argv[])
       break;
     case 'n':
       nullfile = true;
+      break;
+    case 'b':
+      buffer_size = strtol(optarg, nullptr, 10);
       break;
     default:
       ShowUsage(argv[0]);
@@ -195,7 +203,7 @@ int main(int argc, char *argv[])
   int fds[nfds];
   WaitForAllClient(server_fd, nfds, fds);
   printf("Start receiving...\n");
-  DoDumpNetwork(nfds, fds, nullfile);
+  DoDumpNetwork(nfds, fds, nullfile, buffer_size);
   printf("Done\n");
 
   return 0;

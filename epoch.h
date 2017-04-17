@@ -160,7 +160,7 @@ public:
   static uint64_t CurrentEpochNumber();
 
   void *AllocFromBrk(int cpu, size_t sz) {
-    // if (brks[cpu].offset + sz >= kBrkSize) std::abort();
+    if (brks[cpu].offset + sz >= kBrkSize) std::abort();
     void *p = brks[cpu].addr + brks[cpu].offset;
     brks[cpu].offset += sz;
     return p;
@@ -196,7 +196,7 @@ private:
 protected:
   static uint64_t kGlobSID;
 public:
-  static const size_t kBrkSize = 16 << 20;
+  static const size_t kBrkSize = 32 << 20;
   typedef mem::Pool<true> BrkPool;
   static BrkPool *pools;
 };

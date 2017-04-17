@@ -94,6 +94,7 @@ void TxnIOReader::Run()
       DTRACE_PROBE1(dolly, commit_back_in_time, skew_ts);
     }
 #endif
+    assert(skew_ts <= 1);
 
 #if 0
     // for debugging

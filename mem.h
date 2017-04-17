@@ -85,10 +85,9 @@ public:
   again:
     r = head.load();
     if (r == nullptr) return nullptr;
-    /*
-    if (r < data || r >= (uint8_t *) data + len)
-      std::abort();
-    */
+
+    assert(r >= (uint8_t *) data && r < (uint8_t *) data + len);
+
     next = (void *) *(uintptr_t *) head.load();
 
     if (LockRequired) {
