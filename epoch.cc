@@ -54,10 +54,10 @@ void TxnIOReader::Run()
    * EOF: just return
    */
   auto *channel = sock->input_channel();
-  uint64_t last_commit_ts = 0;
 
   uint64_t commit_ts;
   int64_t skew_ts;
+
   bool eof = false;
   int count_max = 0;
 
@@ -76,11 +76,6 @@ void TxnIOReader::Run()
       break; // EOF
     }
     logger->debug("read ts {:x} {:x}", commit_ts, skew_ts);
-    if (commit_ts < last_commit_ts) {
-      logger->error("last commit ts {} commit_ts {}", last_commit_ts, commit_ts);
-      std::abort();
-    }
-    last_commit_ts = commit_ts;
 
     auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
 
@@ -310,29 +305,42 @@ void Txn::Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len, Epoc
 
 void Txn::SetupReExec()
 {
-  /*
-   * TODO:
-   *
-   * Since kptr->fid should never be 0, let's clear that to 0 every time we
-   * sucessfully SetupReExec() one key.
-   */
   auto &mgr = Instance<RelationManager>();
 
   uint8_t *key_buffer = (uint8_t *) keys;
-  uint8_t *p = key_buffer;
+  uint64_t finished_bytes = 0;
 
-  while (p < key_buffer + sz_key_buf) {
-    TxnKey *kptr = (TxnKey *) p;
-    VarStr var_str;
-    var_str.len = kptr->len;
-    var_str.data = kptr->data;
-    logger->debug("setup fid {}", kptr->fid);
-    auto &relation = mgr.GetRelationOrCreate(kptr->fid);
-    relation.SetupReExec(&var_str, sid);
-    p += sizeof(TxnKey) + kptr->len;
+  while (finished_bytes < sz_key_buf) {
+    uint8_t *p = key_buffer;
+    while (p < key_buffer + sz_key_buf) {
+      TxnKey *kptr = (TxnKey *) p;
+      Relation *relation;
+      if (kptr->fid == 0) {
+	goto skip_next;
+      }
+
+      VarStr var_str;
+      var_str.len = kptr->len;
+      var_str.data = kptr->data;
+      logger->debug("setup fid {}", kptr->fid);
+      relation = &mgr.GetRelationOrCreate(kptr->fid);
+
+      if (!relation->SetupReExecAsync(&var_str, sid)) {
+	goto skip_next;
+      }
+
+      finished_bytes += sizeof(TxnKey) + kptr->len;
+      kptr->fid = 0;
 #ifdef VALIDATE_TXN
-    p += 4; // skip the csum as well
+      finished_bytes += 4;
 #endif
+
+    skip_next:
+      p += sizeof(TxnKey) + kptr->len;
+#ifdef VALIDATE_TXN
+      p += 4; // skip the csum as well
+#endif
+    }
   }
 }
 

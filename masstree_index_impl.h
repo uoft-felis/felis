@@ -106,6 +106,7 @@ protected:
     bool ShouldSkip(uint64_t sid, CommitBuffer &buffer) {
       obj = buffer.Get(relation_id, &key());
       if (!obj) {
+	if (!it.value()) return true;
 	if (__builtin_expect(sid == std::numeric_limits<int64_t>::max(), 0)) {
 	  DTRACE_PROBE2(dolly, chkpt_scan,
 			it.value()->nr_versions(),
@@ -124,6 +125,8 @@ public:
   }
 
 protected:
+friend DeletedGarbageHeads;
+
   static threadinfo &GetThreadInfo();
 
   struct {
@@ -132,14 +135,18 @@ protected:
   } nr_keys [NR_THREADS]; // scalable counting
 
   VHandle *InsertOrCreate(const VarStr *k) {
+    auto result = this->Search(k);
+    if (result) return result;
     auto &ti = GetThreadInfo();
     typename MasstreeMap::cursor_type cursor(map, k->data, k->len);
     bool found = cursor.find_insert(ti);
     if (!found) {
-      cursor.value() = new VHandle();
+      auto h = new VHandle();
+      asm volatile("": : :"memory"); // don't you dare to reorder the new after the commit!
+      cursor.value() = h;
       nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].add_cnt++;
     }
-    auto result = cursor.value();
+    result = cursor.value();
     cursor.finish(1, ti);
     assert(result != nullptr);
     return result;
@@ -177,16 +184,31 @@ public:
     bool found = cursor.find_locked(ti);
     if (found) {
       VHandle *phandle = cursor.value();
-      delete phandle;
       cursor.value() = nullptr;
+
+      asm volatile ("": : :"memory");
+
+      delete phandle;
     }
     cursor.finish(-1, ti);
   }
 };
 
 // current relation implementation
+#if (defined LL_REPLAY) || (defined CALVIN_REPLAY)
+
+#ifdef LL_REPLAY
+using VHandle = LinkListVHandle;
+#endif
+
+#ifdef CALVIN_REPLAY
+using VHandle = CalvinVHandle;
+#endif
+
+#else
 using VHandle = SortedArrayVHandle;
-// using VHandle = LinkListVHandle;
+#endif
+
 typedef RelationPolicy<MasstreeIndex, VHandle> Relation;
 
 class RelationManager : public RelationManagerPolicy<Relation> {

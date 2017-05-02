@@ -4,18 +4,15 @@ project(dolly C CXX ASM)
 
 add_definitions(-std=c++11 -pthread -Wstrict-aliasing -DNR_THREADS=${NR_THREADS})
 
-# set(CMAKE_CXX_COMPILER "g++")
-# set(CMAKE_C_COMPILER "gcc")
-
 set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -DNDEBUG")
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-flto -fwhole-program -g -fno-omit-frame-pointer")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -flto -fwhole-program -g -fno-omit-frame-pointer")
 
 # set(CMAKE_CXX_FLAGS_DEBUG "-fsanitize=address -fno-omit-frame-pointer")
 # set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address")
 
 set_source_files_properties(gopp/asm.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp")
 
-add_library(dolly SHARED net-io.cc epoch.cc log.cc index.cc mem.cc json11/json11.cpp masstree_index_impl.cc gopp/gopp.cc gopp/epoll-channel.cc gopp/asm.S)
+add_library(dolly SHARED net-io.cc epoch.cc log.cc vhandle.cc index.cc mem.cc json11/json11.cpp masstree_index_impl.cc gopp/gopp.cc gopp/epoll-channel.cc gopp/asm.S)
 target_link_libraries(dolly numa pthread masstree)
 target_include_directories(dolly PRIVATE ${CMAKE_SOURCE_DIR})
 

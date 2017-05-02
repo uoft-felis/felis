@@ -86,7 +86,10 @@ public:
     r = head.load();
     if (r == nullptr) return nullptr;
 
-    assert(r >= (uint8_t *) data && r < (uint8_t *) data + len);
+    if (r < (uint8_t *) data || r >= (uint8_t *) data + len) {
+      fprintf(stderr, "memory pool not large enough!");
+      std::abort();
+    }
 
     next = (void *) *(uintptr_t *) head.load();
 
