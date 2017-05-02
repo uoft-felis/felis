@@ -208,7 +208,7 @@ void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
     // entry->lru_node.Remove();
     // entry->lru_node.InsertAfter(&lru);
     return;
-  next:
+ next:
     node = node->next;
   }
   auto entry = new CommitBufferEntry(fid, key, obj);
@@ -229,7 +229,7 @@ VarStr *CommitBuffer::Get(int fid, const VarStr *key)
       goto next;
 
     return entry->obj;
-  next:
+ next:
     node = node->next;
   }
   return nullptr;

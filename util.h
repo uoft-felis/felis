@@ -18,7 +18,7 @@
 #define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))
 #define __XCONCAT(a, b) __XCONCAT2(a, b)
 #define __XCONCAT2(a, b) a ## b
-#define CACHE_PADOUT \
+#define CACHE_PADOUT                                                    \
   char __XCONCAT(__padout, __COUNTER__)[0] __attribute__((aligned(CACHELINE_SIZE)))
 
 #ifndef likely
@@ -38,11 +38,11 @@ namespace util {
 // padded, aligned primitives
 template <typename T, bool Pedantic = true>
 class CacheAligned {
-public:
+ public:
 
   template <class... Args>
   CacheAligned(Args &&... args)
-    : elem(std::forward<Args>(args)...)
+      : elem(std::forward<Args>(args)...)
   {
     if (Pedantic)
       assert(((uintptr_t)this % CACHELINE_SIZE) == 0);
@@ -57,7 +57,7 @@ public:
   inline T * operator->() { return &elem; }
   inline const T * operator->() const { return &elem; }
 
-private:
+ private:
   inline void
   __cl_asserter() const
   {
@@ -70,9 +70,9 @@ private:
 // taken from java:
 //   http://developer.classpath.org/doc/java/util/Random-source.html
 class FastRandom {
-public:
+ public:
   FastRandom(unsigned long seed)
-    : seed(0)
+      : seed(0)
   {
     set_seed0(seed);
   }
@@ -125,7 +125,7 @@ public:
     this->seed = seed;
   }
 
-private:
+ private:
   void set_seed0(unsigned long seed) {
     this->seed = (seed ^ 0x5DEECE66DL) & ((1L << 48) - 1);
   }
@@ -184,7 +184,7 @@ template <int N>
 class Counter {
   long cnt[N];
   std::string name;
-public:
+ public:
   Counter(const char *n) : name(n) {
     memset(cnt, 0, sizeof(long) * N);
   }

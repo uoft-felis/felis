@@ -41,7 +41,7 @@ class MasstreeIndex {
 
   MasstreeMap map;
 
-protected:
+ protected:
   struct MasstreeMapIteratorImpl {
 
     const VarStr *end_key; // null key means never active terminates
@@ -54,7 +54,7 @@ protected:
     MasstreeMapIteratorImpl(typename MasstreeMap::forward_scan_iterator &&scan_it,
 			    const VarStr *terminate_key,
 			    int relation_id, uint64_t sid, CommitBuffer &buffer)
-      : end_key(terminate_key), it(std::move(scan_it)), relation_id(relation_id) {
+        : end_key(terminate_key), it(std::move(scan_it)), relation_id(relation_id) {
       AdaptKey();
       ti = &MasstreeIndex<VHandle>::GetThreadInfo();
       if (IsValid()) {
@@ -64,7 +64,7 @@ protected:
 
     MasstreeMapIteratorImpl(typename MasstreeMap::forward_scan_iterator &&scan_it,
 			    int relation_id, uint64_t sid, CommitBuffer &buffer)
-      : end_key(nullptr), it(std::move(scan_it)), relation_id(relation_id) {
+        : end_key(nullptr), it(std::move(scan_it)), relation_id(relation_id) {
       AdaptKey();
       ti = &MasstreeIndex<VHandle>::GetThreadInfo();
       if (IsValid()) {
@@ -102,7 +102,7 @@ protected:
     const VarStr *object() const {
       return obj;
     }
-  private:
+   private:
     bool ShouldSkip(uint64_t sid, CommitBuffer &buffer) {
       obj = buffer.Get(relation_id, &key());
       if (!obj) {
@@ -118,14 +118,14 @@ protected:
     }
     const VarStr *obj;
   };
-public:
+ public:
   typedef MasstreeMapIteratorImpl Iterator;
   void Initialize(threadinfo &ti) {
     map.initialize(ti);
   }
 
-protected:
-friend DeletedGarbageHeads;
+ protected:
+  friend DeletedGarbageHeads;
 
   static threadinfo &GetThreadInfo();
 
@@ -169,7 +169,7 @@ friend DeletedGarbageHeads;
 		    end, relation_id, sid, buffer);
   }
 
-public:
+ public:
   size_t nr_unique_keys() const {
     size_t rs = 0;
     for (int i = 0; i < NR_THREADS; i++) {
@@ -213,7 +213,7 @@ typedef RelationPolicy<MasstreeIndex, VHandle> Relation;
 
 class RelationManager : public RelationManagerPolicy<Relation> {
   threadinfo *ti;
-public:
+ public:
   RelationManager() : RelationManagerPolicy<Relation>() {
     // initialize all relations
     ti = threadinfo::make(threadinfo::TI_MAIN, -1);

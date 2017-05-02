@@ -37,7 +37,7 @@ struct TxnKey {
 class Epoch;
 
 class DivergentOutputException : public std::exception {
-public:
+ public:
 };
 
 class Txn;
@@ -82,7 +82,7 @@ class Txn : public go::Routine {
   TxnQueue node;
   TxnQueue *reuse_q;
 
-public:
+ public:
   uint8_t type;
 
   struct FinishCounter {
@@ -117,12 +117,12 @@ public:
 
   uint8_t *key_buffer() const { return keys; }
   uint16_t key_buffer_size() const { return sz_key_buf; }
-protected:
+ protected:
   virtual void Run();
 };
 
 class BaseRequest : public Txn {
-public:
+ public:
   // for parsers to create request dynamically
   static BaseRequest *CreateRequestFromChannel(go::InputSocketChannel *channel, Epoch *epoch);
 
@@ -139,7 +139,7 @@ public:
     return factory_map;
   }
 
-private:
+ private:
   static FactoryMap factory_map;
   static std::map<std::string, void *> support_handles;
 };
@@ -154,7 +154,7 @@ class Request : public BaseRequest, public T {
 class TxnIOReader;
 
 class Epoch {
-public:
+ public:
   Epoch(std::vector<go::EpollSocket *> socks);
   ~Epoch();
   static uint64_t CurrentEpochNumber();
@@ -177,11 +177,11 @@ public:
   static const int kNrThreads = 16;
 #endif
 
-private:
+ private:
   void InitBrks();
   void DestroyBrks();
 
-private:
+ private:
   go::BufferChannel<uint8_t> *wait_channel;
   TxnIOReader *readers[kNrThreads];
   go::WaitBarrier *wait_barrier;
@@ -193,9 +193,9 @@ private:
     char __padding__[4];
   } brks[kNrThreads];
 
-protected:
+ protected:
   static uint64_t kGlobSID;
-public:
+ public:
   static const size_t kBrkSize = 32 << 20;
   typedef mem::Pool<true> BrkPool;
   static BrkPool *pools;

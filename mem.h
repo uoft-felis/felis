@@ -26,11 +26,11 @@ class Pool {
   size_t capacity;
   unsigned char __pad__[32];
 
-public:
+ public:
   Pool() : data(nullptr), len(0) {}
 
   Pool(size_t chunk_size, size_t cap, int numa_node = -1)
-    : len(cap * chunk_size), capacity(cap) {
+      : len(cap * chunk_size), capacity(cap) {
     if (cap == 0) return;
 
     int flags = MAP_ANONYMOUS | MAP_PRIVATE;
@@ -82,7 +82,7 @@ public:
   // TODO: optimize this?
   void *Alloc() {
     void *r = nullptr, *next = nullptr;
-  again:
+ again:
     r = head.load();
     if (r == nullptr) return nullptr;
 
@@ -104,7 +104,7 @@ public:
 
   void Free(void *ptr) {
     void *r = nullptr;
-  again:
+ again:
     r = head;
     *(uintptr_t *) ptr = (uintptr_t) r;
     if (LockRequired) {
@@ -124,7 +124,7 @@ class Region {
   // static const int kMaxPools = 12;
   PoolType pools[32];
   size_t proposed_caps[32];
-public:
+ public:
   Region() {
     for (int i = 0; i < kMaxPools; i++) {
       proposed_caps[i] = 1 << (27 - 5 - i);
@@ -142,7 +142,7 @@ public:
   void ApplyFromConf(std::string filename) {
     std::ifstream fin(filename);
     std::string conf_text {std::istreambuf_iterator<char>(fin),
-	std::istreambuf_iterator<char>()};
+          std::istreambuf_iterator<char>()};
     std::string err;
     json11::Json conf_doc = json11::Json::parse(conf_text, err);
 

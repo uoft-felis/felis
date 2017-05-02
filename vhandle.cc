@@ -8,7 +8,7 @@
 namespace dolly {
 
 SortedArrayVHandle::SortedArrayVHandle()
-  : lock(false)
+    : lock(false)
 {
   capacity = 4;
   size = 0;
@@ -106,7 +106,7 @@ class SpinnerSlot {
     volatile long done;
     long __padding__[7];
   } slots[kNrSpinners];
-public:
+ public:
   SpinnerSlot() { memset(slots, 0, 64 * kNrSpinners); }
 
   void Wait();
@@ -259,7 +259,7 @@ void BaseVHandle::InitPools()
 }
 
 LinkListVHandle::LinkListVHandle()
-  : this_coreid(mem::CurrentAllocAffinity()), lock(false), head(nullptr), size(0)
+    : this_coreid(mem::CurrentAllocAffinity()), lock(false), head(nullptr), size(0)
 {
 }
 
@@ -363,7 +363,7 @@ void LinkListVHandle::GarbageCollect()
 }
 
 CalvinVHandle::CalvinVHandle()
-  : lock(false), pos(-1)
+    : lock(false), pos(0)
 {
   this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
   auto &region = mem::GetThreadLocalRegion(alloc_by_coreid);
@@ -396,7 +396,6 @@ bool CalvinVHandle::AppendNewAccess(uint64_t sid, bool is_read)
   while (i > 0 && accesses[i - 1] > last) i--;
   memmove(&accesses[i + 1], &accesses[i], (size - i - 1) * sizeof(uint64_t));
   accesses[i] = last;
-
   lock.store(false);
   return true;
 }
@@ -413,10 +412,23 @@ void CalvinVHandle::EnsureSpace()
 
 bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
 {
-
+  if (pos.load(std::memory_order_acquire) >= size) std::abort();
+  while (true) {
+    uint64_t mark = accesses[pos.load(std::memory_order_acquire)];
+    if ((mark >> 1) == sid) {
+      break;
+    }
+  }
+  if (!dry_run) {
+    if (obj == nullptr && pos.load(std::memory_order_acquire) == size - 1) {
+      return false
+          }
+    pos.fetch_add(1, std::memory_order_release);
+  }
+  return true;
 }
 
-void CalvinVHandle::ReadWithVersion(uint64_t sid)
+VarStr *CalvinVHandle::ReadWithVersion(uint64_t sid)
 {
 }
 

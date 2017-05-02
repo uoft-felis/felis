@@ -20,7 +20,7 @@ namespace sql {
 // equivalent to VARCHAR(N)
 template <typename IntSizeType, unsigned int N>
 class inline_str_base {
-public:
+ public:
   inline_str_base() : sz(0) {}
 
   inline_str_base(const char *s) {
@@ -111,7 +111,7 @@ public:
     return !operator==(other);
   }
 
-private:
+ private:
   IntSizeType sz;
   mutable char buf[N + 1];
 } __attribute__((packed));
@@ -127,7 +127,7 @@ operator<<(std::ostream &o, const inline_str_base<IntSizeType, N> &s)
 template <unsigned int N>
 class inline_str_8 : public inline_str_base<uint8_t, N> {
   typedef inline_str_base<uint8_t, N> super_type;
-public:
+ public:
   inline_str_8() : super_type() {}
   inline_str_8(const char *s) : super_type(s) {}
   inline_str_8(const char *s, size_t n) : super_type(s, n) {}
@@ -137,7 +137,7 @@ public:
 template <unsigned int N>
 class inline_str_16 : public inline_str_base<uint16_t, N> {
   typedef inline_str_base<uint16_t, N> super_type;
-public:
+ public:
   inline_str_16() : super_type() {}
   inline_str_16(const char *s) : super_type(s) {}
   inline_str_16(const char *s, size_t n) : super_type(s, n) {}
@@ -147,7 +147,7 @@ public:
 // equiavlent to CHAR(N)
 template <unsigned int N, char FillChar = ' '>
 class inline_str_fixed {
-public:
+ public:
   inline_str_fixed() {
     memset(&buf[0], FillChar, N);
   }
@@ -211,7 +211,7 @@ public:
     return !operator==(other);
   }
 
-private:
+ private:
   char buf[N];
 } __attribute__((packed));
 
@@ -258,7 +258,7 @@ template <typename T, typename ...Targs>
 struct Serializer {
   static size_t EncodeSize(const uint8_t *ptr) {
     return Serializer<T>::EncodeSize(ptr)
-      + Serializer<Targs...>::EncodeSize(ptr + sizeof(T));
+        + Serializer<Targs...>::EncodeSize(ptr + sizeof(T));
   }
   static constexpr size_t DecodeSize() {
     return sizeof(T) + Serializer<Targs...>::DecodeSize();
@@ -288,7 +288,7 @@ struct BasicSerializer {
 
 template <typename SizeType, unsigned int N>
 struct Serializer<inline_str_base<SizeType, N>>
-  : public BasicSerializer<inline_str_base<SizeType, N>> {
+    : public BasicSerializer<inline_str_base<SizeType, N>> {
   typedef inline_str_base<SizeType, N> ObjectType;
   static size_t EncodeSize(const uint8_t *ptr) {
     auto p = (const ObjectType *) ptr;
@@ -362,16 +362,16 @@ template <typename T>
 struct Serializer<T> : public BasicSerializer<T> {};
 
 /*
-template <unsigned int N>
-struct Serializer<sql::inline_str_fixed<N>> {
+  template <unsigned int N>
+  struct Serializer<sql::inline_str_fixed<N>> {
   static size_t EncodeSize() { return N; }
   static void Encode(uint8_t *buf, const uint8_t *ptr) {
-    memcpy(buf, ptr, EncodeSize());
+  memcpy(buf, ptr, EncodeSize());
   }
   static void DecodeFrom(uint8_t *ptr, const uint8_t *buf) {
-    memcpy(ptr, buf, N);
+  memcpy(ptr, buf, N);
   }
-};
+  };
 */
 
 // serve as the key of database
@@ -447,7 +447,7 @@ template <typename T, typename ...Targs>
 class Schemas : public T,
 		public Compare<Targs...>,
 		public Serializer<Targs...> {
-public:
+ public:
   using T::T;
   Schemas(Targs... args) : T {args...} {}
   Schemas() : T{} {}
@@ -483,7 +483,7 @@ public:
   void DecodeFrom(const VarStr *str) {
     DecodeFrom(str->data);
   }
-private:
+ private:
   VarStr *Encode(VarStr *str) const {
     Encode((uint8_t *) str + sizeof(VarStr));
     return str;

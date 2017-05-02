@@ -163,24 +163,24 @@ int main(int argc, char *argv[])
   size_t buffer_size = (512 << 20);
   while ((opt = getopt(argc, argv, "c:h:p:n:b:")) != -1) {
     switch (opt) {
-    case 'c':
-      nfds = atoi(optarg);
-      break;
-    case 'h':
-      host = std::string(optarg);
-      break;
-    case 'p':
-      port = atoi(optarg);
-      break;
-    case 'n':
-      nullfile = true;
-      break;
-    case 'b':
-      buffer_size = strtol(optarg, nullptr, 10);
-      break;
-    default:
-      ShowUsage(argv[0]);
-      break;
+      case 'c':
+        nfds = atoi(optarg);
+        break;
+      case 'h':
+        host = std::string(optarg);
+        break;
+      case 'p':
+        port = atoi(optarg);
+        break;
+      case 'n':
+        nullfile = true;
+        break;
+      case 'b':
+        buffer_size = strtol(optarg, nullptr, 10);
+        break;
+      default:
+        ShowUsage(argv[0]);
+        break;
     }
   }
 

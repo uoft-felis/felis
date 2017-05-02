@@ -32,12 +32,12 @@ struct ErmiaEpochGCRule {
 };
 
 class BaseVHandle {
-public:
+ public:
   static mem::Pool<true> *pools;
   static void InitPools();
-protected:
+ protected:
   ErmiaEpochGCRule gc_rule;
-public:
+ public:
   uint64_t last_update_epoch() const { return gc_rule.last_gc_epoch; }
 };
 
@@ -56,7 +56,7 @@ class SortedArrayVHandle : public BaseVHandle {
   // };
   // TxnWaitSlot *slots;
 
-public:
+ public:
   static void *operator new(size_t nr_bytes) {
     return pools[mem::CurrentAllocAffinity()].Alloc();
   }
@@ -75,7 +75,7 @@ public:
   void GarbageCollect();
 
   const size_t nr_versions() const { return size; }
-private:
+ private:
   void EnsureSpace();
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
@@ -111,7 +111,7 @@ class LinkListVHandle : public BaseVHandle {
   Entry *head; // head is the largest!
   size_t size;
 
-public:
+ public:
   static void *operator new(size_t nr_bytes) {
     return pools[mem::CurrentAllocAffinity()].Alloc();
   }
@@ -149,7 +149,7 @@ class CalvinVHandle : public BaseVHandle {
   size_t size;
   std::atomic_llong pos;
   uint64_t *accesses;
-public:
+ public:
   static void *operator new(size_t nr_bytes) {
     return pools[mem::CurrentAllocAffinity()].Alloc();
   }
@@ -167,7 +167,7 @@ public:
   VarStr *ReadWithVersion(uint64_t sid);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
   void GarbageCollect();
-private:
+ private:
   void EnsureSpace();
 };
 

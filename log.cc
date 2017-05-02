@@ -21,7 +21,7 @@ void InitializeLogger()
 }
 
 PerfLog::PerfLog()
-  : is_started(false), duration(0)
+    : is_started(false), duration(0)
 {
   Start();
 }
@@ -41,7 +41,7 @@ void PerfLog::End()
     struct timeval newtv;
     gettimeofday(&newtv, NULL);
     duration += (newtv.tv_sec - tv.tv_sec) * 1000
-      + (newtv.tv_usec - tv.tv_usec) / 1000;
+                + (newtv.tv_usec - tv.tv_usec) / 1000;
   }
 }
 

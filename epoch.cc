@@ -33,15 +33,15 @@ class TxnIOReader : public go::Routine {
   Txn::FinishCounter fcnt;
   TxnQueue *reuse_q;
 
-public:
+ public:
   TxnIOReader(go::EpollSocket *s, go::WaitBarrier *bar, Epoch *e, TxnQueue *q)
-    : sock(s), barrier(bar), epoch(e), reuse_q(q) {
+      : sock(s), barrier(bar), epoch(e), reuse_q(q) {
     set_reuse(true);
   }
 
   Txn::FinishCounter *finish_counter() { return &fcnt; }
 
-protected:
+ protected:
   virtual void Run();
 };
 
@@ -118,7 +118,7 @@ void TxnIOReader::Run()
 class TxnRunner : public go::Routine {
   TxnQueue *queue;
   bool collect_garbage;
-public:
+ public:
   TxnRunner(TxnQueue *q) : queue(q), collect_garbage(false) {}
   void set_collect_garbage(bool v) { collect_garbage = v; }
   virtual void Run();
@@ -335,7 +335,7 @@ void Txn::SetupReExec()
       finished_bytes += 4;
 #endif
 
-    skip_next:
+   skip_next:
       p += sizeof(TxnKey) + kptr->len;
 #ifdef VALIDATE_TXN
       p += 4; // skip the csum as well
@@ -381,7 +381,7 @@ void BaseRequest::LoadWorkloadSupport(const std::string &name)
 
   typedef void (*InitializeFunctionPointer)();
   InitializeFunctionPointer init_fp =
-    (InitializeFunctionPointer) dlsym(handle, "InitializeWorkload");
+      (InitializeFunctionPointer) dlsym(handle, "InitializeWorkload");
   init_fp();
 }
 

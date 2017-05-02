@@ -7,12 +7,12 @@ namespace dolly {
 
 template <class VHandle>
 class StdMapIndex {
-protected:
+ protected:
   struct StdMapIteratorImpl {
     typedef typename std::map<VarStr, VHandle>::iterator MapIterator;
     StdMapIteratorImpl(MapIterator current_it, MapIterator end_it, int rid, uint64_t sid,
 		       CommitBuffer &buffer)
-      : current(current_it), end(end_it), relation_id(rid), obj(nullptr) {
+        : current(current_it), end(end_it), relation_id(rid), obj(nullptr) {
       if (IsValid()) {
 	if (ShouldSkip(sid, buffer)) Next(sid, buffer);
       }
@@ -30,7 +30,7 @@ protected:
     const VarStr *object() const { return obj; }
     MapIterator current, end;
     int relation_id;
-  private:
+   private:
     bool ShouldSkip(uint64_t sid, CommitBuffer &buffer) {
       obj = buffer.Get(relation_id, &key());
       if (!obj) obj = current->second.ReadWithVersion(sid);
@@ -38,11 +38,11 @@ protected:
     }
     const VarStr *obj;
   };
-public:
+ public:
   typedef StdMapIteratorImpl Iterator;
-private:
+ private:
   std::map<VarStr, VHandle> map;
-protected:
+ protected:
 
   VHandle *InsertOrCreate(const VarStr *k) {
     // implicit copy

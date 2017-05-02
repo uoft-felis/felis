@@ -41,22 +41,22 @@ int main(int argc, char *argv[])
 
   while ((opt = getopt(argc, argv, "rw:s:c:")) != -1) {
     switch (opt) {
-    case 'r':
-      replay_from_file = true;
-      break;
-    case 'w':
-      workload_name = std::string(optarg);
-      break;
-    case 's':
-      timer_skip = atoi(optarg);
-      break;
-    case 'c':
-      chkpt = true;
-      chkpt_format = std::string(optarg);
-      break;
-    default:
-      show_usage(argv[0]);
-      break;
+      case 'r':
+        replay_from_file = true;
+        break;
+      case 'w':
+        workload_name = std::string(optarg);
+        break;
+      case 's':
+        timer_skip = atoi(optarg);
+        break;
+      case 'c':
+        chkpt = true;
+        chkpt_format = std::string(optarg);
+        break;
+      default:
+        show_usage(argv[0]);
+        break;
     }
   }
 
@@ -98,10 +98,10 @@ int main(int argc, char *argv[])
   logger->info("setting up memory pools and regions. {} NUMA nodes in total", tot_nodes);
 
   dolly::Epoch::pools = (dolly::Epoch::BrkPool *)
-    malloc(sizeof(dolly::Epoch::BrkPool) * tot_nodes);
+                        malloc(sizeof(dolly::Epoch::BrkPool) * tot_nodes);
   for (int nid = 0; nid < tot_nodes; nid++) {
     new (&dolly::Epoch::pools[nid])
-      dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 2 * mem::kNrCorePerNode, nid);
+        dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 2 * mem::kNrCorePerNode, nid);
   }
   mem::InitThreadLocalRegions(dolly::Epoch::kNrThreads);
   for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
@@ -146,7 +146,7 @@ int main(int argc, char *argv[])
     m.lock(); // waits
     go::WaitThreadPool();
   }
-// chkpt:
+  // chkpt:
   // go::WaitThreadPool();
   // everybody quits. time to dump a checkpoint
   if (chkpt) {

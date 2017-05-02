@@ -22,10 +22,10 @@ class TxnValidator {
   static std::atomic<unsigned long> tot_validated;
   uint8_t *keys_ptr;
   bool is_valid;
-public:
+ public:
   TxnValidator() :
-    key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
-    value_size(0), keys_ptr(nullptr), is_valid(true) {}
+      key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
+      value_size(0), keys_ptr(nullptr), is_valid(true) {}
 
   void set_keys_ptr(uint8_t *kptr) { keys_ptr = kptr; }
   void CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr *obj);
@@ -45,13 +45,13 @@ struct CommitBufferEntry {
   const VarStr *key;
   VarStr *obj;
   CommitBufferEntry(int id, const VarStr *k, VarStr *o)
-    : epoch_nr(Epoch::CurrentEpochNumber()), fid(id), key(k), obj(o) {}
+      : epoch_nr(Epoch::CurrentEpochNumber()), fid(id), key(k), obj(o) {}
 };
 
 class DeletedGarbageHeads {
   ListNode garbage_heads[NR_THREADS];
 
-public:
+ public:
   DeletedGarbageHeads();
 
   void AttachGarbage(CommitBufferEntry *g);
@@ -65,7 +65,7 @@ class CommitBuffer {
   ListNode lru;
   ListNode *htable;
   static const int kHashTableSize = 37;
-public:
+ public:
 
   CommitBuffer(Txn *txn) : tx(txn) {
     htable = new ListNode[kHashTableSize];
@@ -108,7 +108,7 @@ public:
 };
 
 class Checkpoint {
-public:
+ public:
   // TODO: load checkpoint plugins dynamically?
   // static void LoadPlugins();
 
@@ -124,10 +124,10 @@ public:
 // Second layer is the versioning layer. The versioning layers could be simply
 // kept as a sorted array
 class BaseRelation {
-protected:
+ protected:
   int id;
   size_t key_len;
-public:
+ public:
   BaseRelation() : id(-1) {}
 
   void set_id(int relation_id) { id = relation_id; }
@@ -139,9 +139,9 @@ public:
 };
 
 class RelationManagerBase {
-protected:
+ protected:
   std::map<std::string, int> relation_id_map;
-public:
+ public:
   RelationManagerBase();
   int LookupRelationId(std::string name) const {
     auto it = relation_id_map.find(name);
@@ -157,7 +157,7 @@ public:
 
 template <class T>
 class RelationManagerPolicy : public RelationManagerBase {
-public:
+ public:
   static const int kMaxNrRelations = 1024;
 
   RelationManagerPolicy() {
@@ -176,14 +176,14 @@ public:
 #endif
     return relations[fid];
   }
-protected:
+ protected:
   std::array<T, kMaxNrRelations> relations;
 };
 
 template <template<typename> class IndexPolicy, class VHandle>
 class RelationPolicy : public BaseRelation,
 		       public IndexPolicy<VHandle> {
-public:
+ public:
   void SetupReExec(const VarStr *k, uint64_t sid, VarStr *obj = (VarStr *) kPendingValue) {
     auto handle = this->InsertOrCreate(k);
     while (!handle->AppendNewVersion(sid)) {
@@ -249,7 +249,7 @@ public:
   }
 
 
-private:
+ private:
   void CallScanCallback(typename IndexPolicy<VHandle>::Iterator it, uint64_t sid,
 			CommitBuffer &buffer,
 			std::function<bool (const VarStr *k, const VarStr *v)> callback) {

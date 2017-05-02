@@ -18,9 +18,9 @@ class ClientFetcher : public go::Routine {
 
   PerfLog *p;
   int timer_skip_epoch;
-public:
+ public:
   ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch, std::string name)
-    : peer_fds(fds), epoch_ch(ch), workload_name(name), p(nullptr), timer_skip_epoch(30) {
+      : peer_fds(fds), epoch_ch(ch), workload_name(name), p(nullptr), timer_skip_epoch(30) {
     set_share(true);
   }
 
@@ -35,9 +35,9 @@ class ClientExecutor : public go::Routine {
   go::BufferChannel<Epoch *> *epoch_ch;
   std::mutex *mp;
   ClientFetcher *fetcher;
-public:
+ public:
   ClientExecutor(go::BufferChannel<Epoch *> *ch, std::mutex *m, ClientFetcher *cf)
-    : epoch_ch(ch), mp(m), fetcher(cf) {
+      : epoch_ch(ch), mp(m), fetcher(cf) {
     // set_share(true);
   }
 

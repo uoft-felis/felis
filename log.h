@@ -14,7 +14,7 @@ class PerfLog {
   struct timeval tv;
   bool is_started;
   uint32_t duration;
-public:
+ public:
   PerfLog();
   void Start();
   void End();
