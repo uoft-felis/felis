@@ -4,7 +4,7 @@
 #include "util.h"
 #include "index.h"
 #include "gopp/gopp.h"
-#include "gopp/epoll-channel.h"
+#include "gopp/channels.h"
 
 using util::MixIn;
 using util::Instance;
@@ -12,7 +12,7 @@ using util::Instance;
 namespace dolly {
 
 template<>
-void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::InputSocketChannel *channel)
+void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::TcpInputChannel *channel)
 {
   struct {
     uint warehouse_id;
@@ -51,7 +51,7 @@ int Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::CoreAffinity() const
 }
 
 template<>
-void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::InputSocketChannel *channel)
+void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::TcpInputChannel *channel)
 {
   struct {
     uint warehouse_id;
@@ -72,7 +72,7 @@ int Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::CoreAffinity() const
 }
 
 template<>
-void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::InputSocketChannel *channel)
+void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::TcpInputChannel *channel)
 {
   channel->Read(&warehouse_id, 4);
   channel->Read(&district_id, 4);
@@ -88,7 +88,7 @@ int Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::CoreAffinity() con
 }
 
 template<>
-void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::InputSocketChannel *channel)
+void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::ParseFromChannel(go::TcpInputChannel *channel)
 {
   struct {
     uint warehouse_id;
@@ -178,14 +178,17 @@ static void LoadTPCCDataSet()
   std::atomic_int count_down(6);
   m.lock(); // use as a semaphore
 
-  CreateLoader<tpcc::loaders::Warehouse>(9324, &m, &count_down, 0)->StartOn(1);
-  CreateLoader<tpcc::loaders::Item>(235443, &m, &count_down, 1)->StartOn(2);
-  CreateLoader<tpcc::loaders::Stock>(89785943, &m, &count_down, 2)->StartOn(3);
-  CreateLoader<tpcc::loaders::District>(129856349, &m, &count_down, 3)->StartOn(4);
-  CreateLoader<tpcc::loaders::Customer>(923587856425, &m, &count_down, 4)->StartOn(5);
-  CreateLoader<tpcc::loaders::Order>(2343352, &m, &count_down, 5)->StartOn(6);
+  go::GetSchedulerFromPool(1)->WakeUp(CreateLoader<tpcc::loaders::Warehouse>(9324, &m, &count_down, 0));
+  go::GetSchedulerFromPool(2)->WakeUp(CreateLoader<tpcc::loaders::Item>(235443, &m, &count_down, 1));
+  go::GetSchedulerFromPool(3)->WakeUp(CreateLoader<tpcc::loaders::Stock>(89785943, &m, &count_down, 2));
+  go::GetSchedulerFromPool(4)->WakeUp(CreateLoader<tpcc::loaders::District>(129856349, &m, &count_down, 3));
+  go::GetSchedulerFromPool(5)->WakeUp(CreateLoader<tpcc::loaders::Customer>(923587856425, &m, &count_down, 4));
+  go::GetSchedulerFromPool(6)->WakeUp(CreateLoader<tpcc::loaders::Order>(2343352, &m, &count_down, 5));
 
   m.lock(); // waits
+  auto &mgr = Instance<dolly::RelationManager>();
+  mgr.GetRelationOrCreate(mgr.LookupRelationId("customer_name_idx")).set_read_only(true);
+  mgr.GetRelationOrCreate(mgr.LookupRelationId("item")).set_read_only(true);
 }
 
 extern "C" void InitializeWorkload()

@@ -389,6 +389,7 @@ struct VarStr {
   }
 
   static void operator delete(void *ptr) {
+    if (ptr == nullptr) return;
     VarStr *ins = (VarStr *) ptr;
     auto &r = mem::GetThreadLocalRegion(ins->region_id);
     if (__builtin_expect(ins->data == (uint8_t *) ptr + sizeof(VarStr), 1)) {

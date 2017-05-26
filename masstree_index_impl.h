@@ -29,6 +29,8 @@ struct VHandlePrinter {
   }
 };
 
+class RelationManager;
+
 template <class VHandle>
 class MasstreeIndex {
 
@@ -48,13 +50,16 @@ class MasstreeIndex {
     typename MasstreeMap::forward_scan_iterator it;
     threadinfo *ti;
     int relation_id;
+    bool relation_read_only;
 
     VarStr cur_key;
 
     MasstreeMapIteratorImpl(typename MasstreeMap::forward_scan_iterator &&scan_it,
 			    const VarStr *terminate_key,
-			    int relation_id, uint64_t sid, CommitBuffer &buffer)
-        : end_key(terminate_key), it(std::move(scan_it)), relation_id(relation_id) {
+			    int relation_id, bool read_only,
+                            uint64_t sid, CommitBuffer &buffer)
+        : end_key(terminate_key), it(std::move(scan_it)), relation_id(relation_id),
+          relation_read_only(read_only) {
       AdaptKey();
       ti = &MasstreeIndex<VHandle>::GetThreadInfo();
       if (IsValid()) {
@@ -63,8 +68,9 @@ class MasstreeIndex {
     }
 
     MasstreeMapIteratorImpl(typename MasstreeMap::forward_scan_iterator &&scan_it,
-			    int relation_id, uint64_t sid, CommitBuffer &buffer)
-        : end_key(nullptr), it(std::move(scan_it)), relation_id(relation_id) {
+			    int relation_id, bool read_only, uint64_t sid, CommitBuffer &buffer)
+        : end_key(nullptr), it(std::move(scan_it)), relation_id(relation_id),
+          relation_read_only(read_only) {
       AdaptKey();
       ti = &MasstreeIndex<VHandle>::GetThreadInfo();
       if (IsValid()) {
@@ -112,7 +118,15 @@ class MasstreeIndex {
 			it.value()->nr_versions(),
 			it.value()->last_update_epoch());
 	}
+#ifdef CALVIN_REPLAY
+        if (relation_read_only) {
+          obj = it.value()->DirectRead();
+        } else {
+          obj = it.value()->ReadWithVersion(sid);
+        }
+#else
 	obj = it.value()->ReadWithVersion(sid);
+#endif
       }
       return obj == nullptr;
     }
@@ -159,14 +173,14 @@ class MasstreeIndex {
     return result;
   }
 
-  Iterator IndexSearchIterator(const VarStr *k, int relation_id, uint64_t sid, CommitBuffer &buffer) {
+  Iterator IndexSearchIterator(const VarStr *k, int relation_id, bool read_only, uint64_t sid, CommitBuffer &buffer) {
     return Iterator(std::move(map.find_iterator(lcdf::Str(k->data, k->len), GetThreadInfo())),
-		    relation_id, sid, buffer);
+		    relation_id, read_only, sid, buffer);
   }
-  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end, int relation_id, uint64_t sid,
+  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end, int relation_id, bool read_only, uint64_t sid,
 			       CommitBuffer &buffer) {
     return Iterator(std::move(map.find_iterator(lcdf::Str(start->data, start->len), GetThreadInfo())),
-		    end, relation_id, sid, buffer);
+		    end, relation_id, read_only, sid, buffer);
   }
 
  public:
@@ -185,9 +199,7 @@ class MasstreeIndex {
     if (found) {
       VHandle *phandle = cursor.value();
       cursor.value() = nullptr;
-
       asm volatile ("": : :"memory");
-
       delete phandle;
     }
     cursor.finish(-1, ti);
@@ -209,7 +221,7 @@ using VHandle = CalvinVHandle;
 using VHandle = SortedArrayVHandle;
 #endif
 
-typedef RelationPolicy<MasstreeIndex, VHandle> Relation;
+class Relation : public RelationPolicy<MasstreeIndex, VHandle> {};
 
 class RelationManager : public RelationManagerPolicy<Relation> {
   threadinfo *ti;

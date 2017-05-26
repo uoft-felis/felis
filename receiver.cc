@@ -30,7 +30,7 @@ static void DoDumpNetwork(int nfds, int fds[], bool nullfile, size_t buffer_size
 	fprintf(stderr, "IO buffer size is 0\n");
 	continue;
       }
-      fbuf[i] = (char *) malloc(buffer_size);
+      fbuf[i] = (char *) calloc(1, buffer_size);
       setvbuf(fout[i], fbuf[i], _IOFBF, buffer_size);
     }
   }
@@ -161,7 +161,7 @@ int main(int argc, char *argv[])
   std::string host;
   int port = 0;
   size_t buffer_size = (512 << 20);
-  while ((opt = getopt(argc, argv, "c:h:p:n:b:")) != -1) {
+  while ((opt = getopt(argc, argv, "c:h:p:nb:")) != -1) {
     switch (opt) {
       case 'c':
         nfds = atoi(optarg);

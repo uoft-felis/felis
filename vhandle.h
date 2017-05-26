@@ -47,6 +47,7 @@ class SortedArrayVHandle : public BaseVHandle {
   std::atomic_bool lock;
   size_t capacity;
   size_t size;
+  size_t value_mark;
   uint64_t *versions;
   uintptr_t *objects;
 
@@ -149,6 +150,7 @@ class CalvinVHandle : public BaseVHandle {
   size_t size;
   std::atomic_llong pos;
   uint64_t *accesses;
+  VarStr *obj;
  public:
   static void *operator new(size_t nr_bytes) {
     return pools[mem::CurrentAllocAffinity()].Alloc();
@@ -165,10 +167,15 @@ class CalvinVHandle : public BaseVHandle {
   bool AppendNewVersion(uint64_t sid);
   bool AppendNewAccess(uint64_t sid, bool is_read = false);
   VarStr *ReadWithVersion(uint64_t sid);
+  VarStr *DirectRead(); // for read-only optimization
   bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
   void GarbageCollect();
+
+  const size_t nr_versions() const { return size; }
  private:
   void EnsureSpace();
+  uint64_t WaitForTurn(uint64_t sid);
+  bool PeekForTurn(uint64_t sid);
 };
 
 static_assert(sizeof(CalvinVHandle) <= 64, "Calvin Handle too large!");

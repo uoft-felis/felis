@@ -3,6 +3,7 @@
 
 #include <string>
 #include "gopp/gopp.h"
+#include "gopp/channels.h"
 #include "epoch.h"
 #include "util.h"
 #include "mem.h"
@@ -12,15 +13,19 @@ namespace dolly {
 
 class ClientFetcher : public go::Routine {
   bool replay_from_file; // contact a local webserver
-  int *peer_fds;
-  go::BufferChannel<Epoch *> *epoch_ch;
+  go::BufferChannel *epoch_ch;
   std::string workload_name;
 
   PerfLog *p;
   int timer_skip_epoch;
+
+  // static const char *kDummyWebServerHost = "127.0.0.1";
+  static const std::string kDummyWebServerHost;
+  static const int kDummyWebServerPort = 8000;
+
  public:
-  ClientFetcher(int *fds, go::BufferChannel<Epoch *> *ch, std::string name)
-      : peer_fds(fds), epoch_ch(ch), workload_name(name), p(nullptr), timer_skip_epoch(30) {
+  ClientFetcher(go::BufferChannel *ch, std::string name)
+      : epoch_ch(ch), workload_name(name), p(nullptr), timer_skip_epoch(30) {
     set_share(true);
   }
 
@@ -32,13 +37,13 @@ class ClientFetcher : public go::Routine {
 };
 
 class ClientExecutor : public go::Routine {
-  go::BufferChannel<Epoch *> *epoch_ch;
+  go::BufferChannel *epoch_ch;
   std::mutex *mp;
   ClientFetcher *fetcher;
  public:
-  ClientExecutor(go::BufferChannel<Epoch *> *ch, std::mutex *m, ClientFetcher *cf)
+  ClientExecutor(go::BufferChannel *ch, std::mutex *m, ClientFetcher *cf)
       : epoch_ch(ch), mp(m), fetcher(cf) {
-    // set_share(true);
+    set_share(true);
   }
 
   virtual void Run();

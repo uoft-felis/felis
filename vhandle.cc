@@ -226,6 +226,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_ru
 
 void SortedArrayVHandle::GarbageCollect()
 {
+  value_mark = size;
   if (size < 2) return;
 
   for (int i = 0; i < size; i++) {
@@ -371,6 +372,7 @@ CalvinVHandle::CalvinVHandle()
   capacity = 4;
 
   accesses = (uint64_t *) region.Alloc(capacity * sizeof(uint64_t));
+  obj = nullptr;
 }
 
 bool CalvinVHandle::AppendNewVersion(uint64_t sid)
@@ -384,14 +386,15 @@ bool CalvinVHandle::AppendNewAccess(uint64_t sid, bool is_read)
   if (!lock.compare_exchange_strong(expected, true))
     return false;
 
-  // TOOD: gc?
+  gc_rule(*this, sid);
+
   size++;
   EnsureSpace();
 
-  uint64_t access_mark = sid << 1;
-  if (!is_read) access_mark |= 1;
+  uint64_t access_turn = sid << 1;
+  if (!is_read) access_turn |= 1;
 
-  uint64_t last = accesses[size - 1] = access_mark;
+  uint64_t last = accesses[size - 1] = access_turn;
   int i = size - 1;
   while (i > 0 && accesses[i - 1] > last) i--;
   memmove(&accesses[i + 1], &accesses[i], (size - i - 1) * sizeof(uint64_t));
@@ -404,32 +407,86 @@ void CalvinVHandle::EnsureSpace()
 {
   if (unlikely(size == capacity)) {
     auto current_coreid = mem::CurrentAllocAffinity();
+    auto old_accesses = accesses;
+    auto old_capacity = capacity;
     capacity *= 2;
     accesses = (uint64_t *) mem::GetThreadLocalRegion(current_coreid).Alloc(capacity * sizeof(uint64_t));
+    memcpy(accesses, old_accesses, old_capacity * sizeof(uint64_t));
+    mem::GetThreadLocalRegion(alloc_by_coreid).Free(old_accesses, old_capacity * sizeof(uint64_t));
     alloc_by_coreid = current_coreid;
   }
 }
 
-bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+uint64_t CalvinVHandle::WaitForTurn(uint64_t sid)
 {
   if (pos.load(std::memory_order_acquire) >= size) std::abort();
   while (true) {
-    uint64_t mark = accesses[pos.load(std::memory_order_acquire)];
-    if ((mark >> 1) == sid) {
-      break;
+    uint64_t turn = accesses[pos.load(std::memory_order_acquire)];
+    if ((turn >> 1) == sid) {
+      return turn;
     }
+    asm volatile("pause": : :"memory");
   }
+}
+
+bool CalvinVHandle::PeekForTurn(uint64_t sid)
+{
+  // Binary search over the entire accesses array
+  auto it = std::lower_bound((uint64_t *) accesses,
+                             (uint64_t *) accesses + size,
+                             sid << 1);
+  if (it == accesses + size) return false;
+  if ((*it) >> 1 == sid) return true;
+  if ((accesses[0] >> 1) < sid) {
+    std::abort();
+  }
+  return false;
+}
+
+bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+{
+  uint64_t turn = WaitForTurn(sid);
+
   if (!dry_run) {
-    if (obj == nullptr && pos.load(std::memory_order_acquire) == size - 1) {
-      return false
-          }
+    delete this->obj;
+    this->obj = obj;
+    bool is_last = (obj == nullptr && pos.load(std::memory_order_acquire) == size - 1);
     pos.fetch_add(1, std::memory_order_release);
+    return !is_last;
   }
   return true;
 }
 
 VarStr *CalvinVHandle::ReadWithVersion(uint64_t sid)
 {
+  // Need for scan
+  if (!PeekForTurn(sid))
+    return nullptr;
+
+  uint64_t turn = WaitForTurn(sid);
+  VarStr *o = obj;
+  if ((turn & 0x01) == 0) {
+    // I only need to read this record, so advance the pos. Otherwise, I do not
+    // need to advance the pos, because I will write to this later.
+    pos.fetch_add(1, std::memory_order_release);
+  }
+  return o;
+}
+
+VarStr *CalvinVHandle::DirectRead()
+{
+  return obj;
+}
+
+void CalvinVHandle::GarbageCollect()
+{
+  if (size < 2) return;
+
+  auto it = std::lower_bound(accesses, accesses + size, gc_rule.min_of_epoch);
+  memmove(accesses, it, (it - accesses) * sizeof(uint64_t));
+  size -= it - accesses;
+  pos.fetch_sub(it - accesses, std::memory_order_release);
+  return;
 }
 
 }

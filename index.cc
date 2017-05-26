@@ -65,11 +65,11 @@ void TxnValidator::CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr 
     update_crc32(k->data, k->len, &key_crc);
 
   TxnKey *kptr = (TxnKey *) keys_ptr;
-  if (!k || kptr->fid != fid || kptr->len != k->len
+  if (!k || -kptr->fid != fid || kptr->len != k->len
       || memcmp(kptr->data, k->data, k->len) != 0) {
     is_valid = false;
     logger->alert("Out-of-Order Write. sid {} fid {}",
-		  tx.serializable_id(), kptr->fid);
+		  tx.serializable_id(), -kptr->fid);
     VarStr real_k;
     real_k.data = kptr->data;
     real_k.len = kptr->len;
@@ -99,6 +99,7 @@ void TxnValidator::CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr 
     prefix.str(std::string());
     prefix << "Actual Value sid " << tx.serializable_id() << " ";
     DebugVarStr(prefix.str().c_str(), obj);
+    std::abort();
   }
   keys_ptr += 4;
 #endif
@@ -144,7 +145,7 @@ DeletedGarbageHeads::DeletedGarbageHeads()
   }
 }
 
-// #define PROACTIVE_GC
+#define PROACTIVE_GC
 
 void DeletedGarbageHeads::AttachGarbage(CommitBufferEntry *g)
 {

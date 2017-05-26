@@ -126,9 +126,10 @@ class Checkpoint {
 class BaseRelation {
  protected:
   int id;
+  bool read_only;
   size_t key_len;
  public:
-  BaseRelation() : id(-1) {}
+  BaseRelation() : id(-1), read_only(false) {}
 
   void set_id(int relation_id) { id = relation_id; }
   int relation_id() { return id; }
@@ -136,6 +137,8 @@ class BaseRelation {
   void set_key_length(size_t l) { key_len = l; }
   size_t key_length() const { return key_len; }
 
+  void set_read_only(bool v) { read_only = v; }
+  bool is_read_only() const { return read_only; }
 };
 
 class RelationManagerBase {
@@ -199,7 +202,20 @@ class RelationPolicy : public BaseRelation,
     return handle->AppendNewVersion(sid);
   }
 
+#ifdef CALVIN_REPLAY
+  bool SetupReExecAccessAsync(const VarStr *k, uint64_t sid) {
+    auto handle = this->InsertOrCreate(k);
+    return handle->AppendNewAccess(sid, true);
+  }
+#endif
+
   const VarStr *Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
+#ifdef CALVIN_REPLAY
+    if (is_read_only()) {
+      return this->Search(k)->DirectRead();
+    }
+#endif
+
     const VarStr *o = buffer.Get(id, k);
     if (!o) o = this->Search(k)->ReadWithVersion(sid);
     return o;
@@ -214,8 +230,8 @@ class RelationPolicy : public BaseRelation,
   void Put(const VarStr *k, uint64_t sid, VarStr *obj, CommitBuffer &buffer) {
     buffer.Put(id, std::move(k), obj);
 #ifndef NDEBUG
-    // dry run to test ??
-    // this->Search(k)->WriteWithVersion(sid, obj, true);
+    // Dry run to test. Extremely helpful for debugging deadlock
+    this->Search(k)->WriteWithVersion(sid, obj, true);
 #endif
   }
 
@@ -240,14 +256,15 @@ class RelationPolicy : public BaseRelation,
 
   typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *k, uint64_t sid,
 							 CommitBuffer &buffer) {
-    return std::move(this->IndexSearchIterator(k, id, sid, buffer));
+    auto it = this->IndexSearchIterator(k, id, is_read_only(), sid, buffer);
+    return std::move(it);
   }
 
   typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *start, const VarStr *end,
 							 uint64_t sid, CommitBuffer &buffer) {
-    return std::move(this->IndexSearchIterator(start, end, id, sid, buffer));
+    auto it = this->IndexSearchIterator(start, end, id, is_read_only(), sid, buffer);
+    return std::move(it);
   }
-
 
  private:
   void CallScanCallback(typename IndexPolicy<VHandle>::Iterator it, uint64_t sid,

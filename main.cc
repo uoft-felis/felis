@@ -10,7 +10,7 @@
 #include "index.h"
 #include "client.h"
 #include "gopp/gopp.h"
-#include "gopp/epoll-channel.h"
+#include "gopp/channels.h"
 
 #include "log.h"
 
@@ -23,10 +23,6 @@ void show_usage(const char *progname)
 
   std::exit(-1);
 }
-
-// static const char *kDummyWebServerHost = "127.0.0.1";
-static const char *kDummyWebServerHost = "142.150.234.186";
-static const int kDummyWebServerPort = 8000;
 
 int main(int argc, char *argv[])
 {
@@ -66,34 +62,6 @@ int main(int argc, char *argv[])
   }
   logger->info("Running {} workload", workload_name);
 
-  int peer_fd = -1;
-
-  socklen_t addrlen = sizeof(struct sockaddr_in);
-  struct sockaddr_in addr;
-
-  // we assume each core is creating a connection
-  int *peer_fds = new int[dolly::Epoch::kNrThreads];
-
-  if (replay_from_file) {
-    memset(&addr, 0, addrlen);
-    addr.sin_addr.s_addr = inet_addr(kDummyWebServerHost);
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(kDummyWebServerPort);
-  }
-
-  for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
-    if (replay_from_file) {
-      peer_fd = socket(AF_INET, SOCK_STREAM, 0);
-      if (connect(peer_fd, (struct sockaddr *) &addr, addrlen) < 0) {
-	perror("connect");
-	std::abort();
-      }
-    }
-    peer_fds[i] = peer_fd;
-  }
-  logger->info("replica received {} connections\n", dolly::Epoch::kNrThreads);
-  logger->info("replica ready!");
-
   const int tot_nodes = dolly::Epoch::kNrThreads / mem::kNrCorePerNode;
   logger->info("setting up memory pools and regions. {} NUMA nodes in total", tot_nodes);
 
@@ -124,24 +92,19 @@ int main(int argc, char *argv[])
   // FIXME:
   // goto chkpt;
   {
-    auto epoch_ch = new go::BufferChannel<dolly::Epoch *>(0);
+    auto epoch_ch = new go::BufferChannel(sizeof(void *));
     std::mutex m;
     m.lock();
 
-    auto epoch_fetcher = new dolly::ClientFetcher(peer_fds, epoch_ch, workload_name);
+    auto epoch_fetcher = new dolly::ClientFetcher(epoch_ch, workload_name);
     auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m, epoch_fetcher);
 
     epoch_fetcher->set_replay_from_file(replay_from_file);
     if (timer_skip > 0)
       epoch_fetcher->set_timer_skip_epoch(timer_skip);
 
-    go::CreateGlobalEpoll();
-
-    auto t = std::thread([]{ go::GlobalEpoll()->EventLoop(); });
-    t.detach();
-
-    epoch_fetcher->StartOn(1);
-    epoch_executor->StartOn(2);
+    go::GetSchedulerFromPool(1)->WakeUp(epoch_fetcher);
+    go::GetSchedulerFromPool(2)->WakeUp(epoch_executor);
 
     m.lock(); // waits
     go::WaitThreadPool();
@@ -155,8 +118,6 @@ int main(int argc, char *argv[])
     p_chkpt_impl->Export();
     p.Show("checkpoint takes");
   }
-
-  delete [] peer_fds;
 
   return 0;
 }

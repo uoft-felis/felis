@@ -12,24 +12,33 @@
 #include <atomic>
 #include <limits.h>
 
-#include "net-io.h"
+// #include "net-io.h"
 #include "sqltypes.h"
 #include "csum.h"
 
 #include "mem.h"
+#include "log.h"
 
 #include "gopp/gopp.h"
-#include "gopp/epoll-channel.h"
+#include "gopp/channels.h"
+#include "gopp/barrier.h"
 
 // #define VALIDATE_TXN 1
 // #define VALIDATE_TXN_KEY 1
 
 namespace dolly {
 
+class ParseBufferEOF : public std::exception {
+ public:
+  virtual const char *what() const noexcept {
+    return "ParseBuffer EOF";
+  }
+};
+
 typedef sql::VarStr VarStr;
 
 struct TxnKey {
-  uint16_t fid; // table id
+  int16_t fid; // table id
   uint8_t len;
   uint8_t data[];
 } __attribute__((packed));
@@ -67,7 +76,13 @@ struct TxnQueue {
   bool is_empty() const { return next == this && prev == this; }
 };
 
+class Relation;
+
 class Txn : public go::Routine {
+#ifdef CALVIN_REPLAY
+  uint8_t *read_set_keys;
+  uint32_t sz_read_set_key_buf;
+#endif
   uint8_t *keys;
   uint16_t sz_key_buf;
   unsigned int key_crc;
@@ -94,7 +109,10 @@ class Txn : public go::Routine {
     set_reuse(true);
   }
 
-  void Initialize(go::InputSocketChannel *channel, uint16_t key_pkt_len, Epoch *epoch);
+#ifdef CALVIN_REPLAY
+  void InitializeReadSet(go::TcpInputChannel *channel, uint32_t read_key_pkt_size, Epoch *epoch);
+#endif
+  void Initialize(go::TcpInputChannel *channel, uint16_t key_pkt_len, Epoch *epoch);
   void SetupReExec();
 
   unsigned int key_checksum() const { return key_crc; }
@@ -119,12 +137,15 @@ class Txn : public go::Routine {
   uint16_t key_buffer_size() const { return sz_key_buf; }
  protected:
   virtual void Run();
+ private:
+  void GenericSetupReExec(uint8_t *key_buffer, size_t key_len,
+                          std::function<bool (Relation *, const VarStr *, uint64_t)> callback);
 };
 
 class BaseRequest : public Txn {
  public:
   // for parsers to create request dynamically
-  static BaseRequest *CreateRequestFromChannel(go::InputSocketChannel *channel, Epoch *epoch);
+  static BaseRequest *CreateRequestFromChannel(go::TcpInputChannel *channel, Epoch *epoch);
 
   // for workload-support plugins
   typedef std::map<uint8_t, std::function<BaseRequest* (Epoch *)> > FactoryMap;
@@ -133,7 +154,7 @@ class BaseRequest : public Txn {
   static void LoadWorkloadSupportFromConf();
 
   virtual ~BaseRequest() {}
-  virtual void ParseFromChannel(go::InputSocketChannel *channel) = 0;
+  virtual void ParseFromChannel(go::TcpInputChannel *channel) = 0;
 
   static FactoryMap& GetGlobalFactoryMap() {
     return factory_map;
@@ -146,7 +167,7 @@ class BaseRequest : public Txn {
 
 template <class T>
 class Request : public BaseRequest, public T {
-  virtual void ParseFromChannel(go::InputSocketChannel *channel);
+  virtual void ParseFromChannel(go::TcpInputChannel *channel);
   virtual void RunTxn();
   virtual int CoreAffinity() const;
 };
@@ -155,12 +176,15 @@ class TxnIOReader;
 
 class Epoch {
  public:
-  Epoch(std::vector<go::EpollSocket *> socks);
+  Epoch(std::vector<go::TcpSocket *> socks);
   ~Epoch();
   static uint64_t CurrentEpochNumber();
 
   void *AllocFromBrk(int cpu, size_t sz) {
-    if (brks[cpu].offset + sz >= kBrkSize) std::abort();
+    if (brks[cpu].offset + sz >= kBrkSize) {
+      logger->critical("brk is full {}, current {}", kBrkSize, brks[cpu].offset);
+      std::abort();
+    }
     void *p = brks[cpu].addr + brks[cpu].offset;
     brks[cpu].offset += sz;
     return p;
@@ -169,7 +193,7 @@ class Epoch {
   int IssueReExec();
   void WaitForReExec(int total = kNrThreads);
 
-  go::BufferChannel<uint8_t> *channel() { return wait_channel; }
+  go::BufferChannel *channel() { return wait_channel; }
 
 #ifdef NR_THREADS
   static const int kNrThreads = NR_THREADS;
@@ -182,7 +206,7 @@ class Epoch {
   void DestroyBrks();
 
  private:
-  go::BufferChannel<uint8_t> *wait_channel;
+  go::BufferChannel *wait_channel;
   TxnIOReader *readers[kNrThreads];
   go::WaitBarrier *wait_barrier;
   TxnQueue reuse_q[kNrThreads];
@@ -196,7 +220,7 @@ class Epoch {
  protected:
   static uint64_t kGlobSID;
  public:
-  static const size_t kBrkSize = 32 << 20;
+  static const size_t kBrkSize;
   typedef mem::Pool<true> BrkPool;
   static BrkPool *pools;
 };
