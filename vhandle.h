@@ -49,7 +49,7 @@ class SortedArrayVHandle : public BaseVHandle {
   size_t size;
   size_t value_mark;
   uint64_t *versions;
-  uintptr_t *objects;
+  // uintptr_t *objects;
 
   // struct TxnWaitSlot {
   //   std::mutex lock;

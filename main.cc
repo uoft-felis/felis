@@ -60,6 +60,11 @@ int main(int argc, char *argv[])
     show_usage(argv[0]);
     return -1;
   }
+  {
+    std::ofstream pid_fout("/tmp/dolly.pid");
+    pid_fout << (unsigned long) getpid();
+  }
+
   logger->info("Running {} workload", workload_name);
 
   const int tot_nodes = dolly::Epoch::kNrThreads / mem::kNrCorePerNode;

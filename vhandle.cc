@@ -11,12 +11,11 @@ SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
 {
   capacity = 4;
-  size = 0;
+  value_mark = size = 0;
   this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
 
   // uint8_t *p = (uint8_t *) malloc(2 * len);
   versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * capacity * sizeof(uint64_t));
-  objects = versions + capacity;
 }
 
 static void EnlargePair64Array(uint64_t *old_p, size_t old_cap, int old_coreid,
@@ -41,7 +40,6 @@ void SortedArrayVHandle::EnsureSpace()
     EnlargePair64Array(versions, capacity, alloc_by_coreid,
 		       versions, capacity, current_coreid);
     alloc_by_coreid = current_coreid;
-    objects = (uintptr_t *) versions + capacity;
   }
 }
 
@@ -56,6 +54,7 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid)
   size++;
   EnsureSpace();
   versions[size - 1] = sid;
+  auto objects = versions + capacity;
   objects[size - 1] = kPendingValue;
 
   // now we need to swap backwards... hope this won't take too long...
@@ -67,8 +66,12 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid)
 
   memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
   versions[i] = last;
-  memmove(&objects[i + 1], &objects[i], sizeof(uintptr_t) * (size - i - 1));
-  objects[i] = kPendingValue;
+
+  if (i < value_mark) {
+    value_mark++;
+    memmove(&objects[i + 1], &objects[i], sizeof(uintptr_t) * (value_mark - i - 1));
+    objects[i] = kPendingValue;
+  }
 
   lock.store(false);
   return true;
@@ -88,6 +91,7 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
     return nullptr;
   }
   pos = --it - versions;
+  auto objects = versions + capacity;
   return &objects[pos];
 }
 
@@ -202,6 +206,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_ru
     throw DivergentOutputException();
   }
   if (!dry_run) {
+    auto objects = versions + capacity;
     volatile uintptr_t *addr = &objects[it - versions];
     uintptr_t oldval = *addr;
     uintptr_t newval = (uintptr_t) obj;
@@ -226,8 +231,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_ru
 
 void SortedArrayVHandle::GarbageCollect()
 {
-  value_mark = size;
-  if (size < 2) return;
+  auto objects = versions + capacity;
+  if (size < 2) goto done;
 
   for (int i = 0; i < size; i++) {
     if (versions[i] < gc_rule.min_of_epoch) {
@@ -238,9 +243,12 @@ void SortedArrayVHandle::GarbageCollect()
       memmove(&versions[0], &versions[i], sizeof(int64_t) * (size - i));
       memmove(&objects[0], &objects[i], sizeof(uintptr_t) * (size - i));
       size -= i;
-      return;
+      goto done;
     }
   }
+done:
+  value_mark = size;
+  return;
 }
 
 mem::Pool<true> *BaseVHandle::pools;
@@ -419,7 +427,7 @@ void CalvinVHandle::EnsureSpace()
 
 uint64_t CalvinVHandle::WaitForTurn(uint64_t sid)
 {
-  if (pos.load(std::memory_order_acquire) >= size) std::abort();
+  // if (pos.load(std::memory_order_acquire) >= size) std::abort();
   while (true) {
     uint64_t turn = accesses[pos.load(std::memory_order_acquire)];
     if ((turn >> 1) == sid) {
@@ -437,9 +445,11 @@ bool CalvinVHandle::PeekForTurn(uint64_t sid)
                              sid << 1);
   if (it == accesses + size) return false;
   if ((*it) >> 1 == sid) return true;
+  /*
   if ((accesses[0] >> 1) < sid) {
     std::abort();
   }
+  */
   return false;
 }
 

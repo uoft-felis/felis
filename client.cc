@@ -16,7 +16,7 @@ void ClientFetcher::Run()
   for (int i = 0; i < Epoch::kNrThreads; i++) {
     auto sched = go::GetSchedulerFromPool(i + 1);
     sched->WakeUp(go::Make([i, &socks, &chn, this] {
-          auto sock = new go::TcpSocket(16 << 20, 4096);
+          auto sock = new go::TcpSocket(512 << 20, 4096);
           if (!sock->Pin()) {
             logger->critical("pin socket failed on {}", go::Scheduler::CurrentThreadPoolId());
           }

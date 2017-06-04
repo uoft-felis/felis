@@ -17,7 +17,7 @@ void InitializeLogger()
   spdlog::set_level(spdlog::level::debug);
   spdlog::set_async_mode(4096);
 #endif
-  spdlog::set_pattern("[%H:%M:%S] [thread %t] %v");
+  spdlog::set_pattern("[%H:%M:%S.%e] [thread %t] %v");
 }
 
 PerfLog::PerfLog()

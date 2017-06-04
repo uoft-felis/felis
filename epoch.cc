@@ -61,6 +61,7 @@ void TxnIOReader::Run()
 
   bool eof = false;
   int count_max = 0;
+  uint64_t last_sid = 0;
 
   while (true) {
     if (!channel->Read(&commit_ts, sizeof(uint64_t))) {
@@ -90,7 +91,6 @@ void TxnIOReader::Run()
       DTRACE_PROBE1(dolly, commit_back_in_time, skew_ts);
     }
 #endif
-    assert(skew_ts <= 1);
 
 #if 0
     // for debugging
@@ -106,6 +106,7 @@ void TxnIOReader::Run()
     req->set_reuse_queue(reuse_q);
 
     req->PushToReuseQueue();
+    last_sid = sid;
   }
   fcnt.max = count_max; // should never be 0 here
   logger->info("finished, socket ptr {} on {} cnt {} ioreader {}", (void *) sock,
