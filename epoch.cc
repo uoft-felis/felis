@@ -81,6 +81,11 @@ void TxnIOReader::Run()
 
     auto req = BaseRequest::CreateRequestFromChannel(channel, epoch);
 
+    if (req == nullptr) {
+      logger->critical("WTF? {:x} {:x}", commit_ts, skew_ts);
+      std::abort();
+    }
+
     count_max++;
     // uint64_t sid = skew_ts == 0 ? commit_ts << 6 : (skew_ts << 6) - go::Scheduler::CurrentThreadPoolId();
 #ifdef PROTO_OLD_SSI
@@ -380,7 +385,7 @@ BaseRequest *BaseRequest::CreateRequestFromChannel(go::TcpInputChannel *channel,
   if (type == 0 || type > GetGlobalFactoryMap().rbegin()->first) {
     logger->critical("Unknown txn type {} on thread {}", type,
                      go::Scheduler::CurrentThreadPoolId());
-    std::abort();
+    return nullptr;
   }
   auto req = GetGlobalFactoryMap().at(type)(epoch);
   req->type = type;
@@ -402,29 +407,7 @@ BaseRequest *BaseRequest::CreateRequestFromChannel(go::TcpInputChannel *channel,
   return req;
 }
 
-std::map<std::string, void *> BaseRequest::support_handles;
 BaseRequest::FactoryMap BaseRequest::factory_map;
-
-void BaseRequest::LoadWorkloadSupport(const std::string &name)
-{
-  if (support_handles.find(name) != support_handles.end()) {
-    logger->error("Workload Support {} already loaded", name);
-    return;
-  }
-  void *handle = dlopen(name.c_str(), RTLD_LAZY);
-  if (handle == NULL) {
-    logger->error("Cannot load {}, error {}", name, dlerror());
-    return;
-  }
-  support_handles[name] = handle;
-
-  typedef void (*InitializeFunctionPointer)();
-  InitializeFunctionPointer init_fp =
-      (InitializeFunctionPointer) dlsym(handle, "InitializeWorkload");
-  init_fp();
-}
-
-// TODO: unload all dl handles!
 
 void BaseRequest::MergeFactoryMap(const FactoryMap &extra)
 {
@@ -436,27 +419,6 @@ void BaseRequest::MergeFactoryMap(const FactoryMap &extra)
     }
     logger->info("registered tx with type {}", (int) it->first);
     factory_map.insert(*it);
-  }
-}
-
-void BaseRequest::LoadWorkloadSupportFromConf()
-{
-  std::string err;
-  std::ifstream fin("workload_support.json");
-  std::string conf_text {
-    std::istreambuf_iterator<char>(fin), std::istreambuf_iterator<char>() };
-  json11::Json conf_doc = json11::Json::parse(conf_text, err);
-
-  if (!err.empty()) {
-    logger->critical(err);
-    logger->critical("Cannot load workload support configuration");
-    std::abort();
-  }
-
-  auto json_arr = conf_doc.array_items();
-  for (auto it = json_arr.begin(); it != json_arr.end(); ++it) {
-    logger->info("Loading Workload Support {}", it->string_value());
-    LoadWorkloadSupport(it->string_value());
   }
 }
 

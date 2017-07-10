@@ -14,12 +14,11 @@
 
 #include "gopp/gopp.h"
 
-#define CACHELINE_SIZE 64
-#define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))
+#define CACHE_ALIGNED __attribute__((aligned(CACHE_LINE_SIZE)))
 #define __XCONCAT(a, b) __XCONCAT2(a, b)
 #define __XCONCAT2(a, b) a ## b
 #define CACHE_PADOUT                                                    \
-  char __XCONCAT(__padout, __COUNTER__)[0] __attribute__((aligned(CACHELINE_SIZE)))
+  char __XCONCAT(__padout, __COUNTER__)[0] __attribute__((aligned(CACHE_LINE_SIZE)))
 
 #ifndef likely
 #define likely(x) __builtin_expect((x),1)
@@ -45,7 +44,7 @@ class CacheAligned {
       : elem(std::forward<Args>(args)...)
   {
     if (Pedantic)
-      assert(((uintptr_t)this % CACHELINE_SIZE) == 0);
+      assert(((uintptr_t)this % CACHE_LINE_SIZE) == 0);
   }
 
   T elem;
@@ -61,7 +60,7 @@ class CacheAligned {
   inline void
   __cl_asserter() const
   {
-    static_assert((sizeof(*this) % CACHELINE_SIZE) == 0, "xx");
+    static_assert((sizeof(*this) % CACHE_LINE_SIZE) == 0, "xx");
   }
 } CACHE_ALIGNED;
 
@@ -176,29 +175,6 @@ static void PinToCPU(int cpu)
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
   pthread_yield();
 }
-
-// #define TRACE_ENABLE
-
-// Counter Stuff
-template <int N>
-class Counter {
-  long cnt[N];
-  std::string name;
- public:
-  Counter(const char *n) : name(n) {
-    memset(cnt, 0, sizeof(long) * N);
-  }
-  ~Counter() {
-#ifdef TRACE_ENABLE
-    long sum = 0;
-    for (int i = 0; i < N; i++) sum += cnt[i];
-    fprintf(stderr, "%s: %ld\n", name.c_str(), sum);
-#endif
-  }
-  void Increment() {
-    cnt[go::Scheduler::CurrentThreadPoolId() - 1]++;
-  }
-};
 
 }
 

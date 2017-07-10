@@ -162,7 +162,6 @@ class BaseRequest : public Txn {
 
  private:
   static FactoryMap factory_map;
-  static std::map<std::string, void *> support_handles;
 };
 
 template <class T>

@@ -108,11 +108,10 @@ class CommitBuffer {
 };
 
 class Checkpoint {
+  static std::map<std::string, Checkpoint *> impl;
  public:
-  // TODO: load checkpoint plugins dynamically?
-  // static void LoadPlugins();
-
-  static Checkpoint *LoadCheckpointImpl(const std::string &filename);
+  static void RegisterCheckpointFormat(std::string fmt, Checkpoint *pimpl) { impl[fmt] = pimpl; }
+  static Checkpoint *checkpoint_impl(std::string fmt) { return impl[fmt]; }
   virtual void Export() = 0;
 };
 

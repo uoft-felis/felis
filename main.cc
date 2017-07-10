@@ -9,6 +9,7 @@
 #include "epoch.h"
 #include "index.h"
 #include "client.h"
+#include "module.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 
@@ -92,7 +93,7 @@ int main(int argc, char *argv[])
   go::InitThreadPool(dolly::Epoch::kNrThreads);
 
   logger->info("loading base dataset");
-  dolly::BaseRequest::LoadWorkloadSupportFromConf();
+  dolly::Module<dolly::WorkloadModule>::InitAllModules();
 
   // FIXME:
   // goto chkpt;
@@ -119,7 +120,8 @@ int main(int argc, char *argv[])
   // everybody quits. time to dump a checkpoint
   if (chkpt) {
     PerfLog p;
-    auto p_chkpt_impl = dolly::Checkpoint::LoadCheckpointImpl(chkpt_format);
+    dolly::Module<dolly::ExportModule>::InitAllModules();
+    auto p_chkpt_impl = dolly::Checkpoint::checkpoint_impl(chkpt_format);
     p_chkpt_impl->Export();
     p.Show("checkpoint takes");
   }

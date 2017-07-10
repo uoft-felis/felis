@@ -271,14 +271,7 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
     validator->Validate(*tx);
 }
 
-typedef Checkpoint* (*InitChkptFunc)(void);
-
-Checkpoint *Checkpoint::LoadCheckpointImpl(const std::string &filename)
-{
-  void *handle = dlopen(filename.c_str(), RTLD_LAZY);
-  InitChkptFunc func = (InitChkptFunc) dlsym(handle, "InitializeChkpt");
-  return func();
-}
+std::map<std::string, Checkpoint *> Checkpoint::impl;
 
 }
 

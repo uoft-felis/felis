@@ -3,6 +3,7 @@
 #include "log.h"
 #include "util.h"
 #include "index.h"
+#include "module.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 
@@ -191,16 +192,18 @@ static void LoadTPCCDataSet()
   mgr.GetRelationOrCreate(mgr.LookupRelationId("item")).set_read_only(true);
 }
 
-extern "C" void InitializeWorkload()
-{
-  logger->info("Loading TPCC Workload Support");
-  BaseRequest::MergeFactoryMap(kTPCCFactoryMap);
-  logger->info("loading dataset...");
+class TPCCModule : public Module<WorkloadModule> {
+ public:
+  void Init() override {
+    logger->info("Initializing TPCC Workload");
+    BaseRequest::MergeFactoryMap(kTPCCFactoryMap);
+    // just to initialize this
+    Instance<tpcc::TPCCTableHandles>();
+    LoadTPCCDataSet();
+    logger->info("done.");
+  }
+};
 
-  // just to initialize this
-  Instance<tpcc::TPCCTableHandles>();
-  LoadTPCCDataSet();
-  logger->info("done.");
-}
+static TPCCModule tpcc_module;
 
 }

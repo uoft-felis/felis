@@ -428,11 +428,39 @@ void CalvinVHandle::EnsureSpace()
 uint64_t CalvinVHandle::WaitForTurn(uint64_t sid)
 {
   // if (pos.load(std::memory_order_acquire) >= size) std::abort();
+
+  /*
+   * Because Calvin enforces R-R conflicts, we may get into deadlocks if we do
+   * not switch to another txn. A simple scenario is:
+   *
+   * T1: t24, t19
+   * T2: t20 t24
+   *
+   * Both t24 and t19 read some key, but, because calvin enforces R-R conflicts
+   * too, t24 will need to wait for t19. This is unnecessary of course, but
+   * allow arbitrary R-R ordering in Calvin can be expensive.
+   *
+   * Both dolly and Calvin are safe with W-W conflict because the both SSN and
+   * SSI guarantee writes are "fresh". Commit back in time cannot happen between
+   * W-W conflict.
+   *
+   * In princple we do not need to worry about R-W conflicts either, because the
+   * dependency graph is tree.
+   *
+   * Solution for R-R conflicts in Calvin is simple: spin for a while and switch
+   * to the next txn.
+   */
+  uint64_t switch_counter = 0;
   while (true) {
     uint64_t turn = accesses[pos.load(std::memory_order_acquire)];
     if ((turn >> 1) == sid) {
       return turn;
     }
+    if (++switch_counter >= 10000000UL) {
+      go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
+      switch_counter = 0;
+    }
+
     asm volatile("pause": : :"memory");
   }
 }
