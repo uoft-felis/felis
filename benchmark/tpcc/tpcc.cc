@@ -982,7 +982,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 					      + sizeof(VarStr) + 1),
 		      serializable_id(), buffer);
 
-    for (size_t i = 0; it.IsValid() && i < 15; i++, it.Next(serializable_id(), buffer)) {
+    for (size_t i = 0; it.IsValid() && i < 15; i++, it.Next()) {
       const auto v_ol = it.object()->ToType<OrderLine::Value>();
 
 // #ifdef CHECK_INVARIANTS
@@ -1109,7 +1109,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
   large_buf += k_oo_idx_0.EncodeSize() + k_oo_idx_1.EncodeSize() + sizeof(VarStr) * 2 + 2;
 
   int sum = 0;
-  for (; it.IsValid(); it.Next(serializable_id(), buffer))
+  for (; it.IsValid(); it.Next())
   {
     OOrderCIdIdx::Key k_oo_idx;
     k_oo_idx.DecodeFrom(&it.key());

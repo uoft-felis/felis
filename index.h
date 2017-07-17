@@ -1,4 +1,4 @@
-// -*- c++ -*-
+// -*- C++ -*-
 #ifndef INDEX_H
 #define INDEX_H
 
@@ -182,9 +182,9 @@ class RelationManagerPolicy : public RelationManagerBase {
   std::array<T, kMaxNrRelations> relations;
 };
 
-template <template<typename> class IndexPolicy, class VHandle>
+template <class IndexPolicy>
 class RelationPolicy : public BaseRelation,
-		       public IndexPolicy<VHandle> {
+		       public IndexPolicy {
  public:
   void SetupReExec(const VarStr *k, uint64_t sid, VarStr *obj = (VarStr *) kPendingValue) {
     auto handle = this->InsertOrCreate(k);
@@ -253,20 +253,20 @@ class RelationPolicy : public BaseRelation,
     CallScanCallback(this->SearchIterator(start, end, sid, buffer), sid, buffer, callback);
   }
 
-  typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *k, uint64_t sid,
-							 CommitBuffer &buffer) {
+  typename IndexPolicy::Iterator SearchIterator(const VarStr *k, uint64_t sid,
+                                                CommitBuffer &buffer) {
     auto it = this->IndexSearchIterator(k, id, is_read_only(), sid, buffer);
-    return std::move(it);
+    return it;
   }
 
-  typename IndexPolicy<VHandle>::Iterator SearchIterator(const VarStr *start, const VarStr *end,
-							 uint64_t sid, CommitBuffer &buffer) {
+  typename IndexPolicy::Iterator SearchIterator(const VarStr *start, const VarStr *end,
+                                                uint64_t sid, CommitBuffer &buffer) {
     auto it = this->IndexSearchIterator(start, end, id, is_read_only(), sid, buffer);
-    return std::move(it);
+    return it;
   }
 
  private:
-  void CallScanCallback(typename IndexPolicy<VHandle>::Iterator it, uint64_t sid,
+  void CallScanCallback(typename IndexPolicy::Iterator it, uint64_t sid,
 			CommitBuffer &buffer,
 			std::function<bool (const VarStr *k, const VarStr *v)> callback) {
     while (it.IsValid()) {
@@ -276,7 +276,7 @@ class RelationPolicy : public BaseRelation,
       bool should_continue = callback(&key, value);
       if (!should_continue) break;
 
-      it.Next(sid, buffer);
+      it.Next();
     }
   }
 };

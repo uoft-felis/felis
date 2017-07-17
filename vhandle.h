@@ -180,6 +180,21 @@ class CalvinVHandle : public BaseVHandle {
 
 static_assert(sizeof(CalvinVHandle) <= 64, "Calvin Handle too large!");
 
+// current relation implementation
+#if (defined LL_REPLAY) || (defined CALVIN_REPLAY)
+
+#ifdef LL_REPLAY
+using VHandle = LinkListVHandle;
+#endif
+
+#ifdef CALVIN_REPLAY
+using VHandle = CalvinVHandle;
+#endif
+
+#else
+using VHandle = SortedArrayVHandle;
+#endif
+
 }
 
 #endif /* VHANDLE_H */

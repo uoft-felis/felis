@@ -166,7 +166,7 @@ class MixIn : public M... {};
 template <class O> O &Instance();
 
 // CPU pinning
-static void PinToCPU(int cpu)
+static inline void PinToCPU(int cpu)
 {
   // linux only
   cpu_set_t set;
@@ -174,6 +174,11 @@ static void PinToCPU(int cpu)
   CPU_SET(cpu % sysconf(_SC_NPROCESSORS_CONF), &set);
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
   pthread_yield();
+}
+
+static inline size_t Align(size_t x, size_t a)
+{
+  return a * ((x - 1) / a + 1);
 }
 
 }

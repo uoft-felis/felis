@@ -16,15 +16,15 @@ set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -flto -fwhole-program -g -fno-omit-fr
 
 set_source_files_properties(gopp/asm.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp")
 
-add_subdirectory(benchmark/tpcc/)
-add_subdirectory(chkpt/)
-
 add_executable(db-backup-node epoch.cc log.cc vhandle.cc index.cc mem.cc masstree_index_impl.cc
+  fpcore.cc
   json11/json11.cpp
   gopp/gopp.cc gopp/channels.cc gopp/asm.S
   masstree/kvthread.cc masstree/string.cc masstree/straccum.cc
   client.cc main.cc)
 
-target_link_libraries(db-backup-node numa pthread tcmalloc
-  -Wl,--whole-archive tpcc chkpt_ermia -Wl,--no-whole-archive)
+add_subdirectory(benchmark/tpcc/)
+add_subdirectory(chkpt/)
+
+target_link_libraries(db-backup-node numa pthread tcmalloc)
 target_include_directories(db-backup-node PRIVATE ${CMAKE_SOURCE_DIR})

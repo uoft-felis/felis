@@ -324,7 +324,7 @@ ErmiaEntry &TableDataIterator<ErmiaEntry>::operator*()
 TableDataIterator<ErmiaEntry> &TableDataIterator<ErmiaEntry>::operator++()
 {
   do {
-    dolly_iter->Next(std::numeric_limits<int64_t>::max(), *dummy);
+    dolly_iter->Next();
   } while (dolly_iter->IsValid() && dolly_iter->object() == nullptr);
   adapted = false;
   current_oid++;
