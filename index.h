@@ -192,7 +192,11 @@ class RelationPolicy : public BaseRelation,
       asm("pause" : : :"memory");
     }
     if (obj != (void *) kPendingValue) {
-      handle->WriteWithVersion(sid, obj);
+      bool is_garbage;
+      if (!handle->WriteWithVersion(sid, obj, is_garbage)) {
+        logger->error("Diverging outcomes during setup setup");
+        std::abort();
+      }
     }
   }
 
@@ -230,16 +234,22 @@ class RelationPolicy : public BaseRelation,
     buffer.Put(id, std::move(k), obj);
 #ifndef NDEBUG
     // Dry run to test. Extremely helpful for debugging deadlock
-    this->Search(k)->WriteWithVersion(sid, obj, true);
+    bool is_garbage;
+    if (!this->Search(k)->WriteWithVersion(sid, obj, is_garbage, true)) {
+      logger->error("Diverging outcomes!");
+      std::abort();
+    }
 #endif
   }
 
-  bool CommitPut(const VarStr *k, uint64_t sid, VarStr *obj) {
-    if (!this->Search(k)->WriteWithVersion(sid, obj)) {
-      this->nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++; // delete an object, this won't be checkpointed
-      return false;
+  void CommitPut(const VarStr *k, uint64_t sid, VarStr *obj, bool &is_garbage) {
+    if (!this->Search(k)->WriteWithVersion(sid, obj, is_garbage)) {
+      logger->error("Diverging outcomes!");
+      std::abort();
     }
-    return true;
+    if (is_garbage) {
+      this->nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++; // delete an object, this won't be checkpointed
+    }
   }
 
   void Scan(const VarStr *k, uint64_t sid, CommitBuffer &buffer,

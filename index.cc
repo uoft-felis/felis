@@ -251,12 +251,8 @@ void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
 
     if (validator)
       validator->CaptureWrite(*tx, entry->fid, entry->key, entry->obj);
-    try {
-      is_garbage = not mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj);
-    } catch (...) {
-      logger->critical("Error during commit key {}", entry->key->ToHex().c_str());
-      throw DivergentOutputException();
-    }
+
+    mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj, is_garbage);
 
     if (!is_garbage) {
       delete entry->key;

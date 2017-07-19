@@ -8,6 +8,8 @@ if (${CALVIN_REPLAY})
   add_definitions(-DCALVIN_REPLAY=1)
 endif (${CALVIN_REPLAY})
 
+set(CMAKE_C_FLAGS "-Wstrict-aliasing")
+set(CMAKE_CXX_FLAGS "-Wstrict-aliasing")
 set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -DNDEBUG")
 set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -flto -fwhole-program -g -fno-omit-frame-pointer")
 

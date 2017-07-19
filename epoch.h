@@ -44,11 +44,6 @@ struct TxnKey {
 } __attribute__((packed));
 
 class Epoch;
-
-class DivergentOutputException : public std::exception {
- public:
-};
-
 class Txn;
 
 struct TxnQueue {

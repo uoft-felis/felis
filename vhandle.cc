@@ -191,7 +191,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   return (VarStr *) *addr;
 }
 
-bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run)
 {
   assert(this);
   // Writing to exact location
@@ -203,7 +203,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_ru
       ss << versions[i] << ' ';
     }
     logger->critical("Versions: {}", ss.str());
-    throw DivergentOutputException();
+    return false;
   }
   if (!dry_run) {
     auto objects = versions + capacity;
@@ -223,9 +223,10 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_ru
     gSpinnerSlots.NotifyAll(hibitmap >> 32);
 
     if (obj == nullptr && it - versions == size - 1) {
-      return false;
+      is_garbage = true;
     }
   }
+  is_garbage = false;
   return true;
 }
 
@@ -323,7 +324,7 @@ VarStr *LinkListVHandle::ReadWithVersion(uint64_t sid)
   return (VarStr *) *addr;
 }
 
-bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run)
 {
   assert(this);
   Entry *p = head;
@@ -335,15 +336,16 @@ bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
   DTRACE_PROBE2(dolly, linklist_search_write, search_count, size);
   if (!p) {
     logger->critical("Diverging outcomes! sid {}", sid);
-    throw DivergentOutputException();
+    return false;
   }
   if (!dry_run) {
     volatile uintptr_t *addr = &p->object;
     *addr = (uintptr_t) obj;
     if (obj == nullptr && p->next == nullptr) {
-      return false;
+      is_garbage = true;
     }
   }
+  is_garbage = false;
   return true;
 }
 
@@ -481,17 +483,17 @@ bool CalvinVHandle::PeekForTurn(uint64_t sid)
   return false;
 }
 
-bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run)
+bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run)
 {
   uint64_t turn = WaitForTurn(sid);
 
   if (!dry_run) {
     delete this->obj;
     this->obj = obj;
-    bool is_last = (obj == nullptr && pos.load(std::memory_order_acquire) == size - 1);
+    is_garbage = (obj == nullptr && pos.load(std::memory_order_acquire) == size - 1);
     pos.fetch_add(1, std::memory_order_release);
-    return !is_last;
   }
+  is_garbage = false;
   return true;
 }
 

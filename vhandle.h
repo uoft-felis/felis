@@ -72,7 +72,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   bool AppendNewVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid);
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false);
   void GarbageCollect();
 
   const size_t nr_versions() const { return size; }
@@ -132,7 +132,7 @@ class LinkListVHandle : public BaseVHandle {
 
   bool AppendNewVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid);
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false);
   void GarbageCollect();
 
   const size_t nr_versions() const { return size; }
@@ -168,7 +168,7 @@ class CalvinVHandle : public BaseVHandle {
   bool AppendNewAccess(uint64_t sid, bool is_read = false);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *DirectRead(); // for read-only optimization
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool dry_run = false);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false);
   void GarbageCollect();
 
   const size_t nr_versions() const { return size; }
