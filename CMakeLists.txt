@@ -18,6 +18,8 @@ set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -flto -g -fno-omit-frame-pointer")
 
 set_source_files_properties(gopp/asm.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp")
 
+set_source_files_properties(masstree/kvthread.cc masstree/string.cc masstree/straccum.cc PROPERTIES COMPILE_FLAGS "-include masstree/build/config.h")
+
 add_executable(db-backup-node epoch.cc log.cc vhandle.cc index.cc mem.cc masstree_index_impl.cc
   fpcore.cc
   json11/json11.cpp
