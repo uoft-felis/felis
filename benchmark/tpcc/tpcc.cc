@@ -808,30 +808,30 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
   }
 
   // large_buf for the key
-  void *large_buf = alloca(1024);
+  // void *large_buf = alloca(1024);
   TxnValidator validator;
   CommitBuffer buffer(this);
 
   const Customer::Key k_c(warehouse_id, district_id, customer_id);
   auto v_c = relation(TPCCTable::Customer, warehouse_id)
-    .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
-			  serializable_id(),
-			  buffer);
+             .Get<Customer::Value>(k_c.EncodeFromRoutine(),
+                                   serializable_id(),
+                                   buffer);
   Checker::SanityCheckCustomer(&k_c, &v_c);
 
   const Warehouse::Key k_w(warehouse_id);
   auto v_w = relation(TPCCTable::Warehouse, warehouse_id)
-    .Get<Warehouse::Value>(k_w.EncodeFromAlloca(large_buf),
-			   serializable_id(),
-			   buffer);
+             .Get<Warehouse::Value>(k_w.EncodeFromRoutine(),
+                                    serializable_id(),
+                                    buffer);
 
   Checker::SanityCheckWarehouse(&k_w, &v_w);
 
   const District::Key k_d(warehouse_id, district_id);
   auto v_d = relation(TPCCTable::District, warehouse_id)
-    .Get<District::Value>(k_d.EncodeFromAlloca(large_buf),
-			  serializable_id(),
-			  buffer);
+             .Get<District::Value>(k_d.EncodeFromRoutine(),
+                                   serializable_id(),
+                                   buffer);
 
   Checker::SanityCheckDistrict(&k_d, &v_d);
 
@@ -868,14 +868,14 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     const Item::Key k_i(ol_i_id);
     auto v_i = relation(TPCCTable::Item, 1)
-      .Get<Item::Value>(k_i.EncodeFromAlloca(large_buf),
+      .Get<Item::Value>(k_i.EncodeFromRoutine(),
 			serializable_id(),
 			buffer);
     Checker::SanityCheckItem(&k_i, &v_i);
 
     const Stock::Key k_s(ol_supply_w_id, ol_i_id);
     auto v_s = relation(TPCCTable::Stock, ol_supply_w_id)
-      .Get<Stock::Value>(k_s.EncodeFromAlloca(large_buf),
+      .Get<Stock::Value>(k_s.EncodeFromRoutine(),
 			 serializable_id(),
 			 buffer);
     Checker::SanityCheckStock(&k_s, &v_s);
@@ -930,7 +930,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
   //   num_txn_contexts : 4
   ScopedLockGuard<std::mutex> slock(
     g_enable_partition_locks ? &LockForPartition(warehouse_id) : nullptr);
-  void *large_buf = alloca(1024);
+  // void *large_buf = alloca(1024);
   TxnValidator validator;
   CommitBuffer buffer(this);
 
@@ -943,8 +943,8 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     // scan on the index
     relation(TPCCTable::NewOrder, warehouse_id)
-      .Scan(k_no_0.EncodeFromAlloca(large_buf),
-	    k_no_1.EncodeFromAlloca((uint8_t *) large_buf + k_no_0.EncodeSize() + sizeof(VarStr) + 1),
+      .Scan(k_no_0.EncodeFromRoutine(),
+	    k_no_1.EncodeFromRoutine(),
 	    serializable_id(),
 	    buffer,
 	    [&k_no, &k_no_found] (const VarStr *k, const VarStr *v) -> bool {
@@ -967,7 +967,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
     // we will read the oorder entry: in this case the txn will abort,
     // but we're simply bailing out early
     auto v_oo = relation(TPCCTable::OOrder, warehouse_id)
-      .Get<OOrder::Value>(k_oo.EncodeFromAlloca(large_buf),
+      .Get<OOrder::Value>(k_oo.EncodeFromRoutine(),
 			  serializable_id(), buffer);
     Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
@@ -977,9 +977,8 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     int sum = 0;
     auto it = relation(TPCCTable::OrderLine, warehouse_id)
-      .SearchIterator(k_oo_0.EncodeFromAlloca(large_buf),
-		      k_oo_1.EncodeFromAlloca((uint8_t *) large_buf + k_oo_0.EncodeSize()
-					      + sizeof(VarStr) + 1),
+      .SearchIterator(k_oo_0.EncodeFromRoutine(),
+		      k_oo_1.EncodeFromRoutine(),
 		      serializable_id(), buffer);
 
     for (size_t i = 0; it.IsValid() && i < 15; i++, it.Next()) {
@@ -1023,7 +1022,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
     // update customer
     const Customer::Key k_c(warehouse_id, d, c_id);
     const auto v_c = relation(TPCCTable::Customer, warehouse_id)
-      .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
+      .Get<Customer::Value>(k_c.EncodeFromRoutine(),
 			    serializable_id(),
 			    buffer);
 
@@ -1079,7 +1078,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
   TxnValidator validator;
   CommitBuffer buffer(this);
 
-  uint8_t *large_buf = (uint8_t*) alloca(2048);
+  // uint8_t *large_buf = (uint8_t*) alloca(2048);
 
   logger->debug("CC txn, sid {}, whid {} did {} cwid {} cdid {} cid {}", serializable_id(),
 		warehouse_id, district_id, customer_warehouse_id,
@@ -1088,7 +1087,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
   // select * from customer with random C_ID
   Customer::Key k_c(customer_warehouse_id, customer_district_id, customer_id);
   const auto v_c = relation(TPCCTable::Customer, customer_warehouse_id)
-    .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
+    .Get<Customer::Value>(k_c.EncodeFromRoutine(),
 			  serializable_id(),
 			  buffer);
   Checker::SanityCheckCustomer(&k_c, &v_c);
@@ -1102,11 +1101,11 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
 
   auto it = relation(TPCCTable::OOrderCIdIdx, warehouse_id)
     .SearchIterator(
-      k_oo_idx_0.EncodeFromAlloca(large_buf),
-      k_oo_idx_1.EncodeFromAlloca(large_buf + k_oo_idx_0.EncodeSize() + sizeof(VarStr) + 1),
+      k_oo_idx_0.EncodeFromRoutine(),
+      k_oo_idx_1.EncodeFromRoutine(),
       serializable_id(), buffer);
 
-  large_buf += k_oo_idx_0.EncodeSize() + k_oo_idx_1.EncodeSize() + sizeof(VarStr) * 2 + 2;
+  // large_buf += k_oo_idx_0.EncodeSize() + k_oo_idx_1.EncodeSize() + sizeof(VarStr) * 2 + 2;
 
   int sum = 0;
   for (; it.IsValid(); it.Next())
@@ -1117,7 +1116,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     OOrder::Key k_oo(warehouse_id, district_id, o_id);
     auto v_oo = relation(TPCCTable::OOrder, warehouse_id)
-      .Get(k_oo.EncodeFromAlloca(large_buf),
+      .Get(k_oo.EncodeFromRoutine(),
            serializable_id(),
            buffer);
     // if (!v_oo) continue;
@@ -1132,8 +1131,8 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     relation(TPCCTable::OrderLine, warehouse_id)
       .Scan(
-	k_ol_0.EncodeFromAlloca(large_buf),
-	k_ol_1.EncodeFromAlloca(large_buf + k_ol_0.EncodeSize() + sizeof(VarStr) + 1),
+	k_ol_0.EncodeFromRoutine(),
+	k_ol_1.EncodeFromRoutine(),
 	serializable_id(),
 	buffer,
 	[&sum] (const VarStr *k, const VarStr *v) -> bool {
@@ -1183,11 +1182,11 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
   logger->debug("Pay txn sid {} whid {} did {} cwhid {} cdid {}", serializable_id(),
 		warehouse_id, district_id, customer_warehouse_id, customer_district_id);
 
-  void *large_buf = alloca(1024);
+  // void *large_buf = alloca(1024);
 
   const Warehouse::Key k_w(warehouse_id);
   auto v_w = relation(TPCCTable::Warehouse, warehouse_id)
-    .Get<Warehouse::Value>(k_w.EncodeFromAlloca(large_buf),
+    .Get<Warehouse::Value>(k_w.EncodeFromRoutine(),
 			   serializable_id(),
 			   buffer);
   Checker::SanityCheckWarehouse(&k_w, &v_w);
@@ -1199,7 +1198,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
 
   District::Key k_d(warehouse_id, district_id);
   auto v_d = relation(TPCCTable::District, warehouse_id)
-    .Get<District::Value>(k_d.EncodeFromAlloca(large_buf),
+    .Get<District::Value>(k_d.EncodeFromRoutine(),
 			  serializable_id(),
 			  buffer);
   Checker::SanityCheckDistrict(&k_d, &v_d);
@@ -1219,7 +1218,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
     uint8_t *lastname_buf = by.lastname_buf;
 
     static const std::string zeros(16, 0);
-    static const std::string ones(16, 255);
+    static const std::string ones(16, (unsigned char) 255);
 
     CustomerNameIdx::Key k_c_idx_0;
     k_c_idx_0.c_w_id = customer_warehouse_id;
@@ -1236,8 +1235,8 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
     std::vector<uint32_t> customer_ids;
     relation(TPCCTable::CustomerNameIdx, customer_warehouse_id)
       .Scan(
-	k_c_idx_0.EncodeFromAlloca(large_buf),
-	k_c_idx_1.EncodeFromAlloca((uint8_t *) large_buf + k_c_idx_0.EncodeSize() + sizeof(VarStr) + 1),
+	k_c_idx_0.EncodeFromRoutine(),
+	k_c_idx_1.EncodeFromRoutine(),
 	serializable_id(),
 	buffer,
 	[&customer_ids] (const VarStr *k, const VarStr *v) -> bool {
@@ -1251,14 +1250,14 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     k_c.c_id = customer_ids[(customer_ids.size() - 1) / 2];
     v_c = relation(TPCCTable::Customer, customer_warehouse_id)
-      .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
+      .Get<Customer::Value>(k_c.EncodeFromRoutine(),
 			    serializable_id(),
 			    buffer);
   } else {
     // cust by ID
     k_c.c_id = by.customer_id;
     v_c = relation(TPCCTable::Customer, customer_warehouse_id)
-      .Get<Customer::Value>(k_c.EncodeFromAlloca(large_buf),
+      .Get<Customer::Value>(k_c.EncodeFromRoutine(),
 			    serializable_id(),
 			    buffer);
   }

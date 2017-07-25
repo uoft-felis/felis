@@ -473,6 +473,11 @@ class Schemas : public T,
     return Encode(VarStr::FromAlloca(base_ptr, EncodeSize()));
   }
 
+  VarStr *EncodeFromRoutine() const {
+    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(EncodeSize()));
+    return Encode(VarStr::FromAlloca(base_ptr, EncodeSize()));
+  }
+
   size_t EncodeSize() const {
     return Serializer<Targs...>::EncodeSize((const uint8_t *) this);
   }

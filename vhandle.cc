@@ -252,13 +252,13 @@ done:
   return;
 }
 
-mem::Pool<true> *BaseVHandle::pools;
+mem::Pool *BaseVHandle::pools;
 
-static mem::Pool<true> *InitPerCorePool(size_t ele_size, size_t nr_ele)
+static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
 {
-  auto pools = (mem::Pool<true> *) malloc(sizeof(mem::Pool<true>) * Epoch::kNrThreads);
+  auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * Epoch::kNrThreads);
   for (int i = 0; i < Epoch::kNrThreads; i++) {
-    new (&pools[i]) mem::Pool<true>(ele_size, nr_ele, i / mem::kNrCorePerNode);
+    new (&pools[i]) mem::Pool(ele_size, nr_ele, i / mem::kNrCorePerNode);
   }
   return pools;
 }
@@ -273,7 +273,7 @@ LinkListVHandle::LinkListVHandle()
 {
 }
 
-mem::Pool<true> *LinkListVHandle::Entry::pools;
+mem::Pool *LinkListVHandle::Entry::pools;
 
 void LinkListVHandle::Entry::InitPools()
 {

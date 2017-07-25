@@ -92,6 +92,14 @@ class Txn : public go::Routine {
   TxnQueue node;
   TxnQueue *reuse_q;
 
+ private:
+  static const size_t kTxnBrkSize = 64 << 10;
+  static const size_t kPoolCap = 1 << 20;
+
+  static mem::Pool *pools; // for txn brk allocator
+ public:
+  static void InitPools();
+
  public:
   uint8_t type;
 
@@ -175,13 +183,7 @@ class Epoch {
   static uint64_t CurrentEpochNumber();
 
   void *AllocFromBrk(int cpu, size_t sz) {
-    if (brks[cpu].offset + sz >= kBrkSize) {
-      logger->critical("brk is full {}, current {}", kBrkSize, brks[cpu].offset);
-      std::abort();
-    }
-    void *p = brks[cpu].addr + brks[cpu].offset;
-    brks[cpu].offset += sz;
-    return p;
+    return brks[cpu].Alloc(sz);
   }
 
   int IssueReExec();
@@ -205,18 +207,15 @@ class Epoch {
   go::WaitBarrier *wait_barrier;
   TxnQueue reuse_q[kNrThreads];
 
-  struct {
-    uint8_t *addr;
-    int offset;
-    char __padding__[4];
-  } brks[kNrThreads];
+  mem::Brk brks[kNrThreads];
 
  protected:
   static uint64_t kGlobSID;
- public:
+ private:
   static const size_t kBrkSize;
-  typedef mem::Pool<true> BrkPool;
-  static BrkPool *pools;
+  static mem::Pool *pools;
+ public:
+  static void InitPools();
 };
 
 }

@@ -33,7 +33,7 @@ struct ErmiaEpochGCRule {
 
 class BaseVHandle {
  public:
-  static mem::Pool<true> *pools;
+  static mem::Pool *pools;
   static void InitPools();
  protected:
   ErmiaEpochGCRule gc_rule;
@@ -93,7 +93,7 @@ class LinkListVHandle : public BaseVHandle {
     uintptr_t object;
     int alloc_by_coreid;
 
-    static mem::Pool<true> *pools;
+    static mem::Pool *pools;
 
     static void *operator new(size_t nr_bytes) {
       return pools[mem::CurrentAllocAffinity()].Alloc();

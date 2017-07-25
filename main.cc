@@ -68,15 +68,8 @@ int main(int argc, char *argv[])
 
   logger->info("Running {} workload", workload_name);
 
-  const int tot_nodes = dolly::Epoch::kNrThreads / mem::kNrCorePerNode;
-  logger->info("setting up memory pools and regions. {} NUMA nodes in total", tot_nodes);
+  dolly::Epoch::InitPools();
 
-  dolly::Epoch::pools = (dolly::Epoch::BrkPool *)
-                        malloc(sizeof(dolly::Epoch::BrkPool) * tot_nodes);
-  for (int nid = 0; nid < tot_nodes; nid++) {
-    new (&dolly::Epoch::pools[nid])
-        dolly::Epoch::BrkPool(dolly::Epoch::kBrkSize, 2 * mem::kNrCorePerNode, nid);
-  }
   mem::InitThreadLocalRegions(dolly::Epoch::kNrThreads);
   for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
     auto &r = mem::GetThreadLocalRegion(i);
@@ -86,6 +79,7 @@ int main(int argc, char *argv[])
   }
 
   dolly::VHandle::InitPools();
+  dolly::Txn::InitPools();
 
   logger->info("memory ready");
 

@@ -25,7 +25,19 @@ struct MasstreeDollyParam : public Masstree::nodeparams<15, 15> {
 
 class MasstreeMap : public Masstree::basic_table<MasstreeDollyParam> {};
 class MasstreeMapForwardScanIteratorImpl : public MasstreeMap::forward_scan_iterator_impl {
+ public:
   using MasstreeMap::forward_scan_iterator_impl::forward_scan_iterator_impl;
+
+  static void *operator new(size_t sz) {
+    return mem::AllocFromRoutine(sizeof(MasstreeMapForwardScanIteratorImpl), [](void *p) {
+        auto i = (MasstreeMapForwardScanIteratorImpl *) p;
+        delete i;
+      });
+  }
+
+  static void operator delete(void *p) {
+    // noop;
+  }
 };
 
 void MasstreeIndex::Iterator::AdaptKey()
@@ -89,6 +101,7 @@ VHandle *MasstreeIndex::InsertOrCreate(const VarStr *k)
 {
   auto result = this->Search(k);
   if (result) return result;
+  // VHandle *result;
   auto ti = GetThreadInfo();
   typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
   bool found = cursor.find_insert(*ti);

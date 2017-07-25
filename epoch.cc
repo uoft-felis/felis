@@ -157,6 +157,16 @@ void TxnRunner::Run()
   }
 }
 
+mem::Pool *Txn::pools;
+
+void Txn::InitPools()
+{
+  pools = (mem::Pool *) malloc(Epoch::kNrThreads * sizeof(mem::Pool));
+  for (int i = 0; i < Epoch::kNrThreads; i++) {
+    new (&pools[i]) mem::Pool(kTxnBrkSize, kPoolCap / kTxnBrkSize, i / mem::kNrCorePerNode);
+  }
+}
+
 void Txn::Run()
 {
   if (is_setup) {
@@ -181,12 +191,17 @@ void Txn::Run()
       logger->info("{} has total {} txns", go::Scheduler::CurrentThreadPoolId(), fcnt->max);
     }
   } else {
-    try {
+    int cpu = go::Scheduler::CurrentThreadPoolId() - 1;
+    void *p = pools[cpu].Alloc();
+    {
+      mem::Brk b(p, kTxnBrkSize);
+      go::Scheduler::Current()->current_routine()->set_userdata(&b);
+
       RunTxn();
-      // logger->info("{} done on thread {}", serializable_id(), go::Scheduler::CurrentThreadPoolId());
-    } catch (...) {
-      std::abort();
+      go::Scheduler::Current()->current_routine()->set_userdata(nullptr);
     }
+    pools[cpu].Free(p);
+
     if (++fcnt->count == fcnt->max) {
       // notify the driver thread, which only used to hold and free stuff...
       logger->info("all txn replayed done on thread {}", go::Scheduler::CurrentThreadPoolId());
@@ -197,6 +212,18 @@ void Txn::Run()
 }
 
 const int Epoch::kNrThreads;
+
+void Epoch::InitPools()
+{
+  const int tot_nodes = kNrThreads / mem::kNrCorePerNode;
+  logger->info("setting up memory pools and regions. {} NUMA nodes in total", tot_nodes);
+
+  pools = (mem::Pool *) malloc(tot_nodes * sizeof(mem::Pool));
+
+  for (int nid = 0; nid < tot_nodes; nid++) {
+    new (&pools[nid]) mem::Pool(kBrkSize, 2 * mem::kNrCorePerNode, nid);
+  }
+}
 
 Epoch::Epoch(std::vector<go::TcpSocket *> socks)
 {
@@ -264,20 +291,20 @@ void Epoch::WaitForReExec(int tot)
   wait_channel->Read(res, tot);
 }
 
-Epoch::BrkPool *Epoch::pools;
+mem::Pool *Epoch::pools;
 
 void Epoch::InitBrks()
 {
   for (int i = 0; i < kNrThreads; i++) {
-    brks[i].addr = (uint8_t *) pools[i / mem::kNrCorePerNode].Alloc();
-    brks[i].offset = 0;
+    auto p = pools[i / mem::kNrCorePerNode].Alloc();
+    brks[i] = mem::Brk(p, kBrkSize);
   }
 }
 
 void Epoch::DestroyBrks()
 {
   for (int i = 0; i < kNrThreads; i++) {
-    pools[i / mem::kNrCorePerNode].Free(brks[i].addr);
+    pools[i / mem::kNrCorePerNode].Free(brks[i].ptr());
   }
 }
 
