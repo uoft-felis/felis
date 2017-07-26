@@ -10,7 +10,6 @@ endif (${CALVIN_REPLAY})
 
 set(CMAKE_C_FLAGS "-Wstrict-aliasing")
 set(CMAKE_CXX_FLAGS "-Wstrict-aliasing")
-set(CMAKE_EXE_LINKER_FLAGS "-static-libstdc++ -static-libgcc")
 set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -DNDEBUG")
 set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -flto -fwhole-program -g -fno-omit-frame-pointer")
 
