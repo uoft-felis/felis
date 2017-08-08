@@ -1,3 +1,5 @@
+#include "table_decl.h"
+
 #include "tpcc.h"
 #include "epoch.h"
 #include "log.h"

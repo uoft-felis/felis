@@ -181,6 +181,18 @@ static inline size_t Align(size_t x, size_t a)
   return a * ((x - 1) / a + 1);
 }
 
+// Typesafe get from a variadic arguments
+template <int Index, typename U, typename ...Args>
+struct GetArg : public GetArg<Index - 1, Args...> {
+  GetArg(const U &first, const Args&... rest) : GetArg<Index - 1, Args...>(rest...) {}
+};
+
+template <typename U, typename ...Args>
+struct GetArg<0, U, Args...> {
+  U value;
+  GetArg(const U &value, const Args&... drop) : value(value) {}
+};
+
 }
 
 #endif /* UTIL_H */

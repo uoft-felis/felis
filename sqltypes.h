@@ -11,6 +11,7 @@
 #include <cassert>
 
 #include "mem.h"
+#include "util.h"
 
 namespace sql {
 
@@ -228,81 +229,37 @@ operator<<(std::ostream &o, const inline_str_fixed<N, FillChar> &s)
 // However, with a combined key, we have to compare field by field. Moreover, on
 // x86 architecture, memcmp() won't work for integer types at all.
 
-template <typename T, typename ...Targs>
-struct Compare {
-  // less than: -1. equal: 0. larger than: 1
-  static inline int CompareTo(const uint8_t *p, const uint8_t *q) {
-    int ret = Compare<T>::CompareTo(p, q);
-    if (ret != 0)
-      return ret;
-    else
-      return Compare<Targs...>::LessThan(p + sizeof(T), q + sizeof(T));
-  }
-};
-
 template <typename T>
-struct Compare<T> {
-  static inline int CompareTo(const uint8_t *p, const uint8_t *q) {
-    const T *a = (const T *) p;
-    const T *b = (const T *) q;
-    if (*a == *b)
-      return 0;
-    else if (*a < *b)
-      return -1;
-    else
-      return 1;
-  }
-};
-
-template <typename T, typename ...Targs>
 struct Serializer {
-  static size_t EncodeSize(const uint8_t *ptr) {
-    return Serializer<T>::EncodeSize(ptr)
-        + Serializer<Targs...>::EncodeSize(ptr + sizeof(T));
-  }
-  static constexpr size_t DecodeSize() {
-    return sizeof(T) + Serializer<Targs...>::DecodeSize();
-  }
-  static void Encode(uint8_t *buf, const uint8_t *ptr) {
-    Serializer<T>::Encode(buf, ptr);
-    Serializer<Targs...>::Encode(buf + Serializer<T>::EncodeSize(ptr), ptr + sizeof(T));
-  }
-  static void DecodeFrom(uint8_t *ptr, const uint8_t *buf) {
-    Serializer<T>::DecodeFrom(ptr, buf);
-    Serializer<Targs...>::DecodeFrom(ptr + sizeof(T), buf + Serializer<T>::EncodeSize(ptr));
-  }
-};
+  static size_t EncodeSize(const T *ptr) { return sizeof(T); }
 
-template <typename T>
-struct BasicSerializer {
-  static size_t EncodeSize(const uint8_t *ptr) { return sizeof(T); }
-  static constexpr size_t DecodeSize() { return sizeof(T); }
-
-  static void Encode(uint8_t *buf, const uint8_t *ptr) {
+  static void EncodeTo(uint8_t *buf, const T *ptr) {
     memcpy(buf, ptr, EncodeSize(ptr));
   }
-  static void DecodeFrom(uint8_t *ptr, const uint8_t *buf) {
+  static void DecodeFrom(T *ptr, const uint8_t *buf) {
     memcpy(ptr, buf, sizeof(T));
   }
 };
 
+template <typename T>
+struct KeySerializer : public Serializer<T> {};
+
+template <typename T>
+struct ValueSerializer : public Serializer<T> {};
+
 template <typename SizeType, unsigned int N>
-struct Serializer<inline_str_base<SizeType, N>>
-    : public BasicSerializer<inline_str_base<SizeType, N>> {
+struct Serializer<inline_str_base<SizeType, N>> {
   typedef inline_str_base<SizeType, N> ObjectType;
-  static size_t EncodeSize(const uint8_t *ptr) {
-    auto p = (const ObjectType *) ptr;
+  static size_t EncodeSize(const ObjectType *p) {
     return sizeof(SizeType) + p->size();
   }
-  static void Encode(uint8_t *buf, const uint8_t *ptr) {
-    auto p = (const ObjectType *) ptr;
+  static void EncodeTo(uint8_t *buf, const ObjectType *p) {
     SizeType sz = p->size();
-    Serializer<SizeType>::Encode(buf, (const uint8_t *) &sz);
+    Serializer<SizeType>::EncodeTo(buf, (const uint8_t *) &sz);
     memcpy(buf + Serializer<SizeType>::EncodeSize((const uint8_t *) &sz),
 	   p->data(), p->size());
   }
-  static void DecodeFrom(uint8_t *ptr, const uint8_t *buf) {
-    auto p = (ObjectType *) ptr;
+  static void DecodeFrom(ObjectType *p, const uint8_t *buf) {
     SizeType sz;
     Serializer<SizeType>::DecodeFrom((uint8_t *) &sz, buf);
     p->assign((const char *) buf + Serializer<SizeType>::EncodeSize((const uint8_t *) &sz), sz);
@@ -310,69 +267,111 @@ struct Serializer<inline_str_base<SizeType, N>>
 };
 
 template<>
-struct Serializer<uint16_t> : public BasicSerializer<uint16_t> {
-  static void Encode(uint8_t *buf, const uint8_t *ptr) {
-    uint16_t be = htobe16(*(const uint16_t *) ptr); // has to be BE!
+struct KeySerializer<uint16_t> : public Serializer<uint16_t> {
+  static void EncodeTo(uint8_t *buf, const uint16_t *ptr) {
+    uint16_t be = htobe16(*ptr); // has to be BE!
     memcpy(buf, &be, EncodeSize(ptr));
   }
-  static void DecodeFrom(uint8_t *ptr, const uint8_t *buf) {
-    uint16_t h = be16toh(* (const uint16_t *) buf);
-    memcpy(ptr, &h, sizeof(uint16_t));
+  static void DecodeFrom(uint16_t *ptr, const uint8_t *buf) {
+    uint16_t h = be16toh(*buf);
+    *ptr = h;
   }
 };
 
 template <>
-struct Serializer<uint32_t> : public BasicSerializer<uint32_t> {
-  static void Encode(uint8_t *buf, const uint8_t *ptr) {
-    uint32_t be = htobe32(*(const uint32_t *) ptr); // has to be BE!
+struct KeySerializer<uint32_t> : public Serializer<uint32_t> {
+  static void EncodeTo(uint8_t *buf, const uint32_t *ptr) {
+    uint32_t be = htobe32(*ptr); // has to be BE!
     memcpy(buf, &be, EncodeSize(ptr));
   }
-  static void DecodeFrom(uint8_t *ptr, const uint8_t *buf) {
-    uint32_t h = be32toh(* (const uint32_t *) buf);
-    memcpy(ptr, &h, sizeof(uint32_t));
+  static void DecodeFrom(uint32_t *ptr, const uint8_t *buf) {
+    uint32_t h = be32toh(*(const uint32_t *) buf);
+    *ptr = h;
   }
 };
 
-// host integer for serializer. Won't be matched to uintxx_t
-template <typename T>
-struct hint {
-  T val;
-  operator int16_t() const { return val; }
-  operator int32_t() const { return val; }
-  operator int64_t() const { return val; }
+template <int N> class FieldValue {};
 
-  operator uint16_t() const { return val; }
-  operator uint32_t() const { return val; }
-  operator uint64_t() const { return val; }
-} __attribute__((packed));
+template <template <typename> class FieldSerializer, int N>
+class Field : public Field<FieldSerializer, N - 1>, public FieldValue<N> {
+  typedef Field<FieldSerializer, N - 1> PreviousFields;
+  typedef typename FieldValue<N>::Type ImplType;
+  typedef FieldSerializer<ImplType> Impl;
+  ImplType *pointer() { return FieldValue<N>::ptr(); }
+  const ImplType *pointer() const { return FieldValue<N>::ptr(); }
 
-struct hint16 : public hint<uint16_t> {
-  hint16() { val = 0; }
-  hint16(const int16_t& rhs) { val = rhs; }
-  // hint16(const uint16_t& rhs) { val = rhs; }
-} __attribute__((packed));
+ protected:
+  static constexpr int kFieldOffset = PreviousFields::kFieldOffset + 1;
+  Field() {}
 
-struct hint32 : public hint<uint32_t> {
-  hint32() { val = 0; }
-  hint32(const int32_t& rhs) { val = rhs; }
-  hint32(const uint32_t& rhs) { val = rhs; }
-} __attribute__((packed));
+  template <int K>
+  using FieldType = Field<FieldSerializer, K>;
 
-template <typename T>
-struct Serializer<T> : public BasicSerializer<T> {};
+ public:
+  static constexpr int kOffset = N;
 
-/*
-  template <unsigned int N>
-  struct Serializer<sql::inline_str_fixed<N>> {
-  static size_t EncodeSize() { return N; }
-  static void Encode(uint8_t *buf, const uint8_t *ptr) {
-  memcpy(buf, ptr, EncodeSize());
+
+  template <typename T>
+  struct FieldBuilder : public FieldValue<N>::template Builder<typename Field<FieldSerializer, N + 1>::template FieldBuilder<T>, T> {};
+
+  size_t EncodeSize() const {
+    return PreviousFields::EncodeSize() + Impl::EncodeSize(pointer());
   }
-  static void DecodeFrom(uint8_t *ptr, const uint8_t *buf) {
-  memcpy(ptr, buf, N);
+  uint8_t *EncodeTo(uint8_t *buf) const {
+    buf = PreviousFields::EncodeTo(buf);
+    Impl::EncodeTo(buf, pointer());
+    return buf + Impl::EncodeSize(pointer());
   }
+  const uint8_t *DecodeFrom(const uint8_t *buf) {
+    buf = PreviousFields::DecodeFrom(buf);
+    Impl::DecodeFrom(pointer(), buf);
+    return buf + Impl::EncodeSize(pointer());
+  }
+};
+
+// Gap Fields. For example, 0 is the first gap fields
+
+template <template <typename> class FieldSerializer>
+class GapField {
+ protected:
+  static constexpr int kFieldOffset = -1;
+
+ public:
+  template <typename T>
+  struct FieldBuilder {
+    T *obj;
+    T Done() { return *obj; }
+    void Init() {}
   };
-*/
+
+  size_t EncodeSize() const { return 0; }
+  uint8_t *EncodeTo(uint8_t *buf) const { return buf; }
+  const uint8_t *DecodeFrom(const uint8_t *buf) { return buf; }
+};
+
+// First Gap
+template <template <typename> class FieldSerializer>
+class Field<FieldSerializer, __COUNTER__> : public GapField<FieldSerializer> {};
+
+#define FIELD(field_type, field_name)                                   \
+  template <> struct FieldValue<__COUNTER__> { \
+    field_type field_name; typedef field_type Type;                     \
+    Type *ptr() { return &field_name;}                                  \
+    const Type *ptr() const { return &field_name;}                      \
+    template <typename NextBuilder, typename T> struct Builder {        \
+      T *obj;                                                           \
+      NextBuilder _(field_type field_name) { this->obj->field_name = field_name; NextBuilder b; b.obj = obj; return b;} \
+      template <typename ...Args> void Init(field_type field_name, Args... args) { _(field_name).Init(args...); } \
+    };                                                                  \
+  };                                                                    \
+
+#define DBOBJ(name, serializer)                                         \
+  using name = sql::Schemas<sql::Field<serializer, __COUNTER__ - 1>>;   \
+  template <template <typename> class FieldSerializer>                  \
+  class Field<FieldSerializer, name::kOffset + 1> : public GapField<FieldSerializer> {}; \
+
+#define KEYS(name) DBOBJ(name, KeySerializer)
+#define VALUES(name) DBOBJ(name, ValueSerializer)
 
 // serve as the key of database
 struct VarStr {
@@ -429,7 +428,7 @@ struct VarStr {
   template <typename T>
   const T ToType() const {
     T instance;
-    instance.DecodeFrom(this);
+    instance.Decode(this);
     return instance;
   }
 
@@ -444,58 +443,51 @@ struct VarStr {
   }
 };
 
-template <typename T, typename ...Targs>
-class Schemas : public T,
-		public Compare<Targs...>,
-		public Serializer<Targs...> {
+template <typename AllFields>
+class Schemas : public AllFields {
  public:
-  using T::T;
-  Schemas(Targs... args) : T {args...} {}
-  Schemas() : T{} {}
+  // Concept:
+  // void EncodeTo(uint8_t *buf) const;
+  // size_t EncodeSize() const;
+  // void DecodeFrom(const uint8_t *buf);
 
-  bool operator<(const T &rhs) const {
-    return Compare<Targs...>::CompareTo((const uint8_t *) this,
-					(const uint8_t *) &rhs) < 0;
+  Schemas() {}
+
+  using ThisType = Schemas<AllFields>;
+  using FirstBuilder = typename AllFields::template FieldType<AllFields::kOffset - AllFields::kFieldOffset>::template FieldBuilder<ThisType>;
+
+  template <typename ...Args>
+  static ThisType New(Args... args) {
+    ThisType o;
+    o.Build().Init(args...);
+    return o;
   }
 
-  bool operator==(const T &rhs) const {
-    return Compare<Targs...>::CompareTo((const uint8_t *) this,
-					(const uint8_t *) &rhs) == 0;
+  FirstBuilder Build() {
+    FirstBuilder b;
+    b.obj = this;
+    return b;
   }
 
-  void Encode(uint8_t *buf) const {
-    Serializer<Targs...>::Encode(buf, (const uint8_t *) this);
-  }
-
-  VarStr *Encode() const { return Encode(VarStr::New(EncodeSize())); }
+  VarStr *Encode() const { return EncodeVarStr(VarStr::New(this->EncodeSize())); }
 
   VarStr *EncodeFromAlloca(void *base_ptr) const {
-    return Encode(VarStr::FromAlloca(base_ptr, EncodeSize()));
+    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
   }
 
   VarStr *EncodeFromRoutine() const {
-    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(EncodeSize()));
-    return Encode(VarStr::FromAlloca(base_ptr, EncodeSize()));
+    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
+    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
   }
-
-  size_t EncodeSize() const {
-    return Serializer<Targs...>::EncodeSize((const uint8_t *) this);
-  }
-
-  void DecodeFrom(const uint8_t *buf) {
-    Serializer<Targs...>::DecodeFrom((uint8_t *) this, buf);
-  }
-
-  void DecodeFrom(const VarStr *str) {
-    DecodeFrom(str->data);
+  void Decode(const VarStr *str) {
+    this->DecodeFrom(str->data);
   }
  private:
-  VarStr *Encode(VarStr *str) const {
-    Encode((uint8_t *) str + sizeof(VarStr));
+  VarStr *EncodeVarStr(VarStr *str) const {
+    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
     return str;
   }
 };
-
 
 }
 

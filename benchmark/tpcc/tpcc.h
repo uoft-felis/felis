@@ -3,6 +3,8 @@
 #ifndef TPCC_H
 #define TPCC_H
 
+#include "table_decl.h"
+
 #include <map>
 #include <array>
 #include <string>
@@ -11,382 +13,69 @@
 
 #include "index.h"
 #include "util.h"
-#include "sqltypes.h"
+#include "../../sqltypes.h"
 
 namespace tpcc {
 
-// TODO: I wonder if we can use boost::spirit to create a DSL?
-
 // table and schemas definition
 struct Customer {
-
-  struct KeyStruct {
-    uint32_t c_w_id;
-    uint32_t c_d_id;
-    uint32_t c_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    int c_discount;
-    sql::inline_str_fixed<2> c_credit;
-    sql::inline_str_8<16> c_last;
-    sql::inline_str_8<16> c_first;
-    int c_credit_lim;
-    int c_balance;
-    int c_ytd_payment;
-    int32_t c_payment_cnt;
-    int32_t c_delivery_cnt;
-    sql::inline_str_8<20> c_street_1;
-    sql::inline_str_8<20> c_street_2;
-    sql::inline_str_8<20> c_city;
-    sql::inline_str_fixed<2> c_state;
-    sql::inline_str_fixed<9> c_zip;
-    sql::inline_str_fixed<16> c_phone;
-    uint32_t c_since;
-    sql::inline_str_fixed<2> c_middle;
-    sql::inline_str_16<500> c_data;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::hint32,
-		       sql::inline_str_fixed<2>,
-		       sql::inline_str_base<uint8_t, 16>,
-		       sql::inline_str_base<uint8_t, 16>,
-		       sql::hint32, sql::hint32, sql::hint32,
-		       sql::hint32, sql::hint32,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_fixed<2>,
-		       sql::inline_str_fixed<9>,
-		       sql::inline_str_fixed<16>,
-		       sql::hint32,
-		       sql::inline_str_fixed<2>,
-		       sql::inline_str_base<sql::hint16, 500>> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
+  using Key = sql::CustomerKey;
+  using Value = sql::CustomerValue;
 };
 
-
 struct CustomerNameIdx {
-
-  struct KeyStruct {
-    uint32_t c_w_id;
-    uint32_t c_d_id;
-    sql::inline_str_fixed<16> c_last;
-    sql::inline_str_fixed<16> c_first;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct,
-		       uint32_t,
-		       uint32_t,
-		       sql::inline_str_fixed<16>,
-		       sql::inline_str_fixed<16>> Key;
-
-  struct ValueStruct {
-    uint32_t c_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::hint32> Value;
-
+  using Key = sql::CustomerNameIdxKey;
+  using Value = sql::CustomerNameIdxValue;
 };
 
 struct District {
-
-  struct KeyStruct {
-    uint32_t d_w_id;
-    uint32_t d_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    int32_t d_ytd;
-    int32_t d_tax;
-    uint32_t d_next_o_id;
-    sql::inline_str_8<10> d_name;
-    sql::inline_str_8<20> d_street_1;
-    sql::inline_str_8<20> d_street_2;
-    sql::inline_str_8<20> d_city;
-    sql::inline_str_fixed<2> d_state;
-    sql::inline_str_fixed<9> d_zip;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::hint32, sql::hint32,
-		       sql::hint32,
-		       sql::inline_str_base<uint8_t, 10>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_fixed<2>,
-		       sql::inline_str_fixed<9>> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::DistrictKey;
+  using Value = sql::DistrictValue;
 };
 
 struct History {
-
-  struct KeyStruct {
-    uint32_t h_c_id;
-    uint32_t h_c_d_id;
-    uint32_t h_c_w_id;
-    uint32_t h_d_id;
-    uint32_t h_w_id;
-    uint32_t h_date;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct,
-		       uint32_t,
-		       uint32_t,
-		       uint32_t,
-		       uint32_t,
-		       uint32_t,
-		       uint32_t> Key;
-
-  struct ValueStruct {
-    int32_t h_amount;
-    sql::inline_str_8<24> h_data;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::hint32, sql::inline_str_base<uint8_t, 24>> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::HistoryKey;
+  using Value = sql::HistoryValue;
 };
 
 struct Item {
-
-  struct KeyStruct {
-    uint32_t i_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t> Key;
-
-  struct ValueStruct {
-    sql::inline_str_8<24> i_name;
-    int32_t i_price;
-    sql::inline_str_8<50> i_data;
-    int32_t i_im_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::inline_str_base<uint8_t, 24>,
-		       sql::hint32,
-		       sql::inline_str_base<uint8_t, 50>,
-		       sql::hint32> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::ItemKey;
+  using Value = sql::ItemValue;
 };
 
 struct NewOrder {
-
-  struct KeyStruct {
-    uint32_t no_w_id;
-    uint32_t no_d_id;
-    uint32_t no_o_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    sql::inline_str_fixed<12> no_dummy;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct, sql::inline_str_fixed<12>> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::NewOrderKey;
+  using Value = sql::NewOrderValue;
 };
 
 struct OOrder {
-
-  struct KeyStruct {
-    uint32_t o_w_id;
-    uint32_t o_d_id;
-    uint32_t o_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    uint32_t o_c_id;
-    uint32_t o_carrier_id;
-    uint8_t o_ol_cnt;
-    bool o_all_local;
-    uint32_t o_entry_d;
-  } __attribute__((packed)); // 8 + 1 + 4 + 4 = 17
-
-  typedef sql::Schemas<ValueStruct, sql::hint32, sql::hint32, uint8_t, bool, sql::hint32> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::OOrderKey;
+  using Value = sql::OOrderValue;
 };
 
 struct OOrderCIdIdx {
-
-  struct KeyStruct {
-    uint32_t o_w_id;
-    uint32_t o_d_id;
-    uint32_t o_c_id;
-    uint32_t o_o_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    uint8_t o_dummy;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct, uint8_t> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::OOrderCIdIdxKey;
+  using Value = sql::OOrderCIdIdxValue;
 };
 
 struct OrderLine {
-
-  struct KeyStruct {
-    uint32_t ol_w_id;
-    uint32_t ol_d_id;
-    uint32_t ol_o_id;
-    uint32_t ol_number;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    int32_t ol_i_id;
-    uint32_t ol_delivery_d;
-    int32_t ol_amount;
-    int32_t ol_supply_w_id;
-    uint8_t ol_quantity;
-  } __attribute__((packed)); // 8 + 4 + 4 + 1 = 17
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::hint32,
-		       sql::hint32,
-		       sql::hint32,
-		       sql::hint32,
-		       uint8_t> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::OrderLineKey;
+  using Value = sql::OrderLineValue;
 };
 
 struct Stock {
-
-  struct KeyStruct {
-    uint32_t s_w_id;
-    uint32_t s_i_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    int16_t s_quantity;
-    int32_t s_ytd;
-    int32_t s_order_cnt;
-    int32_t s_remote_cnt;
-  } __attribute__((packed)); // 2 + 4 + 8 = 14
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::hint16,
-		       sql::hint32,
-		       sql::hint32,
-		       sql::hint32> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::StockKey;
+  using Value = sql::StockValue;
 };
 
 struct StockData {
-
-  struct KeyStruct {
-    uint32_t s_w_id;
-    uint32_t s_i_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t, uint32_t> Key;
-
-  struct ValueStruct {
-    sql::inline_str_8<50> s_data;
-    sql::inline_str_fixed<24> s_dist_01;
-    sql::inline_str_fixed<24> s_dist_02;
-    sql::inline_str_fixed<24> s_dist_03;
-    sql::inline_str_fixed<24> s_dist_04;
-    sql::inline_str_fixed<24> s_dist_05;
-    sql::inline_str_fixed<24> s_dist_06;
-    sql::inline_str_fixed<24> s_dist_07;
-    sql::inline_str_fixed<24> s_dist_08;
-    sql::inline_str_fixed<24> s_dist_09;
-    sql::inline_str_fixed<24> s_dist_10;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::inline_str_base<uint8_t, 50>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>,
-		       sql::inline_str_fixed<24>> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::StockDataKey;
+  using Value = sql::StockDataValue;
 };
 
 struct Warehouse {
-
-  struct KeyStruct {
-    uint32_t w_id;
-  } __attribute__((packed));
-
-  typedef sql::Schemas<KeyStruct, uint32_t> Key;
-
-  struct ValueStruct {
-    int32_t w_ytd;
-    int32_t w_tax;
-    sql::inline_str_8<10> w_name;
-    sql::inline_str_8<20> w_street_1;
-    sql::inline_str_8<20> w_street_2;
-    sql::inline_str_8<20> w_city;
-    sql::inline_str_fixed<2> w_state;
-    sql::inline_str_fixed<9> w_zip;
-  } __attribute__((packed)); // 78+8+11 = 97
-
-  typedef sql::Schemas<ValueStruct,
-		       sql::hint32, sql::hint32,
-		       sql::inline_str_base<uint8_t, 10>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_base<uint8_t, 20>,
-		       sql::inline_str_fixed<2>,
-		       sql::inline_str_fixed<9>> Value;
-
-  static_assert(Key::DecodeSize() == sizeof(KeyStruct), "SQL Schemas inconsistent");
-  static_assert(Value::DecodeSize() == sizeof(ValueStruct), "SQL Schemas inconsistent");
-
+  using Key = sql::WarehouseKey;
+  using Value = sql::WarehouseValue;
 };
 
 enum struct TPCCTable : int { Customer, CustomerNameIdx, District, History, Item,

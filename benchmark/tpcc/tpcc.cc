@@ -3,6 +3,8 @@
  * https://github.com/oltpbenchmark/oltpbench/tree/master/src/com/oltpbenchmark/benchmarks/tpcc
  */
 
+#include "table_decl.h"
+
 #include <sys/time.h>
 #include <string>
 #include <sys/types.h>
@@ -429,7 +431,7 @@ void Loader<TPCCLoader::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= NumWarehouses(); i++) {
-    auto k = Warehouse::Key(i);
+    auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
 
     auto w_name = RandomStr(r, RandomNumber(r, 6, 10));
@@ -454,7 +456,7 @@ void Loader<TPCCLoader::Warehouse>::DoLoad()
   }
 
   for (uint i = 1; i <= NumWarehouses(); i++) {
-    relation(TPCCTable::Warehouse, i).set_key_length(sizeof(Warehouse::KeyStruct));
+    relation(TPCCTable::Warehouse, i).set_key_length(sizeof(Warehouse::Key));
   }
   logger->info("Warehouse Table loading done.");
 }
@@ -465,8 +467,8 @@ void Loader<TPCCLoader::Item>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= NumItems(); i++) {
     // items don't "belong" to a certain warehouse, so no pinning
-    const Item::Key k(i);
-    Item::Value v;
+    auto k = Item::Key::New(i);
+    auto v = Item::Value();
 
     auto i_name = RandomStr(r, RandomNumber(r, 14, 24));
     v.i_name.assign(i_name);
@@ -488,7 +490,7 @@ void Loader<TPCCLoader::Item>::DoLoad()
     relation(TPCCTable::Item, 1)
       .SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
   }
-  relation(TPCCTable::Item, 1).set_key_length(sizeof(Item::KeyStruct));
+  relation(TPCCTable::Item, 1).set_key_length(sizeof(Item::Key));
   logger->info("Item Table loading done.");
 }
 
@@ -501,8 +503,8 @@ void Loader<TPCCLoader::Stock>::DoLoad()
     mem::SetThreadLocalAllocAffinity(PartitionId(w));
 
     for(size_t i = 1; i <= NumItems(); i++) {
-      const Stock::Key k(w, i);
-      const StockData::Key k_data(w, i);
+      const auto k = Stock::Key::New(w, i);
+      const auto k_data =  StockData::Key::New(w, i);
 
       Stock::Value v;
       v.s_quantity = RandomNumber(r, 10, 100);
@@ -537,8 +539,8 @@ void Loader<TPCCLoader::Stock>::DoLoad()
       relation(TPCCTable::Stock, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
       relation(TPCCTable::StockData, w).SetupReExec(k_data.EncodeFromAlloca(large_buf), 0, v_data.Encode());
     }
-    relation(TPCCTable::Stock, w).set_key_length(sizeof(Stock::KeyStruct));
-    relation(TPCCTable::StockData, w).set_key_length(sizeof(StockData::KeyStruct));
+    relation(TPCCTable::Stock, w).set_key_length(sizeof(Stock::Key));
+    relation(TPCCTable::StockData, w).set_key_length(sizeof(StockData::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Stock Table loading done.");
@@ -553,7 +555,7 @@ void Loader<TPCCLoader::District>::DoLoad()
     mem::SetThreadLocalAllocAffinity(PartitionId(w));
 
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-      const District::Key k(w, d);
+      const auto k = District::Key::New(w, d);
       District::Value v;
       v.d_ytd = 3000000;
       v.d_tax = RandomNumber(r, 0, 2000) / 100;
@@ -569,7 +571,7 @@ void Loader<TPCCLoader::District>::DoLoad()
 
       relation(TPCCTable::District, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
     }
-    relation(TPCCTable::District, w).set_key_length(sizeof(District::KeyStruct));
+    relation(TPCCTable::District, w).set_key_length(sizeof(District::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("District Table loading done.");
@@ -600,7 +602,7 @@ void Loader<TPCCLoader::Customer>::DoLoad()
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       for (uint cidx0 = 0; cidx0 < NumCustomersPerDistrict(); cidx0++) {
 	const uint c = cidx0 + 1;
-	Customer::Key k(w, d, c);
+	auto k = Customer::Key::New(w, d, c);
 	Customer::Value v;
 
 	v.c_discount = RandomNumber(r, 1, 5000) / 100;
@@ -636,8 +638,8 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	relation(TPCCTable::Customer, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
 
 	// customer name index
-	CustomerNameIdx::Key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
-	CustomerNameIdx::Value v_idx{k.c_id};
+	auto k_idx = CustomerNameIdx::Key::New(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
+	auto v_idx = CustomerNameIdx::Value::New(k.c_id);
 
 	// index structure is:
 	// (c_w_id, c_d_id, c_last, c_first) -> (c_id)
@@ -662,9 +664,9 @@ void Loader<TPCCLoader::Customer>::DoLoad()
       }
     }
 
-    relation(TPCCTable::Customer, w).set_key_length(sizeof(Customer::KeyStruct));
-    relation(TPCCTable::CustomerNameIdx, w).set_key_length(sizeof(CustomerNameIdx::KeyStruct));
-    relation(TPCCTable::History, w).set_key_length(sizeof(History::KeyStruct));
+    relation(TPCCTable::Customer, w).set_key_length(sizeof(Customer::Key));
+    relation(TPCCTable::CustomerNameIdx, w).set_key_length(sizeof(CustomerNameIdx::Key));
+    relation(TPCCTable::History, w).set_key_length(sizeof(History::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
 }
@@ -694,8 +696,7 @@ void Loader<TPCCLoader::Order>::DoLoad()
       }
 
       for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
-	const OOrder::Key k_oo(w, d, c);
-
+	const auto k_oo = OOrder::Key::New(w, d, c);
 	OOrder::Value v_oo;
 
 	v_oo.o_c_id = c_ids[c - 1];
@@ -713,13 +714,13 @@ void Loader<TPCCLoader::Order>::DoLoad()
 
 	relation(TPCCTable::OOrder, w).SetupReExec(k_oo.EncodeFromAlloca(large_buf), 0, v_oo.Encode());
 
-	const OOrderCIdIdx::Key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
-	OOrderCIdIdx::Value v_oo_idx{0};
+	const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
+	const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
 
 	relation(TPCCTable::OOrderCIdIdx, w).SetupReExec(k_oo_idx.EncodeFromAlloca(large_buf), 0, v_oo_idx.Encode());
 
 	if (c >= 2101) {
-	  NewOrder::Key k_no(w, d, c);
+	  auto k_no = NewOrder::Key::New(w, d, c);
 	  NewOrder::Value v_no;
 
 	  Checker::SanityCheckNewOrder(&k_no, &v_no);
@@ -728,9 +729,9 @@ void Loader<TPCCLoader::Order>::DoLoad()
 	}
 
 	for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
-	  const OrderLine::Key k_ol(w, d, c, l);
-
+	  auto k_ol = OrderLine::Key::New(w, d, c, l);
 	  OrderLine::Value v_ol;
+
 	  v_ol.ol_i_id = RandomNumber(r, 1, 100000);
 	  if (k_ol.ol_o_id < 2101) {
 	    v_ol.ol_delivery_d = v_oo.o_entry_d;
@@ -751,10 +752,10 @@ void Loader<TPCCLoader::Order>::DoLoad()
 	}
       }
     }
-    relation(TPCCTable::OOrder, w).set_key_length(sizeof(OOrder::KeyStruct));
-    relation(TPCCTable::OOrderCIdIdx, w).set_key_length(sizeof(OOrderCIdIdx::KeyStruct));
-    relation(TPCCTable::NewOrder, w).set_key_length(sizeof(NewOrder::KeyStruct));
-    relation(TPCCTable::OrderLine, w).set_key_length(sizeof(OrderLine::KeyStruct));
+    relation(TPCCTable::OOrder, w).set_key_length(sizeof(OOrder::Key));
+    relation(TPCCTable::OOrderCIdIdx, w).set_key_length(sizeof(OOrderCIdIdx::Key));
+    relation(TPCCTable::NewOrder, w).set_key_length(sizeof(NewOrder::Key));
+    relation(TPCCTable::OrderLine, w).set_key_length(sizeof(OrderLine::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
 }
@@ -812,14 +813,14 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
   TxnValidator validator;
   CommitBuffer buffer(this);
 
-  const Customer::Key k_c(warehouse_id, district_id, customer_id);
+  const auto k_c = Customer::Key::New(warehouse_id, district_id, customer_id);
   auto v_c = relation(TPCCTable::Customer, warehouse_id)
              .Get<Customer::Value>(k_c.EncodeFromRoutine(),
                                    serializable_id(),
                                    buffer);
   Checker::SanityCheckCustomer(&k_c, &v_c);
 
-  const Warehouse::Key k_w(warehouse_id);
+  const auto k_w = Warehouse::Key::New(warehouse_id);
   auto v_w = relation(TPCCTable::Warehouse, warehouse_id)
              .Get<Warehouse::Value>(k_w.EncodeFromRoutine(),
                                     serializable_id(),
@@ -827,7 +828,7 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
 
   Checker::SanityCheckWarehouse(&k_w, &v_w);
 
-  const District::Key k_d(warehouse_id, district_id);
+  const auto k_d = District::Key::New(warehouse_id, district_id);
   auto v_d = relation(TPCCTable::District, warehouse_id)
              .Get<District::Value>(k_d.EncodeFromRoutine(),
                                    serializable_id(),
@@ -837,27 +838,28 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
 
   const uint64_t my_next_o_id = v_d.d_next_o_id;
 
-  const NewOrder::Key k_no(warehouse_id, district_id, my_next_o_id);
-  const NewOrder::Value v_no{sql::inline_str_fixed<12>()}; // this is a dummy
+  const auto k_no = NewOrder::Key::New(warehouse_id, district_id, my_next_o_id);
+  const auto v_no = NewOrder::Value::New(sql::inline_str_fixed<12>()); // this is a dummy
 
   logger->debug("NewOrder sid {} Put New Order {} {} {}", serializable_id(),
 		k_no.no_w_id, k_no.no_d_id, k_no.no_o_id);
   relation(TPCCTable::NewOrder, warehouse_id)
     .Put(k_no.Encode(), serializable_id(), v_no.Encode(), buffer);
 
-  District::Value v_d_new(v_d);
+  auto v_d_new = v_d;
   v_d_new.d_next_o_id++;
   relation(TPCCTable::District, warehouse_id)
     .Put(k_d.Encode(), serializable_id(), v_d_new.Encode(), buffer);
 
-  const OOrder::Key k_oo(warehouse_id, district_id, k_no.no_o_id);
-  const OOrder::Value v_oo {customer_id, 0, (uint8_t) nr_items, all_local, ts_now};
+  const auto k_oo = OOrder::Key::New(warehouse_id, district_id, k_no.no_o_id);
+  const auto v_oo = OOrder::Value::New(customer_id, 0, (uint8_t) nr_items, all_local, ts_now);
 
   relation(TPCCTable::OOrder, warehouse_id)
     .Put(k_oo.Encode(), serializable_id(), v_oo.Encode(), buffer);
 
-  const OOrderCIdIdx::Key k_oo_idx(warehouse_id, district_id, customer_id, k_no.no_o_id);
-  const OOrderCIdIdx::Value v_oo_idx{0};
+  const auto k_oo_idx = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id, k_no.no_o_id);
+  const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
+
   relation(TPCCTable::OOrderCIdIdx, warehouse_id)
     .Put(k_oo_idx.Encode(), serializable_id(), v_oo_idx.Encode(), buffer);
 
@@ -866,21 +868,21 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
     const uint ol_i_id = item_id[ol_number - 1];
     const uint ol_quantity = order_quantities[ol_number - 1];
 
-    const Item::Key k_i(ol_i_id);
+    const auto k_i = Item::Key::New(ol_i_id);
     auto v_i = relation(TPCCTable::Item, 1)
       .Get<Item::Value>(k_i.EncodeFromRoutine(),
 			serializable_id(),
 			buffer);
     Checker::SanityCheckItem(&k_i, &v_i);
 
-    const Stock::Key k_s(ol_supply_w_id, ol_i_id);
+    const auto k_s = Stock::Key::New(ol_supply_w_id, ol_i_id);
     auto v_s = relation(TPCCTable::Stock, ol_supply_w_id)
       .Get<Stock::Value>(k_s.EncodeFromRoutine(),
 			 serializable_id(),
 			 buffer);
     Checker::SanityCheckStock(&k_s, &v_s);
 
-    Stock::Value v_s_new(v_s);
+    auto v_s_new = v_s;
     if (v_s_new.s_quantity - ol_quantity >= 10)
       v_s_new.s_quantity -= ol_quantity;
     else
@@ -892,10 +894,10 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
     relation(TPCCTable::Stock, ol_supply_w_id)
       .Put(k_s.Encode(), serializable_id(), v_s_new.Encode(), buffer);
 
-    const OrderLine::Key k_ol(warehouse_id, district_id, k_no.no_o_id, ol_number);
-    const OrderLine::Value v_ol (ol_i_id, 0,
-				 ol_quantity * v_i.i_price,
-				 ol_supply_w_id, (uint8_t) ol_quantity);
+    const auto k_ol = OrderLine::Key::New(warehouse_id, district_id, k_no.no_o_id, ol_number);
+    const auto v_ol = OrderLine::Value::New(ol_i_id, 0,
+                                       ol_quantity * v_i.i_price,
+                                       ol_supply_w_id, (uint8_t) ol_quantity);
 
     logger->debug("NewOrder sid {} Put OrderLine {} {} {} {}", serializable_id(),
 		  k_ol.ol_w_id, k_ol.ol_d_id, k_ol.ol_o_id, k_ol.ol_number);
@@ -936,8 +938,8 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 
   for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
     logger->debug("Delivery sid {} process district {} last oid {}", serializable_id(), d, last_no_o_ids[d - 1]);
-    const NewOrder::Key k_no_0(warehouse_id, d, last_no_o_ids[d - 1]);
-    const NewOrder::Key k_no_1(warehouse_id, d, std::numeric_limits<int32_t>::max());
+    const auto k_no_0 = NewOrder::Key::New(warehouse_id, d, last_no_o_ids[d - 1]);
+    const auto k_no_1 = NewOrder::Key::New(warehouse_id, d, std::numeric_limits<int32_t>::max());
     NewOrder::Key k_no;
     bool k_no_found = false;
 
@@ -948,10 +950,10 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 	    serializable_id(),
 	    buffer,
 	    [&k_no, &k_no_found] (const VarStr *k, const VarStr *v) -> bool {
-	      k_no.DecodeFrom(k);
+	      k_no.Decode(k);
 	      k_no_found = true;
 	      NewOrder::Value v_no;
-	      v_no.DecodeFrom(v);
+	      v_no.Decode(v);
 
 	      Checker::SanityCheckNewOrder(&k_no, &v_no);
 	      return false;
@@ -962,7 +964,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 
     // last_no_o_ids[d - 1] = k_no.no_o_id + 1; // XXX: update last seen
 
-    const OOrder::Key k_oo(warehouse_id, d, k_no.no_o_id);
+    const auto k_oo = OOrder::Key::New(warehouse_id, d, k_no.no_o_id);
     // even if we read the new order entry, there's no guarantee
     // we will read the oorder entry: in this case the txn will abort,
     // but we're simply bailing out early
@@ -972,8 +974,8 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
     Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
     // static_limit_callback<15> c(s_arena.get(), false); // never more than 15 order_lines per order
-    const OrderLine::Key k_oo_0(warehouse_id, d, k_no.no_o_id, 0);
-    const OrderLine::Key k_oo_1(warehouse_id, d, k_no.no_o_id, std::numeric_limits<int32_t>::max());
+    const auto k_oo_0 = OrderLine::Key::New(warehouse_id, d, k_no.no_o_id, 0);
+    const auto k_oo_1 = OrderLine::Key::New(warehouse_id, d, k_no.no_o_id, std::numeric_limits<int32_t>::max());
 
     int sum = 0;
     auto it = relation(TPCCTable::OrderLine, warehouse_id)
@@ -986,7 +988,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
 
 // #ifdef CHECK_INVARIANTS
       OrderLine::Key k_ol;
-      k_ol.DecodeFrom(&it.key());
+      k_ol.Decode(&it.key());
 
       Checker::SanityCheckOrderLine(&k_ol, &v_ol);
 // #endif
@@ -1020,7 +1022,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
     const int ol_total = sum;
 
     // update customer
-    const Customer::Key k_c(warehouse_id, d, c_id);
+    const auto k_c =  Customer::Key::New(warehouse_id, d, c_id);
     const auto v_c = relation(TPCCTable::Customer, warehouse_id)
       .Get<Customer::Value>(k_c.EncodeFromRoutine(),
 			    serializable_id(),
@@ -1085,7 +1087,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
 		customer_district_id, customer_id);
 
   // select * from customer with random C_ID
-  Customer::Key k_c(customer_warehouse_id, customer_district_id, customer_id);
+  auto k_c = Customer::Key::New(customer_warehouse_id, customer_district_id, customer_id);
   const auto v_c = relation(TPCCTable::Customer, customer_warehouse_id)
     .Get<Customer::Value>(k_c.EncodeFromRoutine(),
 			  serializable_id(),
@@ -1096,8 +1098,8 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
   //		c_w_id = :w_id;
   //		c_d_id = :d_id;
   //		c_id = :c_id;
-  OOrderCIdIdx::Key k_oo_idx_0(warehouse_id, district_id, customer_id, 0);
-  OOrderCIdIdx::Key k_oo_idx_1(warehouse_id, district_id, customer_id, std::numeric_limits<int32_t>::max());
+  auto k_oo_idx_0 = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id, 0);
+  auto k_oo_idx_1 = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id, std::numeric_limits<int32_t>::max());
 
   auto it = relation(TPCCTable::OOrderCIdIdx, warehouse_id)
     .SearchIterator(
@@ -1111,10 +1113,10 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
   for (; it.IsValid(); it.Next())
   {
     OOrderCIdIdx::Key k_oo_idx;
-    k_oo_idx.DecodeFrom(&it.key());
+    k_oo_idx.Decode(&it.key());
     auto o_id = k_oo_idx.o_o_id;
 
-    OOrder::Key k_oo(warehouse_id, district_id, o_id);
+    auto k_oo = OOrder::Key::New(warehouse_id, district_id, o_id);
     auto v_oo = relation(TPCCTable::OOrder, warehouse_id)
       .Get(k_oo.EncodeFromRoutine(),
            serializable_id(),
@@ -1126,8 +1128,8 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
     //		ol_w_id = :w_id
     //		ol_o_id = o_id
     //		ol_number = 1-15
-    const OrderLine::Key k_ol_0(warehouse_id, district_id, o_id, 1);
-    const OrderLine::Key k_ol_1(warehouse_id, district_id, o_id, 15);
+    const auto k_ol_0 = OrderLine::Key::New(warehouse_id, district_id, o_id, 1);
+    const auto k_ol_1 = OrderLine::Key::New(warehouse_id, district_id, o_id, 15);
 
     relation(TPCCTable::OrderLine, warehouse_id)
       .Scan(
@@ -1137,14 +1139,14 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
 	buffer,
 	[&sum] (const VarStr *k, const VarStr *v) -> bool {
 	  OrderLine::Value v_ol;
-	  v_ol.DecodeFrom(v);
+	  v_ol.Decode(v);
 	  sum += v_ol.ol_amount;
 	  return true;
 	});
   }
 
   // c_credit update
-  Customer::Value v_c_new(v_c);
+  auto v_c_new = v_c;
   if (v_c_new.c_balance + sum >= 500000) // Threshold = 5K
     v_c_new.c_credit.assign("BC");
   else
@@ -1184,26 +1186,26 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
 
   // void *large_buf = alloca(1024);
 
-  const Warehouse::Key k_w(warehouse_id);
+  const auto k_w = Warehouse::Key::New(warehouse_id);
   auto v_w = relation(TPCCTable::Warehouse, warehouse_id)
     .Get<Warehouse::Value>(k_w.EncodeFromRoutine(),
 			   serializable_id(),
 			   buffer);
   Checker::SanityCheckWarehouse(&k_w, &v_w);
 
-  Warehouse::Value v_w_new(v_w);
+  auto v_w_new = v_w;
   v_w_new.w_ytd += payment_amount;
   relation(TPCCTable::Warehouse, warehouse_id)
     .Put(k_w.Encode(), serializable_id(), v_w_new.Encode(), buffer);
 
-  District::Key k_d(warehouse_id, district_id);
+  auto k_d = District::Key::New(warehouse_id, district_id);
   auto v_d = relation(TPCCTable::District, warehouse_id)
     .Get<District::Value>(k_d.EncodeFromRoutine(),
 			  serializable_id(),
 			  buffer);
   Checker::SanityCheckDistrict(&k_d, &v_d);
 
-  District::Value v_d_new(v_d);
+  auto v_d_new = v_d;
   v_d_new.d_ytd += payment_amount;
   relation(TPCCTable::District, warehouse_id)
     .Put(k_d.Encode(), serializable_id(), v_d_new.Encode(), buffer);
@@ -1241,7 +1243,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
 	buffer,
 	[&customer_ids] (const VarStr *k, const VarStr *v) -> bool {
 	  CustomerNameIdx::Value name_idx;
-	  name_idx.DecodeFrom(v);
+	  name_idx.Decode(v);
 	  customer_ids.push_back(name_idx.c_id);
 	  return customer_ids.size() < NMaxCustomerIdxScanElems;
 	});
@@ -1262,7 +1264,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
 			    buffer);
   }
   Checker::SanityCheckCustomer(&k_c, &v_c);
-  Customer::Value v_c_new(v_c);
+  auto v_c_new = v_c;
 
   v_c_new.c_balance -= payment_amount;
   v_c_new.c_ytd_payment += payment_amount;
@@ -1287,7 +1289,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
   relation(TPCCTable::Customer, customer_warehouse_id)
     .Put(k_c.Encode(), serializable_id(), v_c_new.Encode(), buffer);
 
-  History::Key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, district_id, warehouse_id, ts);
+  auto k_h = History::Key::New(k_c.c_d_id, k_c.c_w_id, k_c.c_id, district_id, warehouse_id, ts);
   History::Value v_h;
   v_h.h_amount = payment_amount;
   v_h.h_data.resize_junk(v_h.h_data.max_size());
