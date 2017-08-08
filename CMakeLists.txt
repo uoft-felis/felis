@@ -10,6 +10,7 @@ endif (${CALVIN_REPLAY})
 
 set(CMAKE_C_FLAGS "-Wstrict-aliasing")
 set(CMAKE_CXX_FLAGS "-Wstrict-aliasing")
+set(CMAKE_EXE_LINKER_FLAGS "-static-libstdc++ -static-libgcc")
 set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -DNDEBUG")
 set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -flto -fwhole-program -g -fno-omit-frame-pointer")
 
@@ -30,5 +31,5 @@ add_executable(db-backup-node epoch.cc log.cc vhandle.cc index.cc mem.cc masstre
 add_subdirectory(benchmark/tpcc/)
 add_subdirectory(chkpt/)
 
-target_link_libraries(db-backup-node numa pthread tcmalloc)
+target_link_libraries(db-backup-node numa pthread jemalloc)
 target_include_directories(db-backup-node PRIVATE ${CMAKE_SOURCE_DIR})
