@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 2.8)
 
 project(dolly C CXX ASM)
 
+find_library(JEMALLOC_LIBS NAMES jemalloc)
+
 add_definitions(-std=c++11 -pthread -Wstrict-aliasing -DNR_THREADS=${NR_THREADS} -DCACHE_LINE_SIZE=64)
 
 if (${CALVIN_REPLAY})
@@ -11,8 +13,9 @@ endif (${CALVIN_REPLAY})
 set(CMAKE_C_FLAGS "-Wstrict-aliasing")
 set(CMAKE_CXX_FLAGS "-Wstrict-aliasing")
 set(CMAKE_EXE_LINKER_FLAGS "-static-libstdc++ -static-libgcc")
-set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -DNDEBUG")
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -flto -fwhole-program -g -fno-omit-frame-pointer")
+set(CMAKE_C_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -DNDEBUG")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -g -flto -fwhole-program -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer")
 
 # set(CMAKE_CXX_FLAGS_DEBUG "-fsanitize=address -fno-omit-frame-pointer")
 # set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address")
@@ -31,5 +34,5 @@ add_executable(db-backup-node epoch.cc log.cc vhandle.cc index.cc mem.cc masstre
 add_subdirectory(benchmark/tpcc/)
 add_subdirectory(chkpt/)
 
-target_link_libraries(db-backup-node numa pthread jemalloc)
+target_link_libraries(db-backup-node numa pthread ${JEMALLOC_LIBS})
 target_include_directories(db-backup-node PRIVATE ${CMAKE_SOURCE_DIR})

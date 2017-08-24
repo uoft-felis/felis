@@ -155,7 +155,8 @@ static bool IsPendingVal(uintptr_t val)
   return false;
 }
 
-static void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
+static void __attribute__((noinline))
+WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
 {
   DTRACE_PROBE1(dolly, version_read, handle);
 

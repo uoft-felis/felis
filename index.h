@@ -225,7 +225,7 @@ class RelationPolicy : public BaseRelation,
   }
 
   template <typename T>
-  const T Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
+  const T Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) __attribute__((noinline)) {
     const VarStr *o = Get(k, sid, buffer);
     return o->ToType<T>();
   }
@@ -242,7 +242,7 @@ class RelationPolicy : public BaseRelation,
 #endif
   }
 
-  void CommitPut(const VarStr *k, uint64_t sid, VarStr *obj, bool &is_garbage) {
+  void CommitPut(const VarStr *k, uint64_t sid, VarStr *obj, bool &is_garbage) __attribute__((noinline)) {
     if (!this->Search(k)->WriteWithVersion(sid, obj, is_garbage)) {
       logger->error("Diverging outcomes!");
       std::abort();
@@ -264,13 +264,13 @@ class RelationPolicy : public BaseRelation,
   }
 
   typename IndexPolicy::Iterator SearchIterator(const VarStr *k, uint64_t sid,
-                                                CommitBuffer &buffer) {
+                                                CommitBuffer &buffer) __attribute__((noinline)) {
     auto it = this->IndexSearchIterator(k, id, is_read_only(), sid, buffer);
     return it;
   }
 
   typename IndexPolicy::Iterator SearchIterator(const VarStr *start, const VarStr *end,
-                                                uint64_t sid, CommitBuffer &buffer) {
+                                                uint64_t sid, CommitBuffer &buffer) __attribute__((noinline)) {
     auto it = this->IndexSearchIterator(start, end, id, is_read_only(), sid, buffer);
     return it;
   }
@@ -278,7 +278,7 @@ class RelationPolicy : public BaseRelation,
  private:
   void CallScanCallback(typename IndexPolicy::Iterator it, uint64_t sid,
 			CommitBuffer &buffer,
-			std::function<bool (const VarStr *k, const VarStr *v)> callback) {
+			std::function<bool (const VarStr *k, const VarStr *v)> callback) __attribute__((noinline)) {
     while (it.IsValid()) {
       const VarStr &key = it.key();
       const VarStr *value = it.object();

@@ -4,3 +4,6 @@
 [submodule "masstree"]
 	path = masstree
 	url = git@github.com:mikeandmore/masstree-beta.git
+[submodule "Release/jemalloc"]
+	path = Release/jemalloc
+	url = https://github.com/jemalloc/jemalloc.git
