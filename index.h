@@ -10,29 +10,12 @@
 #include "mem.h"
 #include "log.h"
 #include "epoch.h"
+#include "txn.h"
 #include "util.h"
 
 #include "vhandle.h"
 
 namespace dolly {
-
-class TxnValidator {
-  unsigned int key_crc, value_crc;
-  size_t value_size;
-  static std::atomic<unsigned long> tot_validated;
-  uint8_t *keys_ptr;
-  bool is_valid;
- public:
-  TxnValidator() :
-      key_crc(INITIAL_CRC32_VALUE), value_crc(INITIAL_CRC32_VALUE),
-      value_size(0), keys_ptr(nullptr), is_valid(true) {}
-
-  void set_keys_ptr(uint8_t *kptr) { keys_ptr = kptr; }
-  void CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr *obj);
-  void Validate(const Txn &tx);
-
-  static void DebugVarStr(const char *prefix, const VarStr *s);
-};
 
 using util::ListNode;
 

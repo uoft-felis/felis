@@ -75,9 +75,11 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
     pgsz = (2 << 20);
   }
   for (volatile uint8_t *p = (uint8_t *) data; p < (uint8_t *) data + len; p += pgsz) {
+    /*
     fprintf(stderr, "prefaulting %s %lu%%\r",
             (flags & MAP_HUGETLB) ? "hugepage" : "        ",
             (p - (uint8_t *) data) * 100 / len);
+    */
     (*p) = 0;
   }
 #endif
