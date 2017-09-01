@@ -2,7 +2,7 @@
 #include "epoch.h"
 #include "index.h"
 
-#include <sys/sdt.h>
+#include "dolly_probes.h"
 
 using util::Instance;
 

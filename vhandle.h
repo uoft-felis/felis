@@ -1,6 +1,6 @@
 // -*- mode: c++ -*-
 
-#include <sys/sdt.h>
+#include "dolly_probes.h"
 #include "epoch.h"
 
 #ifndef VHANDLE_H

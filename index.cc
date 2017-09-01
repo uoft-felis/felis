@@ -10,7 +10,7 @@
 #include "json11/json11.hpp"
 #include "gopp/gopp.h"
 
-#include <sys/sdt.h>
+#include "dolly_probes.h"
 
 using util::Instance;
 
