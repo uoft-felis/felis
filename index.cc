@@ -65,11 +65,11 @@ void TxnValidator::CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr 
     update_crc32(k->data, k->len, &key_crc);
 
   TxnKey *kptr = (TxnKey *) keys_ptr;
-  if (!k || -kptr->fid != fid || kptr->len != k->len
+  if (!k || kptr->fid != fid || kptr->len != k->len
       || memcmp(kptr->data, k->data, k->len) != 0) {
     is_valid = false;
     logger->alert("Out-of-Order Write. sid {} fid {}",
-		  tx.serializable_id(), -kptr->fid);
+		  tx.serializable_id(), kptr->fid);
     VarStr real_k;
     real_k.data = kptr->data;
     real_k.len = kptr->len;
@@ -108,7 +108,7 @@ void TxnValidator::CaptureWrite(const Txn &tx, int fid, const VarStr *k, VarStr 
 void TxnValidator::DebugVarStr(const char *prefix, const VarStr *s)
 {
   if (!s) {
-    logger->alert("{}: null", prefix);
+    logger->critical("{}: null", prefix);
     return;
   }
 
@@ -117,7 +117,7 @@ void TxnValidator::DebugVarStr(const char *prefix, const VarStr *s)
   for (int i = 0; i < s->len; i++) {
     ss << "0x" << (int) s->data[i] << ' ';
   }
-  logger->alert("{}: {}", prefix, ss.str());
+  logger->critical("{}: {}", prefix, ss.str());
 }
 
 void TxnValidator::Validate(const Txn &tx)
@@ -125,6 +125,7 @@ void TxnValidator::Validate(const Txn &tx)
 #ifdef VALIDATE_TXN
   while (keys_ptr != tx.key_buffer() + tx.key_buffer_size()) {
     logger->alert("left over keys!");
+    is_valid = false;
     CaptureWrite(tx, -1, nullptr, nullptr);
   }
   if (is_valid) {
@@ -151,7 +152,7 @@ void DeletedGarbageHeads::AttachGarbage(CommitBufferEntry *g)
 {
 #ifdef PROACTIVE_GC
   int idx = go::Scheduler::CurrentThreadPoolId() - 1;
-  g->lru_node.InsertAfter(&garbage_heads[idx]);
+  g->ht_node.InsertAfter(&garbage_heads[idx]);
 #else
   delete g->key;
   delete g;
@@ -168,17 +169,16 @@ void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
   auto &mgr = Instance<RelationManager>();
   while (ent != head) {
     auto prev = ent->prev;
-    CommitBufferEntry *entry = container_of(ent, CommitBufferEntry, lru_node);
+    CommitBufferEntry *entry = container_of(ent, CommitBufferEntry, ht_node);
     if (epoch_nr - entry->epoch_nr < 2)
       break;
     auto &rel = mgr.GetRelationOrCreate(entry->fid);
-    auto handle = rel.Search(entry->key);
+    auto handle = rel.Search(&entry->key);
     if (handle->last_update_epoch() == entry->epoch_nr)
-      rel.ImmediateDelete(entry->key);
+      rel.ImmediateDelete(&entry->key);
 
     gc_count++;
     ent->Remove();
-    delete entry->key;
     delete entry;
 
     ent = prev;
@@ -186,85 +186,6 @@ void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
   DTRACE_PROBE1(dolly, deleted_gc_per_core, gc_count);
   logger->info("Proactive GC {} cleaned {} garbage keys", idx, gc_count);
 #endif
-}
-
-void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
-{
-  unsigned int h = Hash(fid, key);
-  ListNode *head = &htable[h % kHashTableSize];
-  ListNode *node = head->next;
-  while (node != head) {
-    auto entry = container_of(node, CommitBufferEntry, ht_node);
-    if (entry->fid != fid)
-      goto next;
-    if (*entry->key != *key)
-      goto next;
-
-    // update this node
-    delete entry->key;
-    delete entry->obj;
-
-    entry->key = key;
-    entry->obj = obj;
-    // entry->lru_node.Remove();
-    // entry->lru_node.InsertAfter(&lru);
-    return;
- next:
-    node = node->next;
-  }
-  auto entry = new CommitBufferEntry(fid, key, obj);
-  entry->ht_node.InsertAfter(head);
-  entry->lru_node.InsertAfter(&lru);
-}
-
-VarStr *CommitBuffer::Get(int fid, const VarStr *key)
-{
-  unsigned int h = Hash(fid, key);
-  ListNode *head = &htable[h % kHashTableSize];
-  ListNode *node = head->next;
-  while (node != head) {
-    auto entry = container_of(node, CommitBufferEntry, ht_node);
-    if (entry->fid != fid)
-      goto next;
-    if (*entry->key != *key)
-      goto next;
-
-    return entry->obj;
- next:
-    node = node->next;
-  }
-  return nullptr;
-}
-
-void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
-{
-  ListNode *head = &lru;
-  ListNode *node = head->prev;
-  auto &mgr = Instance<RelationManager>();
-
-  if (validator)
-    validator->set_keys_ptr(tx->key_buffer());
-  while (node != head) {
-    ListNode *prev = node->prev;
-    auto entry = container_of(node, CommitBufferEntry, lru_node);
-    bool is_garbage;
-
-    if (validator)
-      validator->CaptureWrite(*tx, entry->fid, entry->key, entry->obj);
-
-    mgr.GetRelationOrCreate(entry->fid).CommitPut(entry->key, sid, entry->obj, is_garbage);
-
-    if (!is_garbage) {
-      delete entry->key;
-      delete entry;
-    } else {
-      gDeletedGarbage.AttachGarbage(entry);
-    }
-    node = prev;
-  }
-
-  if (validator)
-    validator->Validate(*tx);
 }
 
 std::map<std::string, Checkpoint *> Checkpoint::impl;

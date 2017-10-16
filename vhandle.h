@@ -1,12 +1,15 @@
 // -*- mode: c++ -*-
 
 #include "dolly_probes.h"
-#include "epoch.h"
+#include "mem.h"
+#include "sqltypes.h"
 
 #ifndef VHANDLE_H
 #define VHANDLE_H
 
 namespace dolly {
+
+using VarStr = sql::VarStr;
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
 
@@ -17,18 +20,7 @@ struct ErmiaEpochGCRule {
   ErmiaEpochGCRule() : last_gc_epoch(0), min_of_epoch(0) {}
 
   template <typename VHandle>
-  void operator()(VHandle &handle, uint64_t sid) {
-    uint64_t ep = Epoch::CurrentEpochNumber();
-    if (ep > last_gc_epoch) {
-      // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
-      handle.GarbageCollect();
-      DTRACE_PROBE3(dolly, versions_per_epoch_on_gc, &handle, ep - 1, handle.nr_versions());
-      min_of_epoch = sid;
-      last_gc_epoch = ep;
-    }
-
-    if (min_of_epoch > sid) min_of_epoch = sid;
-  }
+  void operator()(VHandle &handle, uint64_t sid);
 };
 
 class BaseVHandle {
@@ -39,12 +31,13 @@ class BaseVHandle {
   ErmiaEpochGCRule gc_rule;
  public:
   uint64_t last_update_epoch() const { return gc_rule.last_gc_epoch; }
+  void Prefetch() const {}
 };
 
 class SortedArrayVHandle : public BaseVHandle {
+  std::atomic_bool lock;
   short alloc_by_coreid;
   short this_coreid;
-  std::atomic_bool lock;
   size_t capacity;
   size_t size;
   size_t value_mark;
@@ -71,9 +64,10 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
   bool AppendNewVersion(uint64_t sid);
-  VarStr *ReadWithVersion(uint64_t sid);
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false);
+  VarStr *ReadWithVersion(uint64_t sid) __attribute__((noinline));
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false) __attribute__((noinline));
   void GarbageCollect();
+  void Prefetch() const { __builtin_prefetch(versions); }
 
   const size_t nr_versions() const { return size; }
  private:

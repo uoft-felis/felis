@@ -115,62 +115,40 @@ class inline_str_base {
  private:
   IntSizeType sz;
   mutable char buf[N + 1];
-} __attribute__((packed));
-
-template <typename IntSizeType, unsigned int N>
-inline std::ostream &
-operator<<(std::ostream &o, const inline_str_base<IntSizeType, N> &s)
-{
-  o << std::string(s.data(), s.size());
-  return o;
-}
+};
 
 template <unsigned int N>
-class inline_str_8 : public inline_str_base<uint8_t, N> {
-  typedef inline_str_base<uint8_t, N> super_type;
- public:
-  inline_str_8() : super_type() {}
-  inline_str_8(const char *s) : super_type(s) {}
-  inline_str_8(const char *s, size_t n) : super_type(s, n) {}
-  inline_str_8(const std::string &s) : super_type(s) {}
-} __attribute__((packed));
+using inline_str_8 = inline_str_base<uint8_t, N>;
 
 template <unsigned int N>
-class inline_str_16 : public inline_str_base<uint16_t, N> {
-  typedef inline_str_base<uint16_t, N> super_type;
- public:
-  inline_str_16() : super_type() {}
-  inline_str_16(const char *s) : super_type(s) {}
-  inline_str_16(const char *s, size_t n) : super_type(s, n) {}
-  inline_str_16(const std::string &s) : super_type(s) {}
-} __attribute__((packed));
+using inline_str_16 = inline_str_base<uint16_t, N>;
 
 // equiavlent to CHAR(N)
 template <unsigned int N, char FillChar = ' '>
-class inline_str_fixed {
+class Char {
  public:
-  inline_str_fixed() {
+  Char() {
     memset(&buf[0], FillChar, N);
   }
 
-  inline_str_fixed(const char *s) {
+  Char(const char *s) {
     assign(s, strlen(s));
   }
 
-  inline_str_fixed(const char *s, size_t n) {
+  Char(const char *s, size_t n) {
     assign(s, n);
   }
 
-  inline_str_fixed(const std::string &s) {
+  Char(const std::string &s) {
     assign(s.data(), s.size());
   }
 
-  inline_str_fixed(const inline_str_fixed &that) {
+  Char(const Char &that) {
     memcpy(&buf[0], &that.buf[0], N);
   }
 
-  inline_str_fixed &
-  operator=(const inline_str_fixed &that) {
+  Char &
+  operator=(const Char &that) {
     if (this == &that)
       return *this;
     memcpy(&buf[0], &that.buf[0], N);
@@ -204,25 +182,17 @@ class inline_str_fixed {
     assign(s.data(), s.size());
   }
 
-  bool operator==(const inline_str_fixed &other) const {
+  bool operator==(const Char &other) const {
     return memcmp(buf, other.buf, N) == 0;
   }
 
-  bool operator!=(const inline_str_fixed &other) const {
+  bool operator!=(const Char &other) const {
     return !operator==(other);
   }
 
  private:
   char buf[N];
-} __attribute__((packed));
-
-template <unsigned int N, char FillChar>
-inline std::ostream &
-operator<<(std::ostream &o, const inline_str_fixed<N, FillChar> &s)
-{
-  o << std::string(s.data(), s.size());
-  return o;
-}
+};
 
 // Schemas Wrapper.
 // Because schemas is a POJO, we need to add less than operator to this POJO.
@@ -241,12 +211,6 @@ struct Serializer {
   }
 };
 
-template <typename T>
-struct KeySerializer : public Serializer<T> {};
-
-template <typename T>
-struct ValueSerializer : public Serializer<T> {};
-
 template <typename SizeType, unsigned int N>
 struct Serializer<inline_str_base<SizeType, N>> {
   typedef inline_str_base<SizeType, N> ObjectType;
@@ -255,16 +219,22 @@ struct Serializer<inline_str_base<SizeType, N>> {
   }
   static void EncodeTo(uint8_t *buf, const ObjectType *p) {
     SizeType sz = p->size();
-    Serializer<SizeType>::EncodeTo(buf, (const uint8_t *) &sz);
-    memcpy(buf + Serializer<SizeType>::EncodeSize((const uint8_t *) &sz),
+    Serializer<SizeType>::EncodeTo(buf, (const SizeType *) &sz);
+    memcpy(buf + Serializer<SizeType>::EncodeSize((const SizeType *) &sz),
 	   p->data(), p->size());
   }
   static void DecodeFrom(ObjectType *p, const uint8_t *buf) {
     SizeType sz;
-    Serializer<SizeType>::DecodeFrom((uint8_t *) &sz, buf);
-    p->assign((const char *) buf + Serializer<SizeType>::EncodeSize((const uint8_t *) &sz), sz);
+    Serializer<SizeType>::DecodeFrom((SizeType *) &sz, buf);
+    p->assign((const char *) buf + Serializer<SizeType>::EncodeSize((const SizeType *) &sz), sz);
   }
 };
+
+template <typename T>
+struct KeySerializer : public Serializer<T> {};
+
+template <typename T>
+struct ValueSerializer : public Serializer<T> {};
 
 template<>
 struct KeySerializer<uint16_t> : public Serializer<uint16_t> {

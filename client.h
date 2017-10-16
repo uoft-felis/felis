@@ -18,6 +18,7 @@ class ClientFetcher : public go::Routine {
 
   PerfLog *p;
   int timer_skip_epoch;
+  int timer_force_terminate;
 
   // static const char *kDummyWebServerHost = "127.0.0.1";
   static const std::string kDummyWebServerHost;
@@ -25,12 +26,14 @@ class ClientFetcher : public go::Routine {
 
  public:
   ClientFetcher(go::BufferChannel *ch, std::string name)
-      : epoch_ch(ch), workload_name(name), p(nullptr), timer_skip_epoch(30) {
+      : epoch_ch(ch), workload_name(name), p(nullptr), timer_skip_epoch(30), timer_force_terminate(-1) {
+    set_reuse(true);
     set_share(true);
   }
 
   void set_replay_from_file(bool b) { replay_from_file = b; }
   void set_timer_skip_epoch(int s) { timer_skip_epoch = s; }
+  void set_timer_force_terminate(int t) { timer_force_terminate = t; }
   PerfLog *perf_log() { return p; }
 
   virtual void Run();

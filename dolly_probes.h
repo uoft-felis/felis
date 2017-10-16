@@ -13,9 +13,11 @@ DEFINE_PROBE(dolly, chkpt_scan);
 DEFINE_PROBE(dolly, blocking_version_read);
 DEFINE_PROBE(dolly, linklist_search_read);
 DEFINE_PROBE(dolly, linklist_search_write);
+DEFINE_PROBE(dolly, local_index_cache);
+DEFINE_PROBE(dolly, index_get);
 
-// depends on the probes impl
-PROBE(dolly, wait_jiffies, long jiffies);
-PROBE(general, process_exit, void);
+#define PROBE_ENBALED
+#include "dolly_probes.cc"
+#undef PROBE_ENBALED
 
 #endif /* DOLLY_PROBES_H */

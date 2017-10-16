@@ -6,6 +6,7 @@
 
 namespace dolly {
 
+// TODO: finish this
 template <typename T>
 class Entity : public typename T::KeyStruct, public typename T::ValueStruct {
   const VarStr *value_ptr = null;

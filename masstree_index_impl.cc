@@ -40,6 +40,20 @@ class MasstreeMapForwardScanIteratorImpl : public MasstreeMap::forward_scan_iter
   }
 };
 
+MasstreeIndex::Iterator::Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
+                                  const VarStr *terminate_key,
+                                  int relation_id, bool read_only,
+                                  uint64_t sid, CommitBuffer &buffer)
+    : end_key(terminate_key), it(scan_it), relation_id(relation_id),
+      relation_read_only(read_only), sid(sid), buffer(&buffer)
+{
+  AdaptKey();
+  ti = GetThreadInfo();
+  if (IsValid()) {
+    if (ShouldSkip()) Next();
+  }
+}
+
 void MasstreeIndex::Iterator::AdaptKey()
 {
   if (!it->terminated) {
@@ -71,20 +85,21 @@ bool MasstreeIndex::Iterator::ShouldSkip()
 {
   obj = buffer->Get(relation_id, &key());
   if (!obj) {
-    if (!it->entry.value()) return true;
+    auto handle = it->entry.value();
+    if (!handle) return true;
     if (__builtin_expect(sid == std::numeric_limits<int64_t>::max(), 0)) {
       DTRACE_PROBE2(dolly, chkpt_scan,
-                    it->entry.value()->nr_versions(),
-                    it->entry.value()->last_update_epoch());
+                    handle->nr_versions(),
+                    handle->last_update_epoch());
     }
 #ifdef CALVIN_REPLAY
     if (relation_read_only) {
-      obj = it.value()->DirectRead();
+      obj = handle->DirectRead();
     } else {
-      obj = it.value()->ReadWithVersion(sid);
+      obj = handle->ReadWithVersion(sid);
     }
 #else
-    obj = it->entry.value()->ReadWithVersion(sid);
+    obj = handle->ReadWithVersion(sid);
 #endif
   }
   return obj == nullptr;
@@ -99,9 +114,9 @@ void MasstreeIndex::Initialize(threadinfo *ti)
 
 VHandle *MasstreeIndex::InsertOrCreate(const VarStr *k)
 {
-  auto result = this->Search(k);
-  if (result) return result;
-  // VHandle *result;
+  VHandle *result;
+  // result = this->Search(k);
+  // if (result) return result;
   auto ti = GetThreadInfo();
   typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
   bool found = cursor.find_insert(*ti);

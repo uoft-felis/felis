@@ -64,16 +64,18 @@ void ClientFetcher::Run()
   try {
     int nr = 0;
     while (true) {
-      logger->info("firing up an epoch, cnt {}", nr + 1);
+      nr++;
+      logger->info("firing up an epoch, cnt {}", nr);
 
-      if (++nr == timer_skip_epoch + 1) p = new PerfLog();
+      if (nr == timer_skip_epoch + 1) p = new PerfLog();
+      if (nr == timer_force_terminate) throw ParseBufferEOF();
 
       auto epoch = new Epoch(socks);
       logger->info("received a complete epoch");
       epoch_ch->Write(&epoch, sizeof(Epoch *));
       epoch_ch->Flush();
     }
-  } catch (dolly::ParseBufferEOF &ex) {
+  } catch (ParseBufferEOF &ex) {
     logger->info("EOF");
     epoch_ch->Flush();
     epoch_ch->Close();

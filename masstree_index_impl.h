@@ -36,15 +36,7 @@ class MasstreeIndex {
     Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
              const VarStr *terminate_key,
              int relation_id, bool read_only,
-             uint64_t sid, CommitBuffer &buffer)
-        : end_key(terminate_key), it(scan_it), relation_id(relation_id),
-          relation_read_only(read_only), sid(sid), buffer(&buffer) {
-      AdaptKey();
-      ti = GetThreadInfo();
-      if (IsValid()) {
-	if (ShouldSkip()) Next();
-      }
-    }
+             uint64_t sid, CommitBuffer &buffer);
 
     Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
              int relation_id, bool read_only, uint64_t sid, CommitBuffer &buffer)
@@ -76,6 +68,7 @@ class MasstreeIndex {
     uint64_t del_cnt;
   } nr_keys [NR_THREADS]; // scalable counting
 
+ public:
   VHandle *InsertOrCreate(const VarStr *k);
   VHandle *Search(const VarStr *k);
 
@@ -84,7 +77,6 @@ class MasstreeIndex {
   Iterator IndexSearchIterator(const VarStr *start, const VarStr *end, int relation_id, bool read_only,
                                uint64_t sid, CommitBuffer &buffer);
 
- public:
   size_t nr_unique_keys() const {
     size_t rs = 0;
     for (int i = 0; i < NR_THREADS; i++) {
@@ -93,6 +85,10 @@ class MasstreeIndex {
     return rs;
   }
   void ImmediateDelete(const VarStr *k);
+  void FakeDelete(const VarStr *k) {
+    // delete an object, this won't be checkpointed
+    nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++;
+  }
 };
 
 class Relation : public RelationPolicy<MasstreeIndex> {};

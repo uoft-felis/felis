@@ -811,7 +811,7 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
   // large_buf for the key
   // void *large_buf = alloca(1024);
   TxnValidator validator;
-  CommitBuffer buffer(this);
+  CommitBuffer &buffer = txn_buffer();
 
   const auto k_c = Customer::Key::New(warehouse_id, district_id, customer_id);
   auto v_c = relation(TPCCTable::Customer, warehouse_id)
@@ -819,6 +819,8 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
                                    serializable_id(),
                                    buffer);
   Checker::SanityCheckCustomer(&k_c, &v_c);
+
+  logger->debug("NewOrder sid {} Get Warehouse {}", serializable_id(), warehouse_id);
 
   const auto k_w = Warehouse::Key::New(warehouse_id);
   auto v_w = relation(TPCCTable::Warehouse, warehouse_id)
@@ -839,7 +841,7 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
   const uint64_t my_next_o_id = v_d.d_next_o_id;
 
   const auto k_no = NewOrder::Key::New(warehouse_id, district_id, my_next_o_id);
-  const auto v_no = NewOrder::Value::New(sql::inline_str_fixed<12>()); // this is a dummy
+  const auto v_no = NewOrder::Value::New(sql::Char<12>()); // this is a dummy
 
   logger->debug("NewOrder sid {} Put New Order {} {} {}", serializable_id(),
 		k_no.no_w_id, k_no.no_d_id, k_no.no_o_id);
@@ -934,7 +936,7 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
     g_enable_partition_locks ? &LockForPartition(warehouse_id) : nullptr);
   // void *large_buf = alloca(1024);
   TxnValidator validator;
-  CommitBuffer buffer(this);
+  CommitBuffer &buffer = txn_buffer();
 
   for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
     logger->debug("Delivery sid {} process district {} last oid {}", serializable_id(), d, last_no_o_ids[d - 1]);
@@ -1007,9 +1009,10 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
     // we just insert a nullptr?
     // TODO: double check if someone is reading/scanning this item!
     // -Mike
+
     logger->debug("Delivery sid {} Delete NewOrder {} {} {}", serializable_id(), k_no.no_w_id, k_no.no_d_id, k_no.no_o_id);
     relation(TPCCTable::NewOrder, warehouse_id)
-      .Put(k_no.Encode(), serializable_id(), nullptr, buffer);
+        .Put(k_no.Encode(), serializable_id(), nullptr, buffer);
 
     logger->debug("Delivery sid {} Put OOrder {} {} {}", serializable_id(), k_oo.o_w_id, k_oo.o_d_id, k_oo.o_id);
     // update oorder
@@ -1078,7 +1081,7 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
   }
 
   TxnValidator validator;
-  CommitBuffer buffer(this);
+  CommitBuffer &buffer = txn_buffer();
 
   // uint8_t *large_buf = (uint8_t*) alloca(2048);
 
@@ -1179,7 +1182,7 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
   }
 
   TxnValidator validator;
-  CommitBuffer buffer(this);
+  CommitBuffer &buffer = txn_buffer();
 
   logger->debug("Pay txn sid {} whid {} did {} cwhid {} cdid {}", serializable_id(),
 		warehouse_id, district_id, customer_warehouse_id, customer_district_id);

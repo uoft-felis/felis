@@ -19,77 +19,6 @@ namespace dolly {
 
 using util::ListNode;
 
-struct CommitBufferEntry {
-  ListNode ht_node;
-  ListNode lru_node; // fifo_node? for ERMIA 2.0?
-  uint64_t epoch_nr;
-
-  int fid;
-  const VarStr *key;
-  VarStr *obj;
-  CommitBufferEntry(int id, const VarStr *k, VarStr *o)
-      : epoch_nr(Epoch::CurrentEpochNumber()), fid(id), key(k), obj(o) {}
-};
-
-class DeletedGarbageHeads {
-  ListNode garbage_heads[NR_THREADS];
-
- public:
-  DeletedGarbageHeads();
-
-  void AttachGarbage(CommitBufferEntry *g);
-  void CollectGarbage(uint64_t epoch_nr);
-};
-
-// we need this class because we need to handle read local-write scenario.
-class CommitBuffer {
-  const Txn *tx;
-
-  ListNode lru;
-  ListNode *htable;
-  static const int kHashTableSize = 37;
- public:
-
-  CommitBuffer(Txn *txn) : tx(txn) {
-    htable = new ListNode[kHashTableSize];
-    for (int i = 0; i < kHashTableSize; i++) {
-      htable[i].Initialize();
-    }
-    lru.Initialize();
-  }
-  CommitBuffer(const CommitBuffer &rhs) = delete;
-  CommitBuffer(CommitBuffer &&rhs) {
-    tx = rhs.tx;
-    lru = rhs.lru;
-    htable = rhs.htable;
-    rhs.htable = nullptr;
-  }
-  ~CommitBuffer() {
-    delete [] htable;
-  }
-
-  unsigned int Hash(int fid, const VarStr *key) {
-    unsigned int h = fid;
-    unsigned int l = key->len;
-    const uint8_t *p = key->data;
-    while (l >= 8) {
-      h ^= *((const uint64_t *) p);
-      p += 8;
-      l -= 8;
-    }
-    if (l > 0) {
-      uint64_t extra = 0xFFFFFFFFFFFFFFFFUL;
-      memcpy(&extra, p, l);
-      h ^= extra;
-    }
-    return h;
-  }
-
-  void Put(int fid, const VarStr *key, VarStr *obj);
-  VarStr *Get(int fid, const VarStr *k);
-  void Commit(uint64_t sid, TxnValidator *validator = nullptr);
-};
-
 class Checkpoint {
   static std::map<std::string, Checkpoint *> impl;
  public:
@@ -183,6 +112,11 @@ class RelationPolicy : public BaseRelation,
     }
   }
 
+  bool SetupReExecSync(const VarStr *k, uint64_t sid) {
+    SetupReExec(k, sid);
+    return true;
+  }
+
   bool SetupReExecAsync(const VarStr *k, uint64_t sid) {
     auto handle = this->InsertOrCreate(k);
     return handle->AppendNewVersion(sid);
@@ -196,19 +130,23 @@ class RelationPolicy : public BaseRelation,
 #endif
 
   const VarStr *Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
+    DTRACE_PROBE3(dolly, index_get, id, (const void *) k, sid);
 #ifdef CALVIN_REPLAY
     if (is_read_only()) {
       return this->Search(k)->DirectRead();
     }
 #endif
 
-    const VarStr *o = buffer.Get(id, k);
-    if (!o) o = this->Search(k)->ReadWithVersion(sid);
-    return o;
+    auto *e = buffer.GetEntry(id, k);
+    const VarStr *o = buffer.Get(e);
+    if (o) return o;
+
+    VHandle *handle = e ? e->handle : this->Search(k);
+    return handle->ReadWithVersion(sid);
   }
 
   template <typename T>
-  const T Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) __attribute__((noinline)) {
+  const T Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
     const VarStr *o = Get(k, sid, buffer);
     return o->ToType<T>();
   }
@@ -225,16 +163,6 @@ class RelationPolicy : public BaseRelation,
 #endif
   }
 
-  void CommitPut(const VarStr *k, uint64_t sid, VarStr *obj, bool &is_garbage) __attribute__((noinline)) {
-    if (!this->Search(k)->WriteWithVersion(sid, obj, is_garbage)) {
-      logger->error("Diverging outcomes!");
-      std::abort();
-    }
-    if (is_garbage) {
-      this->nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++; // delete an object, this won't be checkpointed
-    }
-  }
-
   void Scan(const VarStr *k, uint64_t sid, CommitBuffer &buffer,
 	    std::function<bool (const VarStr *k, const VarStr *v)> callback) {
     CallScanCallback(this->SearchIterator(k, sid, buffer), sid, buffer, callback);
@@ -247,13 +175,13 @@ class RelationPolicy : public BaseRelation,
   }
 
   typename IndexPolicy::Iterator SearchIterator(const VarStr *k, uint64_t sid,
-                                                CommitBuffer &buffer) __attribute__((noinline)) {
+                                                CommitBuffer &buffer) {
     auto it = this->IndexSearchIterator(k, id, is_read_only(), sid, buffer);
     return it;
   }
 
   typename IndexPolicy::Iterator SearchIterator(const VarStr *start, const VarStr *end,
-                                                uint64_t sid, CommitBuffer &buffer) __attribute__((noinline)) {
+                                                uint64_t sid, CommitBuffer &buffer) {
     auto it = this->IndexSearchIterator(start, end, id, is_read_only(), sid, buffer);
     return it;
   }
@@ -261,7 +189,7 @@ class RelationPolicy : public BaseRelation,
  private:
   void CallScanCallback(typename IndexPolicy::Iterator it, uint64_t sid,
 			CommitBuffer &buffer,
-			std::function<bool (const VarStr *k, const VarStr *v)> callback) __attribute__((noinline)) {
+			std::function<bool (const VarStr *k, const VarStr *v)> callback) {
     while (it.IsValid()) {
       const VarStr &key = it.key();
       const VarStr *value = it.object();

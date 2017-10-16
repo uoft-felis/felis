@@ -7,3 +7,9 @@
 [submodule "Release/jemalloc"]
 	path = Release/jemalloc
 	url = https://github.com/jemalloc/jemalloc.git
+[submodule "xxHash"]
+	path = xxHash
+	url = https://github.com/Cyan4973/xxHash.git
+[submodule "spdlog"]
+	path = spdlog
+	url = https://github.com/gabime/spdlog.git

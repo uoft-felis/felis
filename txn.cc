@@ -1,6 +1,7 @@
 #include "txn.h"
 #include "epoch.h"
 #include "index.h"
+#include "xxHash/xxhash.h"
 
 #include "dolly_probes.h"
 
@@ -110,6 +111,110 @@ void TxnRunner::Run()
   }
 }
 
+CommitBufferEntry::CommitBufferEntry(int id, const VarStr &k, VarStr *o)
+    : epoch_nr(Epoch::CurrentEpochNumber()), fid(id), key(k), obj(o), handle(nullptr)
+{}
+
+CommitBufferEntry *CommitBufferEntry::Clone()
+{
+  auto *e = new CommitBufferEntry(fid, key, obj);
+  e->epoch_nr = epoch_nr;
+  e->handle = handle;
+  return e;
+}
+
+void CommitBuffer::AppendPreWrite(int fid, const VarStr &key, VHandle *handle)
+{
+  writes[cur_write] = CommitBufferEntry(fid, key, nullptr);
+  writes[cur_write].handle = handle;
+  unsigned int h = Hash(fid, &key);
+  writes[cur_write].ht_node.InsertAfter(&htable[h % kHashTableSize]);
+  cur_write++;
+}
+
+unsigned long CommitBuffer::Hash(int fid, const VarStr *key)
+{
+  return XXH64(key->data, key->len, (unsigned long) fid);
+}
+
+CommitBufferEntry *CommitBuffer::GetEntry(int fid, const VarStr *k)
+{
+  __builtin_prefetch(htable);
+  unsigned int h = Hash(fid, k);
+  ListNode *head = &htable[h % kHashTableSize];
+  ListNode *node = head->next;
+  while (node != head) {
+    auto entry = container_of(node, CommitBufferEntry, ht_node);
+    if (entry->fid != fid)
+      goto next;
+    if (entry->key != *k)
+      goto next;
+
+    return entry;
+ next:
+    node = node->next;
+  }
+  return nullptr;
+}
+
+VarStr *CommitBuffer::Get(CommitBufferEntry *entry)
+{
+  if (!entry) return nullptr;
+  unsigned int pos = entry - writes;
+  if (pos < cur_write)
+    return nullptr;
+  return entry->obj;
+}
+
+void CommitBuffer::Put(int fid, const VarStr *key, VarStr *obj)
+{
+  auto *w = &writes[cur_write];
+  if (w->fid == fid && w->key == *key) {
+    cur_write++;
+    goto done;
+  }
+
+  w = GetEntry(fid, key);
+  if (!w) {
+    logger->critical("missing writes!");
+    std::abort();
+  }
+
+done:
+  w->obj = obj;
+}
+
+void CommitBuffer::Commit(uint64_t sid, TxnValidator *validator)
+{
+  if (validator)
+    validator->set_keys_ptr(tx->key_buffer());
+
+  for (int i = 0; i < nr_writes; i++) {
+    writes[i].handle->Prefetch();
+  }
+
+  for (int i = 0; i < nr_writes; i++) {
+    auto *entry = &writes[i];
+    bool is_garbage;
+
+    if (validator)
+      validator->CaptureWrite(*tx, entry->fid, &entry->key, entry->obj);
+
+    entry->handle->WriteWithVersion(sid, entry->obj, is_garbage);
+
+    if (!is_garbage) {
+    } else {
+      Instance<RelationManager>().GetRelationOrCreate(entry->fid).FakeDelete(&entry->key);
+      Instance<DeletedGarbageHeads>().AttachGarbage(entry->Clone());
+    }
+  }
+
+  if (validator)
+    validator->Validate(*tx);
+
+  delete writes;
+}
+
 mem::Pool *Txn::pools;
 
 void Txn::InitPools()
@@ -118,6 +223,17 @@ void Txn::InitPools()
   for (int i = 0; i < Epoch::kNrThreads; i++) {
     new (&pools[i]) mem::Pool(kTxnBrkSize, kPoolCap / kTxnBrkSize, i / mem::kNrCorePerNode);
   }
+}
+
+void Txn::PushToReuseQueue()
+{
+  node.t = this;
+  auto *p = reuse_q->prev;
+  for (int i = 0; p != reuse_q; p = p->prev, i++) {
+    if (p->t->sid < sid)
+      break;
+  }
+  node.Add(p);
 }
 
 void Txn::Run()
@@ -181,6 +297,7 @@ void Txn::Initialize(go::TcpInputChannel *channel, uint16_t key_pkt_len, Epoch *
 {
   int cpu = go::Scheduler::CurrentThreadPoolId() - 1;
   uint8_t *buffer = (uint8_t *) epoch->AllocFromBrk(cpu, key_pkt_len);
+  memset(buffer, 0xff, key_pkt_len);
 
   channel->Read(buffer, key_pkt_len);
 
@@ -189,7 +306,10 @@ void Txn::Initialize(go::TcpInputChannel *channel, uint16_t key_pkt_len, Epoch *
 
 #ifdef VALIDATE_TXN_KEY
   sz_key_buf -= 4;
-  uint32_t orig_key_crc = *(uint32_t *) (buffer + sz_key_buf);
+  uint32_t orig_key_crc;
+
+  memcpy(&orig_key_crc, buffer + sz_key_buf, 4);
+  // logger->info("orig key crc {} buffer {} sz_key_buf {}", orig_key_crc, (void *) buffer, sz_key_buf);
 
   uint8_t *p = buffer;
   while (p < buffer + sz_key_buf) {
@@ -205,41 +325,75 @@ void Txn::Initialize(go::TcpInputChannel *channel, uint16_t key_pkt_len, Epoch *
 #endif
 }
 
-void Txn::GenericSetupReExec(uint8_t *key_buffer, size_t key_len,
-                             std::function<bool (Relation *, const VarStr *, uint64_t)> callback)
+void Txn::GenericSetupReExec(uint8_t *key_buffer, size_t key_len, bool is_read)
 {
   auto &mgr = Instance<RelationManager>();
-  uint64_t finished_bytes = 0;
-  while (finished_bytes < key_len) {
-    uint8_t *p = key_buffer;
-    while (p < key_buffer + key_len) {
-      TxnKey *kptr = (TxnKey *) p;
-      Relation *relation;
-      if (kptr->fid < 0) {
-	goto skip_next;
-      }
+  uint8_t *p = key_buffer;
+  size_t nr_tot = 0;
 
-      VarStr var_str;
-      var_str.len = kptr->len;
-      var_str.data = kptr->data;
-      logger->debug("setup fid {}", kptr->fid);
-      relation = &mgr.GetRelationOrCreate(kptr->fid);
+  while (p < key_buffer + key_len) {
+    TxnKey *kptr = (TxnKey *) p;
+    nr_tot++;
 
-      if (!callback(relation, &var_str, sid)) {
-	goto skip_next;
-      }
-
-      finished_bytes += sizeof(TxnKey) + kptr->len;
-      kptr->fid = -kptr->fid;
+    p += sizeof(TxnKey) + kptr->len;
 #ifdef VALIDATE_TXN
-      finished_bytes += 4;
+    p += 4; // skip the csum as well
 #endif
+  }
 
-   skip_next:
-      p += sizeof(TxnKey) + kptr->len;
-#ifdef VALIDATE_TXN
-      p += 4; // skip the csum as well
+  VHandle **handles = nullptr;
+  if (!is_read) {
+    commit_buffer.InitPreWrites(nr_tot);
+    handles = (VHandle **) alloca(nr_tot * sizeof(VHandle *));
+  }
+
+  p = key_buffer;
+  int i = 0;
+  while (p < key_buffer + key_len) {
+    TxnKey *kptr = (TxnKey *) p;
+    Relation *relation;
+    VarStr var_str;
+    var_str.len = kptr->len;
+    var_str.data = kptr->data;
+    relation = &mgr.GetRelationOrCreate(kptr->fid);
+    auto *handle = relation->InsertOrCreate(&var_str);
+    if (!is_read) {
+      // non-calvin
+      handles[i++] = handle;
+      commit_buffer.AppendPreWrite(kptr->fid, var_str, handle);
+    } else {
+      // calvin's read-set
+#ifdef CALVIN_REPLAY
+      while (!handle->AppendNewAccess(serializable_id(), true))
+        __builtin_ia32_pause();
 #endif
+    }
+
+    p += sizeof(TxnKey) + kptr->len;
+#ifdef VALIDATE_TXN
+    p += 4; // skip the csum as well
+#endif
+  }
+
+  // calvin's read-set
+  if (is_read)
+    return;
+
+  commit_buffer.DonePreWrite();
+
+  for (int i = 0; i < nr_tot; i++) {
+    __builtin_prefetch(handles[i]);
+  }
+
+  size_t nr_left = nr_tot;
+  while (nr_left > 0) {
+    for (int i = 0; i < nr_tot; i++) {
+      auto handle = handles[i];
+      if (!handle) continue;
+      if (!is_read && handle->AppendNewVersion(serializable_id())) {
+        handles[i] = nullptr;
+        nr_left--;
+      }
     }
   }
 }
@@ -248,9 +402,9 @@ void Txn::SetupReExec()
 {
   logger->debug("setup sid {}", serializable_id());
 #ifdef CALVIN_REPLAY
-  GenericSetupReExec(read_set_keys, sz_read_set_key_buf, &Relation::SetupReExecAccessAsync);
+  GenericSetupReExec(read_set_keys, sz_read_set_key_buf, true);
 #endif
-  GenericSetupReExec(keys, sz_key_buf, &Relation::SetupReExecAsync);
+  GenericSetupReExec(keys, sz_key_buf);
 }
 
 

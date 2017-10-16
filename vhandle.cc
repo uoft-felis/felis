@@ -4,8 +4,24 @@
 #include "util.h"
 #include "log.h"
 #include "vhandle.h"
+#include "epoch.h"
 
 namespace dolly {
+
+template <typename VHandle>
+void ErmiaEpochGCRule::operator()(VHandle &handle, uint64_t sid)
+{
+  uint64_t ep = Epoch::CurrentEpochNumber();
+  if (ep > last_gc_epoch) {
+    // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
+    handle.GarbageCollect();
+    DTRACE_PROBE3(dolly, versions_per_epoch_on_gc, &handle, ep - 1, handle.nr_versions());
+    min_of_epoch = sid;
+    last_gc_epoch = ep;
+  }
+
+  if (min_of_epoch > sid) min_of_epoch = sid;
+}
 
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
@@ -80,8 +96,6 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid)
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
   assert(size > 0);
-  __builtin_prefetch(versions);
-
   auto it = std::lower_bound(versions, versions + size, sid);
   if (it == versions) {
     // it's likely a read-your-own-insert happened here.
@@ -113,12 +127,12 @@ class SpinnerSlot {
  public:
   SpinnerSlot() { memset(slots, 0, 64 * kNrSpinners); }
 
-  void Wait();
+  void Wait(uint64_t sid, uint64_t ver);
   void NotifyAll(uint64_t bitmap);
 };
 
 
-void SpinnerSlot::Wait()
+void SpinnerSlot::Wait(uint64_t sid, uint64_t ver)
 {
   int idx = go::Scheduler::CurrentThreadPoolId() - 1;
   if (unlikely(idx < 0)) {
@@ -133,7 +147,7 @@ void SpinnerSlot::Wait()
 
   asm volatile("" : : :"memory");
 
-  DTRACE_PROBE1(dolly, wait_jiffies, dt);
+  DTRACE_PROBE3(dolly, wait_jiffies, dt, sid, ver);
   slots[idx].done = 0;
 }
 
@@ -172,7 +186,7 @@ WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
     uintptr_t newval = val & ~mask;
     oldval = __sync_val_compare_and_swap(addr, val, newval);
     if (oldval == val) {
-      gSpinnerSlots.Wait();
+      gSpinnerSlots.Wait(sid, ver);
       oldval = *addr;
     }
     if (!IsPendingVal(oldval))
@@ -209,8 +223,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_ga
   if (!dry_run) {
     auto objects = versions + capacity;
     volatile uintptr_t *addr = &objects[it - versions];
-    uintptr_t oldval = *addr;
-    uintptr_t newval = (uintptr_t) obj;
+    auto oldval = *addr;
+    auto newval = (uintptr_t) obj;
 
     // installing newval
     while (true) {
@@ -220,8 +234,9 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_ga
     }
 
     // need to notify according to the bitmaps, which is oldval
-    uint64_t hibitmap = ~(oldval << 32);
-    gSpinnerSlots.NotifyAll(hibitmap >> 32);
+    uint64_t mask = (uint64_t{1} << 32) - 1;
+    uint64_t bitmap = mask - (oldval & mask);
+    gSpinnerSlots.NotifyAll(bitmap);
 
     if (obj == nullptr && it - versions == size - 1) {
       is_garbage = true;
@@ -341,7 +356,19 @@ bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garba
   }
   if (!dry_run) {
     volatile uintptr_t *addr = &p->object;
-    *addr = (uintptr_t) obj;
+    auto oldval = *addr;
+    auto newval = (uintptr_t) obj;
+
+    while (true) {
+      uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
+      if (val == oldval) break;
+      oldval = val;
+    }
+
+    uint64_t mask = (uint64_t{1} << 32) - 1;
+    uint64_t bitmap = mask - (oldval & mask);
+    gSpinnerSlots.NotifyAll(bitmap);
+
     if (obj == nullptr && p->next == nullptr) {
       is_garbage = true;
     }
@@ -455,15 +482,17 @@ uint64_t CalvinVHandle::WaitForTurn(uint64_t sid)
    */
   uint64_t switch_counter = 0;
   while (true) {
-    uint64_t turn = accesses[pos.load(std::memory_order_acquire)];
+    uint64_t turn = accesses[pos.load()];
     if ((turn >> 1) == sid) {
       return turn;
     }
+#if 0
     if (++switch_counter >= 10000000UL) {
+      // fputs("So...Hmm, switching cuz I've spinned enough", stderr);
       go::Scheduler::Current()->RunNext(go::Scheduler::NextReadyState);
       switch_counter = 0;
     }
-
+#endif
     asm volatile("pause": : :"memory");
   }
 }
@@ -491,8 +520,8 @@ bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage
   if (!dry_run) {
     delete this->obj;
     this->obj = obj;
-    is_garbage = (obj == nullptr && pos.load(std::memory_order_acquire) == size - 1);
-    pos.fetch_add(1, std::memory_order_release);
+    is_garbage = (obj == nullptr && pos.load() == size - 1);
+    pos.fetch_add(1);
   }
   is_garbage = false;
   return true;
@@ -509,7 +538,7 @@ VarStr *CalvinVHandle::ReadWithVersion(uint64_t sid)
   if ((turn & 0x01) == 0) {
     // I only need to read this record, so advance the pos. Otherwise, I do not
     // need to advance the pos, because I will write to this later.
-    pos.fetch_add(1, std::memory_order_release);
+    pos.fetch_add(1);
   }
   return o;
 }
@@ -521,6 +550,7 @@ VarStr *CalvinVHandle::DirectRead()
 
 void CalvinVHandle::GarbageCollect()
 {
+#if 0
   if (size < 2) return;
 
   auto it = std::lower_bound(accesses, accesses + size, gc_rule.min_of_epoch);
@@ -528,6 +558,24 @@ void CalvinVHandle::GarbageCollect()
   size -= it - accesses;
   pos.fetch_sub(it - accesses, std::memory_order_release);
   return;
+#endif
+  // completely clear the handle?
+  size = 0;
+  pos.store(0);
 }
 
 }
+
+#if (defined LL_REPLAY) || (defined CALVIN_REPLAY)
+
+#ifdef LL_REPLAY
+#pragma message "Using Linklist Versioning"
+#endif
+
+#ifdef CALVIN_REPLAY
+#pragma message "Using Calvin"
+#endif
+
+#else
+#pragma message "Using Dolly"
+#endif

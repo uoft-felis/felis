@@ -29,14 +29,15 @@ int main(int argc, char *argv[])
 {
   int opt;
   bool replay_from_file = false;
-  int timer_skip = 30;
+  int timer_skip = -1;
+  int timer_force_terminate = -1;
   bool chkpt = false;
   std::string chkpt_format;
   std::string workload_name;
 
   InitializeLogger();
 
-  while ((opt = getopt(argc, argv, "rw:s:c:")) != -1) {
+  while ((opt = getopt(argc, argv, "rw:s:c:t:")) != -1) {
     switch (opt) {
       case 'r':
         replay_from_file = true;
@@ -46,6 +47,9 @@ int main(int argc, char *argv[])
         break;
       case 's':
         timer_skip = atoi(optarg);
+        break;
+      case 't':
+        timer_force_terminate = atoi(optarg);
         break;
       case 'c':
         chkpt = true;
@@ -100,8 +104,11 @@ int main(int argc, char *argv[])
     auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m, epoch_fetcher);
 
     epoch_fetcher->set_replay_from_file(replay_from_file);
+
     if (timer_skip > 0)
       epoch_fetcher->set_timer_skip_epoch(timer_skip);
+    if (timer_force_terminate > 0)
+      epoch_fetcher->set_timer_force_terminate(timer_force_terminate);
 
     go::GetSchedulerFromPool(1)->WakeUp(epoch_fetcher);
     go::GetSchedulerFromPool(2)->WakeUp(epoch_executor);
