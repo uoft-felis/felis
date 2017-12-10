@@ -186,31 +186,6 @@ struct PaymentStruct {
   } by;
 };
 
-////////////////////////////////////////////////////////////////////////////////
-
-// configuration flags
-extern int g_disable_xpartition_txn;
-extern int g_disable_read_only_scans;
-extern int g_enable_partition_locks;
-extern int g_enable_separate_tree_per_partition;
-extern int g_new_order_remote_item_pct;
-// extern int g_new_order_fast_id_gen;
-extern int g_uniform_item_dist;
-extern int g_order_status_scan_hack;
-extern int g_microbench_static;
-extern int g_microbench_simple;
-extern int g_microbench_random;
-extern int g_wh_temperature;
-extern uint g_microbench_rows;
-
-extern double g_microbench_wr_ratio;
-extern uint g_microbench_wr_rows;
-
-extern double g_wh_spread;
-
-extern unsigned g_txn_workload_mix[];
-extern size_t g_tpcc_scale_factor;
-
 }
 
 #endif /* TPCC_H */

@@ -33,31 +33,14 @@ using util::Instance;
 
 namespace tpcc {
 
-// configuration flags
-int g_disable_xpartition_txn = 0;
-int g_disable_read_only_scans = 0;
-int g_enable_partition_locks = 0;
-int g_enable_separate_tree_per_partition = 0;
-int g_new_order_remote_item_pct = 1;
-int g_uniform_item_dist = 0;
-int g_order_status_scan_hack = 0;
-int g_microbench_static = 0;
-int g_microbench_simple = 0;
-int g_microbench_random = 0;
-int g_wh_temperature = 0;
-uint g_microbench_rows = 100000;  // this many rows
+static struct Config {
+  bool uniform_item_distribution = false;
 
-// can't have both ratio and rows at the same time
-double g_microbench_wr_ratio = 0; // this % of writes
-uint g_microbench_wr_rows = 0; // this number of rows to write
-
-// how much % of time a worker should use a random home wh
-// 0 - always use home wh
-// 50 - 50% of time use random wh
-// 100 - always use a random wh
-double g_wh_spread = 0;
-
-size_t g_tpcc_scale_factor = dolly::Epoch::kNrThreads; // scale factor that's running on the client!
+  size_t nr_items = 100000;
+  size_t nr_warehouses = dolly::Epoch::kNrThreads;
+  size_t districts_per_warehouse = 10;
+  size_t customers_per_district = 3000;
+} kTPCCConfig;
 
 // TPC-C workload mix
 // 0: NewOrder
@@ -69,115 +52,26 @@ size_t g_tpcc_scale_factor = dolly::Epoch::kNrThreads; // scale factor that's ru
 // 6: Microbenchmark - others will be set to 0 if g_microbench is set
 // 7: Microbenchmark-simple - just do one insert, get, and put
 // 8: Microbenchmark-random - same as Microbenchmark, but uses random read-set range
+
 // unsigned g_txn_workload_mix[] = {41, 43, 4, 4, 4, 4, 0, 0, 0}; // default TPC-C workload mix
 //static unsigned g_txn_workload_mix[] = {45, 43, 4, 4, 4, 0, 0, 0};
 //static unsigned g_txn_workload_mix[] = {0, 100, 0, 0, 0, 0, 0, 0};
-
-util::CacheAligned<std::mutex> *g_partition_locks = nullptr;
-
-// T must implement lock()/unlock(). Both must *not* throw exceptions
-template <typename T>
-class ScopedMultilock {
-public:
-  inline ScopedMultilock()
-    : did_lock(false) {}
-
-  inline ~ScopedMultilock() {
-    if (did_lock)
-      for (auto &t : locks)
-	t->unlock();
-  }
-
-  inline void enq(T &t) {
-    assert(!did_lock);
-    locks.emplace_back(&t);
-  }
-
-  inline void multilock() {
-    assert(!did_lock);
-    if (locks.size() > 1)
-      sort(locks.begin(), locks.end());
-#ifdef CHECK_INVARIANTS
-    if (set<T *>(locks.begin(), locks.end()).size() != locks.size()) {
-      for (auto &t : locks)
-	cerr << "lock: " << hexify(t) << endl;
-      INVARIANT(false && "duplicate locks found");
-    }
-#endif
-    for (auto &t : locks)
-      t->lock();
-    did_lock = true;
-  }
-
-private:
-  bool did_lock;
-  typename std::vector<T*> locks;
-};
-
-// like a lock_guard, but has the option of not acquiring
-template <typename T>
-class ScopedLockGuard {
-public:
-  ScopedLockGuard(T &l) : l(&l) {
-    this->l->lock();
-  }
-
-  ScopedLockGuard(T *l) : l(l) {
-    if (this->l)
-      this->l->lock();
-  }
-
-  ~ScopedLockGuard() {
-    if (l)
-      l->unlock();
-  }
-
-private:
-  T *l;
-};
-
-static inline size_t NumWarehouses()
-{
-  return (size_t) g_tpcc_scale_factor;
-}
-
-// config constants
-static constexpr inline size_t NumItems()
-{
-  return 100000;
-}
-
-static constexpr inline size_t NumDistrictsPerWarehouse()
-{
-  return 10;
-}
-
-static constexpr inline size_t NumCustomersPerDistrict()
-{
-  return 3000;
-}
 
 static int NMaxCustomerIdxScanElems = 512;
 
 // maps a wid => partition id
 static inline unsigned int PartitionId(unsigned int wid)
 {
-  assert(wid >= 1 && wid <= NumWarehouses());
+  assert(wid >= 1 && wid <= kTPCCConfig.nr_warehouses());
   int nthreads = Epoch::kNrThreads;
   wid -= 1; // 0-idx
-  if (NumWarehouses() <= nthreads)
-    // more workers than partitions, so its easy
+  if (kTPCCConfig.nr_warehouses <= nthreads)
     return wid;
-  const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
+  const unsigned nwhse_per_partition = kTPCCConfig.nr_warehouses / nthreads;
   const unsigned partid = wid / nwhse_per_partition;
   if (partid >= nthreads)
     return nthreads - 1;
   return partid;
-}
-
-static inline std::mutex &LockForPartition(unsigned int wid)
-{
-  return g_partition_locks[PartitionId(wid)].elem;
 }
 
 // utils for generating random #s and strings
@@ -200,16 +94,18 @@ static inline int NonUniformRandom(util::FastRandom &r, int A, int C, int min, i
 
 static inline int GetItemId(util::FastRandom &r)
 {
-  return CheckBetweenInclusive(
-    g_uniform_item_dist ?
-    RandomNumber(r, 1, NumItems()) :
-    NonUniformRandom(r, 8191, 7911, 1, NumItems()),
-    1, NumItems());
+  int id = 0;
+  if (kTPCCConfig.uniform_item_distribution) {
+    id = RandomNumber(r, 1, kTPCCConfig.nr_items);
+  } else {
+    id = NonUniformRandom(r, 8191, 7911, 1, kTPCCConfig.nr_items);
+  }
+  return CheckBetweenInclusive(id, 1, kTPCCConfig.nr_items);
 }
 
 static inline int GetCustomerId(util::FastRandom &r)
 {
-  return CheckBetweenInclusive(NonUniformRandom(r, 1023, 259, 1, NumCustomersPerDistrict()), 1, NumCustomersPerDistrict());
+  return CheckBetweenInclusive(NonUniformRandom(r, 1023, 259, 1, kTPCCConfig.customers_per_district), 1, kTPCCConfig.customers_per_district);
 }
 
 static std::string NameTokens[] = {
@@ -314,24 +210,24 @@ struct Checker {
 
   static inline  void
   SanityCheckCustomer(const Customer::Key *k, const Customer::Value *v) {
-    assert(k->c_w_id >= 1 && static_cast<size_t>(k->c_w_id) <= NumWarehouses());
-    assert(k->c_d_id >= 1 && static_cast<size_t>(k->c_d_id) <= NumDistrictsPerWarehouse());
-    assert(k->c_id >= 1 && static_cast<size_t>(k->c_id) <= NumCustomersPerDistrict());
+    assert(k->c_w_id >= 1 && static_cast<size_t>(k->c_w_id) <= kTPCCConfig.nr_warehouses);
+    assert(k->c_d_id >= 1 && static_cast<size_t>(k->c_d_id) <= kTPCCConfig.nr_district_per_warehouse);
+    assert(k->c_id >= 1 && static_cast<size_t>(k->c_id) <= kTPCCConfig.nr_customer_per_district);
     assert(v->c_credit == "BC" || v->c_credit == "GC");
     assert(v->c_middle == "OE");
   }
 
   static inline  void
   SanityCheckWarehouse(const Warehouse::Key *k, const Warehouse::Value *v) {
-    assert(k->w_id >= 1 && static_cast<size_t>(k->w_id) <= NumWarehouses());
+    assert(k->w_id >= 1 && static_cast<size_t>(k->w_id) <= kTPCCConfig.nr_warehouses);
     assert(v->w_state.size() == 2);
     assert(v->w_zip == "123456789");
   }
 
   static inline  void
   SanityCheckDistrict(const District::Key *k, const District::Value *v) {
-    assert(k->d_w_id >= 1 && static_cast<size_t>(k->d_w_id) <= NumWarehouses());
-    assert(k->d_id >= 1 && static_cast<size_t>(k->d_id) <= NumDistrictsPerWarehouse());
+    assert(k->d_w_id >= 1 && static_cast<size_t>(k->d_w_id) <= kTPCCConfig.nr_warehouses);
+    assert(k->d_id >= 1 && static_cast<size_t>(k->d_id) <= kTPCCConfig.nr_district_per_warehouse);
     assert(v->d_next_o_id >= 3001);
     assert(v->d_state.size() == 2);
     assert(v->d_zip == "123456789");
@@ -339,44 +235,44 @@ struct Checker {
 
   static inline  void
   SanityCheckItem(const Item::Key *k, const Item::Value *v) {
-    assert(k->i_id >= 1 && static_cast<size_t>(k->i_id) <= NumItems());
+    assert(k->i_id >= 1 && static_cast<size_t>(k->i_id) <= kTPCCConfig.nr_items);
     assert(v->i_price >= 100 && v->i_price <= 10000);
   }
 
   static inline  void
   SanityCheckStock(const Stock::Key *k, const Stock::Value *v) {
-    assert(k->s_w_id >= 1 && static_cast<size_t>(k->s_w_id) <= NumWarehouses());
-    assert(k->s_i_id >= 1 && static_cast<size_t>(k->s_i_id) <= NumItems());
+    assert(k->s_w_id >= 1 && static_cast<size_t>(k->s_w_id) <= kTPCCConfig.nr_warehouses);
+    assert(k->s_i_id >= 1 && static_cast<size_t>(k->s_i_id) <= kTPCCConfig.nr_items);
   }
 
   static inline  void
   SanityCheckNewOrder(const NewOrder::Key *k, const NewOrder::Value *v) {
-    assert(k->no_w_id >= 1 && static_cast<size_t>(k->no_w_id) <= NumWarehouses());
-    assert(k->no_d_id >= 1 && static_cast<size_t>(k->no_d_id) <= NumDistrictsPerWarehouse());
+    assert(k->no_w_id >= 1 && static_cast<size_t>(k->no_w_id) <= kTPCCConfig.nr_warehouses);
+    assert(k->no_d_id >= 1 && static_cast<size_t>(k->no_d_id) <= kTPCCConfig.nr_district_per_warehouse);
   }
 
   static inline  void
    SanityCheckOOrder(const OOrder::Key *k, const OOrder::Value *v) {
-    assert(k->o_w_id >= 1 && static_cast<size_t>(k->o_w_id) <= NumWarehouses());
-    assert(k->o_d_id >= 1 && static_cast<size_t>(k->o_d_id) <= NumDistrictsPerWarehouse());
-    assert(v->o_c_id >= 1 && static_cast<size_t>(v->o_c_id) <= NumCustomersPerDistrict());
-    assert(v->o_carrier_id >= 0 && static_cast<size_t>(v->o_carrier_id) <= NumDistrictsPerWarehouse());
+    assert(k->o_w_id >= 1 && static_cast<size_t>(k->o_w_id) <= kTPCCConfig.nr_warehouses);
+    assert(k->o_d_id >= 1 && static_cast<size_t>(k->o_d_id) <= kTPCCConfig.nr_district_per_warehouse);
+    assert(v->o_c_id >= 1 && static_cast<size_t>(v->o_c_id) <= kTPCCConfig.nr_customer_per_district);
+    assert(v->o_carrier_id >= 0 && static_cast<size_t>(v->o_carrier_id) <= kTPCCConfig.nr_district_per_warehouse);
     assert(v->o_ol_cnt >= 5 && v->o_ol_cnt <= 15);
   }
 
   static inline void
   SanityCheckOrderLine(const OrderLine::Key *k, const OrderLine::Value *v) {
-    assert(k->ol_w_id >= 1 && static_cast<size_t>(k->ol_w_id) <= NumWarehouses());
-    assert(k->ol_d_id >= 1 && static_cast<size_t>(k->ol_d_id) <= NumDistrictsPerWarehouse());
+    assert(k->ol_w_id >= 1 && static_cast<size_t>(k->ol_w_id) <= kTPCCConfig.nr_warehouses);
+    assert(k->ol_d_id >= 1 && static_cast<size_t>(k->ol_d_id) <= kTPCCConfig.nr_district_per_warehouse);
     assert(k->ol_number >= 1 && k->ol_number <= 15);
-    assert(v->ol_i_id >= 1 && static_cast<size_t>(v->ol_i_id) <= NumItems());
+    assert(v->ol_i_id >= 1 && static_cast<size_t>(v->ol_i_id) <= kTPCCConfig.nr_items);
   }
 
 };
 
 TPCCTableHandles::TPCCTableHandles()
 {
-  assert(NumWarehouses() >= 1);
+  assert(kTPCCConfig.nr_warehouses >= 1);
     for (int table_id = 0; table_id < static_cast<int>(TPCCTable::NRTable); table_id++) {
       InitiateTable(static_cast<TPCCTable>(table_id));
     }
@@ -389,29 +285,12 @@ void TPCCTableHandles::InitiateTable(TPCCTable table)
   RelationManager &mgr = Instance<RelationManager>();
   std::string name = kTPCCTableNames[static_cast<int>(table)];
 
-  int base_idx = static_cast<int>(table) * NumWarehouses();
+  int base_idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses;
 
-  if (g_enable_separate_tree_per_partition) {
-    if (NumWarehouses() <= nthreads) {
-      for (size_t i = 0; i < NumWarehouses(); i++) {
-	table_handles[base_idx + i] = mgr.LookupRelationId(name + "_" + std::to_string(i));
-      }
-    } else {
-      const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
-      for (size_t partid = 0; partid < nthreads; partid++) {
-	const unsigned wstart = partid * nwhse_per_partition;
-	const unsigned wend   = (partid + 1 == nthreads) ?
-	  NumWarehouses() : (partid + 1) * nwhse_per_partition;
-	int thandle = mgr.LookupRelationId(name + "_" + std::to_string(partid));
-	for (size_t i = wstart; i < wend; i++)
-	  table_handles[base_idx + i] = thandle;
-      }
-    }
-  } else {
-    int thandle = mgr.LookupRelationId(name);
-    for (size_t i = 0; i < NumWarehouses(); i++)
-      table_handles[base_idx + i] = thandle;
-  }
+  int thandle = mgr.LookupRelationId(name);
+  for (size_t i = 0; i < kTPCCConfig.nr_warehouses; i++)
+    table_handles[base_idx + i] = thandle;
+
 }
 
 static TPCCTableHandles *global_table_handles;
@@ -419,7 +298,7 @@ static TPCCTableHandles *global_table_handles;
 dolly::Relation &TPCCMixIn::relation(TPCCTable table, unsigned int wid)
 {
   assert(wid > 0); // wid starting from 1
-  int idx = static_cast<int>(table) * NumWarehouses() + wid - 1;
+  int idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses + wid - 1;
   int fid = global_table_handles->table_handle(idx);
   return Instance<RelationManager>().GetRelationOrCreate(fid);
 }
@@ -430,7 +309,7 @@ template <>
 void Loader<TPCCLoader::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint i = 1; i <= NumWarehouses(); i++) {
+  for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
     auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
 
@@ -455,7 +334,7 @@ void Loader<TPCCLoader::Warehouse>::DoLoad()
     relation(TPCCTable::Warehouse, i).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
   }
 
-  for (uint i = 1; i <= NumWarehouses(); i++) {
+  for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
     relation(TPCCTable::Warehouse, i).set_key_length(sizeof(Warehouse::Key));
   }
   logger->info("Warehouse Table loading done.");
@@ -465,7 +344,7 @@ template <>
 void Loader<TPCCLoader::Item>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint i = 1; i <= NumItems(); i++) {
+  for (uint i = 1; i <= kTPCCConfig.nr_items; i++) {
     // items don't "belong" to a certain warehouse, so no pinning
     auto k = Item::Key::New(i);
     auto v = Item::Value();
@@ -498,11 +377,11 @@ template <>
 void Loader<TPCCLoader::Stock>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint w = 1; w <= NumWarehouses(); w++) {
+  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
     util::PinToCPU(PartitionId(w));
     mem::SetThreadLocalAllocAffinity(PartitionId(w));
 
-    for(size_t i = 1; i <= NumItems(); i++) {
+    for(size_t i = 1; i <= kTPCCConfig.nr_items; i++) {
       const auto k = Stock::Key::New(w, i);
       const auto k_data =  StockData::Key::New(w, i);
 
@@ -550,11 +429,11 @@ template <>
 void Loader<TPCCLoader::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint w = 1; w <= NumWarehouses(); w++) {
+  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
     util::PinToCPU(PartitionId(w));
     mem::SetThreadLocalAllocAffinity(PartitionId(w));
 
-    for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+    for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       const auto k = District::Key::New(w, d);
       District::Value v;
       v.d_ytd = 3000000;
@@ -595,12 +474,12 @@ template <>
 void Loader<TPCCLoader::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint w = 1; w <= NumWarehouses(); w++) {
+  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
     util::PinToCPU(PartitionId(w));
     mem::SetThreadLocalAllocAffinity(PartitionId(w));
 
-    for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-      for (uint cidx0 = 0; cidx0 < NumCustomersPerDistrict(); cidx0++) {
+    for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
+      for (uint cidx0 = 0; cidx0 < kTPCCConfig.customers_per_district; cidx0++) {
 	const uint c = cidx0 + 1;
 	auto k = Customer::Key::New(w, d, c);
 	Customer::Value v;
@@ -680,22 +559,22 @@ template <>
 void Loader<TPCCLoader::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint w = 1; w <= NumWarehouses(); w++) {
+  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
     util::PinToCPU(PartitionId(w));
     mem::SetThreadLocalAllocAffinity(PartitionId(w) % dolly::Epoch::kNrThreads);;
-    for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+    for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;
 
-      while (c_ids.size() != NumCustomersPerDistrict()) {
-	const auto x = (r.next() % NumCustomersPerDistrict()) + 1;
+      while (c_ids.size() != kTPCCConfig.customers_per_district) {
+	const auto x = (r.next() % kTPCCConfig.customers_per_district) + 1;
 	if (c_ids_s.count(x))
 	  continue;
 	c_ids_s.insert(x);
 	c_ids.emplace_back(x);
       }
 
-      for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
+      for (uint c = 1; c <= kTPCCConfig.customers_per_district; c++) {
 	const auto k_oo = OOrder::Key::New(w, d, c);
 	OOrder::Value v_oo;
 
@@ -705,8 +584,6 @@ void Loader<TPCCLoader::Order>::DoLoad()
 	else
 	  v_oo.o_carrier_id = 0;
 	v_oo.o_ol_cnt = NumOrderLinesPerCustomer(r);
-	if (g_microbench_simple)
-	  v_oo.o_ol_cnt--;  // make room for the insert
 	v_oo.o_all_local = 1;
 	v_oo.o_entry_d = GetCurrentTimeMillis();
 
@@ -786,28 +663,6 @@ void Request<MixIn<tpcc::NewOrderStruct, tpcc::TPCCMixIn>>::RunTxn()
   for (uint i = 0; i < nr_items; i++) {
     if (supplier_warehouse_id[i] != warehouse_id) all_local = false;
   }
-
-  assert(!g_disable_xpartition_txn || all_local);
-
-  ScopedMultilock<std::mutex> mlock;
-  if (g_enable_partition_locks) {
-    if (all_local) {
-      mlock.enq(LockForPartition(warehouse_id));
-    } else {
-      std::set<unsigned int> lockset;
-      mlock.enq(LockForPartition(warehouse_id));
-      lockset.insert(PartitionId(warehouse_id));
-
-      for (uint i = 0; i < nr_items; i++) {
-        if (lockset.find(PartitionId(supplier_warehouse_id[i])) == lockset.end()) {
-          mlock.enq(LockForPartition(supplier_warehouse_id[i]));
-          lockset.insert(PartitionId(supplier_warehouse_id[i]));
-        }
-      }
-    }
-    mlock.multilock();
-  }
-
   // large_buf for the key
   // void *large_buf = alloca(1024);
   TxnValidator validator;
@@ -932,13 +787,11 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
   //   max_read_set_size : 133
   //   max_write_set_size : 133
   //   num_txn_contexts : 4
-  ScopedLockGuard<std::mutex> slock(
-    g_enable_partition_locks ? &LockForPartition(warehouse_id) : nullptr);
-  // void *large_buf = alloca(1024);
+
   TxnValidator validator;
   CommitBuffer &buffer = txn_buffer();
 
-  for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+  for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
     logger->debug("Delivery sid {} process district {} last oid {}", serializable_id(), d, last_no_o_ids[d - 1]);
     const auto k_no_0 = NewOrder::Key::New(warehouse_id, d, last_no_o_ids[d - 1]);
     const auto k_no_1 = NewOrder::Key::New(warehouse_id, d, std::numeric_limits<int32_t>::max());
@@ -965,7 +818,6 @@ void Request<MixIn<tpcc::DeliveryStruct, tpcc::TPCCMixIn>>::RunTxn()
       continue;
 
     // last_no_o_ids[d - 1] = k_no.no_o_id + 1; // XXX: update last seen
-
     const auto k_oo = OOrder::Key::New(warehouse_id, d, k_no.no_o_id);
     // even if we read the new order entry, there's no guarantee
     // we will read the oorder entry: in this case the txn will abort,
@@ -1070,16 +922,6 @@ void Request<MixIn<tpcc::CreditCheckStruct, tpcc::TPCCMixIn>>::RunTxn()
     SQL UPDATE Customer SET c_credit = :c_credit
     WHERE c_id = :c_id AND c_d_id = :d_id AND c_w_id = :w_id
   */
-  assert(!g_disable_xpartition_txn || customer_warehouse_id == warehouse_id);
-
-  ScopedMultilock<std::mutex> mlock;
-  if (g_enable_partition_locks) {
-    mlock.enq(LockForPartition(warehouse_id));
-    if (PartitionId(customer_warehouse_id) != PartitionId(warehouse_id))
-      mlock.enq(LockForPartition(customer_warehouse_id));
-    mlock.multilock();
-  }
-
   TxnValidator validator;
   CommitBuffer &buffer = txn_buffer();
 
@@ -1173,14 +1015,6 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
   //   max_read_set_size : 71
   //   max_write_set_size : 1
   //   num_txn_contexts : 5
-  ScopedMultilock<std::mutex> mlock;
-  if (g_enable_partition_locks) {
-    mlock.enq(LockForPartition(warehouse_id));
-    if (PartitionId(customer_warehouse_id) != PartitionId(warehouse_id))
-      mlock.enq(LockForPartition(customer_warehouse_id));
-    mlock.multilock();
-  }
-
   TxnValidator validator;
   CommitBuffer &buffer = txn_buffer();
 
