@@ -1,4 +1,5 @@
-((nil . ((compile-command . "cd ~/workspace/dolly; nix-shell --run \"ninja -C Release\"")))
+((nil . ((default-directory . "~/workspace/dolly/")
+         (compile-command . "ninja -C Release")))
  (c-mode . ((mode . c++)
             (c-basic-offset . 2)))
  (c++-mode . ((c-basic-offset . 2)))

@@ -17,7 +17,7 @@
 #include <set>
 #include <vector>
 #include <memory>
-
+#include <string>
 #include <mutex>
 #include <atomic>
 
@@ -75,58 +75,61 @@ static inline unsigned int PartitionId(unsigned int wid)
 }
 
 // utils for generating random #s and strings
-static inline int CheckBetweenInclusive(int v, int lower, int upper)
+int TPCCClientBase::CheckBetweenInclusive(int v, int lower, int upper)
 {
   assert(v >= lower);
   assert(v <= upper);
   return v;
 }
 
-static inline int RandomNumber(util::FastRandom &r, int min, int max)
+int TPCCClientBase::RandomNumber(int min, int max)
 {
   return CheckBetweenInclusive((int) (r.next_uniform() * (max - min + 1) + min), min, max);
 }
 
-static inline int NonUniformRandom(util::FastRandom &r, int A, int C, int min, int max)
+int TPCCClientBase::NonUniformRandom(int A, int C, int min, int max)
 {
-  return (((RandomNumber(r, 0, A) | RandomNumber(r, min, max)) + C) % (max - min + 1)) + min;
+  return (((RandomNumber(0, A) | RandomNumber(min, max)) + C) % (max - min + 1)) + min;
 }
 
-static inline int GetItemId(util::FastRandom &r)
+int TPCCClientBase::GetOrderLinesPerCustomer()
+{
+  return RandomNumber(5, 15);
+}
+
+
+int TPCCClientBase::GetItemId()
 {
   int id = 0;
   if (kTPCCConfig.uniform_item_distribution) {
-    id = RandomNumber(r, 1, kTPCCConfig.nr_items);
+    id = RandomNumber(1, kTPCCConfig.nr_items);
   } else {
-    id = NonUniformRandom(r, 8191, 7911, 1, kTPCCConfig.nr_items);
+    id = NonUniformRandom(8191, 7911, 1, (int) kTPCCConfig.nr_items);
   }
   return CheckBetweenInclusive(id, 1, kTPCCConfig.nr_items);
 }
 
-static inline int GetCustomerId(util::FastRandom &r)
+int TPCCClientBase::GetCustomerId()
 {
-  return CheckBetweenInclusive(NonUniformRandom(r, 1023, 259, 1, kTPCCConfig.customers_per_district), 1, kTPCCConfig.customers_per_district);
+  return CheckBetweenInclusive(NonUniformRandom(1023, 259, 1, kTPCCConfig.customers_per_district),
+                               1, kTPCCConfig.customers_per_district);
 }
 
-static std::string NameTokens[] = {
-  std::string("BAR"),
-  std::string("OUGHT"),
-  std::string("ABLE"),
-  std::string("PRI"),
-  std::string("PRES"),
-  std::string("ESE"),
-  std::string("ANTI"),
-  std::string("CALLY"),
-  std::string("ATION"),
-  std::string("EING"),
-};
-
-// all tokens are at most 5 chars long
-static const size_t CustomerLastNameMaxSize = 5 * 3;
-
-static inline size_t
-GetCustomerLastName(uint8_t *buf, util::FastRandom &r, int num)
+size_t TPCCClientBase::GetCustomerLastName(uint8_t *buf, int num)
 {
+  static std::string NameTokens[] = {
+    std::string("BAR"),
+    std::string("OUGHT"),
+    std::string("ABLE"),
+    std::string("PRI"),
+    std::string("PRES"),
+    std::string("ESE"),
+    std::string("ANTI"),
+    std::string("CALLY"),
+    std::string("ATION"),
+    std::string("EING"),
+  };
+
   const std::string &s0 = NameTokens[num / 100];
   const std::string &s1 = NameTokens[(num / 10) % 10];
   const std::string &s2 = NameTokens[num % 10];
@@ -140,44 +143,8 @@ GetCustomerLastName(uint8_t *buf, util::FastRandom &r, int num)
   return buf - begin;
 }
 
-static inline size_t GetCustomerLastName(char *buf, util::FastRandom &r, int num)
+std::string TPCCClientBase::RandomStr(uint len)
 {
-  return GetCustomerLastName((uint8_t *) buf, r, num);
-}
-
-static inline std::string GetCustomerLastName(util::FastRandom &r, int num)
-{
-  std::string ret;
-  ret.resize(CustomerLastNameMaxSize);
-  ret.resize(GetCustomerLastName((uint8_t *) &ret[0], r, num));
-  return ret;
-}
-
-static inline std::string GetNonUniformCustomerLastNameLoad(util::FastRandom &r)
-{
-  return GetCustomerLastName(r, NonUniformRandom(r, 255, 157, 0, 999));
-}
-
-static inline size_t GetNonUniformCustomerLastNameRun(uint8_t *buf, util::FastRandom &r)
-{
-  return GetCustomerLastName(buf, r, NonUniformRandom(r, 255, 223, 0, 999));
-}
-
-static inline size_t GetNonUniformCustomerLastNameRun(char *buf, util::FastRandom &r)
-{
-  return GetNonUniformCustomerLastNameRun((uint8_t *) buf, r);
-}
-
-static inline std::string
-GetNonUniformCustomerLastNameRun(util::FastRandom &r)
-{
-  return GetCustomerLastName(r, NonUniformRandom(r, 255, 223, 0, 999));
-}
-
-// following oltpbench, we really generate strings of len - 1...
-static inline std::string RandomStr(util::FastRandom &r, uint len)
-{
-  // this is a property of the oltpbench implementation...
   if (len == 0)
     return "";
 
@@ -185,8 +152,6 @@ static inline std::string RandomStr(util::FastRandom &r, uint len)
   std::string buf(len - 1, 0);
   while (i < (len - 1)) {
     const char c = (char) r.next_char();
-    // XXX(stephentu): oltpbench uses java's Character.isLetter(), which
-    // is a less restrictive filter than isalnum()
     if (!isalnum(c))
       continue;
     buf[i++] = c;
@@ -194,14 +159,111 @@ static inline std::string RandomStr(util::FastRandom &r, uint len)
   return buf;
 }
 
-// RandomNStr() actually produces a string of length len
-static inline std::string RandomNStr(util::FastRandom &r, uint len)
+std::string TPCCClientBase::RandomNStr(uint len)
 {
   const char base = '0';
   std::string buf(len, 0);
   for (uint i = 0; i < len; i++)
     buf[i] = (char)(base + (r.next() % 10));
   return buf;
+}
+
+uint TPCCClientBase::PickWarehouse()
+{
+  if (kWarehouseSpread == 0 || r.next_uniform() >= kWarehouseSpread)
+    return home_warehouse;
+  return r.next() % kTPCCConfig.nr_warehouses + 1;
+}
+
+uint TPCCClientBase::PickDistrict()
+{
+  return RandomNumber(1, kTPCCConfig.districts_per_warehouse);
+}
+
+uint TPCCClientBase::GetCurrentTime()
+{
+  static __thread uint tl_hack = 0;
+  return tl_hack;
+}
+
+template <>
+NewOrderStruct TPCCClient::GenerateTransactionInput<NewOrderStruct>()
+{
+  NewOrderStruct s;
+  s.warehouse_id = PickWarehouse();
+  s.district_id = PickDistrict();
+  s.customer_id = GetCustomerId();
+  s.nr_items = RandomNumber(5, 15);
+  for (int i = 0; i < s.nr_items; i++) {
+    s.item_id[i] = GetItemId();
+    s.order_quantities[i] = RandomNumber(1, 10);
+    if (kTPCCConfig.nr_warehouses == 1
+        || RandomNumber(1, 100) > int(kNewOrderRemoteItem * 100)) {
+      s.supplier_warehouse_id[i] = s.warehouse_id;
+    } else {
+      s.supplier_warehouse_id[i] =
+          RandomNumberExcept(1, kTPCCConfig.nr_warehouses, s.warehouse_id);
+    }
+  }
+  s.ts_now = GetCurrentTime();
+  return s;
+}
+
+template <>
+DeliveryStruct TPCCClient::GenerateTransactionInput<DeliveryStruct>()
+{
+  DeliveryStruct s;
+  s.warehouse_id = PickWarehouse();
+  s.o_carrier_id = PickDistrict();
+  s.ts = GetCurrentTime();
+
+  // XXX: hack
+  memcpy(s.last_no_o_ids, last_no_o_ids, sizeof(int) * 10);
+  return s;
+}
+
+template <>
+CreditCheckStruct TPCCClient::GenerateTransactionInput<CreditCheckStruct>()
+{
+  CreditCheckStruct s;
+  s.warehouse_id = PickWarehouse();
+  s.district_id = PickDistrict();
+  if (kTPCCConfig.nr_warehouses == 1
+      || RandomNumber(1, 100) > int(kCreditCheckRemoteCustomer * 100)) {
+    s.customer_warehouse_id = s.warehouse_id;
+    s.customer_district_id = s.district_id;
+  } else {
+    s.customer_warehouse_id = RandomNumberExcept(1, kTPCCConfig.nr_warehouses, s.warehouse_id);
+    s.customer_district_id = PickDistrict();
+  }
+  s.customer_id = GetCustomerId();
+  return s;
+}
+
+template <>
+PaymentStruct TPCCClient::GenerateTransactionInput<PaymentStruct>()
+{
+  PaymentStruct s;
+  s.warehouse_id = PickWarehouse();
+  s.district_id = PickDistrict();
+  if (kTPCCConfig.nr_warehouses == 1
+      || RandomNumber(1, 100) > int(kPaymentRemoteCustomer * 100)) {
+    s.customer_warehouse_id = s.warehouse_id;
+    s.customer_district_id = s.district_id;
+  } else {
+    s.customer_warehouse_id = RandomNumberExcept(1, kTPCCConfig.nr_warehouses, s.warehouse_id);
+    s.customer_district_id = PickDistrict();
+  }
+  s.payment_amount = RandomNumber(100, 500000);
+  s.ts = GetCurrentTime();
+  s.is_by_name = (RandomNumber(1, 100) <= int(kPaymentByName * 100));
+  if (s.is_by_name) {
+    memset(s.by.lastname_buf, 0, 16);
+    GetNonUniformCustomerLastNameRun(s.by.lastname_buf);
+  } else {
+    s.by.customer_id = GetCustomerId();
+  }
+  return s;
 }
 
 struct Checker {
@@ -313,15 +375,15 @@ void Loader<TPCCLoader::Warehouse>::DoLoad()
     auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
 
-    auto w_name = RandomStr(r, RandomNumber(r, 6, 10));
-    auto w_street_1 = RandomStr(r, RandomNumber(r, 10, 20));
-    auto w_street_2 = RandomStr(r, RandomNumber(r, 10, 20));
-    auto w_city = RandomStr(r, RandomNumber(r, 10, 20));
-    auto w_state = RandomStr(r, 3);
+    auto w_name = RandomStr(RandomNumber(6, 10));
+    auto w_street_1 = RandomStr(RandomNumber(10, 20));
+    auto w_street_2 = RandomStr(RandomNumber(10, 20));
+    auto w_city = RandomStr(RandomNumber(10, 20));
+    auto w_state = RandomStr(3);
     auto w_zip = std::string("123456789");
 
     v.w_ytd = 30000000;
-    v.w_tax = RandomNumber(r, 0, 2000) / 100;
+    v.w_tax = RandomNumber(0, 2000) / 100;
     v.w_name.assign(w_name);
     v.w_street_1.assign(w_street_1);
     v.w_street_2.assign(w_street_2);
@@ -349,21 +411,21 @@ void Loader<TPCCLoader::Item>::DoLoad()
     auto k = Item::Key::New(i);
     auto v = Item::Value();
 
-    auto i_name = RandomStr(r, RandomNumber(r, 14, 24));
+    auto i_name = RandomStr(RandomNumber(14, 24));
     v.i_name.assign(i_name);
-    v.i_price = RandomNumber(r, 100, 10000);
+    v.i_price = RandomNumber(100, 10000);
 
-    const int len = RandomNumber(r, 26, 50);
-    if (RandomNumber(r, 1, 100) > 10) {
-      const std::string i_data = RandomStr(r, len);
+    const int len = RandomNumber(26, 50);
+    if (RandomNumber(1, 100) > 10) {
+      const std::string i_data = RandomStr(len);
       v.i_data.assign(i_data);
     } else {
-      const int startOriginal = RandomNumber(r, 2, (len - 8));
-      const std::string i_data = RandomStr(r, startOriginal + 1) + "ORIGINAL"
-	+ RandomStr(r, len - startOriginal - 7);
+      const int startOriginal = RandomNumber(2, (len - 8));
+      const std::string i_data = RandomStr(startOriginal + 1) + "ORIGINAL"
+	+ RandomStr(len - startOriginal - 7);
       v.i_data.assign(i_data);
     }
-    v.i_im_id = RandomNumber(r, 1, 10000);
+    v.i_im_id = RandomNumber(1, 10000);
 
     Checker::SanityCheckItem(&k, &v);
     relation(TPCCTable::Item, 1)
@@ -386,32 +448,32 @@ void Loader<TPCCLoader::Stock>::DoLoad()
       const auto k_data =  StockData::Key::New(w, i);
 
       Stock::Value v;
-      v.s_quantity = RandomNumber(r, 10, 100);
+      v.s_quantity = RandomNumber(10, 100);
       v.s_ytd = 0;
       v.s_order_cnt = 0;
       v.s_remote_cnt = 0;
 
       StockData::Value v_data;
-      const int len = RandomNumber(r, 26, 50);
-      if (RandomNumber(r, 1, 100) > 10) {
-	const std::string s_data = RandomStr(r, len);
+      const int len = RandomNumber(26, 50);
+      if (RandomNumber(1, 100) > 10) {
+	const std::string s_data = RandomStr(len);
 	v_data.s_data.assign(s_data);
       } else {
-	const int startOriginal = RandomNumber(r, 2, (len - 8));
-	const std::string s_data = RandomStr(r, startOriginal + 1) + "ORIGINAL"
-	  + RandomStr(r, len - startOriginal - 7);
+	const int startOriginal = RandomNumber(2, (len - 8));
+	const std::string s_data = RandomStr(startOriginal + 1) + "ORIGINAL"
+	  + RandomStr(len - startOriginal - 7);
 	v_data.s_data.assign(s_data);
       }
-      v_data.s_dist_01.assign(RandomStr(r, 24));
-      v_data.s_dist_02.assign(RandomStr(r, 24));
-      v_data.s_dist_03.assign(RandomStr(r, 24));
-      v_data.s_dist_04.assign(RandomStr(r, 24));
-      v_data.s_dist_05.assign(RandomStr(r, 24));
-      v_data.s_dist_06.assign(RandomStr(r, 24));
-      v_data.s_dist_07.assign(RandomStr(r, 24));
-      v_data.s_dist_08.assign(RandomStr(r, 24));
-      v_data.s_dist_09.assign(RandomStr(r, 24));
-      v_data.s_dist_10.assign(RandomStr(r, 24));
+      v_data.s_dist_01.assign(RandomStr(24));
+      v_data.s_dist_02.assign(RandomStr(24));
+      v_data.s_dist_03.assign(RandomStr(24));
+      v_data.s_dist_04.assign(RandomStr(24));
+      v_data.s_dist_05.assign(RandomStr(24));
+      v_data.s_dist_06.assign(RandomStr(24));
+      v_data.s_dist_07.assign(RandomStr(24));
+      v_data.s_dist_08.assign(RandomStr(24));
+      v_data.s_dist_09.assign(RandomStr(24));
+      v_data.s_dist_10.assign(RandomStr(24));
 
       Checker::SanityCheckStock(&k, &v);
 
@@ -437,13 +499,13 @@ void Loader<TPCCLoader::District>::DoLoad()
       const auto k = District::Key::New(w, d);
       District::Value v;
       v.d_ytd = 3000000;
-      v.d_tax = RandomNumber(r, 0, 2000) / 100;
+      v.d_tax = RandomNumber(0, 2000) / 100;
       v.d_next_o_id = 3001;
-      v.d_name.assign(RandomStr(r, RandomNumber(r, 6, 10)));
-      v.d_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-      v.d_street_2.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-      v.d_city.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-      v.d_state.assign(RandomStr(r, 3));
+      v.d_name.assign(RandomStr(RandomNumber(6, 10)));
+      v.d_street_1.assign(RandomStr(RandomNumber(10, 20)));
+      v.d_street_2.assign(RandomStr(RandomNumber(10, 20)));
+      v.d_city.assign(RandomStr(RandomNumber(10, 20)));
+      v.d_state.assign(RandomStr(3));
       v.d_zip.assign("123456789");
 
       Checker::SanityCheckDistrict(&k, &v);
@@ -454,20 +516,6 @@ void Loader<TPCCLoader::District>::DoLoad()
   }
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("District Table loading done.");
-}
-
-
-static uint32_t GetCurrentTimeMillis()
-{
-  //struct timeval tv;
-  //ALWAYS_ASSERT(gettimeofday(&tv, 0) == 0);
-  //return tv.tv_sec * 1000;
-
-  // XXX(stephentu): implement a scalable GetCurrentTimeMillis()
-  // for now, we just give each core an increasing number
-
-  static __thread uint32_t tl_hack = 0;
-  return tl_hack++;
 }
 
 template <>
@@ -484,18 +532,18 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	auto k = Customer::Key::New(w, d, c);
 	Customer::Value v;
 
-	v.c_discount = RandomNumber(r, 1, 5000) / 100;
-	if (RandomNumber(r, 1, 100) <= 10)
+	v.c_discount = RandomNumber(1, 5000) / 100;
+	if (RandomNumber(1, 100) <= 10)
 	  v.c_credit.assign("BC");
 	else
 	  v.c_credit.assign("GC");
 
 	if (c <= 1000)
-	  v.c_last.assign(GetCustomerLastName(r, c - 1));
+	  v.c_last.assign(GetCustomerLastName(c - 1));
 	else
-	  v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
+	  v.c_last.assign(GetNonUniformCustomerLastNameLoad());
 
-	v.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
+	v.c_first.assign(RandomStr(RandomNumber(8, 16)));
 	v.c_credit_lim = 50000;
 
 	v.c_balance = -1000;
@@ -503,15 +551,15 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	v.c_payment_cnt = 1;
 	v.c_delivery_cnt = 0;
 
-	v.c_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-	v.c_street_2.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-	v.c_city.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-	v.c_state.assign(RandomStr(r, 3));
-	v.c_zip.assign(RandomNStr(r, 4) + "11111");
-	v.c_phone.assign(RandomNStr(r, 16));
-	v.c_since = GetCurrentTimeMillis();
+	v.c_street_1.assign(RandomStr(RandomNumber(10, 20)));
+	v.c_street_2.assign(RandomStr(RandomNumber(10, 20)));
+	v.c_city.assign(RandomStr(RandomNumber(10, 20)));
+	v.c_state.assign(RandomStr(3));
+	v.c_zip.assign(RandomNStr(4) + "11111");
+	v.c_phone.assign(RandomNStr(16));
+	v.c_since = GetCurrentTime();
 	v.c_middle.assign("OE");
-	v.c_data.assign(RandomStr(r, RandomNumber(r, 300, 500)));
+	v.c_data.assign(RandomStr(RandomNumber(300, 500)));
 
 	Checker::SanityCheckCustomer(&k, &v);
 	relation(TPCCTable::Customer, w).SetupReExec(k.EncodeFromAlloca(large_buf), 0, v.Encode());
@@ -533,11 +581,11 @@ void Loader<TPCCLoader::Customer>::DoLoad()
 	k_hist.h_c_w_id = w;
 	k_hist.h_d_id = d;
 	k_hist.h_w_id = w;
-	k_hist.h_date = GetCurrentTimeMillis();
+	k_hist.h_date = GetCurrentTime();
 
 	History::Value v_hist;
 	v_hist.h_amount = 1000;
-	v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
+	v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
 	relation(TPCCTable::History, w).SetupReExec(k_hist.EncodeFromAlloca(large_buf), 0, v_hist.Encode());
       }
@@ -548,11 +596,6 @@ void Loader<TPCCLoader::Customer>::DoLoad()
     relation(TPCCTable::History, w).set_key_length(sizeof(History::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
-}
-
-static size_t NumOrderLinesPerCustomer(util::FastRandom &r)
-{
-  return RandomNumber(r, 5, 15);
 }
 
 template <>
@@ -580,12 +623,12 @@ void Loader<TPCCLoader::Order>::DoLoad()
 
 	v_oo.o_c_id = c_ids[c - 1];
 	if (k_oo.o_id < 2101)
-	  v_oo.o_carrier_id = RandomNumber(r, 1, 10);
+	  v_oo.o_carrier_id = RandomNumber(1, 10);
 	else
 	  v_oo.o_carrier_id = 0;
-	v_oo.o_ol_cnt = NumOrderLinesPerCustomer(r);
+	v_oo.o_ol_cnt = GetOrderLinesPerCustomer();
 	v_oo.o_all_local = 1;
-	v_oo.o_entry_d = GetCurrentTimeMillis();
+	v_oo.o_entry_d = GetCurrentTime();
 
 	Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
@@ -609,20 +652,20 @@ void Loader<TPCCLoader::Order>::DoLoad()
 	  auto k_ol = OrderLine::Key::New(w, d, c, l);
 	  OrderLine::Value v_ol;
 
-	  v_ol.ol_i_id = RandomNumber(r, 1, 100000);
+	  v_ol.ol_i_id = RandomNumber(1, 100000);
 	  if (k_ol.ol_o_id < 2101) {
 	    v_ol.ol_delivery_d = v_oo.o_entry_d;
 	    v_ol.ol_amount = 0;
 	  } else {
 	    v_ol.ol_delivery_d = 0;
 	    // random within [0.01 .. 9,999.99]
-	    v_ol.ol_amount = RandomNumber(r, 1, 999999);
+	    v_ol.ol_amount = RandomNumber(1, 999999);
 	  }
 
 	  v_ol.ol_supply_w_id = k_ol.ol_w_id;
 	  v_ol.ol_quantity = 5;
 	  // v_ol.ol_dist_info comes from stock_data(ol_supply_w_id, ol_o_id)
-	  //v_ol.ol_dist_info = RandomStr(r, 24);
+	  //v_ol.ol_dist_info = RandomStr(24);
 
 	  Checker::SanityCheckOrderLine(&k_ol, &v_ol);
 	  relation(TPCCTable::OrderLine, w).SetupReExec(k_ol.EncodeFromAlloca(large_buf), 0, v_ol.Encode());
