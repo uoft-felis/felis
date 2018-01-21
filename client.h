@@ -51,7 +51,7 @@ class ClientExecutor : public go::Routine {
 
   virtual void Run();
 };
-
 }
+
 
 #endif /* CLIENT_H */

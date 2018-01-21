@@ -5,7 +5,7 @@
 // std::shared_ptr<spdlog::logger> logger = spdlog::rotating_logger_mt("file_logger", "log", 1048576 * 5, 3, true);
 std::shared_ptr<spdlog::logger> logger = spdlog::stdout_logger_mt("console");
 #else
-std::shared_ptr<spdlog::logger> logger = spdlog::daily_logger_mt("daily_logger", "debug/log", 2, 30, true);
+std::shared_ptr<spdlog::logger> logger = spdlog::daily_logger_mt("daily_logger", "debug/log", 2, 30);
 // std::shared_ptr<spdlog::logger> logger = spdlog::stdout_logger_mt("console", true);
 #endif
 

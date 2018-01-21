@@ -14,8 +14,8 @@ elseif (REPLAY_OPT STREQUAL "ll")
 endif ()
 
 set(CMAKE_C_FLAGS "-Wstrict-aliasing")
-set(CMAKE_CXX_FLAGS "-Wstrict-aliasing -std=c++11")
-set(CMAKE_EXE_LINKER_FLAGS "-static-libstdc++")
+set(CMAKE_CXX_FLAGS "-Wstrict-aliasing -std=c++17")
+set(CMAKE_EXE_LINKER_FLAGS "-static-libstdc++ -pthread")
 set(CMAKE_C_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -g -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -DNDEBUG")
 set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Ofast -g -flto -fwhole-program -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer")
@@ -37,15 +37,15 @@ set(SRCS epoch.cc txn.cc log.cc vhandle.cc index.cc mem.cc masstree_index_impl.c
 
 set(LIBS numa pthread libjemalloc.a)
 
-add_executable(db-backup-node client.cc main.cc
+add_executable(db client.cc main.cc
   ${SRCS}
 )
 
 add_subdirectory(benchmark/tpcc/)
 add_subdirectory(chkpt/)
 
-target_link_libraries(db-backup-node ${LIBS})
-target_include_directories(db-backup-node PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/spdlog/include/)
+target_link_libraries(db ${LIBS})
+target_include_directories(db PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/spdlog/include/)
 
 if (ENABLE_TEST)
   enable_testing()

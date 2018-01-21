@@ -62,7 +62,7 @@ static int NMaxCustomerIdxScanElems = 512;
 // maps a wid => partition id
 static inline unsigned int PartitionId(unsigned int wid)
 {
-  assert(wid >= 1 && wid <= kTPCCConfig.nr_warehouses());
+  assert(wid >= 1 && wid <= kTPCCConfig.nr_warehouses);
   int nthreads = Epoch::kNrThreads;
   wid -= 1; // 0-idx
   if (kTPCCConfig.nr_warehouses <= nthreads)
@@ -96,7 +96,6 @@ int TPCCClientBase::GetOrderLinesPerCustomer()
 {
   return RandomNumber(5, 15);
 }
-
 
 int TPCCClientBase::GetItemId()
 {
@@ -273,8 +272,8 @@ struct Checker {
   static inline  void
   SanityCheckCustomer(const Customer::Key *k, const Customer::Value *v) {
     assert(k->c_w_id >= 1 && static_cast<size_t>(k->c_w_id) <= kTPCCConfig.nr_warehouses);
-    assert(k->c_d_id >= 1 && static_cast<size_t>(k->c_d_id) <= kTPCCConfig.nr_district_per_warehouse);
-    assert(k->c_id >= 1 && static_cast<size_t>(k->c_id) <= kTPCCConfig.nr_customer_per_district);
+    assert(k->c_d_id >= 1 && static_cast<size_t>(k->c_d_id) <= kTPCCConfig.districts_per_warehouse);
+    assert(k->c_id >= 1 && static_cast<size_t>(k->c_id) <= kTPCCConfig.customers_per_district);
     assert(v->c_credit == "BC" || v->c_credit == "GC");
     assert(v->c_middle == "OE");
   }
@@ -289,7 +288,7 @@ struct Checker {
   static inline  void
   SanityCheckDistrict(const District::Key *k, const District::Value *v) {
     assert(k->d_w_id >= 1 && static_cast<size_t>(k->d_w_id) <= kTPCCConfig.nr_warehouses);
-    assert(k->d_id >= 1 && static_cast<size_t>(k->d_id) <= kTPCCConfig.nr_district_per_warehouse);
+    assert(k->d_id >= 1 && static_cast<size_t>(k->d_id) <= kTPCCConfig.districts_per_warehouse);
     assert(v->d_next_o_id >= 3001);
     assert(v->d_state.size() == 2);
     assert(v->d_zip == "123456789");
@@ -310,22 +309,22 @@ struct Checker {
   static inline  void
   SanityCheckNewOrder(const NewOrder::Key *k, const NewOrder::Value *v) {
     assert(k->no_w_id >= 1 && static_cast<size_t>(k->no_w_id) <= kTPCCConfig.nr_warehouses);
-    assert(k->no_d_id >= 1 && static_cast<size_t>(k->no_d_id) <= kTPCCConfig.nr_district_per_warehouse);
+    assert(k->no_d_id >= 1 && static_cast<size_t>(k->no_d_id) <= kTPCCConfig.districts_per_warehouse);
   }
 
   static inline  void
    SanityCheckOOrder(const OOrder::Key *k, const OOrder::Value *v) {
     assert(k->o_w_id >= 1 && static_cast<size_t>(k->o_w_id) <= kTPCCConfig.nr_warehouses);
-    assert(k->o_d_id >= 1 && static_cast<size_t>(k->o_d_id) <= kTPCCConfig.nr_district_per_warehouse);
-    assert(v->o_c_id >= 1 && static_cast<size_t>(v->o_c_id) <= kTPCCConfig.nr_customer_per_district);
-    assert(v->o_carrier_id >= 0 && static_cast<size_t>(v->o_carrier_id) <= kTPCCConfig.nr_district_per_warehouse);
+    assert(k->o_d_id >= 1 && static_cast<size_t>(k->o_d_id) <= kTPCCConfig.districts_per_warehouse);
+    assert(v->o_c_id >= 1 && static_cast<size_t>(v->o_c_id) <= kTPCCConfig.customers_per_district);
+    assert(v->o_carrier_id >= 0 && static_cast<size_t>(v->o_carrier_id) <= kTPCCConfig.districts_per_warehouse);
     assert(v->o_ol_cnt >= 5 && v->o_ol_cnt <= 15);
   }
 
   static inline void
   SanityCheckOrderLine(const OrderLine::Key *k, const OrderLine::Value *v) {
     assert(k->ol_w_id >= 1 && static_cast<size_t>(k->ol_w_id) <= kTPCCConfig.nr_warehouses);
-    assert(k->ol_d_id >= 1 && static_cast<size_t>(k->ol_d_id) <= kTPCCConfig.nr_district_per_warehouse);
+    assert(k->ol_d_id >= 1 && static_cast<size_t>(k->ol_d_id) <= kTPCCConfig.districts_per_warehouse);
     assert(k->ol_number >= 1 && k->ol_number <= 15);
     assert(v->ol_i_id >= 1 && static_cast<size_t>(v->ol_i_id) <= kTPCCConfig.nr_items);
   }

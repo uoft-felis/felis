@@ -15,6 +15,77 @@
 
 namespace sql {
 
+// serve as the key of database
+struct VarStr {
+
+  static size_t NewSize(uint16_t length) { return sizeof(VarStr) + length; }
+
+  static VarStr *New(uint16_t length) {
+    int region_id = mem::CurrentAllocAffinity();
+    VarStr *ins = (VarStr *) mem::GetThreadLocalRegion(region_id).Alloc(NewSize(length));
+    ins->len = length;
+    ins->region_id = region_id;
+    ins->data = (uint8_t *) ins + sizeof(VarStr);
+    return ins;
+  }
+
+  static void operator delete(void *ptr) {
+    if (ptr == nullptr) return;
+    VarStr *ins = (VarStr *) ptr;
+    auto &r = mem::GetThreadLocalRegion(ins->region_id);
+    if (__builtin_expect(ins->data == (uint8_t *) ptr + sizeof(VarStr), 1)) {
+      r.Free(ptr, sizeof(VarStr) + ins->len);
+    } else {
+      r.Free(ptr, sizeof(VarStr)); // don't know who's gonna do that
+    }
+  }
+
+  static VarStr *FromAlloca(void *ptr, uint16_t length) {
+    VarStr *str = static_cast<VarStr *>(ptr);
+    str->len = length;
+    str->data = (uint8_t *) str + sizeof(VarStr);
+    return str;
+  }
+
+  uint16_t len;
+  int region_id;
+  const uint8_t *data;
+
+  bool operator<(const VarStr &rhs) const {
+    if (data == nullptr) return true;
+    else if (rhs.data == nullptr) return false;
+
+    return len == rhs.len ? memcmp(data, rhs.data, len) < 0 : len < rhs.len;
+  }
+
+  bool operator==(const VarStr &rhs) const {
+    if (len != rhs.len) return false;
+    return memcmp(data, rhs.data, len) == 0;
+  }
+
+  bool operator!=(const VarStr &rhs) const {
+    return !(*this == rhs);
+  }
+
+  template <typename T>
+  const T ToType() const {
+    T instance;
+    instance.Decode(this);
+    return instance;
+  }
+
+  std::string ToHex() const {
+    char buf[8];
+    std::stringstream ss;
+    for (int i = 0; i < len; i++) {
+      snprintf(buf, 8, "%x ", data[i]);
+      ss << buf;
+    }
+    return ss.str();
+  }
+};
+
+
 // types that looks like a built-in C++ type, let's keep them all in lower-case!
 // copied from Silo.
 
@@ -260,6 +331,46 @@ struct KeySerializer<uint32_t> : public Serializer<uint32_t> {
   }
 };
 
+template <typename Base>
+class Object : public Base {
+ public:
+  using Base::Base;
+
+  Object(const Base &b) : Base(b) {}
+
+  VarStr *Encode() const { return EncodeVarStr(VarStr::New(this->EncodeSize())); }
+
+  VarStr *EncodeFromAlloca(void *base_ptr) const {
+    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
+  }
+
+  VarStr *EncodeFromRoutine() const {
+    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
+    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
+  }
+  void Decode(const VarStr *str) {
+    this->DecodeFrom(str->data);
+  }
+ private:
+  VarStr *EncodeVarStr(VarStr *str) const {
+    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    return str;
+  }
+};
+
+template <typename Base>
+struct Serializer<Object<Base>> {
+  static size_t EncodeSize(const Object<Base> *ptr) {
+    return ptr->EncodeSize();
+  }
+  static void EncodeTo(uint8_t *buf, const Object<Base> *ptr) {
+    ptr->EncodeTo(buf);
+  }
+  static void DecodeFrom(Object<Base> *ptr, const uint8_t *buf) {
+    ptr->DecodeFrom(buf);
+  }
+};
+
 template <int N> class FieldValue {};
 
 template <template <typename> class FieldSerializer, int N>
@@ -310,7 +421,7 @@ class GapField {
   template <typename T>
   struct FieldBuilder {
     T *obj;
-    T Done() { return *obj; }
+    Object<T> Done() { return *obj; }
     void Init() {}
   };
 
@@ -343,91 +454,89 @@ class Field<FieldSerializer, __COUNTER__> : public GapField<FieldSerializer> {};
 #define KEYS(name) DBOBJ(name, KeySerializer)
 #define VALUES(name) DBOBJ(name, ValueSerializer)
 
-// serve as the key of database
-struct VarStr {
+// Serializable tuples. Tuples are different than fields, because their
+// members are anonymous.
 
-  static size_t NewSize(uint16_t length) { return sizeof(VarStr) + length; }
+template <int N, template <typename ...> class TupleField, typename T, typename ...Types>
+struct TupleFieldType {
+  typedef typename TupleFieldType<N - 1, TupleField, Types...>::Type Type;
+  typedef typename TupleFieldType<N - 1, TupleField, Types...>::ValueType ValueType;
+};
 
-  static VarStr *New(uint16_t length) {
-    int region_id = mem::CurrentAllocAffinity();
-    VarStr *ins = (VarStr *) mem::GetThreadLocalRegion(region_id).Alloc(NewSize(length));
-    ins->len = length;
-    ins->region_id = region_id;
-    ins->data = (uint8_t *) ins + sizeof(VarStr);
-    return ins;
+template <template <typename ...> class TupleField, typename T, typename ...Types>
+struct TupleFieldType<0, TupleField, T, Types...> {
+  typedef TupleField<T, Types...> Type;
+  typedef T ValueType;
+};
+
+template <typename T, typename ...Types>
+class TupleField : public TupleField<Types...> {
+ protected:
+  T value;
+  typedef TupleField<Types...> ParentTupleFields;
+ public:
+  TupleField(const T &v, const Types&... args) : value(v), ParentTupleFields(args...) {}
+
+  size_t EncodeSize() const {
+    return ParentTupleFields::EncodeSize() + Serializer<T>::EncodeSize(&value);
   }
-
-  static void operator delete(void *ptr) {
-    if (ptr == nullptr) return;
-    VarStr *ins = (VarStr *) ptr;
-    auto &r = mem::GetThreadLocalRegion(ins->region_id);
-    if (__builtin_expect(ins->data == (uint8_t *) ptr + sizeof(VarStr), 1)) {
-      r.Free(ptr, sizeof(VarStr) + ins->len);
-    } else {
-      r.Free(ptr, sizeof(VarStr)); // don't know who's gonna do that
-    }
+  uint8_t *EncodeTo(uint8_t *buf) const {
+    buf = ParentTupleFields::EncodeTo(buf);
+    Serializer<T>::EncodeTo(buf, &value);
+    return buf + Serializer<T>::EncodeSize(&value);
   }
-
-  static VarStr *FromAlloca(void *ptr, uint16_t length) {
-    VarStr *str = static_cast<VarStr *>(ptr);
-    str->len = length;
-    str->data = (uint8_t *) str + sizeof(VarStr);
-    return str;
-  }
-
-  uint16_t len;
-  int region_id;
-  const uint8_t *data;
-
-  bool operator<(const VarStr &rhs) const {
-    if (data == nullptr) return true;
-    else if (rhs.data == nullptr) return false;
-
-    return len == rhs.len ? memcmp(data, rhs.data, len) < 0 : len < rhs.len;
-  }
-
-  bool operator==(const VarStr &rhs) const {
-    if (len != rhs.len) return false;
-    return memcmp(data, rhs.data, len) == 0;
-  }
-
-  bool operator!=(const VarStr &rhs) const {
-    return !(*this == rhs);
-  }
-
-  template <typename T>
-  const T ToType() const {
-    T instance;
-    instance.Decode(this);
-    return instance;
-  }
-
-  std::string ToHex() const {
-    char buf[8];
-    std::stringstream ss;
-    for (int i = 0; i < len; i++) {
-      snprintf(buf, 8, "%x ", data[i]);
-      ss << buf;
-    }
-    return ss.str();
+  const uint8_t *DecodeFrom(const uint8_t *buf) {
+    buf = ParentTupleFields::DecodeFrom(buf);
+    Serializer<T>::DecodeFrom(&value, buf);
+    return buf + Serializer<T>::EncodeSize(&value);
   }
 };
 
+template <typename T>
+class TupleField<T> {
+ protected:
+  T value;
+ public:
+  TupleField(const T &v) : value(v) {}
+
+  size_t EncodeSize() const {
+    return Serializer<T>::EncodeSize(&value);
+  }
+  uint8_t *EncodeTo(uint8_t *buf) const {
+    Serializer<T>::EncodeTo(buf, &value);
+    return buf + Serializer<T>::EncodeSize(&value);
+  }
+  const uint8_t *DecodeFrom(const uint8_t *buf) {
+    Serializer<T>::DecodeFrom(&value, buf);
+    return buf + Serializer<T>::EncodeSize(&value);
+  }
+};
+
+template <typename ...Types>
+class TupleImpl : public TupleField<Types...> {
+ public:
+  template <int N>
+  typename TupleFieldType<N, TupleField, Types...>::ValueType _() const {
+    return ((const typename TupleFieldType<N, TupleField, Types...>::Type *) this)->value;
+  }
+};
+
+
 template <typename AllFields>
-class Schemas : public AllFields {
+class SchemasImpl : public AllFields {
  public:
   // Concept:
   // void EncodeTo(uint8_t *buf) const;
   // size_t EncodeSize() const;
   // void DecodeFrom(const uint8_t *buf);
 
-  Schemas() {}
+  SchemasImpl() {}
 
-  using ThisType = Schemas<AllFields>;
+  using ThisType = SchemasImpl<AllFields>;
   using FirstBuilder = typename AllFields::template FieldType<AllFields::kOffset - AllFields::kFieldOffset>::template FieldBuilder<ThisType>;
 
   template <typename ...Args>
-  static ThisType New(Args... args) {
+  static Object<ThisType> New(Args... args) {
     ThisType o;
     o.Build().Init(args...);
     return o;
@@ -438,26 +547,10 @@ class Schemas : public AllFields {
     b.obj = this;
     return b;
   }
-
-  VarStr *Encode() const { return EncodeVarStr(VarStr::New(this->EncodeSize())); }
-
-  VarStr *EncodeFromAlloca(void *base_ptr) const {
-    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
-  }
-
-  VarStr *EncodeFromRoutine() const {
-    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
-    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
-  }
-  void Decode(const VarStr *str) {
-    this->DecodeFrom(str->data);
-  }
- private:
-  VarStr *EncodeVarStr(VarStr *str) const {
-    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
-    return str;
-  }
 };
+
+template <typename AllFields> using Schemas = Object<SchemasImpl<AllFields>>;
+template <typename ...Types> using Tuple = Object<TupleImpl<Types...>>;
 
 }
 
