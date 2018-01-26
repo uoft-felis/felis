@@ -3,10 +3,13 @@
 
 #include <type_traits>
 #include <vector>
-#include <optional>
+#include <atomic>
+#include <experimental/optional>
 #include "sqltypes.h"
 
 namespace util {
+
+using sql::VarStr;
 
 // Distributed Promise system. We can use promise to define the intra
 // transaction dependencies. The dependencies have to be acyclic.
@@ -20,6 +23,19 @@ namespace util {
 // dynamically migrates, otherwise we will encounter race conditions between
 // nodes.
 
+class BasePromise;
+
+struct PromiseRoutinePool {
+  std::atomic<uint64_t> refcnt;
+  uint8_t *input_ptr;
+  size_t mem_size;
+  uint8_t mem[];
+
+  bool IsManaging(const uint8_t *ptr) const {
+    return (ptr >= mem && ptr < mem + mem_size);
+  }
+};
+
 struct PromiseRoutine {
   VarStr input;
   uint8_t *capture_data;
@@ -32,74 +48,98 @@ struct PromiseRoutine {
   void *callback_native_func;
   void *placement_native_func;
 
-  void Prepare(const VarStr &in) {
-    input = input;
-    if (node_id == -1) {
-      node_id = placement(this);
-    }
-    // Migrate or create local go::Routine to run.
-    //
-    // In this process, input *must be* copied, next pointer will be serialized if
-    // migration is happening
+  size_t NodeSize() const;
+  size_t TreeSize() const;
 
-    // TODO:
-  }
+  uint8_t *EncodeNode(uint8_t *p);
+  uint8_t *DecodeNode(uint8_t *p, PromiseRoutinePool *pool);
+  void EncodeTree(uint8_t *p);
+  void DecodeTree(PromiseRoutinePool *pool);
 
   BasePromise *next;
+  PromiseRoutinePool *pool;
+
+  void Ref() {
+    pool->refcnt.fetch_add(1);
+  }
+
+  void UnRef();
+  void UnRefRecursively();
+
+  static PromiseRoutine *CreateWithDedicatePool(size_t capture_len);
+  static PromiseRoutine *CreateFromBufferedPool(PromiseRoutinePool *pool);
 };
 
 class BasePromise {
  protected:
+  friend class PromiseRoutine;
   std::vector<PromiseRoutine *> handlers;
  public:
-  void Complete(const VarStr &in) {
-    for (auto p: handlers) {
-      p->Prepare(in);
-    }
-  }
+  static int gNodeId;
+  void Complete(const VarStr &in);
 };
 
-template <typename ValueType> using Optional = std::optional<ValueType>;
-class VoidValue {
+template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
+
+inline constexpr auto nullopt = std::experimental::nullopt;
+
+struct VoidValue {
+ private:
   VoidValue() {} // private because you shall never use a Optional<VoidValue> than nullopt_t!
+ public:
+  void Decode(const VarStr *) {}
+  VarStr *EncodeFromAlloca(void *buffer) const { return nullptr; }
+  size_t EncodeSize() const { return 0; }
+};
+
+struct DummyValue {
+  void Decode(const VarStr *) {}
+  VarStr *EncodeFromAlloca(void *buffer) const { return nullptr; }
+  size_t EncodeSize() const { return 0; }
 };
 
 template <typename T>
 class Promise : public BasePromise {
  public:
+
+  template <typename Func, typename Closure>
+  struct Next {
+    typedef typename std::result_of<Func (const Closure &, T)>::type OptType;
+    typedef typename OptType::value_type Type;
+  };
+
   template <typename Func, typename Closure>
   PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
     auto static_func = [](PromiseRoutine *routine) {
-      auto native_func = (void (*)(const Closure &, T)) data->callback_native_func;
-      Closure *capture = routine->capture_data;
+      auto native_func = (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) routine->callback_native_func;
+      Closure *capture = (Closure *) routine->capture_data;
       T t;
-      t.Decode(input);
+      t.Decode(&routine->input);
 
-      // TODO: check the optional return value
       auto output = native_func(*capture, t);
       if (routine->next && output) {
         void *buffer = alloca(output->EncodeSize() + sizeof(VarStr) + 1);
         VarStr *output_str = output->EncodeFromAlloca(buffer);
         routine->next->Complete(*output_str);
       }
+      routine->UnRef();
     };
-    auto routine = new PromiseRoutine();
-    memset(routine, 0, sizeof(PromiseRoutine));
+    auto routine = PromiseRoutine::CreateWithDedicatePool(sizeof(Closure));
+    routine->input.data = nullptr;
     routine->callback = (void (*)(PromiseRoutine *)) static_func;
-    routine->callback_native_func = (void (*)(const ClosureType &, T)) func;
-    routine->capture_len = sizeof(Closure);
-    routine->capture_data = new Closure(capture);
+    routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
+    memcpy(routine->capture_data, &capture, sizeof(Closure));
+    handlers.push_back(routine);
     return routine;
   }
 
   // Static promise routine func should return a std::optional<T>. If the func
   // returns nothing, then it should return std::optional<VoidValue>.
   template <typename Func, typename Closure>
-  Promise<typename std::result_of<Func (const ClosureType &, T)>::type::value_type> *Then(
-      const Closure &capture, Func func, int placement) {
+  Promise<typename Next<Func, Closure>::Type> *Then(int placement, const Closure &capture, Func func) {
     auto routine = AttachRoutine(capture, func);
     routine->node_id = placement;
-    auto next_promise = new Promise<typename std::result_of<Func (const ClosureType &, T)>::type::value_type>();
+    auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
     routine->next = next_promise;
     return next_promise;
   }
@@ -109,12 +149,21 @@ class Promise : public BasePromise {
 
 template <>
 class Promise<VoidValue> : public BasePromise {
-  Promise() {} // shouldn't happen either
  public:
-  static void *operator new(size_t size) {
+  Promise() {
+    std::abort();
+  }
+  static void *operator new(size_t size) noexcept {
     return nullptr;
   }
-}
+};
+
+class HeadPromise : public Promise<DummyValue> {
+ public:
+  void RunAll() {
+    Complete(sql::VarStr());
+  }
+};
 
 }
 

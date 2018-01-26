@@ -1,4 +1,4 @@
-// -*- c++ -*-
+// -*- C++ -*-
 
 #ifndef SQLTYPES_H
 #define SQLTYPES_H
@@ -50,6 +50,9 @@ struct VarStr {
   uint16_t len;
   int region_id;
   const uint8_t *data;
+
+  VarStr() : len(0), region_id(0), data(nullptr) {}
+  VarStr(uint16_t len, int region_id, uint8_t *data) : len(len), region_id(region_id), data(data) {}
 
   bool operator<(const VarStr &rhs) const {
     if (data == nullptr) return true;
@@ -470,11 +473,10 @@ struct TupleFieldType<0, TupleField, T, Types...> {
 };
 
 template <typename T, typename ...Types>
-class TupleField : public TupleField<Types...> {
- protected:
+struct TupleField : public TupleField<Types...> {
   T value;
   typedef TupleField<Types...> ParentTupleFields;
- public:
+  TupleField() : ParentTupleFields() {}
   TupleField(const T &v, const Types&... args) : value(v), ParentTupleFields(args...) {}
 
   size_t EncodeSize() const {
@@ -493,10 +495,9 @@ class TupleField : public TupleField<Types...> {
 };
 
 template <typename T>
-class TupleField<T> {
- protected:
+struct TupleField<T> {
   T value;
- public:
+  TupleField() {}
   TupleField(const T &v) : value(v) {}
 
   size_t EncodeSize() const {
@@ -515,6 +516,7 @@ class TupleField<T> {
 template <typename ...Types>
 class TupleImpl : public TupleField<Types...> {
  public:
+  using TupleField<Types...>::TupleField;
   template <int N>
   typename TupleFieldType<N, TupleField, Types...>::ValueType _() const {
     return ((const typename TupleFieldType<N, TupleField, Types...>::Type *) this)->value;
