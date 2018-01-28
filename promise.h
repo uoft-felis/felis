@@ -72,7 +72,7 @@ struct PromiseRoutine {
 
 class BasePromise {
  protected:
-  friend class PromiseRoutine;
+  friend struct PromiseRoutine;
   std::vector<PromiseRoutine *> handlers;
  public:
   static int gNodeId;
@@ -158,10 +158,19 @@ class Promise<VoidValue> : public BasePromise {
   }
 };
 
-class HeadPromise : public Promise<DummyValue> {
+class PromiseProc {
+  Promise<DummyValue> *p = new Promise<DummyValue>();
  public:
-  void RunAll() {
-    Complete(sql::VarStr());
+  PromiseProc() {}
+  PromiseProc(const PromiseProc &rhs) = delete;
+  PromiseProc(PromiseProc &&rhs) = delete;
+
+  ~PromiseProc() {
+    p->Complete(VarStr());
+  }
+
+  Promise<DummyValue> *operator->() const {
+    return p;
   }
 };
 

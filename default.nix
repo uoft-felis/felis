@@ -3,7 +3,7 @@ with import <nixpkgs> {};
 myEnvFun {
   name = "dolly";
   buildInputs = [
-    jemalloc numactl clang_5 gcc
+    jemalloc numactl llvm_5 clang_5 gcc
   ];
 }
 
