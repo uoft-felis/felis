@@ -73,10 +73,17 @@ struct PromiseRoutine {
 class BasePromise {
  protected:
   friend struct PromiseRoutine;
+  std::atomic<long> refcnt;
   std::vector<PromiseRoutine *> handlers;
  public:
   static int gNodeId;
+  BasePromise() : refcnt(1) {}
   void Complete(const VarStr &in);
+
+  BasePromise *Ref() {
+    refcnt.fetch_add(1);
+    return this;
+  }
 };
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
@@ -149,24 +156,24 @@ class Promise : public BasePromise {
     auto routine = AttachRoutine(capture, func);
     routine->node_id = -1;
     auto static_func = [](PromiseRoutine *routine) -> int {
-      auto native_func = (int (*)(const Closure &, T)) on;
+      auto native_func = (int (*)(const Closure &, T)) routine->placement_native_func;
       Closure *capture = (Closure *) routine->capture_data;
       T t;
       t.Decode(&routine->input);
       return native_func(*capture, t);
-    }
-
+    };
+    routine->placement_native_func = on;
     auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
     routine->next = next_promise;
     return next_promise;
   }
 
-  // TODO: Dynamic routine support? This can be done using the placement callbacks.
 };
 
 template <>
 class Promise<VoidValue> : public BasePromise {
  public:
+
   Promise() {
     std::abort();
   }
@@ -189,6 +196,19 @@ class PromiseProc {
   Promise<DummyValue> *operator->() const {
     return p;
   }
+};
+
+struct CombinerState {
+  std::atomic<long> finished_states;
+  std::vector<VarStr> states;
+};
+
+template <typename T, typename ...Types>
+class Combine : public Combine<Types...> {
+  Promise<T> *p;
+  Promise<Tuple<T, Types...>> *next_promise;
+ public:
+  Combine(Promise<T> *p, Promise<Types>*... rest) : p(p), Combine<Types...>(rest...) {}
 };
 
 }

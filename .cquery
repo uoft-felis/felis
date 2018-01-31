@@ -6,9 +6,13 @@ clang++
 
 # Includes
 -I.
--isystem/nix/store/n0h88bx4smyw040c2hq5lgficbkmhcs3-jemalloc-4.5.0/include
--isystem/nix/store/riqvabrrjphkyigsc09qhipabkvp6k8y-numactl-2.0.10/include
--isystem/nix/store/zgaq13hqz2k1ldw8iw21xg3vb1m52wf6-gcc-6.4.0/include/c++/6.4.0
--isystem/nix/store/zgaq13hqz2k1ldw8iw21xg3vb1m52wf6-gcc-6.4.0/include/c++/6.4.0/x86_64-unknown-linux-gnu
--isystem/nix/store/9ig4ffllfw6khcy21n2p4dn79c9iq8qc-clang-5.0.0/lib/clang/5.0.0/include
--isystem/nix/store/7l433ns0yk5nan0a2ijr5329mbyikz1z-glibc-2.25-49-dev/include
+-isystem/nix/store/g8ljs781qrsr5mydjnwc9531c48v5pd8-jemalloc-5.0.1/include
+-isystem/nix/store/xdk8kcgcflh88kbzzgzd1700j7yksdlk-numactl-2.0.10/include
+-isystem/nix/store/vj00y007jsq4l7z69hml84x2njmfh88x-llvm-5.0.1/include
+-isystem/nix/store/piy10ra6rmszg2hhafb37vryl20p62z7-ncurses-6.0-20171125-dev/include
+-isystem/nix/store/mzcxlf0izjjmwnyi83wma5llf5skr7cv-zlib-1.2.11-dev/include
+-isystem/nix/store/zg2rbsm898sxgz27ps8vg006gywbcggc-gcc-6.4.0/include/c++/6.4.0
+-isystem/nix/store/zg2rbsm898sxgz27ps8vg006gywbcggc-gcc-6.4.0/include/c++/6.4.0/x86_64-unknown-linux-gnu
+-isystem/nix/store/5zvimsqh3dwbdmb0sar2r674i14vf4zg-clang-5.0.1/lib/clang/5.0.1/include
+-isystem/nix/store/aficfjm81yiklfygq03y87vp5k8h28mr-glibc-2.26-131-dev/include
+

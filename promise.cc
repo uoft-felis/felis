@@ -199,7 +199,7 @@ void BasePromise::Complete(const VarStr &in)
       routine->UnRefRecursively();
     }
   }
-  delete this;
+  if (refcnt.)
 }
 
 }
