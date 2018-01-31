@@ -178,6 +178,8 @@ static void ParsePromiseRoutine()
 void BasePromise::Complete(const VarStr &in)
 {
   for (auto routine: handlers) {
+    routine->input = in;
+
     if (routine->node_id == -1) {
       routine->node_id = routine->placement(routine);
     }
@@ -192,7 +194,6 @@ void BasePromise::Complete(const VarStr &in)
           go::Make([routine]() { routine->callback(routine); }));
 
     } else {
-      routine->input = in;
       TransportPromiseRoutine(routine);
       routine->input.data = nullptr;
       routine->UnRefRecursively();
@@ -224,25 +225,25 @@ int main(int argc, const char *argv[])
     auto _ = PromiseProc();
 
     _
-        ->Then(1, argc, [](const int &count, auto _) -> Optional<Tuple<int>> {
+        ->Then(argc, 1, [](const int &count, auto _) -> Optional<Tuple<int>> {
             int a;
             std::cin >> a;
             std::cout << "First, got A " << a << std::endl;
             return Tuple<int>(a);
           })
 
-        ->Then(1, argc, [](const int &count, Tuple<int> last_result) -> Optional<Tuple<int>> {
+        ->Then(argc, 1, [](const int &count, Tuple<int> last_result) -> Optional<Tuple<int>> {
             printf("Last response is %d\n", last_result._<0>());
             return Tuple<int>(0);
           })
 
-        ->Then(1, argc, [](const int &count, auto _) -> Optional<VoidValue> {
+        ->Then(argc, 1, [](const int &count, auto _) -> Optional<VoidValue> {
             puts("End");
             return nullopt;
           });
 
     _
-        ->Then(2, argc, [](const int &argc, auto _) -> Optional<VoidValue> {
+        ->Then(argc, 2, [](const int &argc, auto _) -> Optional<VoidValue> {
             puts("This runs in parallel");
             return nullopt;
           });
