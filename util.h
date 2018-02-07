@@ -163,7 +163,13 @@ template <class... M>
 class MixIn : public M... {};
 
 // instance of a global object. So that we don't need the ugly extern.
-template <class O> O &Instance();
+template <class O> O &Instance()
+{
+  if (O::instance != nullptr) return *O::instance;
+  static O obj;
+  O::instance = &obj;
+  return *O::instance;
+}
 
 // CPU pinning
 static inline void PinToCPU(int cpu)

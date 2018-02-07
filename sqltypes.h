@@ -517,6 +517,9 @@ template <typename ...Types>
 class TupleImpl : public TupleField<Types...> {
  public:
   using TupleField<Types...>::TupleField;
+
+  TupleImpl(const TupleField<Types...> &rhs) : TupleField<Types...>(rhs) {}
+
   template <int N>
   typename TupleFieldType<N, TupleField, Types...>::ValueType _() const {
     return ((const typename TupleFieldType<N, TupleField, Types...>::Type *) this)->value;

@@ -1,8 +1,11 @@
 #include "promise.h"
 #include "gopp/gopp.h"
+#include "node_config.h"
 #include <queue>
 
-namespace util {
+using util::Instance;
+
+namespace dolly {
 
 static PromiseRoutinePool *CreateRoutinePool(size_t size)
 {
@@ -26,11 +29,13 @@ void PromiseRoutine::UnRef()
 void PromiseRoutine::UnRefRecursively()
 {
   if (next) {
-    for (auto child: next->handlers) {
-      child->UnRefRecursively();
+    auto handlers = next->handlers;
+    if (next->UnRef() == 0) {
+      for (auto child: handlers) {
+        child->UnRefRecursively();
+      }
     }
   }
-  delete next;
   UnRef();
 }
 
@@ -142,8 +147,6 @@ uint8_t *PromiseRoutine::DecodeNode(uint8_t *p, PromiseRoutinePool *rpool)
   return p;
 }
 
-int BasePromise::gNodeId = -1;
-
 // TODO: testing only, transport using a file
 static void TransportPromiseRoutine(PromiseRoutine *routine)
 {
@@ -161,7 +164,7 @@ static void TransportPromiseRoutine(PromiseRoutine *routine)
 // TODO: testing only. should parse from network/RDMA packets.
 static void ParsePromiseRoutine()
 {
-  FILE *fp = fopen(std::to_string(BasePromise::gNodeId).c_str(), "r");
+  FILE *fp = fopen(std::to_string(Instance<NodeConfiguration>().node_id()).c_str(), "r");
   size_t buffer_size;
   (void) fread(&buffer_size, 8, 1, fp);
   PromiseRoutinePool *pool = CreateRoutinePool(buffer_size);
@@ -185,7 +188,7 @@ void BasePromise::Complete(const VarStr &in)
     }
     if (routine->node_id < 0) std::abort();
 
-    if (routine->node_id == BasePromise::gNodeId) {
+    if (routine->node_id == Instance<NodeConfiguration>().node_id()) {
       uint8_t *p = (uint8_t *) malloc(in.len);
       memcpy(p, in.data, in.len);
       routine->input = VarStr(in.len, in.region_id, p);
@@ -199,8 +202,10 @@ void BasePromise::Complete(const VarStr &in)
       routine->UnRefRecursively();
     }
   }
-  if (refcnt.)
+  UnRef();
 }
+
+std::atomic<BaseCombinerState *> BaseCombinerState::gStatesTable[BaseCombinerState::kStateTableSize];
 
 }
 
@@ -208,12 +213,7 @@ void BasePromise::Complete(const VarStr &in)
 
 #ifdef SAMPLE_PROMISE
 
-using util::Optional;
-using util::Promise;
-using util::PromiseProc;
-using util::VoidValue;
-using util::nullopt;
-
+using namespace dolly;
 using namespace sql;
 
 int main(int argc, const char *argv[])
@@ -221,10 +221,10 @@ int main(int argc, const char *argv[])
   go::InitThreadPool(1);
 
   if (argc <= 1) {
-    util::BasePromise::gNodeId = 0;
     auto _ = PromiseProc();
 
-    _
+    auto left =
+        _
         ->Then(argc, 1, [](const int &count, auto _) -> Optional<Tuple<int>> {
             int a;
             std::cin >> a;
@@ -237,20 +237,24 @@ int main(int argc, const char *argv[])
             return Tuple<int>(0);
           })
 
-        ->Then(argc, 1, [](const int &count, auto _) -> Optional<VoidValue> {
+        ->Then(argc, 1, [](const int &count, auto _) -> Optional<Tuple<int>> {
             puts("End");
-            return nullopt;
+            return Tuple<int>(1);
           });
 
-    _
-        ->Then(argc, 2, [](const int &argc, auto _) -> Optional<VoidValue> {
+    auto right =
+        _
+        ->Then(argc, 2, [](const int &argc, auto _) -> Optional<Tuple<int>> {
             puts("This runs in parallel");
+            return Tuple<int>(1);
+          });
+    Combine<Tuple<int>, Tuple<int>>(3, 1, left, right)
+        ->Then(argc, 3, [](const int &argc, Tuple<Tuple<int>, Tuple<int>> input) -> Optional<VoidValue> {
+            printf("sum = %d\n", input._<0>()._<0>() + input._<1>()._<0>());
             return nullopt;
           });
-
   } else {
-    util::BasePromise::gNodeId = std::stoi(std::string(argv[1]));
-    util::ParsePromiseRoutine();
+    ParsePromiseRoutine();
   }
 
   go::WaitThreadPool();

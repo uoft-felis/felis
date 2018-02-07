@@ -8,6 +8,7 @@
 #include "masstree/masstree_scan.hh"
 #include "masstree/kvthread.hh"
 #include "masstree/timestamp.hh"
+#include "masstree/masstree.hh"
 
 volatile mrcu_epoch_type active_epoch;
 volatile mrcu_epoch_type globalepoch = 1;
@@ -191,5 +192,7 @@ RelationManager::RelationManager()
     relations[i].Initialize(ti);
   }
 }
+
+RelationManager *RelationManager::instance = nullptr;
 
 }

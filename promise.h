@@ -7,7 +7,7 @@
 #include <experimental/optional>
 #include "sqltypes.h"
 
-namespace util {
+namespace dolly {
 
 using sql::VarStr;
 
@@ -76,7 +76,6 @@ class BasePromise {
   std::atomic<long> refcnt;
   std::vector<PromiseRoutine *> handlers;
  public:
-  static int gNodeId;
   BasePromise() : refcnt(1) {}
   void Complete(const VarStr &in);
 
@@ -84,6 +83,15 @@ class BasePromise {
     refcnt.fetch_add(1);
     return this;
   }
+
+  long UnRef() {
+    long r = refcnt.fetch_sub(1) - 1;
+    if (r == 0) {
+      delete this;
+    }
+    return r;
+  }
+
 };
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
@@ -198,17 +206,86 @@ class PromiseProc {
   }
 };
 
-struct CombinerState {
+struct BaseCombinerState {
   std::atomic<long> finished_states;
-  std::vector<VarStr> states;
+
+  static constexpr size_t kStateTableSize = 1024 * 16; // 16 nodes at max?
+  static std::atomic<BaseCombinerState *> gStatesTable[kStateTableSize];
 };
 
-template <typename T, typename ...Types>
-class Combine : public Combine<Types...> {
-  Promise<T> *p;
-  Promise<Tuple<T, Types...>> *next_promise;
+template <typename ...Types>
+class CombinerState : public BaseCombinerState, public sql::TupleField<Types...> {
  public:
-  Combine(Promise<T> *p, Promise<Types>*... rest) : p(p), Combine<Types...>(rest...) {}
+  typedef sql::Tuple<Types...> TupleType;
+  typedef Promise<TupleType> PromiseType;
+};
+
+template <typename CombinerStateType, typename T, typename ...Types>
+static void CombineImplInstall(int node_id, int state_id,
+                               typename CombinerStateType::PromiseType *next_promise, Promise<T> *p) {
+  auto routine = p->AttachRoutine(
+      state_id,
+      [](const int &state_id, T result) -> Optional<typename CombinerStateType::TupleType> {
+        auto state = (CombinerStateType *) BaseCombinerState::gStatesTable[state_id].load();
+     again:
+        if (state == nullptr) {
+          state = new CombinerStateType();
+          BaseCombinerState *old_state = nullptr;
+          if (!BaseCombinerState::gStatesTable[state_id].compare_exchange_strong(old_state, state)) {
+            delete state;
+            state = (CombinerStateType *) old_state;
+            goto again;
+          }
+        }
+        sql::TupleField<T, Types...> *tuple = state;
+        tuple->value = result;
+        if (state->finished_states.fetch_add(1) < sizeof...(Types)) {
+          return nullopt;
+        }
+        typename CombinerStateType::TupleType final_result(*state);
+
+        delete state;
+        BaseCombinerState::gStatesTable[state_id].store(nullptr);
+
+        return final_result;
+      });
+  routine->node_id = node_id;
+  routine->next = next_promise->Ref();
+}
+
+template <typename CombinerStateType, typename T, typename ...Types>
+class CombineImpl : public CombineImpl<CombinerStateType, Types...> {
+ public:
+  void Install(int node_id, int state_id,
+               typename CombinerStateType::PromiseType *next_promise,
+               Promise<T> *p, Promise<Types>*... rest) {
+    CombineImplInstall<CombinerStateType, T, Types...>(node_id, state_id, next_promise, p);
+    CombineImpl<CombinerStateType, Types...>::Install(node_id, state_id, next_promise, rest...);
+  }
+};
+
+template <typename CombinerStateType, typename T>
+class CombineImpl<CombinerStateType, T> {
+ public:
+  void Install(int node_id, int state_id,
+               typename CombinerStateType::PromiseType *next_promise,
+               Promise<T> *p) {
+    CombineImplInstall<CombinerStateType, T>(node_id, state_id, next_promise, p);
+  }
+};
+
+template <typename ...Types>
+class Combine : public CombineImpl<CombinerState<Types...>, Types...> {
+  typedef typename CombinerState<Types...>::PromiseType PromiseType;
+  PromiseType *next_promise = new PromiseType();
+ public:
+  Combine(int node_id, int state_id, Promise<Types>*... args) {
+    this->Install(node_id, state_id, next_promise, args...);
+    next_promise->UnRef();
+  }
+  PromiseType *operator->() {
+    return next_promise;
+  }
 };
 
 }

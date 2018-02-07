@@ -172,8 +172,11 @@ class TPCCClientBase {
 
 class TPCCTableHandles {
   int table_handles[dolly::RelationManager::kMaxNrRelations];
-public:
+
   TPCCTableHandles();
+  static TPCCTableHandles *instance;
+  template <typename T> friend T &util::Instance();
+public:
   int table_handle(int idx) const {
     assert(idx < dolly::RelationManager::kMaxNrRelations);
     return table_handles[idx];

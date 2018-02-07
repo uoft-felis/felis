@@ -334,9 +334,9 @@ struct Checker {
 TPCCTableHandles::TPCCTableHandles()
 {
   assert(kTPCCConfig.nr_warehouses >= 1);
-    for (int table_id = 0; table_id < static_cast<int>(TPCCTable::NRTable); table_id++) {
-      InitiateTable(static_cast<TPCCTable>(table_id));
-    }
+  for (int table_id = 0; table_id < static_cast<int>(TPCCTable::NRTable); table_id++) {
+    InitiateTable(static_cast<TPCCTable>(table_id));
+  }
 }
 
 void TPCCTableHandles::InitiateTable(TPCCTable table)
@@ -354,13 +354,13 @@ void TPCCTableHandles::InitiateTable(TPCCTable table)
 
 }
 
-static TPCCTableHandles *global_table_handles;
+TPCCTableHandles *TPCCTableHandles::instance = nullptr;
 
 dolly::Relation &TPCCMixIn::relation(TPCCTable table, unsigned int wid)
 {
   assert(wid > 0); // wid starting from 1
   int idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses + wid - 1;
-  int fid = global_table_handles->table_handle(idx);
+  int fid = Instance<TPCCTableHandles>().table_handle(idx);
   return Instance<RelationManager>().GetRelationOrCreate(fid);
 }
 
@@ -1181,19 +1181,6 @@ void Request<MixIn<tpcc::PaymentStruct, tpcc::TPCCMixIn>>::RunTxn()
     .Put(k_h.Encode(), serializable_id(), v_h.Encode(), buffer);
 
   buffer.Commit(serializable_id(), &validator);
-}
-
-}
-
-namespace util {
-
-template <>
-tpcc::TPCCTableHandles &Instance()
-{
-  if (tpcc::global_table_handles == nullptr) {
-    tpcc::global_table_handles = new tpcc::TPCCTableHandles();
-  }
-  return *tpcc::global_table_handles;
 }
 
 }

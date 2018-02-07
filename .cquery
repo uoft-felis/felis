@@ -6,13 +6,15 @@ clang++
 
 # Includes
 -I.
+-Ispdlog/include
 -isystem/nix/store/g8ljs781qrsr5mydjnwc9531c48v5pd8-jemalloc-5.0.1/include
 -isystem/nix/store/xdk8kcgcflh88kbzzgzd1700j7yksdlk-numactl-2.0.10/include
 -isystem/nix/store/vj00y007jsq4l7z69hml84x2njmfh88x-llvm-5.0.1/include
--isystem/nix/store/piy10ra6rmszg2hhafb37vryl20p62z7-ncurses-6.0-20171125-dev/include
 -isystem/nix/store/mzcxlf0izjjmwnyi83wma5llf5skr7cv-zlib-1.2.11-dev/include
 -isystem/nix/store/zg2rbsm898sxgz27ps8vg006gywbcggc-gcc-6.4.0/include/c++/6.4.0
 -isystem/nix/store/zg2rbsm898sxgz27ps8vg006gywbcggc-gcc-6.4.0/include/c++/6.4.0/x86_64-unknown-linux-gnu
 -isystem/nix/store/5zvimsqh3dwbdmb0sar2r674i14vf4zg-clang-5.0.1/lib/clang/5.0.1/include
 -isystem/nix/store/aficfjm81yiklfygq03y87vp5k8h28mr-glibc-2.26-131-dev/include
 
+-DCACHE_LINE_SIZE=64
+-DNR_THREADS=8

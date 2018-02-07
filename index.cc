@@ -14,18 +14,6 @@
 
 using util::Instance;
 
-// export global variables
-namespace util {
-
-template <>
-dolly::RelationManager &Instance()
-{
-  static dolly::RelationManager mgr;
-  return mgr;
-}
-
-}
-
 namespace dolly {
 
 std::atomic<unsigned long> TxnValidator::tot_validated;
@@ -139,6 +127,8 @@ void TxnValidator::Validate(const Txn &tx)
 
 static DeletedGarbageHeads gDeletedGarbage;
 
+DeletedGarbageHeads *DeletedGarbageHeads::instance = &gDeletedGarbage;
+
 DeletedGarbageHeads::DeletedGarbageHeads()
 {
   for (int i = 0; i < NR_THREADS; i++) {
@@ -189,15 +179,5 @@ void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
 }
 
 std::map<std::string, Checkpoint *> Checkpoint::impl;
-
-}
-
-namespace util {
-
-template <>
-dolly::DeletedGarbageHeads &Instance()
-{
-  return dolly::gDeletedGarbage;
-}
 
 }

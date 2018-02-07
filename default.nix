@@ -7,7 +7,7 @@ stdenv.mkDerivation rec {
   '';
   
   buildInputs = [
-    jemalloc numactl llvm_5 clang_5 gcc
+    jemalloc numactl llvm_5 clang_5 gcc ninja
   ];
 }
 

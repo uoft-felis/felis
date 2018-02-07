@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <atomic>
 
-#include "index.h"
+#include "index_common.h"
 #include "util.h"
 #include "log.h"
 #include "vhandle.h"
@@ -91,12 +91,15 @@ class MasstreeIndex {
   }
 };
 
-class Relation : public RelationPolicy<MasstreeIndex> {};
+class Relation : public dolly::RelationPolicy<MasstreeIndex> {};
 
 class RelationManager : public RelationManagerPolicy<Relation> {
   threadinfo *ti;
- public:
+
   RelationManager();
+  static RelationManager *instance;
+  template <typename T> friend T &util::Instance();
+ public:
   threadinfo *GetThreadInfo() { return ti; }
 };
 

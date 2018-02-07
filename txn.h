@@ -76,6 +76,7 @@ class DeletedGarbageHeads {
   util::ListNode garbage_heads[NR_THREADS];
 
  public:
+  static DeletedGarbageHeads *instance;
   DeletedGarbageHeads();
 
   void AttachGarbage(CommitBufferEntry *g);
