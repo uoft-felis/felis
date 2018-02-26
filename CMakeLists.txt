@@ -28,6 +28,7 @@ set_source_files_properties(gopp/asm.S PROPERTIES COMPILE_FLAGS "-x assembler-wi
 set_source_files_properties(masstree/kvthread.cc masstree/string.cc masstree/straccum.cc PROPERTIES COMPILE_FLAGS "-include masstree/build/config.h")
 
 set(SRCS epoch.cc txn.cc log.cc vhandle.cc index.cc mem.cc promise.cc masstree_index_impl.cc
+  node_config.cc
   dolly_probes.cc
   fpcore.cc 
   json11/json11.cpp

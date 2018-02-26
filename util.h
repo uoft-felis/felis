@@ -12,6 +12,9 @@
 #include <sched.h>
 #include <pthread.h>
 
+// C++ experimental stuff
+#include <experimental/optional>
+
 #include "gopp/gopp.h"
 
 #define CACHE_ALIGNED __attribute__((aligned(CACHE_LINE_SIZE)))
@@ -198,6 +201,8 @@ struct GetArg<0, U, Args...> {
   U value;
   GetArg(const U &value, const Args&... drop) : value(value) {}
 };
+
+template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
 
 }
 

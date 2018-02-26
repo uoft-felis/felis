@@ -209,7 +209,7 @@ std::atomic<BaseCombinerState *> BaseCombinerState::gStatesTable[BaseCombinerSta
 
 }
 
-#define SAMPLE_PROMISE
+// #define SAMPLE_PROMISE
 
 #ifdef SAMPLE_PROMISE
 

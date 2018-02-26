@@ -14,20 +14,29 @@ class NodeConfiguration {
   int id;
  public:
 
-  struct NodeCoreConfig {
+  struct NodePeerConfig {
     std::string host;
     uint16_t port;
   };
 
   struct NodeConfig {
     int id;
-    std::vector<NodeCoreConfig> cores;
+    NodePeerConfig worker_peer;
   };
 
   int node_id() const { return id; }
- private:
+  const NodeConfig &config() const {
+    if (!all_config[id])
+      std::abort();
+    return all_config[id].value();
+  }
+
+  void RunNodeServer();
+
   static constexpr size_t kMaxNrNode = 1024;
-  std::array<NodeConfig, kMaxNrNode> all_config;
+ private:
+  std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;
+  size_t max_node_id;
 };
 
 }

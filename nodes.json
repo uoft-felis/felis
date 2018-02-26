@@ -1,8 +1,8 @@
 {
-  "1": [
-    {"host": "localhost", "port": 1080},
-  ],
-  "2": [
-    {"host": "localhost", "port": 1081},
-  ]
+  "1": {
+    "worker": {"host": "localhost", "port": 1080},
+  },
+  "2": {
+    "worker": {"host": "localhost", "port": 1081},
+  }
 }
