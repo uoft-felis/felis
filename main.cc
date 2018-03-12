@@ -48,6 +48,8 @@ class MemoryPoolModule : public Module<CoreModule> {
   }
 };
 
+static MemoryPoolModule mem_pool_module;
+
 class CoroutineModule : public Module<CoreModule> {
  public:
   void Init() override {
@@ -57,6 +59,8 @@ class CoroutineModule : public Module<CoreModule> {
     return "Coroutine Thread Pool";
   }
 };
+
+static CoroutineModule coroutine_module;
 
 }
 
