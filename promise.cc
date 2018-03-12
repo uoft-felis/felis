@@ -2,12 +2,13 @@
 #include "gopp/gopp.h"
 #include "node_config.h"
 #include <queue>
+#include "util.h"
 
 using util::Instance;
 
 namespace dolly {
 
-static PromiseRoutinePool *CreateRoutinePool(size_t size)
+PromiseRoutinePool *PromiseRoutinePool::Create(size_t size)
 {
   PromiseRoutinePool *p = (PromiseRoutinePool *) malloc(sizeof(PromiseRoutinePool) + size);
   p->mem_size = size;
@@ -41,7 +42,7 @@ void PromiseRoutine::UnRefRecursively()
 
 PromiseRoutine *PromiseRoutine::CreateWithDedicatePool(size_t capture_len)
 {
-  auto *p = CreateRoutinePool(sizeof(PromiseRoutine) + capture_len);
+  auto *p = PromiseRoutinePool::Create(sizeof(PromiseRoutine) + capture_len);
   auto *r = (PromiseRoutine *) p->mem;
   r->capture_len = capture_len;
   r->capture_data = p->mem + sizeof(PromiseRoutine);
@@ -147,39 +148,9 @@ uint8_t *PromiseRoutine::DecodeNode(uint8_t *p, PromiseRoutinePool *rpool)
   return p;
 }
 
-// TODO: testing only, transport using a file
-static void TransportPromiseRoutine(PromiseRoutine *routine)
-{
-  size_t buffer_size = routine->TreeSize();
-  printf("Tree size %ld\n", buffer_size);
-  uint8_t *buffer = (uint8_t *) malloc(buffer_size);
-  routine->EncodeTree(buffer);
-  FILE *fp = fopen(std::to_string(routine->node_id).c_str(), "w");
-  fwrite(&buffer_size, 8, 1, fp);
-  fwrite(buffer, buffer_size, 1, fp);
-  fclose(fp);
-  free(buffer);
-}
-
-// TODO: testing only. should parse from network/RDMA packets.
-static void ParsePromiseRoutine()
-{
-  FILE *fp = fopen(std::to_string(Instance<NodeConfiguration>().node_id()).c_str(), "r");
-  size_t buffer_size;
-  (void) fread(&buffer_size, 8, 1, fp);
-  PromiseRoutinePool *pool = CreateRoutinePool(buffer_size);
-  (void) fread(pool->mem, buffer_size, 1, fp);
-  fclose(fp);
-
-  auto r = PromiseRoutine::CreateFromBufferedPool(pool);
-
-  // TODO: testing only. add to pool 1.
-  go::GetSchedulerFromPool(1)->WakeUp(
-      go::Make([r]() { r->callback(r); }));
-}
-
 void BasePromise::Complete(const VarStr &in)
 {
+  auto &configuration = util::Instance<NodeConfiguration>();
   for (auto routine: handlers) {
     routine->input = in;
 
@@ -197,7 +168,7 @@ void BasePromise::Complete(const VarStr &in)
           go::Make([routine]() { routine->callback(routine); }));
 
     } else {
-      TransportPromiseRoutine(routine);
+      configuration.TransportPromiseRoutine(routine);
       routine->input.data = nullptr;
       routine->UnRefRecursively();
     }
@@ -212,6 +183,35 @@ std::atomic<BaseCombinerState *> BaseCombinerState::gStatesTable[BaseCombinerSta
 // #define SAMPLE_PROMISE
 
 #ifdef SAMPLE_PROMISE
+
+static void TransportPromiseRoutine(PromiseRoutine *routine)
+{
+  size_t buffer_size = routine->TreeSize();
+  printf("Tree size %ld\n", buffer_size);
+  uint8_t *buffer = (uint8_t *) malloc(buffer_size);
+  routine->EncodeTree(buffer);
+  FILE *fp = fopen(std::to_string(routine->node_id).c_str(), "w");
+  fwrite(&buffer_size, 8, 1, fp);
+  fwrite(buffer, buffer_size, 1, fp);
+  fclose(fp);
+  free(buffer);
+}
+
+static void ParsePromiseRoutine()
+{
+  FILE *fp = fopen(std::to_string(Instance<NodeConfiguration>().node_id()).c_str(), "r");
+  size_t buffer_size;
+  (void) fread(&buffer_size, 8, 1, fp);
+  PromiseRoutinePool *pool = PromiseRoutinePool::Create(buffer_size);
+  (void) fread(pool->mem, buffer_size, 1, fp);
+  fclose(fp);
+
+  auto r = PromiseRoutine::CreateFromBufferedPool(pool);
+
+  // TODO: testing only. add to pool 1.
+  go::GetSchedulerFromPool(1)->WakeUp(
+      go::Make([r]() { r->callback(r); }));
+}
 
 using namespace dolly;
 using namespace sql;

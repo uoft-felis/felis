@@ -34,7 +34,10 @@ struct PromiseRoutinePool {
   bool IsManaging(const uint8_t *ptr) const {
     return (ptr >= mem && ptr < mem + mem_size);
   }
+
+  static PromiseRoutinePool *Create(size_t size);
 };
+
 
 struct PromiseRoutine {
   VarStr input;

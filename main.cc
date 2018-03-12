@@ -25,6 +25,41 @@ void show_usage(const char *progname)
   std::exit(-1);
 }
 
+namespace dolly {
+
+class MemoryPoolModule : public Module<CoreModule> {
+ public:
+  void Init() override {
+    Epoch::InitPools();
+
+    mem::InitThreadLocalRegions(Epoch::kNrThreads);
+    for (int i = 0; i < Epoch::kNrThreads; i++) {
+      auto &r = mem::GetThreadLocalRegion(i);
+      r.ApplyFromConf("mem.json");
+      // logger->info("setting up regions {}", i);
+      r.InitPools(i / mem::kNrCorePerNode);
+    }
+
+    VHandle::InitPools();
+    Txn::InitPools();
+  }
+  std::string name() const override {
+    return "Memory Pool";
+  }
+};
+
+class CoroutineModule : public Module<CoreModule> {
+ public:
+  void Init() override {
+    go::InitThreadPool(Epoch::kNrThreads);
+  }
+  std::string name() const override {
+    return "Coroutine Thread Pool";
+  }
+};
+
+}
+
 int main(int argc, char *argv[])
 {
   int opt;
@@ -72,25 +107,7 @@ int main(int argc, char *argv[])
 
   logger->info("Running {} workload", workload_name);
 
-  dolly::Epoch::InitPools();
-
-  mem::InitThreadLocalRegions(dolly::Epoch::kNrThreads);
-  for (int i = 0; i < dolly::Epoch::kNrThreads; i++) {
-    auto &r = mem::GetThreadLocalRegion(i);
-    r.ApplyFromConf("mem.json");
-    logger->info("setting up regions {}", i);
-    r.InitPools(i / mem::kNrCorePerNode);
-  }
-
-  dolly::VHandle::InitPools();
-  dolly::Txn::InitPools();
-
-  logger->info("memory ready");
-
-  logger->info("setting up co-routine thread pool");
-  go::InitThreadPool(dolly::Epoch::kNrThreads);
-
-  logger->info("loading base dataset");
+  dolly::Module<dolly::CoreModule>::InitAllModules();
   dolly::Module<dolly::WorkloadModule>::InitAllModules();
 
   // FIXME:

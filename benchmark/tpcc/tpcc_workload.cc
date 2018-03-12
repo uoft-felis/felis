@@ -197,12 +197,13 @@ static void LoadTPCCDataSet()
 class TPCCModule : public Module<WorkloadModule> {
  public:
   void Init() override {
-    logger->info("Initializing TPCC Workload");
     BaseRequest::MergeFactoryMap(kTPCCFactoryMap);
     // just to initialize this
     Instance<tpcc::TPCCTableHandles>();
     LoadTPCCDataSet();
-    logger->info("done.");
+  }
+  std::string name() const override {
+    return "TPC-C";
   }
 };
 

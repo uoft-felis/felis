@@ -1,9 +1,13 @@
 #ifndef MODULE_H
 #define MODULE_H
 
+#include <string>
+#include "log.h"
+
 namespace dolly {
 
 enum ModuleType {
+  CoreModule,
   WorkloadModule,
   ExportModule,
 };
@@ -18,6 +22,7 @@ class Module {
  public:
   Module();
   virtual void Init() = 0;
+  virtual std::string name() const { return std::string("NoName"); }
   static void InitAllModules();
 };
 
@@ -33,8 +38,10 @@ void Module<Type>::InitAllModules()
 {
   auto p = head();
   while (p) {
+    logger->info("Loading {} module", p->name());
     p->Init();
     p = p->next;
+    logger->info("{} module initialized", p->name());
   }
 }
 

@@ -36,7 +36,8 @@ set(SRCS epoch.cc txn.cc log.cc vhandle.cc index.cc mem.cc promise.cc masstree_i
   gopp/gopp.cc gopp/channels.cc gopp/asm.S
   masstree/kvthread.cc masstree/string.cc masstree/straccum.cc)
 
-set(LIBS numa pthread libjemalloc.a)
+set(APP -Wl,--whole-archive tpcc -Wl,--no-whole-archive)
+set(LIBS dl numa pthread libjemalloc.a)
 
 add_executable(db client.cc main.cc
   ${SRCS}
@@ -44,8 +45,7 @@ add_executable(db client.cc main.cc
 
 add_subdirectory(benchmark/tpcc/)
 add_subdirectory(chkpt/)
-
-target_link_libraries(db ${LIBS})
+target_link_libraries(db ${LIBS} ${APP})
 target_include_directories(db PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/spdlog/include/)
 
 if (ENABLE_TEST)

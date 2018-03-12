@@ -1,3 +1,3 @@
-target_sources(db PRIVATE ${CMAKE_CURRENT_LIST_DIR}/tpcc.cc ${CMAKE_CURRENT_LIST_DIR}/tpcc_workload.cc)
-include_directories(${PROJECT_SOURCE_DIR})
+add_library(tpcc STATIC ${CMAKE_CURRENT_LIST_DIR}/tpcc.cc ${CMAKE_CURRENT_LIST_DIR}/tpcc_workload.cc)
+target_include_directories(tpcc PRIVATE ${PROJECT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/spdlog/include/)
 

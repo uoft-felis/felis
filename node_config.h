@@ -2,8 +2,12 @@
 #include <vector>
 #include <array>
 #include "util.h"
+#include "gopp/channels.h"
 
 namespace dolly {
+
+class NodeServerRoutine;
+class PromiseRoutine;
 
 class NodeConfiguration {
   NodeConfiguration();
@@ -32,10 +36,13 @@ class NodeConfiguration {
   }
 
   void RunNodeServer();
+  void TransportPromiseRoutine(PromiseRoutine *routine);
 
   static constexpr size_t kMaxNrNode = 1024;
  private:
+  friend class NodeServerRoutine;
   std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;
+  std::array<go::TcpSocket *, kMaxNrNode> all_nodes;
   size_t max_node_id;
 };
 
