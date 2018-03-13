@@ -15,6 +15,9 @@ clang++
 -isystem/nix/store/zg2rbsm898sxgz27ps8vg006gywbcggc-gcc-6.4.0/include/c++/6.4.0/x86_64-unknown-linux-gnu
 -isystem/nix/store/5zvimsqh3dwbdmb0sar2r674i14vf4zg-clang-5.0.1/lib/clang/5.0.1/include
 -isystem/nix/store/aficfjm81yiklfygq03y87vp5k8h28mr-glibc-2.26-131-dev/include
+-isystem/nix/store/58smhrar2s9b8mjl9csn2k3wbli8017x-cpp-netlib-0.12.0/include
+-isystem/nix/store/mms6k9bjbdmk6s63c3wgijwkgmhn2n42-asio-1.10.8/include
+-isystem/nix/store/pf6i9aisgyjdvs0i3xvari0m6asdfpd7-boost-1.66_0-dev/include
 
 -DCACHE_LINE_SIZE=64
 -DNR_THREADS=8

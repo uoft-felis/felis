@@ -4,6 +4,7 @@
 
 #include "json11/json11.hpp"
 #include "node_config.h"
+#include "console.h"
 #include "log.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -17,13 +18,19 @@ NodeConfiguration *NodeConfiguration::instance = nullptr;
 
 static const std::string kNodeConfiguration = "nodes.json";
 
+static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, std::string name)
+{
+  NodeConfiguration::NodePeerConfig conf;
+  auto &json_map = json.object_items().find(name)->second.object_items();
+  conf.host = json_map.find("host")->second.string_value();
+  conf.port = (uint16_t) json_map.find("port")->second.int_value();
+  return conf;
+}
+
 static void ParseNodeConfig(util::Optional<NodeConfiguration::NodeConfig> &config, json11::Json json)
 {
-  // TOOD: parse the epoch manager settings too!
-  auto &json_map = json.object_items().find("worker")->second.object_items();
-
-  config->worker_peer.host = json_map.find("host")->second.string_value();
-  config->worker_peer.port = (uint16_t) json_map.find("port")->second.int_value();
+  config->worker_peer = ParseNodePeerConfig(json, "worker");
+  config->web_conf = ParseNodePeerConfig(json, "web");
 }
 
 NodeConfiguration::NodeConfiguration()
@@ -87,15 +94,21 @@ class NodeServerThreadRoutine : public go::Routine {
 class NodeServerRoutine : public go::Routine {
  public:
   virtual void Run() final {
+    auto &console = util::Instance<Console>();
+
     auto server_sock = new TcpSocket(1024, 1024);
     auto &configuration = Instance<NodeConfiguration>();
     auto &node_conf = configuration.config();
-    if (!server_sock->Bind(node_conf.worker_peer.host, node_conf.worker_peer.port)) {
+
+    if (!server_sock->Bind("0.0.0.0", node_conf.worker_peer.port)) {
       std::abort();
     }
     if (!server_sock->Listen(NodeConfiguration::kMaxNrNode)) {
       std::abort();
     }
+    console.UpdateServerStatus("listening");
+
+    console.WaitForServerStatus("connecting");
     // Now if anybody else tries to connect to us, it should be in the listener
     // queue. We are safe to call connect at this point. It shouldn't lead to
     // deadlock.
@@ -116,10 +129,13 @@ class NodeServerRoutine : public go::Routine {
   }
 };
 
+void RunConsoleServer(std::string netmask, std::string service_port);
 
-void NodeConfiguration::RunNodeServer()
+void NodeConfiguration::RunAllServers()
 {
+  RunConsoleServer("0.0.0.0", std::to_string(config().web_conf.port));
   logger->info("Starting node server with id {}", node_id());
+  go::GetSchedulerFromPool(1)->WakeUp(new NodeServerRoutine());
 }
 
 void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)

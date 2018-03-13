@@ -2,6 +2,7 @@
 #define MODULE_H
 
 #include <string>
+#include <cstdio>
 #include "log.h"
 
 namespace dolly {
@@ -24,13 +25,16 @@ class Module {
   virtual void Init() = 0;
   virtual std::string name() const { return std::string("NoName"); }
   static void InitAllModules();
+  static void ShowModules();
 };
 
 template <int Type>
 Module<Type>::Module()
 {
-  next = head();
-  head() = this;
+  Module<Type> **p = &head();
+  while (*p) p = &((*p)->next);
+  *p = this;
+  next = nullptr;
 }
 
 template <int Type>
@@ -40,8 +44,18 @@ void Module<Type>::InitAllModules()
   while (p) {
     logger->info("Loading {} module", p->name());
     p->Init();
-    p = p->next;
     logger->info("{} module initialized", p->name());
+    p = p->next;
+  }
+}
+
+template <int Type>
+void Module<Type>::ShowModules()
+{
+  auto p = head();
+  while (p) {
+    logger->info("Found module {}", p->name());
+    p = p->next;
   }
 }
 

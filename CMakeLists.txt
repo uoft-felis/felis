@@ -28,7 +28,7 @@ set_source_files_properties(gopp/asm.S PROPERTIES COMPILE_FLAGS "-x assembler-wi
 set_source_files_properties(masstree/kvthread.cc masstree/string.cc masstree/straccum.cc PROPERTIES COMPILE_FLAGS "-include masstree/build/config.h")
 
 set(SRCS epoch.cc txn.cc log.cc vhandle.cc index.cc mem.cc promise.cc masstree_index_impl.cc
-  node_config.cc
+  node_config.cc console.cc console_server.cc
   dolly_probes.cc
   fpcore.cc 
   json11/json11.cpp
@@ -37,7 +37,7 @@ set(SRCS epoch.cc txn.cc log.cc vhandle.cc index.cc mem.cc promise.cc masstree_i
   masstree/kvthread.cc masstree/string.cc masstree/straccum.cc)
 
 set(APP -Wl,--whole-archive tpcc -Wl,--no-whole-archive)
-set(LIBS dl numa pthread libjemalloc.a)
+set(LIBS dl numa pthread libjemalloc.a cppnetlib-server-parsers)
 
 add_executable(db client.cc main.cc
   ${SRCS}
@@ -46,7 +46,9 @@ add_executable(db client.cc main.cc
 add_subdirectory(benchmark/tpcc/)
 add_subdirectory(chkpt/)
 target_link_libraries(db ${LIBS} ${APP})
-target_include_directories(db PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/spdlog/include/)
+target_include_directories(db PRIVATE
+  ${CMAKE_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/spdlog/include/)
 
 if (ENABLE_TEST)
   enable_testing()

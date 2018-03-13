@@ -26,6 +26,7 @@ class NodeConfiguration {
   struct NodeConfig {
     int id;
     NodePeerConfig worker_peer;
+    NodePeerConfig web_conf;
   };
 
   int node_id() const { return id; }
@@ -35,7 +36,7 @@ class NodeConfiguration {
     return all_config[id].value();
   }
 
-  void RunNodeServer();
+  void RunAllServers();
   void TransportPromiseRoutine(PromiseRoutine *routine);
 
   static constexpr size_t kMaxNrNode = 1024;

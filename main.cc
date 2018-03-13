@@ -9,6 +9,8 @@
 #include "epoch.h"
 #include "index.h"
 #include "client.h"
+#include "node_config.h"
+
 #include "module.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -26,6 +28,21 @@ void show_usage(const char *progname)
 }
 
 namespace dolly {
+
+class LoggingModule : public Module<CoreModule> {
+ public:
+  void Init() override {
+    InitializeLogger();
+
+    std::ofstream pid_fout("/tmp/dolly.pid");
+    pid_fout << (unsigned long) getpid();
+  }
+  std::string name() const override {
+    return "Logging";
+  }
+};
+
+static LoggingModule logging_module;
 
 class MemoryPoolModule : public Module<CoreModule> {
  public:
@@ -62,37 +79,29 @@ class CoroutineModule : public Module<CoreModule> {
 
 static CoroutineModule coroutine_module;
 
+class NodeServerModule : public Module<CoreModule> {
+ public:
+  void Init() override {
+    util::Instance<NodeConfiguration>().RunAllServers();
+  }
+  std::string name() const override {
+    return std::string("DB Node Server");
+  }
+};
+
+static NodeServerModule server_module;
+
 }
 
 int main(int argc, char *argv[])
 {
   int opt;
-  bool replay_from_file = false;
-  int timer_skip = -1;
-  int timer_force_terminate = -1;
-  bool chkpt = false;
-  std::string chkpt_format;
   std::string workload_name;
-
-  InitializeLogger();
 
   while ((opt = getopt(argc, argv, "rw:s:c:t:")) != -1) {
     switch (opt) {
-      case 'r':
-        replay_from_file = true;
-        break;
       case 'w':
         workload_name = std::string(optarg);
-        break;
-      case 's':
-        timer_skip = atoi(optarg);
-        break;
-      case 't':
-        timer_force_terminate = atoi(optarg);
-        break;
-      case 'c':
-        chkpt = true;
-        chkpt_format = std::string(optarg);
         break;
       default:
         show_usage(argv[0]);
@@ -104,49 +113,13 @@ int main(int argc, char *argv[])
     show_usage(argv[0]);
     return -1;
   }
-  {
-    std::ofstream pid_fout("/tmp/dolly.pid");
-    pid_fout << (unsigned long) getpid();
-  }
 
   logger->info("Running {} workload", workload_name);
+  dolly::Module<dolly::CoreModule>::ShowModules();
+  dolly::Module<dolly::WorkloadModule>::ShowModules();
 
   dolly::Module<dolly::CoreModule>::InitAllModules();
   dolly::Module<dolly::WorkloadModule>::InitAllModules();
-
-  // FIXME:
-  // goto chkpt;
-  {
-    auto epoch_ch = new go::BufferChannel(sizeof(void *));
-    std::mutex m;
-    m.lock();
-
-    auto epoch_fetcher = new dolly::ClientFetcher(epoch_ch, workload_name);
-    auto epoch_executor = new dolly::ClientExecutor(epoch_ch, &m, epoch_fetcher);
-
-    epoch_fetcher->set_replay_from_file(replay_from_file);
-
-    if (timer_skip > 0)
-      epoch_fetcher->set_timer_skip_epoch(timer_skip);
-    if (timer_force_terminate > 0)
-      epoch_fetcher->set_timer_force_terminate(timer_force_terminate);
-
-    go::GetSchedulerFromPool(1)->WakeUp(epoch_fetcher);
-    go::GetSchedulerFromPool(2)->WakeUp(epoch_executor);
-
-    m.lock(); // waits
-    go::WaitThreadPool();
-  }
-  // chkpt:
-  // go::WaitThreadPool();
-  // everybody quits. time to dump a checkpoint
-  if (chkpt) {
-    PerfLog p;
-    dolly::Module<dolly::ExportModule>::InitAllModules();
-    auto p_chkpt_impl = dolly::Checkpoint::checkpoint_impl(chkpt_format);
-    p_chkpt_impl->Export();
-    p.Show("checkpoint takes");
-  }
 
   return 0;
 }
