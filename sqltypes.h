@@ -559,4 +559,10 @@ template <typename ...Types> using Tuple = Object<TupleImpl<Types...>>;
 
 }
 
+namespace dolly {
+
+using VarStr = sql::VarStr;
+
+}
+
 #endif /* SQLTYPES_H */

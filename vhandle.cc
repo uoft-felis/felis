@@ -4,24 +4,9 @@
 #include "util.h"
 #include "log.h"
 #include "vhandle.h"
-#include "epoch.h"
+#include "node_config.h"
 
 namespace dolly {
-
-template <typename VHandle>
-void ErmiaEpochGCRule::operator()(VHandle &handle, uint64_t sid)
-{
-  uint64_t ep = Epoch::CurrentEpochNumber();
-  if (ep > last_gc_epoch) {
-    // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
-    handle.GarbageCollect();
-    DTRACE_PROBE3(dolly, versions_per_epoch_on_gc, &handle, ep - 1, handle.nr_versions());
-    min_of_epoch = sid;
-    last_gc_epoch = ep;
-  }
-
-  if (min_of_epoch > sid) min_of_epoch = sid;
-}
 
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
@@ -59,13 +44,13 @@ void SortedArrayVHandle::EnsureSpace()
   }
 }
 
-bool SortedArrayVHandle::AppendNewVersion(uint64_t sid)
+bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
   bool expected = false;
   if (!lock.compare_exchange_strong(expected, true)) {
     return false;
   }
-  gc_rule(*this, sid);
+  gc_rule(*this, sid, epoch_nr);
 
   size++;
   EnsureSpace();
@@ -206,7 +191,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   return (VarStr *) *addr;
 }
 
-bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run)
+bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run)
 {
   assert(this);
   // Writing to exact location
@@ -239,10 +224,9 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_ga
     gSpinnerSlots.NotifyAll(bitmap);
 
     if (obj == nullptr && it - versions == size - 1) {
-      is_garbage = true;
+      // deleted garbage
     }
   }
-  is_garbage = false;
   return true;
 }
 
@@ -272,8 +256,8 @@ mem::Pool *BaseVHandle::pools;
 
 static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
 {
-  auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * Epoch::kNrThreads);
-  for (int i = 0; i < Epoch::kNrThreads; i++) {
+  auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * NodeConfiguration::kNrThreads);
+  for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
     new (&pools[i]) mem::Pool(ele_size, nr_ele, i / mem::kNrCorePerNode);
   }
   return pools;
@@ -296,14 +280,14 @@ void LinkListVHandle::Entry::InitPools()
   pools = InitPerCorePool(32, 16 << 20);
 }
 
-bool LinkListVHandle::AppendNewVersion(uint64_t sid)
+bool LinkListVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
   bool expected = false;
   if (!lock.compare_exchange_strong(expected, true)) {
     return false;
   }
 
-  gc_rule(*this, sid);
+  gc_rule(*this, sid, epoch_nr);
 
   Entry **p = &head;
   Entry *cur = head;
@@ -340,7 +324,7 @@ VarStr *LinkListVHandle::ReadWithVersion(uint64_t sid)
   return (VarStr *) *addr;
 }
 
-bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run)
+bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run)
 {
   assert(this);
   Entry *p = head;
@@ -370,10 +354,9 @@ bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garba
     gSpinnerSlots.NotifyAll(bitmap);
 
     if (obj == nullptr && p->next == nullptr) {
-      is_garbage = true;
+      // delete the garbage
     }
   }
-  is_garbage = false;
   return true;
 }
 
@@ -413,18 +396,18 @@ CalvinVHandle::CalvinVHandle()
   obj = nullptr;
 }
 
-bool CalvinVHandle::AppendNewVersion(uint64_t sid)
+bool CalvinVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
-  return AppendNewAccess(sid);
+  return AppendNewAccess(sid, epoch_nr);
 }
 
-bool CalvinVHandle::AppendNewAccess(uint64_t sid, bool is_read)
+bool CalvinVHandle::AppendNewAccess(uint64_t sid, uint64_t epoch_nr, bool is_read)
 {
   bool expected = false;
   if (!lock.compare_exchange_strong(expected, true))
     return false;
 
-  gc_rule(*this, sid);
+  gc_rule(*this, sid, epoch_nr);
 
   size++;
   EnsureSpace();
@@ -513,17 +496,18 @@ bool CalvinVHandle::PeekForTurn(uint64_t sid)
   return false;
 }
 
-bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run)
+bool CalvinVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run)
 {
   uint64_t turn = WaitForTurn(sid);
 
   if (!dry_run) {
     delete this->obj;
     this->obj = obj;
-    is_garbage = (obj == nullptr && pos.load() == size - 1);
+    if (obj == nullptr && pos.load() == size - 1) {
+      // delete the garbage
+    }
     pos.fetch_add(1);
   }
-  is_garbage = false;
   return true;
 }
 
@@ -535,8 +519,7 @@ VarStr *CalvinVHandle::ReadWithVersion(uint64_t sid)
 
   uint64_t turn = WaitForTurn(sid);
   VarStr *o = obj;
-  if ((turn & 0x01) == 0) {
-    // I only need to read this record, so advance the pos. Otherwise, I do not
+  if ((turn & 0x01) == 0) {    // I only need to read this record, so advance the pos. Otherwise, I do not
     // need to advance the pos, because I will write to this later.
     pos.fetch_add(1);
   }

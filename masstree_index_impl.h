@@ -29,18 +29,17 @@ class MasstreeIndex {
     int relation_id;
     bool relation_read_only;
     uint64_t sid;
-    CommitBuffer *buffer;
 
     VarStr cur_key;
 
     Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
              const VarStr *terminate_key,
              int relation_id, bool read_only,
-             uint64_t sid, CommitBuffer &buffer);
+             uint64_t sid);
 
     Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
-             int relation_id, bool read_only, uint64_t sid, CommitBuffer &buffer)
-        : Iterator(scan_it, nullptr, relation_id, read_only, sid, buffer) {}
+             int relation_id, bool read_only, uint64_t sid)
+        : Iterator(scan_it, nullptr, relation_id, read_only, sid) {}
 
     void AdaptKey();
 
@@ -66,20 +65,19 @@ class MasstreeIndex {
   struct {
     uint64_t add_cnt;
     uint64_t del_cnt;
-  } nr_keys [NR_THREADS]; // scalable counting
+  } nr_keys [NodeConfiguration::kMaxNrThreads]; // scalable counting
 
  public:
   VHandle *InsertOrCreate(const VarStr *k);
   VHandle *Search(const VarStr *k);
 
-  Iterator IndexSearchIterator(const VarStr *k, int relation_id, bool read_only, uint64_t sid,
-                               CommitBuffer &buffer);
+  Iterator IndexSearchIterator(const VarStr *k, int relation_id, bool read_only, uint64_t sid);
   Iterator IndexSearchIterator(const VarStr *start, const VarStr *end, int relation_id, bool read_only,
-                               uint64_t sid, CommitBuffer &buffer);
+                               uint64_t sid);
 
   size_t nr_unique_keys() const {
     size_t rs = 0;
-    for (int i = 0; i < NR_THREADS; i++) {
+    for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
       rs += nr_keys[i].add_cnt - nr_keys[i].del_cnt;
     }
     return rs;
@@ -97,7 +95,6 @@ class RelationManager : public RelationManagerPolicy<Relation> {
   threadinfo *ti;
 
   RelationManager();
-  static RelationManager *instance;
   template <typename T> friend T &util::Instance();
  public:
   threadinfo *GetThreadInfo() { return ti; }

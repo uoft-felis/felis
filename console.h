@@ -14,7 +14,6 @@ class Console {
   std::condition_variable cond;
   std::string server_status;
 
-  static Console *instance;
   template <typename T> friend T &util::Instance();
 
  public:
@@ -31,6 +30,8 @@ class Console {
   }
 
   std::string HandleAPI(std::string uri);
+ private:
+  void StartClient();
 };
 
 }

@@ -9,11 +9,10 @@
 
 #include "mem.h"
 #include "log.h"
-#include "epoch.h"
-#include "txn.h"
 #include "util.h"
 
 #include "vhandle.h"
+#include "node_config.h"
 
 namespace dolly {
 
@@ -91,6 +90,11 @@ class RelationManagerPolicy : public RelationManagerBase {
 #endif
     return relations[fid];
   }
+
+  T &operator()(int fid) {
+    return GetRelationOrCreate(fid);
+  }
+
  protected:
   std::array<T, kMaxNrRelations> relations;
 };
@@ -99,107 +103,35 @@ template <class IndexPolicy>
 class RelationPolicy : public BaseRelation,
 		       public IndexPolicy {
  public:
-  void SetupReExec(const VarStr *k, uint64_t sid, VarStr *obj = (VarStr *) kPendingValue) {
+
+  VHandle *SetupReExec(const VarStr *k, uint64_t sid, uint64_t epoch_nr, VarStr *obj = (VarStr *) kPendingValue) {
     auto handle = this->InsertOrCreate(k);
-    while (!handle->AppendNewVersion(sid)) {
+    while (!handle->AppendNewVersion(sid, epoch_nr)) {
       asm("pause" : : :"memory");
     }
     if (obj != (void *) kPendingValue) {
-      bool is_garbage;
-      if (!handle->WriteWithVersion(sid, obj, is_garbage)) {
+      if (!handle->WriteWithVersion(sid, obj, epoch_nr)) {
         logger->error("Diverging outcomes during setup setup");
         std::abort();
       }
     }
+    return handle;
   }
 
-  bool SetupReExecSync(const VarStr *k, uint64_t sid) {
-    SetupReExec(k, sid);
+  VHandle *InitValue(const VarStr *k, VarStr *obj) {
+    return SetupReExec(k, 0, 0, obj);
+  }
+
+  bool SetupReExecSync(const VarStr *k, uint64_t sid, uint64_t epoch_nr) {
+    SetupReExec(k, sid, epoch_nr);
     return true;
   }
 
-  bool SetupReExecAsync(const VarStr *k, uint64_t sid) {
+  VHandle *SetupReExecAsync(const VarStr *k, uint64_t sid, uint64_t epoch_nr) {
     auto handle = this->InsertOrCreate(k);
-    return handle->AppendNewVersion(sid);
-  }
-
-#ifdef CALVIN_REPLAY
-  bool SetupReExecAccessAsync(const VarStr *k, uint64_t sid) {
-    auto handle = this->InsertOrCreate(k);
-    return handle->AppendNewAccess(sid, true);
-  }
-#endif
-
-  const VarStr *Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
-    DTRACE_PROBE3(dolly, index_get, id, (const void *) k, sid);
-#ifdef CALVIN_REPLAY
-    if (is_read_only()) {
-      return this->Search(k)->DirectRead();
-    }
-#endif
-
-    auto *e = buffer.GetEntry(id, k);
-    const VarStr *o = buffer.Get(e);
-    if (o) return o;
-
-    VHandle *handle = e ? e->handle : this->Search(k);
-    return handle->ReadWithVersion(sid);
-  }
-
-  template <typename T>
-  const T Get(const VarStr *k, uint64_t sid, CommitBuffer &buffer) {
-    const VarStr *o = Get(k, sid, buffer);
-    return o->ToType<T>();
-  }
-
-  void Put(const VarStr *k, uint64_t sid, VarStr *obj, CommitBuffer &buffer) {
-    buffer.Put(id, std::move(k), obj);
-#ifndef NDEBUG
-    // Dry run to test. Extremely helpful for debugging deadlock
-    bool is_garbage;
-    if (!this->Search(k)->WriteWithVersion(sid, obj, is_garbage, true)) {
-      logger->error("Diverging outcomes!");
-      std::abort();
-    }
-#endif
-  }
-
-  void Scan(const VarStr *k, uint64_t sid, CommitBuffer &buffer,
-	    std::function<bool (const VarStr *k, const VarStr *v)> callback) {
-    CallScanCallback(this->SearchIterator(k, sid, buffer), sid, buffer, callback);
-  }
-
-  void Scan(const VarStr *start, const VarStr *end, uint64_t sid,
-	    CommitBuffer &buffer,
-	    std::function<bool (const VarStr *k, const VarStr *v)> callback) {
-    CallScanCallback(this->SearchIterator(start, end, sid, buffer), sid, buffer, callback);
-  }
-
-  typename IndexPolicy::Iterator SearchIterator(const VarStr *k, uint64_t sid,
-                                                CommitBuffer &buffer) {
-    auto it = this->IndexSearchIterator(k, id, is_read_only(), sid, buffer);
-    return it;
-  }
-
-  typename IndexPolicy::Iterator SearchIterator(const VarStr *start, const VarStr *end,
-                                                uint64_t sid, CommitBuffer &buffer) {
-    auto it = this->IndexSearchIterator(start, end, id, is_read_only(), sid, buffer);
-    return it;
-  }
-
- private:
-  void CallScanCallback(typename IndexPolicy::Iterator it, uint64_t sid,
-			CommitBuffer &buffer,
-			std::function<bool (const VarStr *k, const VarStr *v)> callback) {
-    while (it.IsValid()) {
-      const VarStr &key = it.key();
-      const VarStr *value = it.object();
-
-      bool should_continue = callback(&key, value);
-      if (!should_continue) break;
-
-      it.Next();
-    }
+    if (!handle->AppendNewVersion(sid, epoch_nr))
+      return nullptr;
+    return handle;
   }
 };
 

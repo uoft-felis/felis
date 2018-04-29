@@ -3,6 +3,7 @@
 
 #include <type_traits>
 #include <vector>
+#include <tuple>
 #include <atomic>
 #include <experimental/optional>
 #include "sqltypes.h"
@@ -10,6 +11,12 @@
 namespace dolly {
 
 using sql::VarStr;
+
+template <typename... Args>
+auto T(Args&&... args) -> decltype(std::make_tuple(std::forward<Args>(args)...)) {
+  return std::make_tuple(std::forward<Args>(args)...);
+}
+
 
 // Distributed Promise system. We can use promise to define the intra
 // transaction dependencies. The dependencies have to be acyclic.
@@ -73,12 +80,20 @@ struct PromiseRoutine {
   static PromiseRoutine *CreateFromBufferedPool(PromiseRoutinePool *pool);
 };
 
+class PromiseRoutineTransportService {
+ public:
+  virtual int node_id() const = 0;
+  virtual void TransportPromiseRoutine(PromiseRoutine *routine) = 0;
+};
+
 class BasePromise {
  protected:
   friend struct PromiseRoutine;
   std::atomic<long> refcnt;
   std::vector<PromiseRoutine *> handlers;
  public:
+  static size_t kNrThreads;
+
   BasePromise() : refcnt(1) {}
   void Complete(const VarStr &in);
 
@@ -95,6 +110,8 @@ class BasePromise {
     return r;
   }
 
+  static void InitializeSourceCount(int nr_sources, size_t nr_threads);
+  static void QueueRoutine(PromiseRoutine *r, int source_idx, int thread);
 };
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
@@ -193,27 +210,43 @@ class Promise<VoidValue> : public BasePromise {
   }
 };
 
-class PromiseProc {
-  Promise<DummyValue> *p = new Promise<DummyValue>();
+template <typename T>
+class PromiseStream {
+ protected:
+  Promise<T> *p;
  public:
-  PromiseProc() {}
-  PromiseProc(const PromiseProc &rhs) = delete;
-  PromiseProc(PromiseProc &&rhs) = delete;
+  PromiseStream(Promise<T> *p) : p(p) {}
 
-  ~PromiseProc() {
-    p->Complete(VarStr());
+  Promise<T> *operator->() const {
+    return p;
   }
 
-  Promise<DummyValue> *operator->() const {
+  operator Promise<T>*() const {
     return p;
+  }
+
+  template <typename Closure, typename Placement, typename Func>
+  auto operator>>(std::tuple<Closure, Placement, Func> t) {
+    return PromiseStream<typename Promise<T>::template Next<Func, Closure>::Type>
+        (p->Then(std::get<0>(t), std::get<1>(t), std::get<2>(t)));
+  }
+};
+
+class PromiseProc : public PromiseStream<DummyValue> {
+ public:
+  PromiseProc() : PromiseStream<DummyValue>(new Promise<DummyValue>()) {}
+  PromiseProc(const PromiseProc &rhs) = delete;
+  PromiseProc(PromiseProc &&rhs) = delete;
+  ~PromiseProc() {
+    p->Complete(VarStr());
   }
 };
 
 struct BaseCombinerState {
   std::atomic<long> finished_states;
+  BaseCombinerState() : finished_states(0) {}
 
-  static constexpr size_t kStateTableSize = 1024 * 16; // 16 nodes at max?
-  static std::atomic<BaseCombinerState *> gStatesTable[kStateTableSize];
+  long Finish() { return finished_states.fetch_add(1) + 1; }
 };
 
 template <typename ...Types>
@@ -223,62 +256,51 @@ class CombinerState : public BaseCombinerState, public sql::TupleField<Types...>
   typedef Promise<TupleType> PromiseType;
 };
 
-template <typename CombinerStateType, typename T, typename ...Types>
-static void CombineImplInstall(int node_id, int state_id,
-                               typename CombinerStateType::PromiseType *next_promise, Promise<T> *p) {
+template <typename CombinerStatePtr, typename T, typename ...Types>
+static void CombineImplInstall(int node_id, CombinerStatePtr state_ptr,
+                               typename CombinerStatePtr::Type::PromiseType *next_promise, Promise<T> *p) {
   auto routine = p->AttachRoutine(
-      state_id,
-      [](const int &state_id, T result) -> Optional<typename CombinerStateType::TupleType> {
-        auto state = (CombinerStateType *) BaseCombinerState::gStatesTable[state_id].load();
-     again:
-        if (state == nullptr) {
-          state = new CombinerStateType();
-          BaseCombinerState *old_state = nullptr;
-          if (!BaseCombinerState::gStatesTable[state_id].compare_exchange_strong(old_state, state)) {
-            delete state;
-            state = (CombinerStateType *) old_state;
-            goto again;
-          }
-        }
-        sql::TupleField<T, Types...> *tuple = state;
+      state_ptr,
+      [](const CombinerStatePtr &state_ptr, T result) -> Optional<typename CombinerStatePtr::Type::TupleType> {
+        // We only set the first item in the tuple because of this cast!
+        auto *raw_state_ptr = (typename CombinerStatePtr::Type *) state_ptr;
+        sql::TupleField<T, Types...> *tuple = raw_state_ptr;
         tuple->value = result;
-        if (state->finished_states.fetch_add(1) < sizeof...(Types)) {
+
+        if (state_ptr->Finish() < sizeof...(Types)) {
           return nullopt;
         }
-        typename CombinerStateType::TupleType final_result(*state);
 
-        delete state;
-        BaseCombinerState::gStatesTable[state_id].store(nullptr);
-
+        typename CombinerStatePtr::Type::TupleType final_result(*raw_state_ptr);
         return final_result;
       });
   routine->node_id = node_id;
   routine->next = next_promise->Ref();
 }
 
-template <typename CombinerStateType, typename T, typename ...Types>
-class CombineImpl : public CombineImpl<CombinerStateType, Types...> {
+template <typename CombinerStatePtr, typename T, typename ...Types>
+class CombineImpl : public CombineImpl<CombinerStatePtr, Types...> {
  public:
-  void Install(int node_id, int state_id,
-               typename CombinerStateType::PromiseType *next_promise,
+  void Install(int node_id, CombinerStatePtr state_ptr,
+               typename CombinerStatePtr::Type::PromiseType *next_promise,
                Promise<T> *p, Promise<Types>*... rest) {
-    CombineImplInstall<CombinerStateType, T, Types...>(node_id, state_id, next_promise, p);
-    CombineImpl<CombinerStateType, Types...>::Install(node_id, state_id, next_promise, rest...);
+    CombineImplInstall<CombinerStatePtr, T, Types...>(node_id, state_ptr, next_promise, p);
+    CombineImpl<CombinerStatePtr, Types...>::Install(node_id, state_ptr, next_promise, rest...);
   }
 };
 
-template <typename CombinerStateType, typename T>
-class CombineImpl<CombinerStateType, T> {
+template <typename CombinerStatePtr, typename T>
+class CombineImpl<CombinerStatePtr, T> {
  public:
-  void Install(int node_id, int state_id,
-               typename CombinerStateType::PromiseType *next_promise,
+  void Install(int node_id, CombinerStatePtr state_ptr,
+               typename CombinerStatePtr::Type::PromiseType *next_promise,
                Promise<T> *p) {
-    CombineImplInstall<CombinerStateType, T>(node_id, state_id, next_promise, p);
+    CombineImplInstall<CombinerStatePtr, T>(node_id, state_ptr, next_promise, p);
   }
 };
 
-template <typename ...Types>
-class Combine : public CombineImpl<CombinerState<Types...>, Types...> {
+template <template<typename> typename Ptr, typename ...Types>
+class Combine : public CombineImpl<Ptr<CombinerState<Types...>>, Types...> {
   typedef typename CombinerState<Types...>::PromiseType PromiseType;
   PromiseType *next_promise = new PromiseType();
  public:
@@ -287,6 +309,9 @@ class Combine : public CombineImpl<CombinerState<Types...>, Types...> {
     next_promise->UnRef();
   }
   PromiseType *operator->() {
+    return next_promise;
+  }
+  operator PromiseType*() {
     return next_promise;
   }
 };

@@ -168,11 +168,57 @@ class MixIn : public M... {};
 // instance of a global object. So that we don't need the ugly extern.
 template <class O> O &Instance()
 {
-  if (O::instance != nullptr) return *O::instance;
-  static O obj;
-  O::instance = &obj;
-  return *O::instance;
+  static O o;
+  return o;
 }
+
+template <class O>
+struct InstanceInit {
+  InstanceInit() {
+    Instance<O>();
+  }
+};
+
+// Interface implementation. The real implementation usually is in iface.cc
+template <class IFace> IFace &Impl();
+
+template <typename T, typename ...Args>
+class BaseFactory {
+ public:
+  typedef std::vector<std::function<T *(Args...)>> Table;
+ protected:
+  static Table table;
+  static void AddToTable(std::function<T *(Args...)> f) {
+    table.push_back(f);
+  }
+ public:
+  static T *Create(int n, Args... args) {
+    return table[n](args...);
+  }
+};
+
+template <typename T, typename ...Args>
+typename BaseFactory<T, Args...>::Table BaseFactory<T, Args...>::table;
+
+template <typename T, int LastEnum, typename ...Args>
+class Factory : public Factory<T, LastEnum - 1, Args...> {
+  typedef Factory<T, LastEnum - 1, Args...> Super;
+ public:
+  static void Initialize() {
+    Super::Initialize();
+    Super::AddToTable([](Args... args) {
+        return Factory<T, LastEnum - 1, Args...>::Construct(args...);
+      });
+  }
+  static T *Construct(Args ...args);
+};
+
+template <typename T, typename ...Args>
+class Factory<T, 0, Args...> : public BaseFactory<T, Args...> {
+ public:
+  static void Initialize() {}
+  static T *Construct(Args ...args);
+};
 
 // CPU pinning
 static inline void PinToCPU(int cpu)

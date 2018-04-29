@@ -1,107 +1,117 @@
-// -*- c++ -*-
 #ifndef EPOCH_H
 #define EPOCH_H
 
-#include <cstdlib>
-#include <sys/types.h>
 #include <cstdint>
-#include <vector>
-#include <map>
-#include <mutex>
-#include <functional>
-#include <atomic>
-#include <limits.h>
-
-#include "sqltypes.h"
-#include "txn.h"
-
+#include <array>
+#include "node_config.h"
+#include "util.h"
 #include "mem.h"
-#include "log.h"
-
-#include "gopp/gopp.h"
-#include "gopp/channels.h"
-#include "gopp/barrier.h"
 
 namespace dolly {
 
-class ParseBufferEOF : public std::exception {
- public:
-  virtual const char *what() const noexcept {
-    return "ParseBuffer EOF";
-  }
-};
-
 class Epoch;
+class BaseTxn;
 
-class BaseRequest : public Txn {
+class EpochClient {
  public:
-  // for parsers to create request dynamically
-  static BaseRequest *CreateRequestFromChannel(go::TcpInputChannel *channel, Epoch *epoch);
-
-  // for workload-support plugins
-  typedef std::map<uint8_t, std::function<BaseRequest* (Epoch *)> > FactoryMap;
-  static void LoadWorkloadSupport(const std::string &name);
-  static void MergeFactoryMap(const FactoryMap &extra);
-  static void LoadWorkloadSupportFromConf();
-
-  virtual ~BaseRequest() {}
-  virtual void ParseFromChannel(go::TcpInputChannel *channel) = 0;
-
-  static FactoryMap& GetGlobalFactoryMap() {
-    return factory_map;
-  }
-
- private:
-  static FactoryMap factory_map;
+  virtual ~EpochClient() {}
+  virtual BaseTxn *RunCreateTxn() = 0;
 };
 
-template <class T>
-class Request : public BaseRequest, public T {
-  virtual void ParseFromChannel(go::TcpInputChannel *channel);
-  virtual void RunTxn();
-  virtual int CoreAffinity() const;
+class EpochManager {
+  mem::Pool *pool;
+
+  static EpochManager *instance;
+  template <class T> friend T& util::Instance();
+
+  static constexpr int kMaxConcurrentEpochs = 2;
+  std::array<Epoch *, kMaxConcurrentEpochs> concurrent_epochs;
+  uint64_t cur_epoch_nr;
+
+  EpochManager();
+ public:
+  Epoch *epoch(uint64_t epoch_nr) const;
+  uint8_t *ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const;
+
+  uint64_t current_epoch_nr() const { return cur_epoch_nr; }
+  Epoch *current_epoch() const { return epoch(cur_epoch_nr); }
+
+  void DoAdvance();
 };
 
-class Epoch {
- public:
-  Epoch(std::vector<go::TcpSocket *> socks);
-  ~Epoch();
-  static uint64_t CurrentEpochNumber();
+template <typename T>
+class EpochObject {
+  uint64_t epoch_nr;
+  int node_id;
+  uint64_t offset;
 
-  void *AllocFromBrk(int cpu, size_t sz) {
-    return brks[cpu].Alloc(sz);
+  friend class Epoch;
+  EpochObject(uint64_t epoch_nr, int node_id, uint64_t offset) : epoch_nr(epoch_nr), node_id(node_id), offset(offset) {}
+ public:
+  EpochObject() : epoch_nr(0), node_id(0), offset(0) {}
+  typedef T Type;
+
+  operator T*() {
+    return this->operator->();
   }
 
-  int IssueReExec();
-  void WaitForReExec(int total = kNrThreads);
+  T *operator->() {
+    return (T *) util::Instance<EpochManager>().ptr(epoch_nr, node_id, offset);
+  }
 
-  go::BufferChannel *channel() { return wait_channel; }
+  template <typename P>
+  EpochObject<P> Convert(P *ptr) {
+    uint8_t *p = (uint8_t *) ptr;
+    uint8_t *self = util::Instance<EpochManager>().ptr(epoch_nr, node_id, offset);
+    int64_t off = p - self;
+    return EpochObject<P>(epoch_nr, node_id, offset + off);
+  }
+};
 
-#ifdef NR_THREADS
-  static const int kNrThreads = NR_THREADS;
-#else
-  static const int kNrThreads = 16;
-#endif
-
- private:
-  void InitBrks();
-  void DestroyBrks();
-
- private:
-  go::BufferChannel *wait_channel;
-  TxnIOReader *readers[kNrThreads];
-  go::WaitBarrier *wait_barrier;
-  TxnQueue reuse_q[kNrThreads];
-
-  mem::Brk brks[kNrThreads];
-
+// This where we store objects across the entire cluster. Note that these
+// objects are replicated but not synchronized. We need to make these objects
+// perfectly partitioned.
+//
+// We mainly use this to store the transaction execution states, but we could
+// store other types of POJOs as well.
+//
+// The allocator is simply an brk. Objects were replicated by replicating the
+// node_id and the offset.
+class EpochMemory {
  protected:
-  static uint64_t kGlobSID;
- private:
-  static const size_t kBrkSize;
-  static mem::Pool *pools;
+  struct {
+    uint8_t *mem;
+    uint64_t off;
+  } brks[NodeConfiguration::kMaxNrNode];
+  mem::Pool *pool;
+
+  friend class EpochManager;
+  EpochMemory(mem::Pool *pool);
+  ~EpochMemory();
  public:
-  static void InitPools();
+};
+
+class Epoch : public EpochMemory {
+ protected:
+  uint64_t epoch_nr;
+  friend class EpochManager;
+
+  std::array<int, NodeConfiguration::kMaxNrNode> counter;
+ public:
+  Epoch(uint64_t epoch_nr, mem::Pool *pool) : epoch_nr(epoch_nr), EpochMemory(pool) {}
+  template <typename T>
+  EpochObject<T> AllocateEpochObject(int node_id) {
+    auto off = brks[node_id - 1].off;
+    brks[node_id - 1].off += util::Align(sizeof(T), 8);
+    return EpochObject<T>(epoch_nr, node_id, off);
+  }
+
+  template <typename T>
+  EpochObject<T> AllocateEpochObjectOnCurrentNode() {
+    return AllocateEpochObject<T>(util::Instance<NodeConfiguration>().node_id());
+  }
+
+  uint64_t id() const { return epoch_nr; }
 };
 
 }

@@ -1,22 +1,28 @@
+#ifndef NODE_CONFIG_H
+#define NODE_CONFIG_H
+
 #include <string>
 #include <vector>
 #include <array>
 #include "util.h"
 #include "gopp/channels.h"
+#include "promise.h"
 
 namespace dolly {
 
 class NodeServerRoutine;
 class PromiseRoutine;
 
-class NodeConfiguration {
+class NodeConfiguration : public PromiseRoutineTransportService {
   NodeConfiguration();
 
-  static NodeConfiguration *instance;
   template <typename T> friend T &util::Instance();
 
   int id;
  public:
+
+  static size_t kNrThreads;
+  static constexpr size_t kMaxNrThreads = 32;
 
   struct NodePeerConfig {
     std::string host;
@@ -29,7 +35,9 @@ class NodeConfiguration {
     NodePeerConfig web_conf;
   };
 
-  int node_id() const { return id; }
+  int node_id() const final override { return id; }
+  void set_node_id(int v) { id = v; }
+
   const NodeConfig &config() const {
     if (!all_config[id])
       std::abort();
@@ -37,9 +45,19 @@ class NodeConfiguration {
   }
 
   void RunAllServers();
-  void TransportPromiseRoutine(PromiseRoutine *routine);
+  void TransportPromiseRoutine(PromiseRoutine *routine) final override;
+  void SendBarrier(int node_id);
+  void BroadcastBarrier();
+
+  // node id starts from 1
+  int nr_nodes() const { return max_node_id; }
 
   static constexpr size_t kMaxNrNode = 1024;
+ private:
+  go::TcpOutputChannel *GetOutputChannel(int node_id);
+
+  size_t nr_clients;
+
  private:
   friend class NodeServerRoutine;
   std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;
@@ -48,3 +66,5 @@ class NodeConfiguration {
 };
 
 }
+
+#endif /* NODE_CONFIG_H */

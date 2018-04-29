@@ -1,34 +1,23 @@
 // -*- mode: c++ -*-
 
-#include "dolly_probes.h"
-#include "mem.h"
-#include "sqltypes.h"
-
 #ifndef VHANDLE_H
 #define VHANDLE_H
 
+#include "dolly_probes.h"
+#include "mem.h"
+#include "sqltypes.h"
+#include "gc.h"
+
 namespace dolly {
 
-using VarStr = sql::VarStr;
-
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
-
-struct ErmiaEpochGCRule {
-  uint64_t last_gc_epoch;
-  uint64_t min_of_epoch;
-
-  ErmiaEpochGCRule() : last_gc_epoch(0), min_of_epoch(0) {}
-
-  template <typename VHandle>
-  void operator()(VHandle &handle, uint64_t sid);
-};
 
 class BaseVHandle {
  public:
   static mem::Pool *pools;
   static void InitPools();
  protected:
-  ErmiaEpochGCRule gc_rule;
+  EpochGCRule gc_rule;
  public:
   uint64_t last_update_epoch() const { return gc_rule.last_gc_epoch; }
   void Prefetch() const {}
@@ -63,9 +52,9 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle();
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
-  bool AppendNewVersion(uint64_t sid);
+  bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
   VarStr *ReadWithVersion(uint64_t sid) __attribute__((noinline));
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false) __attribute__((noinline));
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false) __attribute__((noinline));
   void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
 
@@ -124,9 +113,9 @@ class LinkListVHandle : public BaseVHandle {
   LinkListVHandle();
   LinkListVHandle(LinkListVHandle &&rhs) = delete;
 
-  bool AppendNewVersion(uint64_t sid);
+  bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
   VarStr *ReadWithVersion(uint64_t sid);
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
   void GarbageCollect();
 
   const size_t nr_versions() const { return size; }
@@ -158,11 +147,11 @@ class CalvinVHandle : public BaseVHandle {
   CalvinVHandle();
   CalvinVHandle(CalvinVHandle &&rhs) = delete;
 
-  bool AppendNewVersion(uint64_t sid);
-  bool AppendNewAccess(uint64_t sid, bool is_read = false);
+  bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
+  bool AppendNewAccess(uint64_t sid, uint64_t epoch_nr, bool is_read = false);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *DirectRead(); // for read-only optimization
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, bool &is_garbage, bool dry_run = false);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
   void GarbageCollect();
 
   const size_t nr_versions() const { return size; }
@@ -178,17 +167,18 @@ static_assert(sizeof(CalvinVHandle) <= 64, "Calvin Handle too large!");
 #if (defined LL_REPLAY) || (defined CALVIN_REPLAY)
 
 #ifdef LL_REPLAY
-using VHandle = LinkListVHandle;
+clss VHandle : public LinkListVHandle {};
 #endif
 
 #ifdef CALVIN_REPLAY
-using VHandle = CalvinVHandle;
+class VHandle : public CalvinVHandle {};
 #endif
 
 #else
-using VHandle = SortedArrayVHandle;
+class VHandle : public SortedArrayVHandle {};
 #endif
 
 }
+
 
 #endif /* VHANDLE_H */

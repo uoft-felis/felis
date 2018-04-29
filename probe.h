@@ -52,9 +52,8 @@ class Agg : public Impl {
     Value(Agg &agg) : parent(&agg) {
       parent->Add(this);
     }
-    ~Value() {
-      parent->Remove(this);
-    }
+    // We do not want to introduce destructor here because that will rely on
+    // newer glibc under Linux.
   };
 
   Value local() {
@@ -64,12 +63,6 @@ class Agg : public Impl {
   void Add(Value *node) {
     std::lock_guard<std::mutex> _(m);
     values.insert(node);
-  }
-
-  void Remove(Value *node) {
-    std::lock_guard<std::mutex> _(m);
-    values.erase(node);
-    *this << *node;
   }
 
   Impl operator()() {

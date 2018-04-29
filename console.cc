@@ -2,10 +2,12 @@
 
 namespace dolly {
 
-Console *Console::instance = nullptr;
-
 std::string Console::HandleAPI(std::string uri)
 {
+  if (uri == "/client/start/") {
+
+    return "OK";
+  }
   return uri;
 }
 

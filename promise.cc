@@ -1,10 +1,11 @@
 #include "promise.h"
 #include "gopp/gopp.h"
-#include "node_config.h"
+#include "gopp/channels.h"
 #include <queue>
 #include "util.h"
 
 using util::Instance;
+using util::Impl;
 
 namespace dolly {
 
@@ -148,9 +149,13 @@ uint8_t *PromiseRoutine::DecodeNode(uint8_t *p, PromiseRoutinePool *rpool)
   return p;
 }
 
+size_t BasePromise::kNrThreads = 0;
+
+static size_t g_cur_thread = 1;
+
 void BasePromise::Complete(const VarStr &in)
 {
-  auto &configuration = util::Instance<NodeConfiguration>();
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
   for (auto routine: handlers) {
     routine->input = in;
 
@@ -159,16 +164,15 @@ void BasePromise::Complete(const VarStr &in)
     }
     if (routine->node_id < 0) std::abort();
 
-    if (routine->node_id == Instance<NodeConfiguration>().node_id()) {
+    if (routine->node_id == transport.node_id()) {
       uint8_t *p = (uint8_t *) malloc(in.len);
       memcpy(p, in.data, in.len);
       routine->input = VarStr(in.len, in.region_id, p);
 
-      go::GetSchedulerFromPool(1)->WakeUp(
-          go::Make([routine]() { routine->callback(routine); }));
-
+      QueueRoutine(routine, 0, ++g_cur_thread);
+      if (g_cur_thread == kNrThreads) g_cur_thread = 1;
     } else {
-      configuration.TransportPromiseRoutine(routine);
+      transport.TransportPromiseRoutine(routine);
       routine->input.data = nullptr;
       routine->UnRefRecursively();
     }
@@ -176,7 +180,74 @@ void BasePromise::Complete(const VarStr &in)
   UnRef();
 }
 
-std::atomic<BaseCombinerState *> BaseCombinerState::gStatesTable[BaseCombinerState::kStateTableSize];
+struct PromiseSourceDesc {
+  std::atomic<long> finish_count;
+  go::BufferChannel *wait_channel;
+
+  PromiseSourceDesc(long cnt, go::BufferChannel *wait_channel)
+      : finish_count(cnt), wait_channel(wait_channel) {}
+
+  PromiseSourceDesc(const PromiseSourceDesc &rhs) {
+    // Not thread safe
+    wait_channel = rhs.wait_channel;
+    finish_count.store(rhs.finish_count.load());
+  }
+
+  ~PromiseSourceDesc() {}
+
+  void WaitLocalBarrier();
+  static void BroadcastLocalBarrier();
+};
+
+static std::vector<PromiseSourceDesc> g_sources;
+
+void PromiseSourceDesc::WaitLocalBarrier()
+{
+  uint8_t done[g_sources.size()];
+  wait_channel->Read(done, g_sources.size());
+}
+
+void PromiseSourceDesc::BroadcastLocalBarrier()
+{
+  for (auto &desc: g_sources) {
+    uint8_t done = 0;
+    desc.wait_channel->Write(&done, 1);
+  }
+}
+
+void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
+{
+  for (int i = 0; i < nr_sources; i++) {
+    g_sources.emplace_back(1, new go::BufferChannel(nr_sources));
+  }
+  kNrThreads = nr_threads;
+}
+
+void BasePromise::QueueRoutine(dolly::PromiseRoutine *r, int source_idx, int thread)
+{
+  auto &desc = g_sources[source_idx];
+  if (r == nullptr) {
+    if (desc.finish_count.fetch_sub(1) == 1) {
+      desc.BroadcastLocalBarrier();
+    }
+    desc.WaitLocalBarrier();
+    desc.finish_count.fetch_add(1);
+    return;
+  }
+  desc.finish_count.fetch_add(1);
+  go::GetSchedulerFromPool(thread)->WakeUp(
+      go::Make([r, &desc]() {
+          {
+            mem::Brk b(alloca(4096), 4096);
+            go::Scheduler::Current()->current_routine()->set_userdata(&b);
+            r->callback(r);
+            go::Scheduler::Current()->current_routine()->set_userdata(nullptr);
+          }
+          if (desc.finish_count.fetch_sub(1) == 1) {
+            desc.BroadcastLocalBarrier();
+          }
+        }));
+}
 
 }
 

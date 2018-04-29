@@ -13,7 +13,14 @@
 
 #include "index.h"
 #include "util.h"
-#include "../../sqltypes.h"
+#include "sqltypes.h"
+#include "epoch.h"
+
+namespace dolly {
+
+class BaseTxn;
+
+}
 
 namespace tpcc {
 
@@ -78,7 +85,7 @@ struct Warehouse {
   using Value = sql::WarehouseValue;
 };
 
-enum struct TPCCTable : int {
+enum struct TableType : int {
   Customer, CustomerNameIdx, District, History, Item,
   NewOrder, OOrder, OOrderCIdIdx, OrderLine, Stock, StockData, Warehouse,
   NRTable
@@ -99,14 +106,15 @@ static const char *kTPCCTableNames[] = {
   "warehouse",
 };
 
-class TPCCMixIn {
-protected:
-  dolly::Relation &relation(TPCCTable table, unsigned int wid);
+// We create a full set of table per warehouse
+class Util {
+ public:
+  static dolly::Relation &relation(TableType table, unsigned int wid);
+  static int partition(uint wid);
 };
 
-class TPCCClientBase {
+class ClientBase {
  protected:
-  uint home_warehouse;
   util::FastRandom r;
 
  protected:
@@ -116,6 +124,7 @@ class TPCCClientBase {
   static constexpr double kPaymentRemoteCustomer = 0.15;
   static constexpr double kPaymentByName = 0.60;
 
+  size_t nr_warehouses() const;
   uint PickWarehouse();
   uint PickDistrict();
   static int CheckBetweenInclusive(int v, int lower, int upper);
@@ -167,14 +176,13 @@ class TPCCClientBase {
 
   uint GetCurrentTime();
  public:
-  TPCCClientBase(uint home, const util::FastRandom &r) : home_warehouse(home), r(r) {}
+  ClientBase(const util::FastRandom &r) : r(r) {}
 };
 
-class TPCCTableHandles {
+class TableHandles {
   int table_handles[dolly::RelationManager::kMaxNrRelations];
 
-  TPCCTableHandles();
-  static TPCCTableHandles *instance;
+  TableHandles();
   template <typename T> friend T &util::Instance();
 public:
   int table_handle(int idx) const {
@@ -182,24 +190,24 @@ public:
     return table_handles[idx];
   }
 
-  void InitiateTable(TPCCTable table);
+  void InitiateTable(TableType table);
 };
 
 // loaders for each table
 namespace loaders {
 
-enum TPCCLoader {
+enum LoaderType {
   Warehouse, Item, Stock, District, Customer, Order
 };
 
-template <enum TPCCLoader TLN>
-class Loader : public go::Routine, public tpcc::TPCCMixIn, public tpcc::TPCCClientBase {
+template <enum LoaderType TLN>
+class Loader : public go::Routine, public tpcc::Util, public tpcc::ClientBase {
   std::mutex *m;
   std::atomic_int *count_down;
   int cpu;
 public:
   Loader(unsigned long seed, std::mutex *w, std::atomic_int *c, int pin)
-      : TPCCClientBase(0, util::FastRandom(seed)), m(w), count_down(c), cpu(pin) {}
+      : ClientBase(util::FastRandom(seed)), m(w), count_down(c), cpu(pin) {}
   void DoLoad();
   virtual void Run() {
     DoLoad();
@@ -211,57 +219,30 @@ public:
 
 }
 
-// input parameters
-struct NewOrderStruct {
-  uint warehouse_id;
-  uint district_id;
-  uint customer_id;
-  uint nr_items;
-  uint ts_now;
-
-  uint item_id[15];
-  uint supplier_warehouse_id[15];
-  uint order_quantities[15];
-};
-
-struct DeliveryStruct {
-  uint warehouse_id;
-  uint o_carrier_id;
-  uint32_t ts;
-
-  int32_t last_no_o_ids[10]; // XXX(Mike): array of 10 integers, unhack!
-};
-
-struct CreditCheckStruct {
-  uint warehouse_id;
-  uint district_id;
-  uint customer_warehouse_id;
-  uint customer_district_id;
-  uint customer_id;
-};
-
-struct PaymentStruct {
-  uint warehouse_id;
-  uint district_id;
-  uint customer_warehouse_id;
-  uint customer_district_id;
-  int payment_amount;
-  uint32_t ts;
-  bool is_by_name;
-
-  union {
-    uint8_t lastname_buf[16];
-    uint customer_id;
-  } by;
-};
-
-class TPCCClient : public TPCCClientBase {
+class Client : public dolly::EpochClient, public ClientBase {
+  static constexpr unsigned long kClientSeed = 0xdeadbeef;
  public:
+
+  Client() : ClientBase(kClientSeed) {}
+
   template <class T> T GenerateTransactionInput();
 
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];
+
+  dolly::BaseTxn *RunCreateTxn() final override;
 };
+
+enum class TxnType : int {
+  NewOrder,
+  // Delivery,
+  // CreditCheck,
+  // Payment,
+
+  AllTxn,
+};
+
+using TxnFactory = util::Factory<dolly::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *>;
 
 }
 
