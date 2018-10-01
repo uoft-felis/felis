@@ -5,7 +5,7 @@
 #include "index.h"
 #include "node_config.h"
 
-namespace dolly {
+namespace felis {
 
 using util::Instance;
 using util::InstanceInit;
@@ -80,7 +80,7 @@ void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
 
     ent = prev;
   }
-  DTRACE_PROBE1(dolly, deleted_gc_per_core, gc_count);
+  DTRACE_PROBE1(felis, deleted_gc_per_core, gc_count);
   logger->info("Proactive GC {} cleaned {} garbage keys", idx, gc_count);
 #endif
 }

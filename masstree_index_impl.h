@@ -11,7 +11,7 @@
 
 class threadinfo;
 
-namespace dolly {
+namespace felis {
 
 class RelationManager;
 class MasstreeMap;
@@ -89,7 +89,7 @@ class MasstreeIndex {
   }
 };
 
-class Relation : public dolly::RelationPolicy<MasstreeIndex> {};
+class Relation : public felis::RelationPolicy<MasstreeIndex> {};
 
 class RelationManager : public RelationManagerPolicy<Relation> {
   threadinfo *ti;

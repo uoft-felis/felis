@@ -16,7 +16,7 @@
 #include "sqltypes.h"
 #include "epoch.h"
 
-namespace dolly {
+namespace felis {
 
 class BaseTxn;
 
@@ -109,7 +109,7 @@ static const char *kTPCCTableNames[] = {
 // We create a full set of table per warehouse
 class Util {
  public:
-  static dolly::Relation &relation(TableType table, unsigned int wid);
+  static felis::Relation &relation(TableType table, unsigned int wid);
   static int partition(uint wid);
 };
 
@@ -180,13 +180,13 @@ class ClientBase {
 };
 
 class TableHandles {
-  int table_handles[dolly::RelationManager::kMaxNrRelations];
+  int table_handles[felis::RelationManager::kMaxNrRelations];
 
   TableHandles();
   template <typename T> friend T &util::Instance();
 public:
   int table_handle(int idx) const {
-    assert(idx < dolly::RelationManager::kMaxNrRelations);
+    assert(idx < felis::RelationManager::kMaxNrRelations);
     return table_handles[idx];
   }
 
@@ -219,7 +219,7 @@ public:
 
 }
 
-class Client : public dolly::EpochClient, public ClientBase {
+class Client : public felis::EpochClient, public ClientBase {
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
  public:
 
@@ -230,7 +230,7 @@ class Client : public dolly::EpochClient, public ClientBase {
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];
 
-  dolly::BaseTxn *RunCreateTxn() final override;
+  felis::BaseTxn *RunCreateTxn() final override;
 };
 
 enum class TxnType : int {
@@ -242,7 +242,7 @@ enum class TxnType : int {
   AllTxn,
 };
 
-using TxnFactory = util::Factory<dolly::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *>;
+using TxnFactory = util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *>;
 
 }
 

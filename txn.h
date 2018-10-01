@@ -7,7 +7,7 @@
 #include "epoch.h"
 #include "util.h"
 
-namespace dolly {
+namespace felis {
 
 class VHandle;
 class Relation;
@@ -27,34 +27,48 @@ class BaseTxn {
   uint64_t serial_id() const { return sid; }
   void set_serial_id(uint64_t s) { sid = s; }
 
-  class TxnIndex {
+  template <typename Api>
+  class TxnApi {
+   protected:
     uint64_t sid;
     uint64_t epoch_nr;
-    Relation *rel;
+    Api *api;
    public:
-    TxnIndex(uint64_t sid, uint64_t epoch_nr, Relation &rel)
-        : sid(sid), epoch_nr(epoch_nr), rel(&rel) {}
+    TxnApi(uint64_t sid, uint64_t epoch_nr, Api *api)
+        : sid(sid), epoch_nr(epoch_nr), api(api) {}
+  };
+
+  class TxnIndex : public TxnApi<Relation> {
+   public:
+    using TxnApi<Relation>::TxnApi;
     VHandle *Lookup(const VarStr *k);
   };
 
-  class TxnIndexHandle {
+  class TxnVHandle : public TxnApi<VHandle> {
+   public:
+    using TxnApi<VHandle>::TxnApi;
+    bool AppendNewVersion();
+  };
+
+  class TxnHandle {
     uint64_t sid;
     uint64_t epoch_nr;
    public:
-    TxnIndexHandle(uint64_t sid, uint64_t epoch_nr) : sid(sid), epoch_nr(epoch_nr) {}
-    TxnIndexHandle() {}
+    TxnHandle(uint64_t sid, uint64_t epoch_nr) : sid(sid), epoch_nr(epoch_nr) {}
+    TxnHandle() {}
 
-    TxnIndex operator()(Relation &rel) { return TxnIndex(sid, epoch_nr, rel); }
+    TxnIndex operator()(Relation &rel) { return TxnIndex(sid, epoch_nr, &rel); }
+    TxnVHandle operator()(VHandle *vhandle) { return TxnVHandle(sid, epoch_nr, vhandle); }
   };
 
-  TxnIndexHandle index_handle() { return TxnIndexHandle{sid, epoch->id()}; }
+  TxnHandle index_handle() { return TxnHandle{sid, epoch->id()}; }
 };
 
 template <typename TxnState>
 class Txn : public BaseTxn {
  protected:
   typedef EpochObject<TxnState> State;
-  EpochObject<TxnState> state;
+  State state;
  public:
   Txn() {
     state = epoch->AllocateEpochObjectOnCurrentNode<TxnState>();
@@ -65,7 +79,7 @@ class Txn : public BaseTxn {
   template <typename ...Types>
   struct CaptureStruct {
     State state;
-    TxnIndexHandle indexer;
+    TxnHandle handle;
     std::tuple<Types...> params;
   };
 

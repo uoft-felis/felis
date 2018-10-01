@@ -5,7 +5,7 @@
 #include "node_config.h"
 #include "sqltypes.h"
 
-namespace dolly {
+namespace felis {
 
 class VHandle;
 

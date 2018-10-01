@@ -1,96 +1,24 @@
 #include <unistd.h>
 #include <cstdio>
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include "index.h"
-#include "node_config.h"
 
 #include "module.h"
-#include "gopp/gopp.h"
-#include "gopp/channels.h"
-
-#include "log.h"
+#include "node_config.h"
+#include "console.h"
 
 void show_usage(const char *progname)
 {
-  printf("Usage: %s [-t core_count] [-d]\n\n", progname);
-  puts("\t-t\tnumber of cores used");
-  puts("\t-d\tdump only");
-  puts("\t-r\treplay from trace files");
+  printf("Usage: %s -w workload -n node_name -c controller_ip\n\n", progname);
+  puts("\t-w\tworkload name");
+  puts("\t-n\tnode name");
+  puts("\t-c\tcontroller IP address");
 
   std::exit(-1);
 }
 
-namespace dolly {
-
-class LoggingModule : public Module<CoreModule> {
- public:
-  void Init() override {
-    InitializeLogger();
-
-    std::ofstream pid_fout("/tmp/dolly.pid");
-    pid_fout << (unsigned long) getpid();
-  }
-  std::string name() const override {
-    return "Logging";
-  }
-};
-
-static LoggingModule logging_module;
-
-class MemoryPoolModule : public Module<CoreModule> {
- public:
-  void Init() override {
-    mem::InitThreadLocalRegions(NodeConfiguration::kNrThreads);
-    for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
-      auto &r = mem::GetThreadLocalRegion(i);
-      r.ApplyFromConf("mem.json");
-      // logger->info("setting up regions {}", i);
-      r.InitPools(i / mem::kNrCorePerNode);
-    }
-
-    VHandle::InitPools();
-  }
-  std::string name() const override {
-    return "Memory Pool";
-  }
-};
-
-static MemoryPoolModule mem_pool_module;
-
-class CoroutineModule : public Module<CoreModule> {
- public:
-  void Init() override {
-    go::InitThreadPool(NodeConfiguration::kNrThreads);
-  }
-  std::string name() const override {
-    return "Coroutine Thread Pool";
-  }
-};
-
-static CoroutineModule coroutine_module;
-
-class NodeServerModule : public Module<CoreModule> {
- public:
-  void Init() override {
-    util::Instance<NodeConfiguration>().RunAllServers();
-  }
-  std::string name() const override {
-    return std::string("DB Node Server");
-  }
-};
-
-static NodeServerModule server_module;
-
-}
+#ifdef EL6_COMPAT
 
 // Platform Supports
 // We need to support EL6, which uses glibc 2.12
-
 extern "C" {
   // Looks like we are not using memcpy anyway, so why don't we just make EL6 happy?
   asm (".symver memcpy, memcpy@GLIBC_2.2.5");
@@ -100,13 +28,20 @@ extern "C" {
   char *__wrap_secure_getenv(const char *name) { return getenv(name); }
   int __wrap_clock_gettime(clockid_t clk_id, struct timespec *tp) { return clock_gettime(clk_id, tp); }
 }
+#endif
+
+namespace felis {
+
+void ParseControllerAddress(std::string arg);
+
+}
 
 int main(int argc, char *argv[])
 {
   int opt;
   std::string workload_name;
   std::string node_name;
-  while ((opt = getopt(argc, argv, "w:n:")) != -1) {
+  while ((opt = getopt(argc, argv, "w:n:c:")) != -1) {
     switch (opt) {
       case 'w':
         workload_name = std::string(optarg);
@@ -114,11 +49,18 @@ int main(int argc, char *argv[])
       case 'n':
         node_name = std::string(optarg);
         break;
+      case 'c':
+        felis::ParseControllerAddress(std::string(optarg));
+        break;
       default:
         show_usage(argv[0]);
         break;
     }
   }
+
+  felis::Module<felis::CoreModule>::ShowAllModules();
+  felis::Module<felis::WorkloadModule>::ShowAllModules();
+  puts("\n");
 
   if (node_name == "") {
     show_usage(argv[0]);
@@ -130,14 +72,15 @@ int main(int argc, char *argv[])
     return -1;
   }
 
-  util::Instance<dolly::NodeConfiguration>().set_node_id(std::stoi(node_name));
+  auto &console = util::Instance<felis::Console>();
+  console.set_server_node_name(node_name);
 
-  logger->info("Running {} workload", workload_name);
-  dolly::Module<dolly::CoreModule>::ShowModules();
-  dolly::Module<dolly::WorkloadModule>::ShowModules();
+  felis::Module<felis::CoreModule>::InitRequiredModules();
 
-  dolly::Module<dolly::CoreModule>::InitAllModules();
-  dolly::Module<dolly::WorkloadModule>::InitAllModules();
+  util::Instance<felis::NodeConfiguration>().SetupNodeName(node_name);
+  felis::Module<felis::CoreModule>::InitModule("node-server");
+
+  console.WaitForServerStatus(felis::Console::ServerStatus::Exiting);
 
   return 0;
 }

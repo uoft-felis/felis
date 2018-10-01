@@ -20,9 +20,9 @@
 #include "node_config.h"
 #include "tpcc.h"
 
-using dolly::Relation;
-using dolly::RelationManager;
-using dolly::NodeConfiguration;
+using felis::Relation;
+using felis::RelationManager;
+using felis::NodeConfiguration;
 using util::Instance;
 
 namespace tpcc {
@@ -264,19 +264,19 @@ TableHandles::TableHandles()
 
 void TableHandles::InitiateTable(TableType table)
 {
-  logger->info("Initialize TPCC Table {}", (int) table);
-  int nthreads = NodeConfiguration::kNrThreads;
   RelationManager &mgr = Instance<RelationManager>();
   std::string name = kTPCCTableNames[static_cast<int>(table)];
 
-  int base_idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses;
+  logger->info("Initialize TPCC Table {} id {}", name, (int) table);
 
-  int thandle = mgr.LookupRelationId(name);
+  int base_idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses;
+  int thandle = (int) table;
+
   for (size_t i = 0; i < kTPCCConfig.nr_warehouses; i++)
     table_handles[base_idx + i] = thandle;
 }
 
-dolly::Relation &Util::relation(TableType table, unsigned int wid)
+felis::Relation &Util::relation(TableType table, unsigned int wid)
 {
   assert(wid > 0); // wid starting from 1
   int idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses + wid - 1;
@@ -606,7 +606,7 @@ void Loader<LoaderType::Order>::DoLoad()
 
 }
 
-dolly::BaseTxn *Client::RunCreateTxn()
+felis::BaseTxn *Client::RunCreateTxn()
 {
   // TODO: generate standard TPC-C txn mix here
   // currently, only NewOrder is available

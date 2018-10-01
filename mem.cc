@@ -143,19 +143,8 @@ void Region::Free(void *ptr, size_t sz)
   pools[SizeToClass(sz)].Free(ptr);
 }
 
-void Region::ApplyFromConf(std::string filename)
+void Region::ApplyFromConf(json11::Json conf_doc)
 {
-  std::ifstream fin(filename);
-  std::string conf_text {std::istreambuf_iterator<char>(fin),
-        std::istreambuf_iterator<char>()};
-  std::string err;
-  json11::Json conf_doc = json11::Json::parse(conf_text, err);
-
-  if (!err.empty()) {
-    fprintf(stderr, "%s\n", err.c_str());
-    return;
-  }
-
   auto json_map = conf_doc.object_items();
   for (auto it = json_map.begin(); it != json_map.end(); ++it) {
     set_pool_capacity(atoi(it->first.c_str()), it->second.int_value() << 20);

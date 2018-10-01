@@ -14,7 +14,7 @@
 #include "vhandle.h"
 #include "node_config.h"
 
-namespace dolly {
+namespace felis {
 
 using util::ListNode;
 
@@ -52,34 +52,16 @@ class BaseRelation {
 };
 
 class RelationManagerBase {
- protected:
-  std::map<std::string, int> relation_id_map;
  public:
-  RelationManagerBase();
-  int LookupRelationId(std::string name) const {
-    auto it = relation_id_map.find(name);
-    if (it == relation_id_map.end()) {
-      logger->critical("Cannot find relation {}", name);
-      std::abort();
-    }
-    return it->second;
-  }
-
-  std::map<std::string, int> relation_mapping() const { return relation_id_map; }
+  RelationManagerBase() {}
 };
 
 template <class T>
 class RelationManagerPolicy : public RelationManagerBase {
  protected:
-  RelationManagerPolicy() {
-    // for (int i = 0; i < kMaxNrRelations; i++) relations[i].set_id(i);
-    for (auto &p: relation_id_map) {
-      relations[p.second].set_id(p.second);
-    }
-  }
-
  public:
   static const int kMaxNrRelations = 1024;
+  RelationManagerPolicy() {}
 
   T &GetRelationOrCreate(int fid) {
 #ifndef NDEBUG

@@ -12,7 +12,7 @@
 using util::MixIn;
 using util::Instance;
 
-namespace dolly {
+namespace felis {
 
 template <enum tpcc::loaders::LoaderType TLT>
 static tpcc::loaders::Loader<TLT> *CreateLoader(unsigned long seed, std::mutex *m,
@@ -35,20 +35,21 @@ static void LoadTPCCDataSet()
   go::GetSchedulerFromPool(6)->WakeUp(CreateLoader<tpcc::loaders::Order>(2343352, &m, &count_down, 5));
 
   m.lock(); // waits
-  auto &mgr = Instance<dolly::RelationManager>();
-  mgr.GetRelationOrCreate(mgr.LookupRelationId("customer_name_idx")).set_read_only(true);
-  mgr.GetRelationOrCreate(mgr.LookupRelationId("item")).set_read_only(true);
 }
 
 class TPCCModule : public Module<WorkloadModule> {
  public:
+  TPCCModule() {
+    info = {
+      .name = "tpcc",
+      .description = "TPC-C",
+    };
+  }
   void Init() override {
-    // just to initialize this
+    Module<CoreModule>::InitModule("allocator");
+
     Instance<tpcc::TableHandles>();
     LoadTPCCDataSet();
-  }
-  std::string name() const override {
-    return "TPC-C";
   }
 };
 

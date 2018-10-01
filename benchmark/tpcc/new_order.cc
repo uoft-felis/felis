@@ -48,7 +48,7 @@ NewOrderStruct Client::GenerateTransactionInput<NewOrderStruct>()
   return s;
 }
 
-using dolly::VHandle;
+using felis::VHandle;
 
 struct NewOrderState {
   struct {
@@ -57,7 +57,7 @@ struct NewOrderState {
   } rows;
 };
 
-using namespace dolly;
+using namespace felis;
 
 class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct, public Util {
   Client *client;
@@ -78,11 +78,18 @@ NewOrderTxn::NewOrderTxn(Client *client)
       uint district_id;
       std::tie(warehouse_id, district_id) = ctx.params;
       State state = ctx.state;
-      TxnIndexHandle indexer = ctx.indexer;
+      TxnHandle handle = ctx.handle;
 
       state->rows.district =
-          indexer(relation(TableType::District, warehouse_id))
+          handle(relation(TableType::District, warehouse_id))
           .Lookup(District::Key::New(warehouse_id, district_id).EncodeFromRoutine());
+      handle(state->rows.district).AppendNewVersion();
+
+      VHandle *oorder_range =
+          handle(relation(TableType::OOrder, warehouse_id))
+          .Lookup(OOrder::Key::New(warehouse_id, district_id, std::numeric_limits<int>::max()).EncodeFromRoutine());
+      handle(oorder_range).AppendNewVersion();
+
       return nullopt;
     });
 
@@ -94,11 +101,13 @@ NewOrderTxn::NewOrderTxn(Client *client)
         uint item_id;
         std::tie(i, warehouse_id, item_id) = ctx.params;
         State state = ctx.state;
-        TxnIndexHandle indexer = ctx.indexer;
+        TxnHandle handle = ctx.handle;
 
         state->rows.stocks[i] =
-            indexer(relation(TableType::Stock, warehouse_id))
+            handle(relation(TableType::Stock, warehouse_id))
             .Lookup(Stock::Key::New(warehouse_id, item_id).EncodeFromRoutine());
+        handle(state->rows.stocks[i]).AppendNewVersion();
+
         return nullopt;
       });
   }
@@ -112,7 +121,7 @@ void NewOrderTxn::Run()
 
 namespace util {
 
-using namespace dolly;
+using namespace felis;
 using namespace tpcc;
 
 template <>

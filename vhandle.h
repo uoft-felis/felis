@@ -3,12 +3,12 @@
 #ifndef VHANDLE_H
 #define VHANDLE_H
 
-#include "dolly_probes.h"
+#include "felis_probes.h"
 #include "mem.h"
 #include "sqltypes.h"
 #include "gc.h"
 
-namespace dolly {
+namespace felis {
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
 
@@ -22,6 +22,8 @@ class BaseVHandle {
   uint64_t last_update_epoch() const { return gc_rule.last_gc_epoch; }
   void Prefetch() const {}
 };
+
+class CompletionObject;
 
 class SortedArrayVHandle : public BaseVHandle {
   std::atomic_bool lock;
@@ -53,8 +55,8 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
   bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
-  VarStr *ReadWithVersion(uint64_t sid) __attribute__((noinline));
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false) __attribute__((noinline));
+  VarStr *ReadWithVersion(uint64_t sid);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
   void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
 
@@ -66,6 +68,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
 static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
 
+#ifdef LL_REPLAY
 class LinkListVHandle : public BaseVHandle {
   int this_coreid;
   std::atomic_bool lock;
@@ -123,6 +126,10 @@ class LinkListVHandle : public BaseVHandle {
 
 static_assert(sizeof(LinkListVHandle) <= 64, "LinkList Handle too large!");
 
+#endif
+
+#ifdef CALVIN_REPLAY
+
 class CalvinVHandle : public BaseVHandle {
   short alloc_by_coreid;
   short this_coreid;
@@ -162,6 +169,8 @@ class CalvinVHandle : public BaseVHandle {
 };
 
 static_assert(sizeof(CalvinVHandle) <= 64, "Calvin Handle too large!");
+
+#endif
 
 // current relation implementation
 #if (defined LL_REPLAY) || (defined CALVIN_REPLAY)

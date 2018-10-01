@@ -6,7 +6,7 @@
 
 namespace util {
 
-using namespace dolly;
+using namespace felis;
 
 template <>
 PromiseRoutineTransportService &Impl()
@@ -20,12 +20,9 @@ EpochClient &Impl()
   return Instance<tpcc::Client>();
 }
 
-// template <>
-// BaseFactory<BaseTxn, tpcc::Client *>::Table BaseFactory<BaseTxn, tpcc::Client *>::table;
-
 }
 
-namespace dolly {
+namespace felis {
 
 void InitializeInterfaces()
 {

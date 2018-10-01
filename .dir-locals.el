@@ -1,5 +1,4 @@
-((nil . ((default-directory . "~/workspace/dolly/")
-         (compile-command . "ninja -C Release")))
+((nil . ((projectile-project-compilation-cmd . "buck build :debug-db")))
  (c-mode . ((mode . c++)
             (c-basic-offset . 2)))
  (c++-mode . ((c-basic-offset . 2)))

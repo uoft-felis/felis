@@ -2,7 +2,7 @@
 #include <cstdlib>
 #include "fpcore.h"
 
-namespace dolly {
+namespace felis {
 
 struct POData {
   int a;

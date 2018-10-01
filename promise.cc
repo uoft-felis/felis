@@ -7,7 +7,7 @@
 using util::Instance;
 using util::Impl;
 
-namespace dolly {
+namespace felis {
 
 PromiseRoutinePool *PromiseRoutinePool::Create(size_t size)
 {
@@ -164,18 +164,7 @@ void BasePromise::Complete(const VarStr &in)
     }
     if (routine->node_id < 0) std::abort();
 
-    if (routine->node_id == transport.node_id()) {
-      uint8_t *p = (uint8_t *) malloc(in.len);
-      memcpy(p, in.data, in.len);
-      routine->input = VarStr(in.len, in.region_id, p);
-
-      QueueRoutine(routine, 0, ++g_cur_thread);
-      if (g_cur_thread == kNrThreads) g_cur_thread = 1;
-    } else {
-      transport.TransportPromiseRoutine(routine);
-      routine->input.data = nullptr;
-      routine->UnRefRecursively();
-    }
+    transport.TransportPromiseRoutine(routine);
   }
   UnRef();
 }
@@ -223,7 +212,7 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
   kNrThreads = nr_threads;
 }
 
-void BasePromise::QueueRoutine(dolly::PromiseRoutine *r, int source_idx, int thread)
+void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thread)
 {
   auto &desc = g_sources[source_idx];
   if (r == nullptr) {
@@ -250,86 +239,3 @@ void BasePromise::QueueRoutine(dolly::PromiseRoutine *r, int source_idx, int thr
 }
 
 }
-
-// #define SAMPLE_PROMISE
-
-#ifdef SAMPLE_PROMISE
-
-static void TransportPromiseRoutine(PromiseRoutine *routine)
-{
-  size_t buffer_size = routine->TreeSize();
-  printf("Tree size %ld\n", buffer_size);
-  uint8_t *buffer = (uint8_t *) malloc(buffer_size);
-  routine->EncodeTree(buffer);
-  FILE *fp = fopen(std::to_string(routine->node_id).c_str(), "w");
-  fwrite(&buffer_size, 8, 1, fp);
-  fwrite(buffer, buffer_size, 1, fp);
-  fclose(fp);
-  free(buffer);
-}
-
-static void ParsePromiseRoutine()
-{
-  FILE *fp = fopen(std::to_string(Instance<NodeConfiguration>().node_id()).c_str(), "r");
-  size_t buffer_size;
-  (void) fread(&buffer_size, 8, 1, fp);
-  PromiseRoutinePool *pool = PromiseRoutinePool::Create(buffer_size);
-  (void) fread(pool->mem, buffer_size, 1, fp);
-  fclose(fp);
-
-  auto r = PromiseRoutine::CreateFromBufferedPool(pool);
-
-  // TODO: testing only. add to pool 1.
-  go::GetSchedulerFromPool(1)->WakeUp(
-      go::Make([r]() { r->callback(r); }));
-}
-
-using namespace dolly;
-using namespace sql;
-
-int main(int argc, const char *argv[])
-{
-  go::InitThreadPool(1);
-
-  if (argc <= 1) {
-    auto _ = PromiseProc();
-
-    auto left =
-        _
-        ->Then(argc, 1, [](const int &count, auto _) -> Optional<Tuple<int>> {
-            int a;
-            std::cin >> a;
-            std::cout << "First, got A " << a << std::endl;
-            return Tuple<int>(a);
-          })
-
-        ->Then(argc, 1, [](const int &count, Tuple<int> last_result) -> Optional<Tuple<int>> {
-            printf("Last response is %d\n", last_result._<0>());
-            return Tuple<int>(0);
-          })
-
-        ->Then(argc, 1, [](const int &count, auto _) -> Optional<Tuple<int>> {
-            puts("End");
-            return Tuple<int>(1);
-          });
-
-    auto right =
-        _
-        ->Then(argc, 2, [](const int &argc, auto _) -> Optional<Tuple<int>> {
-            puts("This runs in parallel");
-            return Tuple<int>(1);
-          });
-    Combine<Tuple<int>, Tuple<int>>(3, 1, left, right)
-        ->Then(argc, 3, [](const int &argc, Tuple<Tuple<int>, Tuple<int>> input) -> Optional<VoidValue> {
-            printf("sum = %d\n", input._<0>()._<0>() + input._<1>()._<0>());
-            return nullopt;
-          });
-  } else {
-    ParsePromiseRoutine();
-  }
-
-  go::WaitThreadPool();
-  return 0;
-}
-
-#endif

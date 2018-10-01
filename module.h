@@ -3,9 +3,8 @@
 
 #include <string>
 #include <cstdio>
-#include "log.h"
 
-namespace dolly {
+namespace felis {
 
 enum ModuleType {
   CoreModule,
@@ -20,12 +19,29 @@ class Module {
     return head;
   }
   Module<Type> *next;
- public:
+  bool initialized = false;
+ protected:
+  bool required = false;
+  struct {
+    std::string name;
+    std::string description;
+  } info;
   Module();
   virtual void Init() = 0;
-  virtual std::string name() const { return std::string("NoName"); }
-  static void InitAllModules();
-  static void ShowModules();
+ public:
+  void Load() {
+    if (initialized)
+      return;
+
+    printf("Loading %s module...\n", info.name.c_str());
+    fflush(stdout);
+    Init();
+    initialized = true;
+  }
+
+  static void InitRequiredModules();
+  static void InitModule(std::string name);
+  static void ShowAllModules();
 };
 
 template <int Type>
@@ -38,24 +54,33 @@ Module<Type>::Module()
 }
 
 template <int Type>
-void Module<Type>::InitAllModules()
+void Module<Type>::InitRequiredModules()
 {
-  auto p = head();
-  while (p) {
-    logger->info("Loading {} module", p->name());
-    p->Init();
-    logger->info("{} module initialized", p->name());
-    p = p->next;
+  for (auto p = head(); p; p = p->next) {
+    if (p->required)
+      p->Load();
   }
 }
 
 template <int Type>
-void Module<Type>::ShowModules()
+void Module<Type>::ShowAllModules()
 {
-  auto p = head();
-  while (p) {
-    logger->info("Found module {}", p->name());
-    p = p->next;
+  for (auto p = head(); p; p = p->next) {
+    printf("Found module %s%s: %s\n",
+           p->info.name.c_str(),
+           p->required ? "(required)" : "",
+           p->info.description.c_str());
+  }
+}
+
+template <int Type>
+void Module<Type>::InitModule(std::string name)
+{
+  for (auto p = head(); p; p = p->next) {
+    if (p->info.name == name) {
+      p->Load();
+      break;
+    }
   }
 }
 

@@ -7,7 +7,7 @@
 #include "util.h"
 #include "mem.h"
 
-namespace dolly {
+namespace felis {
 
 class Epoch;
 class BaseTxn;

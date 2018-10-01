@@ -9,7 +9,7 @@
 #include "index.h"
 #endif
 
-namespace dolly {
+namespace felis {
 namespace chkpt {
 namespace ermia {
 
@@ -255,15 +255,15 @@ template <>
 class TableDataIterator<ErmiaEntry> {
   size_t key_size;
   std::shared_ptr<uint8_t> zero_key;
-  dolly::VarStr zero_var_str;
+  felis::VarStr zero_var_str;
   std::shared_ptr<CommitBuffer> dummy;
-  std::shared_ptr<dolly::Relation::Iterator> dolly_iter;
+  std::shared_ptr<felis::Relation::Iterator> dolly_iter;
   ErmiaEntry current_entry;
   bool adapted;
   uint32_t current_oid;
   FILE *out_file;
 public:
-  TableDataIterator(dolly::Relation &rel, FILE *fp);
+  TableDataIterator(felis::Relation &rel, FILE *fp);
   TableDataIterator(const ErmiaEntry &entry);
 
   ErmiaEntry &operator*();
@@ -271,7 +271,7 @@ public:
   TableDataIterator<ErmiaEntry> &operator++();
 };
 
-class ErmiaCheckpoint : public dolly::Checkpoint {
+class ErmiaCheckpoint : public felis::Checkpoint {
 public:
   void Export() override final;
   void ExportRelation(FILE *fp, Relation &rel);
@@ -282,7 +282,7 @@ TableDataIterator<ErmiaEntry>::TableDataIterator(const ErmiaEntry &entry)
 {
 }
 
-TableDataIterator<ErmiaEntry>::TableDataIterator(dolly::Relation &rel, FILE *fp)
+TableDataIterator<ErmiaEntry>::TableDataIterator(felis::Relation &rel, FILE *fp)
   : key_size(rel.key_length()),
     zero_key((uint8_t *) calloc(key_size, 1)),
     zero_var_str{(uint16_t) key_size, 0, zero_key.get()},
@@ -331,7 +331,7 @@ TableDataIterator<ErmiaEntry> &TableDataIterator<ErmiaEntry>::operator++()
   return *this;
 }
 
-void ErmiaCheckpoint::ExportRelation(FILE *fp, dolly::Relation &rel)
+void ErmiaCheckpoint::ExportRelation(FILE *fp, felis::Relation &rel)
 {
   printf("Exporting relations FID %d\n", rel.relation_id());
 
@@ -379,9 +379,9 @@ void ErmiaCheckpoint::Export()
 
 #ifndef STANDALONE
 
-extern "C" dolly::Checkpoint* InitializeChkpt()
+extern "C" felis::Checkpoint* InitializeChkpt()
 {
-  return new dolly::chkpt::ermia::ErmiaCheckpoint();
+  return new felis::chkpt::ermia::ErmiaCheckpoint();
 }
 
 #else

@@ -16,7 +16,7 @@ volatile mrcu_epoch_type globalepoch = 1;
 kvtimestamp_t initial_timestamp;
 kvepoch_t global_log_epoch;
 
-namespace dolly {
+namespace felis {
 
 struct MasstreeDollyParam : public Masstree::nodeparams<15, 15> {
   typedef VHandle* value_type;
@@ -88,7 +88,7 @@ bool MasstreeIndex::Iterator::ShouldSkip()
   auto handle = it->entry.value();
   if (!handle) return true;
   if (__builtin_expect(sid == std::numeric_limits<int64_t>::max(), 0)) {
-    DTRACE_PROBE2(dolly, chkpt_scan,
+    DTRACE_PROBE2(felis, chkpt_scan,
                   handle->nr_versions(),
                   handle->last_update_epoch());
   }
@@ -183,7 +183,6 @@ void MasstreeIndex::ImmediateDelete(const VarStr *k)
 }
 
 RelationManager::RelationManager()
-    : RelationManagerPolicy<Relation>()
 {
   // initialize all relations
   ti = threadinfo::make(threadinfo::TI_MAIN, -1);

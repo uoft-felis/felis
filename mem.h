@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdio>
 #include <functional>
+#include "json11/json11.hpp"
 
 namespace mem {
 
@@ -56,7 +57,7 @@ class Region {
     return idx < 0 ? 0 : idx;
   }
 
-  void ApplyFromConf(std::string filename);
+  void ApplyFromConf(json11::Json conf);
 
   void set_pool_capacity(size_t sz, size_t cap) {
     proposed_caps[SizeToClass(sz)] = cap;

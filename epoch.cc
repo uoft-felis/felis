@@ -1,6 +1,6 @@
 #include "epoch.h"
 
-namespace dolly {
+namespace felis {
 
 static constexpr size_t kEpochMemoryLimit = 12 << 20;
 

@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace dolly {
+namespace felis {
 namespace chkpt {
 namespace ermia {
 

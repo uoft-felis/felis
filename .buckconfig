@@ -1,0 +1,5 @@
+[cxx]
+        cxx = /nix/store/w6npdxik34dcxcgwkjyl1cprnw7rsc4a-clang-wrapper-6.0.1/bin/clang++
+        as = /nix/store/w6npdxik34dcxcgwkjyl1cprnw7rsc4a-clang-wrapper-6.0.1/bin/clang
+        cc = /nix/store/w6npdxik34dcxcgwkjyl1cprnw7rsc4a-clang-wrapper-6.0.1/bin/clang
+        ld = /nix/store/w6npdxik34dcxcgwkjyl1cprnw7rsc4a-clang-wrapper-6.0.1/bin/clang++

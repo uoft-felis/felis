@@ -1,7 +1,7 @@
 #include <type_traits>
 #include "ermia_size_encode.h"
 
-namespace dolly {
+namespace felis {
 namespace chkpt {
 namespace ermia {
 

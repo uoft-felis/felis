@@ -1,5 +1,5 @@
 #include "index.h"
 
-namespace dolly {
+namespace felis {
 
 }

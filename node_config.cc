@@ -11,7 +11,7 @@
 
 #include "promise.h"
 
-namespace dolly {
+namespace felis {
 
 size_t NodeConfiguration::kNrThreads = 8;
 
@@ -29,29 +29,24 @@ static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, 
 static void ParseNodeConfig(util::Optional<NodeConfiguration::NodeConfig> &config, json11::Json json)
 {
   config->worker_peer = ParseNodePeerConfig(json, "worker");
-  config->web_conf = ParseNodePeerConfig(json, "web");
+  config->name = json.object_items().find("name")->second.string_value();
 }
 
 NodeConfiguration::NodeConfiguration()
 {
-  std::ifstream fin(kNodeConfiguration);
-  std::string conf_text{std::istreambuf_iterator<char>(fin), std::istreambuf_iterator<char>()};
-  std::string err;
-  json11::Json conf_doc = json11::Json::parse(conf_text, err);
+  auto &console = util::Instance<Console>();
 
-  if (!err.empty()) {
-    fputs("Failed to parse node configuration", stderr);
-    fputs(err.c_str(), stderr);
-    std::abort();
-  }
+  console.WaitForServerStatus(Console::ServerStatus::Configuring);
+  json11::Json conf_doc = console.FindConfigSection("nodes");
 
-  auto json_map = conf_doc.object_items();
-  for (auto it = json_map.begin(); it != json_map.end(); ++it) {
-    int idx = std::stoi(it->first);
+  auto hosts_conf = conf_doc.array_items();
+
+  for (int i = 0; i < hosts_conf.size(); i++) {
+    int idx = i + 1;
     all_config[idx] = NodeConfig();
     auto &config = all_config[idx];
     config->id = idx;
-    ParseNodeConfig(config, it->second);
+    ParseNodeConfig(config, hosts_conf[i]);
     max_node_id = std::max((int) max_node_id, idx);
   }
 
@@ -62,6 +57,12 @@ using go::TcpSocket;
 using go::TcpInputChannel;
 using go::BufferChannel;
 using util::Instance;
+
+void PromiseRoundRobin::QueueRoutine(PromiseRoutine *routine, int idx)
+{
+  BasePromise::QueueRoutine(routine, idx, ++cur_thread);
+  if (cur_thread == NodeConfiguration::kNrThreads) cur_thread = 1;
+}
 
 class NodeServerThreadRoutine : public go::Routine {
   TcpInputChannel *in;
@@ -80,8 +81,7 @@ class NodeServerRoutine : public go::Routine {
 
 void NodeServerThreadRoutine::Run()
 {
-  int max_nr_thread = NodeConfiguration::kNrThreads;
-  int cur_thread = 1;
+  PromiseRoundRobin lb;
   while (true) {
     while (true) {
       uint64_t promise_size = 0;
@@ -91,12 +91,11 @@ void NodeServerThreadRoutine::Run()
         BasePromise::QueueRoutine(nullptr, idx, -1);
         break;
       }
-      PromiseRoutinePool *pool = PromiseRoutinePool::Create(promise_size);
+      auto pool = PromiseRoutinePool::Create(promise_size);
       in->Read(pool->mem, promise_size);
 
       auto r = PromiseRoutine::CreateFromBufferedPool(pool);
-      BasePromise::QueueRoutine(r, idx, ++cur_thread);
-      if (cur_thread == max_nr_thread) cur_thread = 1;
+      lb.QueueRoutine(r, idx);
     }
   }
 }
@@ -118,9 +117,9 @@ void NodeServerRoutine::Run()
   if (!server_sock->Listen(NodeConfiguration::kMaxNrNode)) {
     std::abort();
   }
-  console.UpdateServerStatus("listening");
+  console.UpdateServerStatus(Console::ServerStatus::Listening);
 
-  console.WaitForServerStatus("connecting");
+  console.WaitForServerStatus(Console::ServerStatus::Connecting);
   // Now if anybody else tries to connect to us, it should be in the listener
   // queue. We are safe to call connect at this point. It shouldn't lead to
   // deadlock.
@@ -144,14 +143,21 @@ void NodeServerRoutine::Run()
     configuration.nr_clients++;
     go::Scheduler::Current()->WakeUp(new NodeServerThreadRoutine(client_sock, i));
   }
-  console.UpdateServerStatus("ready");
+  console.UpdateServerStatus(Console::ServerStatus::Running);
 }
 
-void RunConsoleServer(std::string netmask, std::string service_port);
+void NodeConfiguration::SetupNodeName(std::string name)
+{
+  for (int i = 1; i <= max_node_id; i++) {
+    if (all_config[i] && all_config[i]->name == name) {
+      id = i;
+      return;
+    }
+  }
+}
 
 void NodeConfiguration::RunAllServers()
 {
-  RunConsoleServer("0.0.0.0", std::to_string(config().web_conf.port));
   logger->info("Starting node server with id {}", node_id());
   go::GetSchedulerFromPool(1)->WakeUp(new NodeServerRoutine());
 }
@@ -168,12 +174,24 @@ go::TcpOutputChannel *NodeConfiguration::GetOutputChannel(int node_id)
 
 void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
 {
-  uint64_t buffer_size = routine->TreeSize();
-  uint8_t *buffer = (uint8_t *) malloc(buffer_size);
-  routine->EncodeTree(buffer);
-  auto out = GetOutputChannel(routine->node_id);
-  out->Write(&buffer_size, 8);
-  out->Write(buffer, buffer_size);
+  if (routine->node_id != node_id()) {
+    uint64_t buffer_size = routine->TreeSize();
+    uint8_t *buffer = (uint8_t *) malloc(buffer_size);
+    routine->EncodeTree(buffer);
+    auto out = GetOutputChannel(routine->node_id);
+    out->Write(&buffer_size, 8);
+    out->Write(buffer, buffer_size);
+    free(buffer);
+    routine->input.data = nullptr;
+    routine->UnRefRecursively();
+  } else {
+    auto &in = routine->input;
+    uint8_t *p = (uint8_t *) malloc(in.len);
+    memcpy(p, in.data, in.len);
+    routine->input = VarStr(in.len, in.region_id, p);
+
+    lb.QueueRoutine(routine, 0);
+  }
 }
 
 void NodeConfiguration::SendBarrier(int node_id)

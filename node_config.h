@@ -8,10 +8,16 @@
 #include "gopp/channels.h"
 #include "promise.h"
 
-namespace dolly {
+namespace felis {
 
 class NodeServerRoutine;
 class PromiseRoutine;
+
+class PromiseRoundRobin {
+  int cur_thread = 1;
+ public:
+  void QueueRoutine(PromiseRoutine *routine, int idx);
+};
 
 class NodeConfiguration : public PromiseRoutineTransportService {
   NodeConfiguration();
@@ -19,6 +25,8 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   template <typename T> friend T &util::Instance();
 
   int id;
+  // Round Robin for local transport
+  PromiseRoundRobin lb;
  public:
 
   static size_t kNrThreads;
@@ -31,12 +39,12 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   struct NodeConfig {
     int id;
+    std::string name;
     NodePeerConfig worker_peer;
-    NodePeerConfig web_conf;
   };
 
-  int node_id() const final override { return id; }
-  void set_node_id(int v) { id = v; }
+  int node_id() const { return id; }
+  void SetupNodeName(std::string name);
 
   const NodeConfig &config() const {
     if (!all_config[id])

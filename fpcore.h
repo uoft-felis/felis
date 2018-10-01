@@ -11,7 +11,7 @@
 #include "gopp/gopp.h"
 #include "util.h"
 
-namespace dolly {
+namespace felis {
 
 static inline void *Allocate(size_t s)
 {

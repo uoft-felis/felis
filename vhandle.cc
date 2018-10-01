@@ -6,7 +6,7 @@
 #include "vhandle.h"
 #include "node_config.h"
 
-namespace dolly {
+namespace felis {
 
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
@@ -15,8 +15,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   value_mark = size = 0;
   this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
 
-  // uint8_t *p = (uint8_t *) malloc(2 * len);
-  versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * capacity * sizeof(uint64_t));
+  versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(3 * capacity * sizeof(uint64_t));
 }
 
 static void EnlargePair64Array(uint64_t *old_p, size_t old_cap, int old_coreid,
@@ -132,7 +131,7 @@ void SpinnerSlot::Wait(uint64_t sid, uint64_t ver)
 
   asm volatile("" : : :"memory");
 
-  DTRACE_PROBE3(dolly, wait_jiffies, dt, sid, ver);
+  DTRACE_PROBE3(felis, wait_jiffies, dt, sid, ver);
   slots[idx].done = 0;
 }
 
@@ -157,11 +156,11 @@ static bool IsPendingVal(uintptr_t val)
 static void __attribute__((noinline))
 WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
 {
-  DTRACE_PROBE1(dolly, version_read, handle);
+  DTRACE_PROBE1(felis, version_read, handle);
 
   uintptr_t oldval = *addr;
   if (!IsPendingVal(oldval)) return;
-  DTRACE_PROBE1(dolly, blocking_version_read, handle);
+  DTRACE_PROBE1(felis, blocking_version_read, handle);
 
   int core = go::Scheduler::CurrentThreadPoolId() - 1;
 
@@ -268,6 +267,8 @@ void BaseVHandle::InitPools()
   pools = InitPerCorePool(64, 16 << 20);
 }
 
+#ifdef LL_REPLAY
+
 LinkListVHandle::LinkListVHandle()
     : this_coreid(mem::CurrentAllocAffinity()), lock(false), head(nullptr), size(0)
 {
@@ -315,7 +316,7 @@ VarStr *LinkListVHandle::ReadWithVersion(uint64_t sid)
     p = p->next;
   }
 
-  DTRACE_PROBE2(dolly, linklist_search_read, search_count, size);
+  DTRACE_PROBE2(felis, linklist_search_read, search_count, size);
 
   if (!p) return nullptr;
 
@@ -333,7 +334,7 @@ bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch
     search_count++;
     p = p->next;
   }
-  DTRACE_PROBE2(dolly, linklist_search_write, search_count, size);
+  DTRACE_PROBE2(felis, linklist_search_write, search_count, size);
   if (!p) {
     logger->critical("Diverging outcomes! sid {}", sid);
     return false;
@@ -383,6 +384,10 @@ void LinkListVHandle::GarbageCollect()
     size--;
   }
 }
+
+#endif
+
+#ifdef CALVIN_REPLAY
 
 CalvinVHandle::CalvinVHandle()
     : lock(false), pos(0)
@@ -547,18 +552,6 @@ void CalvinVHandle::GarbageCollect()
   pos.store(0);
 }
 
+#endif
+
 }
-
-#if (defined LL_REPLAY) || (defined CALVIN_REPLAY)
-
-#ifdef LL_REPLAY
-#pragma message "Using Linklist Versioning"
-#endif
-
-#ifdef CALVIN_REPLAY
-#pragma message "Using Calvin"
-#endif
-
-#else
-#pragma message "Using Dolly"
-#endif
