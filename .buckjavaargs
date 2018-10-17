@@ -1,2 +1,4 @@
 -server
-
+-XX:CompileThreshold=5
+-XX:-UseCounterDecay
+-Xshare:on

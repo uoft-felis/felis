@@ -22,4 +22,10 @@ class PerfLog {
   void Clear();
 };
 
+#define abort_if(cond, ...)                     \
+  if (cond) {                                   \
+    logger->critical(__VA_ARGS__);              \
+    std::abort();                               \
+  }                                             \
+
 #endif /* LOG_H */

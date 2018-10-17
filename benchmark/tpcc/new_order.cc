@@ -1,6 +1,7 @@
 #include "tpcc.h"
 #include "txn.h"
 #include "promise.h"
+#include <tuple>
 
 namespace tpcc {
 
@@ -95,6 +96,7 @@ NewOrderTxn::NewOrderTxn(Client *client)
 
   for (uint i = 0; i < nr_items; i++) {
     int p = partition(supplier_warehouse_id[i]);
+    printf("partition %d\n", p);
     _ >> T(Capture(i, supplier_warehouse_id[i], item_id[i]), p, [](auto ctx, auto _) -> Optional<VoidValue> {
         uint i;
         uint warehouse_id;

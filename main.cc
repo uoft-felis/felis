@@ -4,6 +4,8 @@
 #include "module.h"
 #include "node_config.h"
 #include "console.h"
+#include "log.h"
+#include "epoch.h"
 
 void show_usage(const char *progname)
 {
@@ -36,6 +38,8 @@ void ParseControllerAddress(std::string arg);
 
 }
 
+using namespace felis;
+
 int main(int argc, char *argv[])
 {
   int opt;
@@ -50,7 +54,7 @@ int main(int argc, char *argv[])
         node_name = std::string(optarg);
         break;
       case 'c':
-        felis::ParseControllerAddress(std::string(optarg));
+        ParseControllerAddress(std::string(optarg));
         break;
       default:
         show_usage(argv[0]);
@@ -58,8 +62,8 @@ int main(int argc, char *argv[])
     }
   }
 
-  felis::Module<felis::CoreModule>::ShowAllModules();
-  felis::Module<felis::WorkloadModule>::ShowAllModules();
+  Module<CoreModule>::ShowAllModules();
+  Module<WorkloadModule>::ShowAllModules();
   puts("\n");
 
   if (node_name == "") {
@@ -72,15 +76,27 @@ int main(int argc, char *argv[])
     return -1;
   }
 
-  auto &console = util::Instance<felis::Console>();
+  auto &console = util::Instance<Console>();
   console.set_server_node_name(node_name);
 
-  felis::Module<felis::CoreModule>::InitRequiredModules();
+  Module<CoreModule>::InitRequiredModules();
 
-  util::Instance<felis::NodeConfiguration>().SetupNodeName(node_name);
-  felis::Module<felis::CoreModule>::InitModule("node-server");
+  util::Instance<NodeConfiguration>().SetupNodeName(node_name);
 
-  console.WaitForServerStatus(felis::Console::ServerStatus::Exiting);
+  // init tables from the workload module
+  Module<WorkloadModule>::InitModule(workload_name);
+
+  Module<CoreModule>::InitModule("node-server");
+
+  console.WaitForServerStatus(felis::Console::ServerStatus::Running);
+
+  abort_if(EpochClient::gWorkloadClient == nullptr,
+           "Workload Module did not setup the EpochClient properly");
+
+  logger->info("Starting workload");
+  EpochClient::gWorkloadClient->Start();
+
+  console.WaitForServerStatus(Console::ServerStatus::Exiting);
 
   return 0;
 }

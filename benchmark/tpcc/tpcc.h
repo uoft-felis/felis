@@ -119,7 +119,7 @@ class ClientBase {
 
  protected:
   static constexpr double kWarehouseSpread = 0.0;
-  static constexpr double kNewOrderRemoteItem = 0.01;
+  static constexpr double kNewOrderRemoteItem = 0.1; // default 0.01
   static constexpr double kCreditCheckRemoteCustomer = 0.15;
   static constexpr double kPaymentRemoteCustomer = 0.15;
   static constexpr double kPaymentByName = 0.60;
@@ -223,13 +223,13 @@ class Client : public felis::EpochClient, public ClientBase {
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
  public:
 
-  Client() : ClientBase(kClientSeed) {}
+  Client() : felis::EpochClient(), ClientBase(kClientSeed) {}
 
   template <class T> T GenerateTransactionInput();
 
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];
-
+ protected:
   felis::BaseTxn *RunCreateTxn() final override;
 };
 

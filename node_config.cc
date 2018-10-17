@@ -95,6 +95,7 @@ void NodeServerThreadRoutine::Run()
       in->Read(pool->mem, promise_size);
 
       auto r = PromiseRoutine::CreateFromBufferedPool(pool);
+      // printf("received a remote routine, put it in the queue\n");
       lb.QueueRoutine(r, idx);
     }
   }
@@ -111,12 +112,14 @@ void NodeServerRoutine::Run()
   auto nr_nodes = configuration.nr_nodes();
   BasePromise::InitializeSourceCount(nr_nodes, configuration.kNrThreads);
 
-  if (!server_sock->Bind("0.0.0.0", node_conf.worker_peer.port)) {
-    std::abort();
-  }
-  if (!server_sock->Listen(NodeConfiguration::kMaxNrNode)) {
-    std::abort();
-  }
+  // Reuse addr just for debugging
+  int enable = 1;
+  setsockopt(server_sock->fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+
+  abort_if(!server_sock->Bind("0.0.0.0", node_conf.worker_peer.port),
+           "Cannot bind peer address");
+  abort_if(!server_sock->Listen(NodeConfiguration::kMaxNrNode),
+           "Cannot listen");
   console.UpdateServerStatus(Console::ServerStatus::Listening);
 
   console.WaitForServerStatus(Console::ServerStatus::Connecting);
@@ -126,6 +129,7 @@ void NodeServerRoutine::Run()
   for (auto &config: configuration.all_config) {
     if (!config) continue;
     if (config->id == configuration.node_id()) continue;
+    logger->info("Connecting {}\n", config->id);
     TcpSocket *remote_sock = new TcpSocket(1024, 1024);
     remote_sock->Connect(config->worker_peer.host, config->worker_peer.port);
     configuration.all_nodes[config->id] = remote_sock;
@@ -165,16 +169,13 @@ void NodeConfiguration::RunAllServers()
 go::TcpOutputChannel *NodeConfiguration::GetOutputChannel(int node_id)
 {
   auto sock = all_nodes[node_id];
-  if (!sock) {
-    logger->critical("node {} does not exist!", node_id);
-    std::abort();
-  }
+  abort_if(!sock, "node with id {} does not exist!", node_id);
   return sock->output_channel();
 }
 
 void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
 {
-  if (routine->node_id != node_id()) {
+  if (routine->node_id != 0 && routine->node_id != node_id()) {
     uint64_t buffer_size = routine->TreeSize();
     uint8_t *buffer = (uint8_t *) malloc(buffer_size);
     routine->EncodeTree(buffer);

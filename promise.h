@@ -229,10 +229,16 @@ class PromiseStream {
     return p;
   }
 
-  template <typename Closure, typename Placement, typename Func>
-  auto operator>>(std::tuple<Closure, Placement, Func> t) {
-    return PromiseStream<typename Promise<T>::template Next<Func, Closure>::Type>
-        (p->Then(std::get<0>(t), std::get<1>(t), std::get<2>(t)));
+  template <typename Tuple>
+  struct ChainType {
+    using Closure = typename std::tuple_element<0, Tuple>::type;
+    using Func = typename std::tuple_element<2, Tuple>::type;
+    using Type = PromiseStream<typename Promise<T>::template Next<Func, Closure>::Type>;
+  };
+
+  template <typename Tuple>
+  typename ChainType<Tuple>::Type operator>>(Tuple t) {
+    return typename ChainType<Tuple>::Type(p->Then(std::get<0>(t), std::get<1>(t), std::get<2>(t)));
   }
 };
 

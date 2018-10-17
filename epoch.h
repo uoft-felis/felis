@@ -14,7 +14,14 @@ class BaseTxn;
 
 class EpochClient {
  public:
+  static EpochClient *gWorkloadClient;
+
+  EpochClient() noexcept;
   virtual ~EpochClient() {}
+
+  void Start();
+ protected:
+  void Worker();
   virtual BaseTxn *RunCreateTxn() = 0;
 };
 

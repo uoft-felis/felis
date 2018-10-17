@@ -19,6 +19,7 @@ static tpcc::loaders::Loader<TLT> *CreateLoader(unsigned long seed, std::mutex *
 						std::atomic_int *count_down, int cpu)
 {
   return new tpcc::loaders::Loader<TLT>(seed, m, count_down, cpu);
+  printf("hello");
 }
 
 static void LoadTPCCDataSet()
@@ -50,6 +51,10 @@ class TPCCModule : public Module<WorkloadModule> {
 
     Instance<tpcc::TableHandles>();
     LoadTPCCDataSet();
+
+    tpcc::TxnFactory::Initialize();
+
+    EpochClient::gWorkloadClient = new tpcc::Client();
   }
 };
 

@@ -9,10 +9,17 @@ tpcc_srcs = [
     'benchmark/tpcc/new_order.cc',
 ]
 
+db_headers = [
+    'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
+    'log.h', 'mem.h', 'module.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
+    'txn.h', 'util.h', 'vhandle.h',
+]
+
 cxx_library(
     name='tpcc',
     srcs=tpcc_srcs,
     compiler_flags=includes,
+    headers=db_headers,
     link_whole=True,
 )
 
@@ -29,19 +36,12 @@ db_srcs = [
 	('masstree/straccum.cc', ['-include', 'masstree/build/config.h']),
     ]
 
-db_headers = [
-    'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
-    'log.h', 'mem.h', 'module.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
-    'txn.h', 'util.h', 'vhandle.h',
-]
-
 libs = ['-pthread', '-lrt', '-ldl', '-lnuma', '-l:libjemalloc.a']
 test_srcs = ['test/promise_test.cc']
 
 cxx_binary(
     name='db',
     srcs=['main.cc', 'module.cc', 'iface.cc'] + db_srcs,
-    headers=db_headers,
     compiler_flags=includes,
     linker_flags=libs,
     deps=[':tpcc'],
@@ -50,22 +50,7 @@ cxx_binary(
 cxx_test(
     name='dbtest',
     srcs=test_srcs + db_srcs,
-    headers=db_headers,
     compiler_flags=includes,
     linker_flags=libs + ['-lgtest_main', '-lgtest'],
     deps=[':tpcc']
 )
-
-# class DebugConfiguration(Configuration):
-#     # CFLAGS=['-g', '-fsanitize=address'] + Configuration.CFLAGS
-#     # LDFLAGS=['-fsanitize=address']
-#     CFLAGS=['-g'] + Configuration.CFLAGS
-#     PREFIX='debug'
-# 
-# class ReleaseConfiguration(Configuration):
-#     CFLAGS=['-Ofast', '-flto', '-fno-omit-frame-pointer', '-mno-omit-leaf-frame-pointer'] + Configuration.CFLAGS
-#     LDFLAGS=['-Ofast', '-flto', '-fwhole-program', '-fno-omit-frame-pointer', '-mno-omit-leaf-frame-pointer']
-#     PREFIX='release'
-# 
-# DebugConfiguration().build()
-# ReleaseConfiguration().build()

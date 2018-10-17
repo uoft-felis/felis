@@ -60,21 +60,26 @@ template <class T>
 class RelationManagerPolicy : public RelationManagerBase {
  protected:
  public:
-  static const int kMaxNrRelations = 1024;
+  static constexpr int kMaxNrRelations = 1024;
   RelationManagerPolicy() {}
 
   T &GetRelationOrCreate(int fid) {
 #ifndef NDEBUG
-    if (fid < 0 || fid >= kMaxNrRelations || relations[fid].relation_id() == -1) {
-      logger->critical("WTF is {}?", fid);
-      std::abort();
-    }
+    abort_if(fid < 0 || fid >= kMaxNrRelations,
+             "Cannot access {}, limit {}", fid, kMaxNrRelations);
 #endif
+
+    if (relations[fid].relation_id() == -1)
+      relations[fid].set_id(fid);
     return relations[fid];
   }
 
   T &operator()(int fid) {
-    return GetRelationOrCreate(fid);
+#ifndef NDEBUG
+    abort_if(fid < 0 || fid >= kMaxNrRelations || relations[fid].relation_id() == -1,
+             "Cannot access {}? Is it initialized? limit {}", fid, kMaxNrRelations);
+#endif
+    return relations[fid];
   }
 
  protected:
@@ -92,10 +97,8 @@ class RelationPolicy : public BaseRelation,
       asm("pause" : : :"memory");
     }
     if (obj != (void *) kPendingValue) {
-      if (!handle->WriteWithVersion(sid, obj, epoch_nr)) {
-        logger->error("Diverging outcomes during setup setup");
-        std::abort();
-      }
+      abort_if(!handle->WriteWithVersion(sid, obj, epoch_nr),
+               "Diverging outcomes during setup setup");
     }
     return handle;
   }
