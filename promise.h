@@ -163,7 +163,9 @@ class Promise : public BasePromise {
     routine->input.data = nullptr;
     routine->callback = (void (*)(PromiseRoutine *)) static_func;
     routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
+
     memcpy(routine->capture_data, &capture, sizeof(Closure));
+
     handlers.push_back(routine);
     return routine;
   }

@@ -53,8 +53,8 @@ struct Config {
 
 static int NMaxCustomerIdxScanElems = 512;
 
-// maps a wid => partition id
-static inline unsigned int PartitionId(unsigned int wid)
+// maps a wid => core id
+static inline unsigned int CoreId(unsigned int wid)
 {
   assert(wid >= 1 && wid <= kTPCCConfig.nr_warehouses);
   int nthreads = NodeConfiguration::kNrThreads;
@@ -63,8 +63,6 @@ static inline unsigned int PartitionId(unsigned int wid)
     return wid;
   const unsigned nwhse_per_partition = kTPCCConfig.nr_warehouses / nthreads;
   const unsigned partid = wid / nwhse_per_partition;
-  if (partid >= nthreads)
-    return nthreads - 1;
   return partid;
 }
 
@@ -286,7 +284,8 @@ felis::Relation &Util::relation(TableType table, unsigned int wid)
 
 int Util::partition(unsigned int wid)
 {
-  return (wid - 1) * Instance<NodeConfiguration>().nr_nodes() / kTPCCConfig.nr_warehouses;
+  // partition id also starts from 1 because 0 means local shard. See node_config.cc
+  return (wid - 1) * Instance<NodeConfiguration>().nr_nodes() / kTPCCConfig.nr_warehouses + 1;
 }
 
 namespace loaders {
@@ -364,8 +363,8 @@ void Loader<LoaderType::Stock>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    util::PinToCPU(PartitionId(w));
-    mem::SetThreadLocalAllocAffinity(PartitionId(w));
+    util::PinToCPU(CoreId(w));
+    mem::SetThreadLocalAllocAffinity(CoreId(w));
 
     for(size_t i = 1; i <= kTPCCConfig.nr_items; i++) {
       const auto k = Stock::Key::New(w, i);
@@ -416,8 +415,8 @@ void Loader<LoaderType::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    util::PinToCPU(PartitionId(w));
-    mem::SetThreadLocalAllocAffinity(PartitionId(w));
+    util::PinToCPU(CoreId(w));
+    mem::SetThreadLocalAllocAffinity(CoreId(w));
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       const auto k = District::Key::New(w, d);
@@ -447,8 +446,8 @@ void Loader<LoaderType::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    util::PinToCPU(PartitionId(w));
-    mem::SetThreadLocalAllocAffinity(PartitionId(w));
+    util::PinToCPU(CoreId(w));
+    mem::SetThreadLocalAllocAffinity(CoreId(w));
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       for (uint cidx0 = 0; cidx0 < kTPCCConfig.customers_per_district; cidx0++) {
@@ -527,8 +526,8 @@ void Loader<LoaderType::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    util::PinToCPU(PartitionId(w));
-    mem::SetThreadLocalAllocAffinity(PartitionId(w) % NodeConfiguration::kNrThreads);;
+    util::PinToCPU(CoreId(w));
+    mem::SetThreadLocalAllocAffinity(CoreId(w) % NodeConfiguration::kNrThreads);;
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;

@@ -77,15 +77,15 @@ class Txn : public BaseTxn {
   }
 
   template <typename ...Types>
-  struct CaptureStruct {
+  struct ContextStruct {
     State state;
     TxnHandle handle;
     std::tuple<Types...> params;
   };
 
   template <typename ...Types>
-  CaptureStruct<Types...> Capture(Types... args) {
-    return CaptureStruct<Types...>{state, index_handle(), std::make_tuple(args...)};
+  ContextStruct<Types...> Context(Types... args) {
+    return ContextStruct<Types...>{state, index_handle(), std::make_tuple(args...)};
   }
 
 };

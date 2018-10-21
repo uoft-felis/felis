@@ -74,7 +74,7 @@ NewOrderTxn::NewOrderTxn(Client *client)
   PromiseProc _;
   int p = partition(warehouse_id);
 
-  _ >> T(Capture(warehouse_id, district_id), p, [](auto ctx, auto _) -> Optional<VoidValue> {
+  _ >> T(Context(warehouse_id, district_id), p, [](auto ctx, auto _) -> Optional<VoidValue> {
       uint warehouse_id;
       uint district_id;
       std::tie(warehouse_id, district_id) = ctx.params;
@@ -97,7 +97,7 @@ NewOrderTxn::NewOrderTxn(Client *client)
   for (uint i = 0; i < nr_items; i++) {
     int p = partition(supplier_warehouse_id[i]);
     printf("partition %d\n", p);
-    _ >> T(Capture(i, supplier_warehouse_id[i], item_id[i]), p, [](auto ctx, auto _) -> Optional<VoidValue> {
+    _ >> T(Context(i, supplier_warehouse_id[i], item_id[i]), p, [](auto ctx, auto _) -> Optional<VoidValue> {
         uint i;
         uint warehouse_id;
         uint item_id;

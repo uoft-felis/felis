@@ -37,7 +37,7 @@ db_srcs = [
     ]
 
 libs = ['-pthread', '-lrt', '-ldl', '-lnuma', '-l:libjemalloc.a']
-test_srcs = ['test/promise_test.cc']
+test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc']
 
 cxx_binary(
     name='db',
