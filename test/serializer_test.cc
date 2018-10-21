@@ -32,8 +32,11 @@ TEST_F(TupleTest, Nested) {
   Tuple<Tuple<int, int>> n;
   n.Decode(s);
 
-  ASSERT_EQ(n._<0>()._<0>(), 23);
-  ASSERT_EQ(n._<0>()._<1>(), 24);
+  int a, b;
+  n._<0>().Unpack(a, b);
+
+  ASSERT_EQ(a, 23);
+  ASSERT_EQ(b, 24);
 }
 
 TEST_F(TupleTest, NestedDBRow) {

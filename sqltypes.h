@@ -479,6 +479,11 @@ struct TupleField : public TupleField<Types...> {
   TupleField() : ParentTupleFields() {}
   TupleField(const T &v, const Types&... args) : value(v), ParentTupleFields(args...) {}
 
+  void Unpack(T &v, Types&... args) {
+    v = value;
+    ParentTupleFields::Unpack(args...);
+  }
+
   size_t EncodeSize() const {
     return ParentTupleFields::EncodeSize() + Serializer<T>::EncodeSize(&value);
   }
@@ -499,6 +504,8 @@ struct TupleField<T> {
   T value;
   TupleField() {}
   TupleField(const T &v) : value(v) {}
+
+  void Unpack(T &v) { v = value; }
 
   size_t EncodeSize() const {
     return Serializer<T>::EncodeSize(&value);
