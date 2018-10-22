@@ -2,6 +2,9 @@
   polyglot_parsing_enabled = true
   default_build_file_syntax = SKYLARK
 
+[cache]
+  mode =
+
 [cxx]
   base_cxxflags = -std=c++17 -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64
   base_cflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64
