@@ -74,16 +74,20 @@ class PromiseTest : public testing::Test {
 TEST_F(PromiseTest, Simple)
 {
   int state = 1;
+  int *p = &state;
   {
     PromiseProc _;
-    auto p = (uintptr_t) &state;
-    _ >> T(p, 1, [](auto ctx, auto _) -> Optional<Tuple<int>> {
-        int *state = (int *) ctx;
+    _ >> T(Tuple<int *>(p), 1, [](auto ctx, auto _) -> Optional<Tuple<int>> {
+        int *state;
+        ctx.Unpack(state);
+
         EXPECT_EQ(*state, 1);
         (*state)++;
         return Tuple<int>(1);
-      }) >> T(p, 0, [](auto ctx, auto last) -> Optional<VoidValue> {
-          int *state = (int *) ctx;
+      }) >> T(Tuple<int *>(p), 0, [](auto ctx, auto last) -> Optional<VoidValue> {
+          int *state;
+          ctx.Unpack(state);
+
           EXPECT_EQ(*state, 2);
           (*state)++;
           return nullopt;
@@ -111,24 +115,27 @@ TEST_F(PromiseTest, Combine)
   CombinerState<Tuple<int>, Tuple<int>> state;
   auto state_ptr = &state;
   int capture = 0;
-  auto p = (uintptr_t) &capture;
+  int *p = &capture;
   {
     PromiseProc _;
     auto a =
-        (_ >> T(p, 1, [](auto ctx, auto _) -> Optional<Tuple<int>> {
-            auto capture = (int *) ctx;
+        (_ >> T(Tuple<int *>(p), 1, [](auto ctx, auto _) -> Optional<Tuple<int>> {
+            int *capture;
+            ctx.Unpack(capture);
             (*capture)++;
             return Tuple<int>(1);
           })).promise();
     auto b =
-        (_ >> T(p, 0, [](auto ctx, auto _) -> Optional<Tuple<int>> {
-            auto capture = (int *) ctx;
+        (_ >> T(Tuple<int *>(p), 0, [](auto ctx, auto _) -> Optional<Tuple<int>> {
+            int *capture;
+            ctx.Unpack(capture);
             (*capture)++;
             return Tuple<int>(2);
           })).promise();
     auto c = Combine(0, state_ptr, a, b).stream();
-    c >> T(p, 0, [](auto ctx, auto _) -> Optional<VoidValue> {
-        auto capture = (int *) ctx;
+    c >> T(Tuple<int *>(p), 0, [](auto ctx, auto _) -> Optional<VoidValue> {
+        int *capture;
+        ctx.Unpack(capture);
         EXPECT_EQ(*capture, 2);
         (*capture)++;
         return nullopt;

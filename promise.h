@@ -48,8 +48,8 @@ struct PromiseRoutinePool {
 
 struct PromiseRoutine {
   VarStr input;
-  uint8_t *capture_data;
   uint32_t capture_len;
+  uint8_t *capture_data;
   int node_id; // -1 if dynamic placement
 
   void (*callback)(PromiseRoutine *);
@@ -147,11 +147,12 @@ class Promise : public BasePromise {
   PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
     auto static_func = [](PromiseRoutine *routine) {
       auto native_func = (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) routine->callback_native_func;
-      Closure *capture = (Closure *) routine->capture_data;
+      Closure capture;
       T t;
+      capture.DecodeFrom(routine->capture_data);
       t.Decode(&routine->input);
 
-      auto output = native_func(*capture, t);
+      auto output = native_func(capture, t);
       if (routine->next && output) {
         void *buffer = alloca(output->EncodeSize() + sizeof(VarStr) + 1);
         VarStr *output_str = output->EncodeFromAlloca(buffer);
@@ -159,12 +160,13 @@ class Promise : public BasePromise {
       }
       routine->UnRef();
     };
-    auto routine = PromiseRoutine::CreateWithDedicatePool(sizeof(Closure));
+    auto routine = PromiseRoutine::CreateWithDedicatePool(capture.EncodeSize());
     routine->input.data = nullptr;
     routine->callback = (void (*)(PromiseRoutine *)) static_func;
     routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
 
-    memcpy(routine->capture_data, &capture, sizeof(Closure));
+    routine->capture_len = capture.EncodeSize();
+    capture.EncodeTo(routine->capture_data);
 
     handlers.push_back(routine);
     return routine;
@@ -185,13 +187,6 @@ class Promise : public BasePromise {
   Promise<typename Next<Func, Closure>::Type> *Then(const Closure &capture, PlacementFunc on, Func func) {
     auto routine = AttachRoutine(capture, func);
     routine->node_id = -1;
-    auto static_func = [](PromiseRoutine *routine) -> int {
-      auto native_func = (int (*)(const Closure &, T)) routine->placement_native_func;
-      Closure *capture = (Closure *) routine->capture_data;
-      T t;
-      t.Decode(&routine->input);
-      return native_func(*capture, t);
-    };
     routine->placement_native_func = on;
     auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
     routine->next = next_promise;
@@ -273,9 +268,12 @@ template <typename CombinerStatePtr, typename CombinerStateType, typename T, typ
 static void CombineImplInstall(int node_id, CombinerStatePtr state_ptr,
                                typename CombinerStateType::PromiseType *next_promise, Promise<T> *p) {
   auto routine = p->AttachRoutine(
-      state_ptr,
-      [](const CombinerStatePtr &state_ptr, T result) -> Optional<typename CombinerStateType::TupleType> {
+      sql::Tuple<CombinerStatePtr>(state_ptr),
+      [](auto ctx, T result) -> Optional<typename CombinerStateType::TupleType> {
         // We only set the first item in the tuple because of this cast!
+        CombinerStatePtr state_ptr;
+        ctx.Unpack(state_ptr);
+
         auto *raw_state_ptr = (CombinerStateType *) state_ptr;
         sql::TupleField<T, Types...> *tuple = raw_state_ptr;
         tuple->value = result;

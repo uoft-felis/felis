@@ -6,6 +6,7 @@
 #include <array>
 #include "epoch.h"
 #include "util.h"
+#include "sqltypes.h"
 
 namespace felis {
 
@@ -66,8 +67,10 @@ class BaseTxn {
 
 template <typename TxnState>
 class Txn : public BaseTxn {
- protected:
+ public:
   typedef EpochObject<TxnState> State;
+
+ protected:
   State state;
  public:
   Txn() {
@@ -77,15 +80,22 @@ class Txn : public BaseTxn {
   }
 
   template <typename ...Types>
-  struct ContextStruct {
-    State state;
-    TxnHandle handle;
-    std::tuple<Types...> params;
+  struct ContextStruct : public sql::Tuple<State, TxnHandle, Types...> {
+    using sql::Tuple<State, TxnHandle, Types...>::Tuple;
+
+    State state() const { return this->template _<0>(); }
+    TxnHandle handle() const { return this->template _<1>(); }
+
+    void Unpack(Types... args) const {
+      State _1;
+      TxnHandle _2;
+      sql::Tuple<State, TxnHandle, Types...>::Unpack(_1, _2, args...);
+    }
   };
 
   template <typename ...Types>
   ContextStruct<Types...> Context(Types... args) {
-    return ContextStruct<Types...>{state, index_handle(), std::make_tuple(args...)};
+    return ContextStruct<Types...>(state, index_handle(), args...);
   }
 
 };

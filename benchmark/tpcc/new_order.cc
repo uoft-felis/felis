@@ -77,9 +77,9 @@ NewOrderTxn::NewOrderTxn(Client *client)
   _ >> T(Context(warehouse_id, district_id), p, [](auto ctx, auto _) -> Optional<VoidValue> {
       uint warehouse_id;
       uint district_id;
-      std::tie(warehouse_id, district_id) = ctx.params;
-      State state = ctx.state;
-      TxnHandle handle = ctx.handle;
+      State state = ctx.state();
+      TxnHandle handle = ctx.handle();
+      ctx.Unpack(warehouse_id, district_id);
 
       state->rows.district =
           handle(relation(TableType::District, warehouse_id))
@@ -101,9 +101,9 @@ NewOrderTxn::NewOrderTxn(Client *client)
         uint i;
         uint warehouse_id;
         uint item_id;
-        std::tie(i, warehouse_id, item_id) = ctx.params;
-        State state = ctx.state;
-        TxnHandle handle = ctx.handle;
+        State state = ctx.state();
+        TxnHandle handle = ctx.handle();
+        ctx.Unpack(i, warehouse_id, item_id);
 
         state->rows.stocks[i] =
             handle(relation(TableType::Stock, warehouse_id))
