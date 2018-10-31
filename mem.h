@@ -101,10 +101,19 @@ class Brk {
   Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), deleters(nullptr) {}
   ~Brk();
 
+  // This is a special New() function. It avoids memory allocation.
+  static Brk *New(void *buf, size_t sz) {
+    auto *p = (uint8_t *) buf;
+    return new (p) Brk(p + sizeof(Brk), sz - sizeof(Brk));
+  }
+
   void *Alloc(size_t s);
   void *Alloc(size_t s, std::function<void (void *)> deleter);
   uint8_t *ptr() const { return data; }
 };
+
+#define NewStackBrk(sz) mem::Brk::New(alloca(sz), sz)
+#define INIT_ROUTINE_BRK(sz) go::RoutineScopedData _______(NewStackBrk(sz));
 
 void *AllocFromRoutine(size_t sz);
 void *AllocFromRoutine(size_t sz, std::function<void (void *)> deleter);

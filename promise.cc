@@ -227,10 +227,10 @@ void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thr
   go::GetSchedulerFromPool(thread)->WakeUp(
       go::Make([r, &desc]() {
           {
-            mem::Brk b(alloca(4096), 4096);
-            go::Scheduler::Current()->current_routine()->set_userdata(&b);
+            // mem::Brk b(alloca(4096), 4096);
+            // go::Scheduler::Current()->current_routine()->set_userdata(&b);
             r->callback(r);
-            go::Scheduler::Current()->current_routine()->set_userdata(nullptr);
+            // go::Scheduler::Current()->current_routine()->set_userdata(nullptr);
           }
           if (desc.finish_count.fetch_sub(1) == 1) {
             desc.BroadcastLocalBarrier();

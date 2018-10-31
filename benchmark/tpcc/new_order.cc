@@ -71,9 +71,18 @@ NewOrderTxn::NewOrderTxn(Client *client)
     : client(client),
       NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>())
 {
-  PromiseProc _;
-  int p = partition(warehouse_id);
+  INIT_ROUTINE_BRK(4096);
 
+  PromiseProc _;
+  auto district_key = District::Key::New(warehouse_id, district_id);
+
+  int p = partition(warehouse_id);
+  _ >> T(IndexContext<District>(warehouse_id, district_id), p, TxnIndexLookupOp<>)
+    >> T(Context(district_key), p, [](auto ctx, Tuple<VHandle *> vhandle) -> Optional<VoidValue> {
+        return nullopt;
+      });
+
+#if 0
   _ >> T(Context(warehouse_id, district_id), p, [](auto ctx, auto _) -> Optional<VoidValue> {
       uint warehouse_id;
       uint district_id;
@@ -113,6 +122,7 @@ NewOrderTxn::NewOrderTxn(Client *client)
         return nullopt;
       });
   }
+#endif
 }
 
 void NewOrderTxn::Run()

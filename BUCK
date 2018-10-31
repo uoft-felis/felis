@@ -42,6 +42,7 @@ test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc']
 cxx_binary(
     name='db',
     srcs=['main.cc', 'module.cc', 'iface.cc'] + db_srcs,
+    headers=db_headers,
     compiler_flags=includes,
     linker_flags=libs,
     deps=[':tpcc'],

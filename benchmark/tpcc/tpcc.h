@@ -24,67 +24,6 @@ class BaseTxn;
 
 namespace tpcc {
 
-// table and schemas definition
-struct Customer {
-  using Key = sql::CustomerKey;
-  using Value = sql::CustomerValue;
-};
-
-struct CustomerNameIdx {
-  using Key = sql::CustomerNameIdxKey;
-  using Value = sql::CustomerNameIdxValue;
-};
-
-struct District {
-  using Key = sql::DistrictKey;
-  using Value = sql::DistrictValue;
-};
-
-struct History {
-  using Key = sql::HistoryKey;
-  using Value = sql::HistoryValue;
-};
-
-struct Item {
-  using Key = sql::ItemKey;
-  using Value = sql::ItemValue;
-};
-
-struct NewOrder {
-  using Key = sql::NewOrderKey;
-  using Value = sql::NewOrderValue;
-};
-
-struct OOrder {
-  using Key = sql::OOrderKey;
-  using Value = sql::OOrderValue;
-};
-
-struct OOrderCIdIdx {
-  using Key = sql::OOrderCIdIdxKey;
-  using Value = sql::OOrderCIdIdxValue;
-};
-
-struct OrderLine {
-  using Key = sql::OrderLineKey;
-  using Value = sql::OrderLineValue;
-};
-
-struct Stock {
-  using Key = sql::StockKey;
-  using Value = sql::StockValue;
-};
-
-struct StockData {
-  using Key = sql::StockDataKey;
-  using Value = sql::StockDataValue;
-};
-
-struct Warehouse {
-  using Key = sql::WarehouseKey;
-  using Value = sql::WarehouseValue;
-};
-
 enum struct TableType : int {
   Customer, CustomerNameIdx, District, History, Item,
   NewOrder, OOrder, OOrderCIdIdx, OrderLine, Stock, StockData, Warehouse,
@@ -106,10 +45,83 @@ static const char *kTPCCTableNames[] = {
   "warehouse",
 };
 
+// table and schemas definition
+struct Customer {
+  static constexpr auto kTable = TableType::Customer;
+  using Key = sql::CustomerKey;
+  using Value = sql::CustomerValue;
+};
+
+struct CustomerNameIdx {
+  static constexpr auto kTable = TableType::CustomerNameIdx;
+  using Key = sql::CustomerNameIdxKey;
+  using Value = sql::CustomerNameIdxValue;
+};
+
+struct District {
+  static constexpr auto kTable = TableType::District;
+  using Key = sql::DistrictKey;
+  using Value = sql::DistrictValue;
+};
+
+struct History {
+  static constexpr auto kTable = TableType::History;
+  using Key = sql::HistoryKey;
+  using Value = sql::HistoryValue;
+};
+
+struct Item {
+  static constexpr auto kTable = TableType::Item;
+  using Key = sql::ItemKey;
+  using Value = sql::ItemValue;
+};
+
+struct NewOrder {
+  static constexpr auto kTable = TableType::NewOrder;
+  using Key = sql::NewOrderKey;
+  using Value = sql::NewOrderValue;
+};
+
+struct OOrder {
+  static constexpr auto kTable = TableType::OOrder;
+  using Key = sql::OOrderKey;
+  using Value = sql::OOrderValue;
+};
+
+struct OOrderCIdIdx {
+  static constexpr auto kTable = TableType::OOrderCIdIdx;
+  using Key = sql::OOrderCIdIdxKey;
+  using Value = sql::OOrderCIdIdxValue;
+};
+
+struct OrderLine {
+  static constexpr auto kTable = TableType::OrderLine;
+  using Key = sql::OrderLineKey;
+  using Value = sql::OrderLineValue;
+};
+
+struct Stock {
+  static constexpr auto kTable = TableType::Stock;
+  using Key = sql::StockKey;
+  using Value = sql::StockValue;
+};
+
+struct StockData {
+  static constexpr auto kTable = TableType::StockData;
+  using Key = sql::StockDataKey;
+  using Value = sql::StockDataValue;
+};
+
+struct Warehouse {
+  static constexpr auto kTable = TableType::Warehouse;
+  using Key = sql::WarehouseKey;
+  using Value = sql::WarehouseValue;
+};
+
 // We create a full set of table per warehouse
 class Util {
  public:
-  static felis::Relation &relation(TableType table, unsigned int wid);
+  static felis::Relation &relation(TableType table);
   static int partition(uint wid);
 };
 

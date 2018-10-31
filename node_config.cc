@@ -60,8 +60,8 @@ using util::Instance;
 
 void PromiseRoundRobin::QueueRoutine(PromiseRoutine *routine, int idx)
 {
-  BasePromise::QueueRoutine(routine, idx, ++cur_thread);
-  if (cur_thread == NodeConfiguration::kNrThreads) cur_thread = 1;
+  BasePromise::QueueRoutine(routine, idx,
+                            cur_thread.fetch_add(1) % NodeConfiguration::kNrThreads);
 }
 
 class NodeServerThreadRoutine : public go::Routine {

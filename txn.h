@@ -7,6 +7,7 @@
 #include "epoch.h"
 #include "util.h"
 #include "sqltypes.h"
+#include "promise.h"
 
 namespace felis {
 
@@ -39,12 +40,6 @@ class BaseTxn {
         : sid(sid), epoch_nr(epoch_nr), api(api) {}
   };
 
-  class TxnIndex : public TxnApi<Relation> {
-   public:
-    using TxnApi<Relation>::TxnApi;
-    VHandle *Lookup(const VarStr *k);
-  };
-
   class TxnVHandle : public TxnApi<VHandle> {
    public:
     using TxnApi<VHandle>::TxnApi;
@@ -58,11 +53,58 @@ class BaseTxn {
     TxnHandle(uint64_t sid, uint64_t epoch_nr) : sid(sid), epoch_nr(epoch_nr) {}
     TxnHandle() {}
 
-    TxnIndex operator()(Relation &rel) { return TxnIndex(sid, epoch_nr, &rel); }
     TxnVHandle operator()(VHandle *vhandle) { return TxnVHandle(sid, epoch_nr, vhandle); }
   };
 
+  struct TxnIndexOpContext {
+    TxnHandle handle;
+    int32_t rel_id;
+    uint32_t key_len;
+    const uint8_t *key_data;
+
+    // We don't need to worry about padding because TxnHandle is perfectly padded.
+    static constexpr size_t kHeaderSize =
+        sizeof(TxnHandle) + sizeof(int32_t) + sizeof(uint32_t);
+
+    TxnIndexOpContext(TxnHandle handle, int32_t rel_id, VarStr *key)
+        : handle(handle), rel_id(rel_id), key_len(key->len), key_data(key->data) {}
+
+    TxnIndexOpContext() {}
+
+    size_t EncodeSize() const {
+      return sizeof(TxnHandle) + sizeof(int32_t) + sizeof(uint32_t) + key_len;
+    }
+    uint8_t *EncodeTo(uint8_t *buf) const {
+      memcpy(buf, this, kHeaderSize);
+      memcpy(buf + kHeaderSize, key_data, key_len);
+      return buf + kHeaderSize + key_len;
+    }
+    const uint8_t *DecodeFrom(const uint8_t *buf) {
+      memcpy(this, buf, kHeaderSize);
+      key_data = (uint8_t *) buf + kHeaderSize; // key_data ptr is always borrowed.
+      return buf + kHeaderSize + key_len;
+    }
+  };
+
+  // We simply ignore the input type. This is just to compatible with the
+  // Promise Func.
+  template <typename T = DummyValue>
+  static Optional<Tuple<VHandle *>> TxnIndexLookupOp(const TxnIndexOpContext &ctx, T) {
+    return TxnIndexLookupOpImpl(ctx);
+  }
+
   TxnHandle index_handle() { return TxnHandle{sid, epoch->id()}; }
+  TxnIndexOpContext IndexContextByStr(int32_t rel_id, VarStr *key) {
+    return TxnIndexOpContext(index_handle(), rel_id, key);
+  }
+
+  template <typename TableT, typename ...Args>
+  TxnIndexOpContext IndexContext(Args... args) {
+    return IndexContextByStr(static_cast<int>(TableT::kTable), TableT::Key::New(args...).EncodeFromRoutine());
+  }
+
+ private:
+  static Optional<Tuple<VHandle *>> TxnIndexLookupOpImpl(const TxnIndexOpContext &);
 };
 
 template <typename TxnState>

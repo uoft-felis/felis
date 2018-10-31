@@ -8,9 +8,9 @@
 [cxx]
   base_cxxflags = -std=c++17 -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64
   base_cflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64
-  debug_cxxflags = -g $(config cxx.base_cxxflags)
-  debug_cflags = -g $(config cxx.base_cflags)
-  debug_ldflags = 
+  debug_cxxflags = -g -Og $(config cxx.base_cxxflags)
+  debug_cflags = -g -Og $(config cxx.base_cflags)
+  debug_ldflags = -g -Og
   release_cxxflags = -Ofast -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer $(config cxx.base_cxxflags)
   release_cflags = -Ofast -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer $(config cxx.base_cflags)
   release_ldflags = -Ofast -flto -fwhole-program -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer

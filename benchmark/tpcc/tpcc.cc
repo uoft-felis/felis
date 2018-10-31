@@ -266,20 +266,20 @@ void TableHandles::InitiateTable(TableType table)
   std::string name = kTPCCTableNames[static_cast<int>(table)];
 
   logger->info("Initialize TPCC Table {} id {}", name, (int) table);
+  mgr.GetRelationOrCreate(static_cast<int>(table));
 
+#if 0
   int base_idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses;
   int thandle = (int) table;
 
   for (size_t i = 0; i < kTPCCConfig.nr_warehouses; i++)
     table_handles[base_idx + i] = thandle;
+#endif
 }
 
-felis::Relation &Util::relation(TableType table, unsigned int wid)
+felis::Relation &Util::relation(TableType table)
 {
-  assert(wid > 0); // wid starting from 1
-  int idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses + wid - 1;
-  int fid = Instance<TableHandles>().table_handle(idx);
-  return Instance<RelationManager>().GetRelationOrCreate(fid);
+  return Instance<RelationManager>()[static_cast<int>(table)];
 }
 
 int Util::partition(unsigned int wid)
@@ -316,11 +316,11 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
     Checker::SanityCheckWarehouse(&k, &v);
 
-    relation(TableType::Warehouse, i).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+    relation(TableType::Warehouse).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
   }
 
   for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
-    relation(TableType::Warehouse, i).set_key_length(sizeof(Warehouse::Key));
+    relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
   }
   logger->info("Warehouse Table loading done.");
 }
@@ -351,10 +351,10 @@ void Loader<LoaderType::Item>::DoLoad()
     v.i_im_id = RandomNumber(1, 10000);
 
     Checker::SanityCheckItem(&k, &v);
-    relation(TableType::Item, 1)
+    relation(TableType::Item)
         .InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
   }
-  relation(TableType::Item, 1).set_key_length(sizeof(Item::Key));
+  relation(TableType::Item).set_key_length(sizeof(Item::Key));
   logger->info("Item Table loading done.");
 }
 
@@ -400,11 +400,11 @@ void Loader<LoaderType::Stock>::DoLoad()
 
       Checker::SanityCheckStock(&k, &v);
 
-      relation(TableType::Stock, w).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
-      relation(TableType::StockData, w).InitValue(k_data.EncodeFromAlloca(large_buf), v_data.Encode());
+      relation(TableType::Stock).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+      relation(TableType::StockData).InitValue(k_data.EncodeFromAlloca(large_buf), v_data.Encode());
     }
-    relation(TableType::Stock, w).set_key_length(sizeof(Stock::Key));
-    relation(TableType::StockData, w).set_key_length(sizeof(StockData::Key));
+    relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
+    relation(TableType::StockData).set_key_length(sizeof(StockData::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Stock Table loading done.");
@@ -433,9 +433,9 @@ void Loader<LoaderType::District>::DoLoad()
 
       Checker::SanityCheckDistrict(&k, &v);
 
-      relation(TableType::District, w).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+      relation(TableType::District).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
     }
-    relation(TableType::District, w).set_key_length(sizeof(District::Key));
+    relation(TableType::District).set_key_length(sizeof(District::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("District Table loading done.");
@@ -485,7 +485,7 @@ void Loader<LoaderType::Customer>::DoLoad()
 	v.c_data.assign(RandomStr(RandomNumber(300, 500)));
 
 	Checker::SanityCheckCustomer(&k, &v);
-	relation(TableType::Customer, w).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+	relation(TableType::Customer).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
 
 	// customer name index
 	auto k_idx = CustomerNameIdx::Key::New(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -494,7 +494,7 @@ void Loader<LoaderType::Customer>::DoLoad()
 	// index structure is:
 	// (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-	relation(TableType::CustomerNameIdx, w).InitValue(k_idx.EncodeFromAlloca(large_buf),
+	relation(TableType::CustomerNameIdx).InitValue(k_idx.EncodeFromAlloca(large_buf),
 							    v_idx.Encode());
 
 	History::Key k_hist;
@@ -510,13 +510,13 @@ void Loader<LoaderType::Customer>::DoLoad()
 	v_hist.h_amount = 1000;
 	v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
-	relation(TableType::History, w).InitValue(k_hist.EncodeFromAlloca(large_buf), v_hist.Encode());
+	relation(TableType::History).InitValue(k_hist.EncodeFromAlloca(large_buf), v_hist.Encode());
       }
     }
 
-    relation(TableType::Customer, w).set_key_length(sizeof(Customer::Key));
-    relation(TableType::CustomerNameIdx, w).set_key_length(sizeof(CustomerNameIdx::Key));
-    relation(TableType::History, w).set_key_length(sizeof(History::Key));
+    relation(TableType::Customer).set_key_length(sizeof(Customer::Key));
+    relation(TableType::CustomerNameIdx).set_key_length(sizeof(CustomerNameIdx::Key));
+    relation(TableType::History).set_key_length(sizeof(History::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
 }
@@ -555,12 +555,12 @@ void Loader<LoaderType::Order>::DoLoad()
 
 	Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
-	relation(TableType::OOrder, w).InitValue(k_oo.EncodeFromAlloca(large_buf), v_oo.Encode());
+	relation(TableType::OOrder).InitValue(k_oo.EncodeFromAlloca(large_buf), v_oo.Encode());
 
 	const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
 	const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
 
-	relation(TableType::OOrderCIdIdx, w).InitValue(k_oo_idx.EncodeFromAlloca(large_buf), v_oo_idx.Encode());
+	relation(TableType::OOrderCIdIdx).InitValue(k_oo_idx.EncodeFromAlloca(large_buf), v_oo_idx.Encode());
 
 	if (c >= 2101) {
 	  auto k_no = NewOrder::Key::New(w, d, c);
@@ -568,7 +568,7 @@ void Loader<LoaderType::Order>::DoLoad()
 
 	  Checker::SanityCheckNewOrder(&k_no, &v_no);
 
-	  relation(TableType::NewOrder, w).InitValue(k_no.EncodeFromAlloca(large_buf), v_no.Encode());
+	  relation(TableType::NewOrder).InitValue(k_no.EncodeFromAlloca(large_buf), v_no.Encode());
 	}
 
 	for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -591,14 +591,14 @@ void Loader<LoaderType::Order>::DoLoad()
 	  //v_ol.ol_dist_info = RandomStr(24);
 
 	  Checker::SanityCheckOrderLine(&k_ol, &v_ol);
-	  relation(TableType::OrderLine, w).InitValue(k_ol.EncodeFromAlloca(large_buf), v_ol.Encode());
+	  relation(TableType::OrderLine).InitValue(k_ol.EncodeFromAlloca(large_buf), v_ol.Encode());
 	}
       }
     }
-    relation(TableType::OOrder, w).set_key_length(sizeof(OOrder::Key));
-    relation(TableType::OOrderCIdIdx, w).set_key_length(sizeof(OOrderCIdIdx::Key));
-    relation(TableType::NewOrder, w).set_key_length(sizeof(NewOrder::Key));
-    relation(TableType::OrderLine, w).set_key_length(sizeof(OrderLine::Key));
+    relation(TableType::OOrder).set_key_length(sizeof(OOrder::Key));
+    relation(TableType::OOrderCIdIdx).set_key_length(sizeof(OOrderCIdIdx::Key));
+    relation(TableType::NewOrder).set_key_length(sizeof(NewOrder::Key));
+    relation(TableType::OrderLine).set_key_length(sizeof(OrderLine::Key));
   }
   mem::SetThreadLocalAllocAffinity(-1);
 }

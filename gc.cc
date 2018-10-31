@@ -56,7 +56,7 @@ void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
     auto *entry = (DeletedGarbage *) ent;
     if (epoch_nr - entry->epoch_nr < 2)
       break;
-    auto &rel = mgr(entry->relation_id);
+    auto &rel = mgr[entry->relation_id];
 
     // We don't have to search over the index again, unless this handle is
     // freed.

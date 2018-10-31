@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <atomic>
 #include "util.h"
 #include "gopp/channels.h"
 #include "promise.h"
@@ -14,7 +15,7 @@ class NodeServerRoutine;
 class PromiseRoutine;
 
 class PromiseRoundRobin {
-  int cur_thread = 1;
+  std::atomic_ulong cur_thread = 1;
  public:
   void QueueRoutine(PromiseRoutine *routine, int idx);
 };

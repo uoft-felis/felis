@@ -1,16 +1,19 @@
 #include "txn.h"
 #include "index.h"
+#include "util.h"
 
 namespace felis {
-
-VHandle *BaseTxn::TxnIndex::Lookup(const VarStr *k)
-{
-  return api->SetupReExec(k, sid, epoch_nr);
-}
 
 bool BaseTxn::TxnVHandle::AppendNewVersion()
 {
   return api->AppendNewVersion(sid, epoch_nr);
+}
+
+Optional<Tuple<VHandle *>> BaseTxn::TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx)
+{
+  auto &rel = util::Instance<RelationManager>().GetRelationOrCreate(ctx.rel_id);
+  VarStr key((unsigned short) ctx.key_len, 0, ctx.key_data);
+  return Tuple<VHandle *>(rel.Search(&key));
 }
 
 }

@@ -52,7 +52,7 @@ struct VarStr {
   const uint8_t *data;
 
   VarStr() : len(0), region_id(0), data(nullptr) {}
-  VarStr(uint16_t len, int region_id, uint8_t *data) : len(len), region_id(region_id), data(data) {}
+  VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), region_id(region_id), data(data) {}
 
   bool operator<(const VarStr &rhs) const {
     if (data == nullptr) return true;
@@ -569,7 +569,7 @@ template <typename ...Types> using Tuple = Object<TupleImpl<Types...>>;
 namespace felis {
 
 using VarStr = sql::VarStr;
-
+using sql::Tuple;
 }
 
 #endif /* SQLTYPES_H */

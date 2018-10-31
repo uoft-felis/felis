@@ -74,7 +74,7 @@ class RelationManagerPolicy : public RelationManagerBase {
     return relations[fid];
   }
 
-  T &operator()(int fid) {
+  T &operator[](int fid) {
 #ifndef NDEBUG
     abort_if(fid < 0 || fid >= kMaxNrRelations || relations[fid].relation_id() == -1,
              "Cannot access {}? Is it initialized? limit {}", fid, kMaxNrRelations);
