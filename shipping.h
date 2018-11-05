@@ -52,6 +52,7 @@ class BaseShipment {
  * T is a concept:
  * ShippingHandle *shipping_handle();
  * void EncodeIOVec(struct iovec *vec);
+ * void DecodeIOVec(struct iovec *vec);
  */
 template <typename T>
 class Shipment : public BaseShipment {
@@ -60,7 +61,10 @@ class Shipment : public BaseShipment {
  public:
   Shipment(int fd) : BaseShipment(fd) {}
 
-  void AddShipment(T *shipment) { queue.push_front(shipment); }
+  void AddShipment(T *shipment) {
+    std::lock_guard _(lock);
+    queue.push_front(shipment);
+  }
 
   bool RunSend() {
     T *obj[kSendBatch];
