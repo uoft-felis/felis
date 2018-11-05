@@ -1,5 +1,6 @@
 #include "shipping.h"
 #include "util.h"
+#include "gopp/channels.h"
 #include <gtest/gtest.h>
 #include <unistd.h>
 #include <sys/un.h>
@@ -31,38 +32,33 @@ class TestObject {
 
 class ShippingTest : public testing::Test {
  public:
-  virtual void TearDown() final override {
-    unlink("/tmp/test.sock");
-  }
 };
 
 TEST_F(ShippingTest, SimplePipeTest) {
-  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-  sockaddr_un addr;
-  addr.sun_family = AF_UNIX;
-  strcpy(addr.sun_path, "/tmp/test.sock");
-  ASSERT_EQ(bind(fd, (sockaddr *) &addr, sizeof(sockaddr_un)), 0);
-  ASSERT_EQ(listen(fd, 1024), 0);
+  int srv = socket(AF_INET, SOCK_STREAM, 0);
+  int enable = 1;
+  setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+
+  go::TcpSocket::CommonInetAddr addr, claddr;
+  socklen_t socklen;
+  go::TcpSocket::FillSockAddr(addr, socklen, AF_INET, "127.0.0.1", 41345);
+  ASSERT_EQ(bind(srv, addr.sockaddr(), socklen), 0);
+  ASSERT_EQ(listen(srv, 1), 0);
 
   // Run!
   auto t = std::thread(
       [] {
-        sockaddr_un addr;
-        addr.sun_family = AF_UNIX;
-        strcpy(addr.sun_path, "/tmp/test.sock");
-        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        ASSERT_EQ(connect(fd, (sockaddr *) &addr, sizeof(sockaddr_un)), 0);
-        auto s = Shipment<TestObject>(fd);
-        for (int i = 0; i < 2 << 20; i++) {
+        auto s = Shipment<TestObject>("127.0.0.1", 41345);
+        for (int i = 0; i < 2 << 17; i++) {
           s.AddShipment(new TestObject(i + 10));
         }
         while (!s.RunSend());
       });
 
-  sockaddr_un claddr;
-  socklen_t cllen;
-  int read_end = accept(fd, (sockaddr *) &claddr, &cllen);
-  auto s = Shipment<TestObject>(read_end);
+  int fd = accept(srv, addr.sockaddr(), &socklen);
+  ASSERT_GT(fd, 0);
+
+  auto s = ShipmentReceiver<TestObject>(fd);
   while (true) {
     TestObject o;
     if (!s.Receive(&o)) {

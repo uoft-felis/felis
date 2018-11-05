@@ -40,12 +40,14 @@ class BaseShipment {
   bool finished;
   std::mutex lock;
 
-  BaseShipment(int fd) : fd(fd), finished(false) {}
   void SendIOVec(struct iovec *vec, int nr_vec);
   void ReceiveACK();
 
   bool has_finished() const { return finished; }
   std::mutex &mutex() { return lock; }
+ public:
+  BaseShipment(int fd) : fd(fd), finished(false) {}
+  BaseShipment(std::string host, unsigned int port);
 };
 
 /**
@@ -59,7 +61,7 @@ class Shipment : public BaseShipment {
  protected:
   std::list<T *> queue;
  public:
-  Shipment(int fd) : BaseShipment(fd) {}
+  using BaseShipment::BaseShipment;
 
   void AddShipment(T *shipment) {
     std::lock_guard _(lock);
@@ -99,6 +101,13 @@ class Shipment : public BaseShipment {
     ReceiveACK();
     return false;
   }
+};
+
+template <typename T>
+class ShipmentReceiver {
+  int fd;
+ public:
+  ShipmentReceiver(int fd) : fd(fd) {}
 
   bool Receive(T *shipment) {
  again:
@@ -117,7 +126,6 @@ class Shipment : public BaseShipment {
 
       goto again;
     }
-
     auto buffer = (uint8_t *) malloc(psz);
     ulong off = 0;
     res = 0;

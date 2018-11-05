@@ -1,4 +1,7 @@
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include "shipping.h"
 #include "log.h"
@@ -21,6 +24,18 @@ bool ShippingHandle::MarkDirty()
 void ShippingHandle::PrepareSend()
 {
   sent_generation.fetch_add(1, std::memory_order_seq_cst);
+}
+
+BaseShipment::BaseShipment(std::string host, unsigned int port)
+{
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  sockaddr_in addr;
+  memset(&addr, 0, sizeof(sockaddr_in));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  addr.sin_addr.s_addr = inet_addr(host.c_str());
+  abort_if(connect(fd, (sockaddr *) &addr, sizeof(sockaddr_in)) < 0,
+           "Cannot connect {}, errno {} {}", host, errno, strerror(errno));
 }
 
 void BaseShipment::SendIOVec(struct iovec *vec, int nr_vec)
