@@ -1,3 +1,5 @@
+#include <sys/socket.h>
+
 #include "shipping.h"
 #include "log.h"
 
@@ -43,13 +45,13 @@ void BaseShipment::SendIOVec(struct iovec *vec, int nr_vec)
 
 void BaseShipment::ReceiveACK()
 {
-  uint8_t done = 0;
+  uint64_t done = 0;
   ssize_t res = 0;
-  for (int i = 0; i < 8; i++) {
-    res = write(fd, &done, 1);
-    if (res != 1) goto error;
-  }
-  res = read(fd, &done, 1);
+
+  res = send(fd, &done, 8, 0);
+  if (res != 8) goto error;
+
+  res = recv(fd, &done, 1, MSG_WAITALL);
 error:
   abort_if(res == 0, "EOF from the receiver side?");
   abort_if(res < 0, "Error receiving ack from the reciver side... errno={}", errno);

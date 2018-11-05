@@ -5,8 +5,10 @@
 #include <mutex>
 #include <list>
 #include <climits>
+#include <sys/socket.h>
 #include <sys/uio.h>
 #include "util.h"
+#include "log.h"
 
 namespace felis {
 
@@ -48,7 +50,7 @@ class BaseShipment {
 
 /**
  * T is a concept:
- * ShippingHandle *shipping_handle() const;
+ * ShippingHandle *shipping_handle();
  * void EncodeIOVec(struct iovec *vec);
  */
 template <typename T>
@@ -57,6 +59,8 @@ class Shipment : public BaseShipment {
   std::list<T *> queue;
  public:
   Shipment(int fd) : BaseShipment(fd) {}
+
+  void AddShipment(T *shipment) { queue.push_front(shipment); }
 
   bool RunSend() {
     T *obj[kSendBatch];
@@ -70,6 +74,7 @@ class Shipment : public BaseShipment {
       }
       if (nr_obj == 0) {
         finished = true;
+        close(fd);
         return true;
       }
     }
@@ -89,6 +94,43 @@ class Shipment : public BaseShipment {
 
     ReceiveACK();
     return false;
+  }
+
+  bool Receive(T *shipment) {
+ again:
+    uint64_t psz;
+    ssize_t res = recv(fd, &psz, 8, MSG_WAITALL);
+
+    abort_if(res < 0, "recv failed, errno {} {}", errno, strerror(errno));
+    if (res == 0) {
+      return false;
+    }
+    abort_if(res < 8, "incomplete read!");
+
+    if (psz == 0) {
+      uint8_t done = 0;
+      send(fd, &done, 1, 0);
+
+      goto again;
+    }
+
+    auto buffer = (uint8_t *) malloc(psz);
+    ulong off = 0;
+    res = 0;
+    while (off < psz) {
+      res = recv(fd, buffer + off, psz, MSG_WAITALL);
+      abort_if(res < 0, "error on receive, errno {} {}", errno, strerror(errno));
+      off += res;
+    }
+
+    struct iovec vec = {
+      .iov_base = buffer,
+      .iov_len = psz,
+    };
+    shipment->DecodeIOVec(&vec);
+
+    free(buffer);
+    return true;
   }
 };
 

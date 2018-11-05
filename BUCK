@@ -38,7 +38,7 @@ db_srcs = [
     ]
 
 libs = ['-pthread', '-lrt', '-ldl', '-lnuma', '-l:libjemalloc.a']
-test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc']
+test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
 
 cxx_binary(
     name='db',
@@ -52,6 +52,7 @@ cxx_binary(
 cxx_test(
     name='dbtest',
     srcs=test_srcs + db_srcs,
+    headers=db_headers,
     compiler_flags=includes,
     linker_flags=libs + ['-lgtest_main', '-lgtest'],
     deps=[':tpcc']
