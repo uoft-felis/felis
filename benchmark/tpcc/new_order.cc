@@ -76,7 +76,7 @@ NewOrderTxn::NewOrderTxn(Client *client)
   PromiseProc _;
   auto district_key = District::Key::New(warehouse_id, district_id);
 
-  int p = partition(warehouse_id);
+  int p = warehouse_to_node_id(warehouse_id);
   _ >> T(IndexContext<District>(warehouse_id, district_id), p, TxnIndexLookupOp<>)
     >> T(Context(district_key), p, [](auto ctx, Tuple<VHandle *> vhandle) -> Optional<VoidValue> {
         return nullopt;

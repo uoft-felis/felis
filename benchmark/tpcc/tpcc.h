@@ -122,12 +122,13 @@ struct Warehouse {
 class Util {
  public:
   static felis::Relation &relation(TableType table);
-  static int partition(uint wid);
+  static int warehouse_to_node_id(uint wid);
 };
 
 class ClientBase {
  protected:
   util::FastRandom r;
+  int node_id;
 
  protected:
   static constexpr double kWarehouseSpread = 0.0;
@@ -188,7 +189,7 @@ class ClientBase {
 
   uint GetCurrentTime();
  public:
-  ClientBase(const util::FastRandom &r) : r(r) {}
+  ClientBase(const util::FastRandom &r);
 };
 
 class TableHandles {
@@ -216,16 +217,14 @@ template <enum LoaderType TLN>
 class Loader : public go::Routine, public tpcc::Util, public tpcc::ClientBase {
   std::mutex *m;
   std::atomic_int *count_down;
-  int cpu;
 public:
-  Loader(unsigned long seed, std::mutex *w, std::atomic_int *c, int pin)
-      : ClientBase(util::FastRandom(seed)), m(w), count_down(c), cpu(pin) {}
+  Loader(unsigned long seed, std::mutex *w, std::atomic_int *c)
+      : ClientBase(util::FastRandom(seed)), m(w), count_down(c) {}
   void DoLoad();
   virtual void Run() {
     DoLoad();
     if (count_down->fetch_sub(1) == 1)
       m->unlock();
-    util::PinToCPU(cpu);
   }
 };
 

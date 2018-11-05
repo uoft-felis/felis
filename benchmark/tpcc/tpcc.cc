@@ -66,6 +66,12 @@ static inline unsigned int CoreId(unsigned int wid)
   return partid;
 }
 
+ClientBase::ClientBase(const util::FastRandom &r)
+    : r(r)
+{
+  node_id = Instance<NodeConfiguration>().node_id();
+}
+
 // utils for generating random #s and strings
 int ClientBase::CheckBetweenInclusive(int v, int lower, int upper)
 {
@@ -168,8 +174,8 @@ uint ClientBase::PickWarehouse()
 {
   if (kWarehouseSpread == 0 || r.next_uniform() >= kWarehouseSpread) {
     auto &conf = Instance<NodeConfiguration>();
-    uint min = kTPCCConfig.nr_warehouses * (conf.node_id() - 1) / conf.nr_nodes() + 1;
-    uint max = kTPCCConfig.nr_warehouses * conf.node_id() / conf.nr_nodes();
+    uint min = kTPCCConfig.nr_warehouses * (node_id - 1) / conf.nr_nodes() + 1;
+    uint max = kTPCCConfig.nr_warehouses * node_id / conf.nr_nodes();
     return RandomNumber(min, max);
   }
   return r.next() % kTPCCConfig.nr_warehouses + 1;
@@ -282,7 +288,7 @@ felis::Relation &Util::relation(TableType table)
   return Instance<RelationManager>()[static_cast<int>(table)];
 }
 
-int Util::partition(unsigned int wid)
+int Util::warehouse_to_node_id(unsigned int wid)
 {
   // partition id also starts from 1 because 0 means local shard. See node_config.cc
   return (wid - 1) * Instance<NodeConfiguration>().nr_nodes() / kTPCCConfig.nr_warehouses + 1;
@@ -295,6 +301,9 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
+    if (warehouse_to_node_id(i) != node_id)
+      continue;
+
     auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
 
@@ -320,6 +329,8 @@ void Loader<LoaderType::Warehouse>::DoLoad()
   }
 
   for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
+    if (warehouse_to_node_id(i) != node_id)
+      continue;
     relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
   }
   logger->info("Warehouse Table loading done.");
@@ -345,7 +356,7 @@ void Loader<LoaderType::Item>::DoLoad()
     } else {
       const int startOriginal = RandomNumber(2, (len - 8));
       const std::string i_data = RandomStr(startOriginal + 1) + "ORIGINAL"
-	+ RandomStr(len - startOriginal - 7);
+        + RandomStr(len - startOriginal - 7);
       v.i_data.assign(i_data);
     }
     v.i_im_id = RandomNumber(1, 10000);
@@ -363,6 +374,9 @@ void Loader<LoaderType::Stock>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
+    if (warehouse_to_node_id(w) != node_id)
+      continue;
+
     util::PinToCPU(CoreId(w));
     mem::SetThreadLocalAllocAffinity(CoreId(w));
 
@@ -379,13 +393,13 @@ void Loader<LoaderType::Stock>::DoLoad()
       StockData::Value v_data;
       const int len = RandomNumber(26, 50);
       if (RandomNumber(1, 100) > 10) {
-	const std::string s_data = RandomStr(len);
-	v_data.s_data.assign(s_data);
+        const std::string s_data = RandomStr(len);
+        v_data.s_data.assign(s_data);
       } else {
-	const int startOriginal = RandomNumber(2, (len - 8));
-	const std::string s_data = RandomStr(startOriginal + 1) + "ORIGINAL"
-	  + RandomStr(len - startOriginal - 7);
-	v_data.s_data.assign(s_data);
+        const int startOriginal = RandomNumber(2, (len - 8));
+        const std::string s_data = RandomStr(startOriginal + 1) + "ORIGINAL"
+          + RandomStr(len - startOriginal - 7);
+        v_data.s_data.assign(s_data);
       }
       v_data.s_dist_01.assign(RandomStr(24));
       v_data.s_dist_02.assign(RandomStr(24));
@@ -415,6 +429,9 @@ void Loader<LoaderType::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
+    if (warehouse_to_node_id(w) != node_id)
+      continue;
+
     util::PinToCPU(CoreId(w));
     mem::SetThreadLocalAllocAffinity(CoreId(w));
 
@@ -446,71 +463,74 @@ void Loader<LoaderType::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
+    if (warehouse_to_node_id(w) != node_id)
+      continue;
+
     util::PinToCPU(CoreId(w));
     mem::SetThreadLocalAllocAffinity(CoreId(w));
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       for (uint cidx0 = 0; cidx0 < kTPCCConfig.customers_per_district; cidx0++) {
-	const uint c = cidx0 + 1;
-	auto k = Customer::Key::New(w, d, c);
-	Customer::Value v;
+        const uint c = cidx0 + 1;
+        auto k = Customer::Key::New(w, d, c);
+        Customer::Value v;
 
-	v.c_discount = RandomNumber(1, 5000) / 100;
-	if (RandomNumber(1, 100) <= 10)
-	  v.c_credit.assign("BC");
-	else
-	  v.c_credit.assign("GC");
+        v.c_discount = RandomNumber(1, 5000) / 100;
+        if (RandomNumber(1, 100) <= 10)
+          v.c_credit.assign("BC");
+        else
+          v.c_credit.assign("GC");
 
-	if (c <= 1000)
-	  v.c_last.assign(GetCustomerLastName(c - 1));
-	else
-	  v.c_last.assign(GetNonUniformCustomerLastNameLoad());
+        if (c <= 1000)
+          v.c_last.assign(GetCustomerLastName(c - 1));
+        else
+          v.c_last.assign(GetNonUniformCustomerLastNameLoad());
 
-	v.c_first.assign(RandomStr(RandomNumber(8, 16)));
-	v.c_credit_lim = 50000;
+        v.c_first.assign(RandomStr(RandomNumber(8, 16)));
+        v.c_credit_lim = 50000;
 
-	v.c_balance = -1000;
-	v.c_ytd_payment = 1000;
-	v.c_payment_cnt = 1;
-	v.c_delivery_cnt = 0;
+        v.c_balance = -1000;
+        v.c_ytd_payment = 1000;
+        v.c_payment_cnt = 1;
+        v.c_delivery_cnt = 0;
 
-	v.c_street_1.assign(RandomStr(RandomNumber(10, 20)));
-	v.c_street_2.assign(RandomStr(RandomNumber(10, 20)));
-	v.c_city.assign(RandomStr(RandomNumber(10, 20)));
-	v.c_state.assign(RandomStr(3));
-	v.c_zip.assign(RandomNStr(4) + "11111");
-	v.c_phone.assign(RandomNStr(16));
-	v.c_since = GetCurrentTime();
-	v.c_middle.assign("OE");
-	v.c_data.assign(RandomStr(RandomNumber(300, 500)));
+        v.c_street_1.assign(RandomStr(RandomNumber(10, 20)));
+        v.c_street_2.assign(RandomStr(RandomNumber(10, 20)));
+        v.c_city.assign(RandomStr(RandomNumber(10, 20)));
+        v.c_state.assign(RandomStr(3));
+        v.c_zip.assign(RandomNStr(4) + "11111");
+        v.c_phone.assign(RandomNStr(16));
+        v.c_since = GetCurrentTime();
+        v.c_middle.assign("OE");
+        v.c_data.assign(RandomStr(RandomNumber(300, 500)));
 
-	Checker::SanityCheckCustomer(&k, &v);
-	relation(TableType::Customer).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+        Checker::SanityCheckCustomer(&k, &v);
+        relation(TableType::Customer).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
 
-	// customer name index
-	auto k_idx = CustomerNameIdx::Key::New(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
-	auto v_idx = CustomerNameIdx::Value::New(k.c_id);
+        // customer name index
+        auto k_idx = CustomerNameIdx::Key::New(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
+        auto v_idx = CustomerNameIdx::Value::New(k.c_id);
 
-	// index structure is:
-	// (c_w_id, c_d_id, c_last, c_first) -> (c_id)
+        // index structure is:
+        // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-	relation(TableType::CustomerNameIdx).InitValue(k_idx.EncodeFromAlloca(large_buf),
-							    v_idx.Encode());
+        relation(TableType::CustomerNameIdx).InitValue(k_idx.EncodeFromAlloca(large_buf),
+                                                            v_idx.Encode());
 
-	History::Key k_hist;
+        History::Key k_hist;
 
-	k_hist.h_c_id = c;
-	k_hist.h_c_d_id = d;
-	k_hist.h_c_w_id = w;
-	k_hist.h_d_id = d;
-	k_hist.h_w_id = w;
-	k_hist.h_date = GetCurrentTime();
+        k_hist.h_c_id = c;
+        k_hist.h_c_d_id = d;
+        k_hist.h_c_w_id = w;
+        k_hist.h_d_id = d;
+        k_hist.h_w_id = w;
+        k_hist.h_date = GetCurrentTime();
 
-	History::Value v_hist;
-	v_hist.h_amount = 1000;
-	v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
+        History::Value v_hist;
+        v_hist.h_amount = 1000;
+        v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
-	relation(TableType::History).InitValue(k_hist.EncodeFromAlloca(large_buf), v_hist.Encode());
+        relation(TableType::History).InitValue(k_hist.EncodeFromAlloca(large_buf), v_hist.Encode());
       }
     }
 
@@ -526,6 +546,9 @@ void Loader<LoaderType::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
+    if (warehouse_to_node_id(w) != node_id)
+      continue;
+
     util::PinToCPU(CoreId(w));
     mem::SetThreadLocalAllocAffinity(CoreId(w) % NodeConfiguration::kNrThreads);;
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
@@ -533,66 +556,66 @@ void Loader<LoaderType::Order>::DoLoad()
       std::vector<uint> c_ids;
 
       while (c_ids.size() != kTPCCConfig.customers_per_district) {
-	const auto x = (r.next() % kTPCCConfig.customers_per_district) + 1;
-	if (c_ids_s.count(x))
-	  continue;
-	c_ids_s.insert(x);
-	c_ids.emplace_back(x);
+        const auto x = (r.next() % kTPCCConfig.customers_per_district) + 1;
+        if (c_ids_s.count(x))
+          continue;
+        c_ids_s.insert(x);
+        c_ids.emplace_back(x);
       }
 
       for (uint c = 1; c <= kTPCCConfig.customers_per_district; c++) {
-	const auto k_oo = OOrder::Key::New(w, d, c);
-	OOrder::Value v_oo;
+        const auto k_oo = OOrder::Key::New(w, d, c);
+        OOrder::Value v_oo;
 
-	v_oo.o_c_id = c_ids[c - 1];
-	if (k_oo.o_id < 2101)
-	  v_oo.o_carrier_id = RandomNumber(1, 10);
-	else
-	  v_oo.o_carrier_id = 0;
-	v_oo.o_ol_cnt = GetOrderLinesPerCustomer();
-	v_oo.o_all_local = 1;
-	v_oo.o_entry_d = GetCurrentTime();
+        v_oo.o_c_id = c_ids[c - 1];
+        if (k_oo.o_id < 2101)
+          v_oo.o_carrier_id = RandomNumber(1, 10);
+        else
+          v_oo.o_carrier_id = 0;
+        v_oo.o_ol_cnt = GetOrderLinesPerCustomer();
+        v_oo.o_all_local = 1;
+        v_oo.o_entry_d = GetCurrentTime();
 
-	Checker::SanityCheckOOrder(&k_oo, &v_oo);
+        Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
-	relation(TableType::OOrder).InitValue(k_oo.EncodeFromAlloca(large_buf), v_oo.Encode());
+        relation(TableType::OOrder).InitValue(k_oo.EncodeFromAlloca(large_buf), v_oo.Encode());
 
-	const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
-	const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
+        const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
+        const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
 
-	relation(TableType::OOrderCIdIdx).InitValue(k_oo_idx.EncodeFromAlloca(large_buf), v_oo_idx.Encode());
+        relation(TableType::OOrderCIdIdx).InitValue(k_oo_idx.EncodeFromAlloca(large_buf), v_oo_idx.Encode());
 
-	if (c >= 2101) {
-	  auto k_no = NewOrder::Key::New(w, d, c);
-	  NewOrder::Value v_no;
+        if (c >= 2101) {
+          auto k_no = NewOrder::Key::New(w, d, c);
+          NewOrder::Value v_no;
 
-	  Checker::SanityCheckNewOrder(&k_no, &v_no);
+          Checker::SanityCheckNewOrder(&k_no, &v_no);
 
-	  relation(TableType::NewOrder).InitValue(k_no.EncodeFromAlloca(large_buf), v_no.Encode());
-	}
+          relation(TableType::NewOrder).InitValue(k_no.EncodeFromAlloca(large_buf), v_no.Encode());
+        }
 
-	for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
-	  auto k_ol = OrderLine::Key::New(w, d, c, l);
-	  OrderLine::Value v_ol;
+        for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
+          auto k_ol = OrderLine::Key::New(w, d, c, l);
+          OrderLine::Value v_ol;
 
-	  v_ol.ol_i_id = RandomNumber(1, 100000);
-	  if (k_ol.ol_o_id < 2101) {
-	    v_ol.ol_delivery_d = v_oo.o_entry_d;
-	    v_ol.ol_amount = 0;
-	  } else {
-	    v_ol.ol_delivery_d = 0;
-	    // random within [0.01 .. 9,999.99]
-	    v_ol.ol_amount = RandomNumber(1, 999999);
-	  }
+          v_ol.ol_i_id = RandomNumber(1, 100000);
+          if (k_ol.ol_o_id < 2101) {
+            v_ol.ol_delivery_d = v_oo.o_entry_d;
+            v_ol.ol_amount = 0;
+          } else {
+            v_ol.ol_delivery_d = 0;
+            // random within [0.01 .. 9,999.99]
+            v_ol.ol_amount = RandomNumber(1, 999999);
+          }
 
-	  v_ol.ol_supply_w_id = k_ol.ol_w_id;
-	  v_ol.ol_quantity = 5;
-	  // v_ol.ol_dist_info comes from stock_data(ol_supply_w_id, ol_o_id)
-	  //v_ol.ol_dist_info = RandomStr(24);
+          v_ol.ol_supply_w_id = k_ol.ol_w_id;
+          v_ol.ol_quantity = 5;
+          // v_ol.ol_dist_info comes from stock_data(ol_supply_w_id, ol_o_id)
+          //v_ol.ol_dist_info = RandomStr(24);
 
-	  Checker::SanityCheckOrderLine(&k_ol, &v_ol);
-	  relation(TableType::OrderLine).InitValue(k_ol.EncodeFromAlloca(large_buf), v_ol.Encode());
-	}
+          Checker::SanityCheckOrderLine(&k_ol, &v_ol);
+          relation(TableType::OrderLine).InitValue(k_ol.EncodeFromAlloca(large_buf), v_ol.Encode());
+        }
       }
     }
     relation(TableType::OOrder).set_key_length(sizeof(OOrder::Key));
