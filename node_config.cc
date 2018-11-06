@@ -32,7 +32,7 @@ static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, 
 static void ParseNodeConfig(util::Optional<NodeConfiguration::NodeConfig> &config, json11::Json json)
 {
   config->worker_peer = ParseNodePeerConfig(json, "worker");
-  config->index_shipper_peer = ParseNodePeerConfig(json, "shipper");
+  config->index_shipper_peer = ParseNodePeerConfig(json, "index_shipper");
   config->name = json.object_items().find("name")->second.string_value();
 }
 
