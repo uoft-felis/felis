@@ -66,8 +66,8 @@ static inline unsigned int CoreId(unsigned int wid)
   return partid;
 }
 
-ClientBase::ClientBase(const util::FastRandom &r)
-    : r(r)
+ClientBase::ClientBase(const util::FastRandom &r, felis::IndexShipment *shipment)
+    : r(r), shipment(shipment)
 {
   node_id = Instance<NodeConfiguration>().node_id();
 }

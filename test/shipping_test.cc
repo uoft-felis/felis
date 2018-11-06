@@ -3,7 +3,6 @@
 #include "gopp/channels.h"
 #include <gtest/gtest.h>
 #include <unistd.h>
-#include <sys/un.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <thread>

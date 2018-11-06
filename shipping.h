@@ -7,6 +7,9 @@
 #include <climits>
 #include <sys/socket.h>
 #include <sys/uio.h>
+#include <netinet/tcp.h>
+#include <netinet/ip.h>
+
 #include "util.h"
 #include "log.h"
 
@@ -107,7 +110,10 @@ template <typename T>
 class ShipmentReceiver {
   int fd;
  public:
-  ShipmentReceiver(int fd) : fd(fd) {}
+  ShipmentReceiver(int fd) : fd(fd) {
+    int enable = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+  }
 
   bool Receive(T *shipment) {
  again:

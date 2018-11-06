@@ -42,6 +42,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
     int id;
     std::string name;
     NodePeerConfig worker_peer;
+    NodePeerConfig index_shipper_peer;
   };
 
   int node_id() const { return id; }
@@ -63,6 +64,8 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   static constexpr size_t kMaxNrNode = 1024;
  private:
+  static void RunIndexShipmentReceiverThread(std::string host, unsigned short port);
+
   go::TcpOutputChannel *GetOutputChannel(int node_id);
 
   size_t nr_clients;

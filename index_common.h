@@ -13,6 +13,7 @@
 
 #include "vhandle.h"
 #include "node_config.h"
+#include "shipping.h"
 
 namespace felis {
 
@@ -84,6 +85,36 @@ class RelationManagerPolicy : public RelationManagerBase {
 
  protected:
   std::array<T, kMaxNrRelations> relations;
+};
+
+// A key-value pair, and thankfully, this is immutable.
+class IndexEntity {
+  int rel_id;
+  VarStr *k;
+  VHandle *handle_ptr;
+  ShippingHandle shandle;
+ public:
+  IndexEntity(int rel_id, VarStr *k, VHandle *handle) : rel_id(rel_id), k(k), handle_ptr(handle) {}
+
+  ShippingHandle *shipping_handle() { return &shandle; }
+  void EncodeIOVec(struct iovec *vec);
+  void DecodeIOVec(struct iovec *vec);
+};
+
+class IndexShipment : public Shipment<IndexEntity> {
+ public:
+  using Shipment<IndexEntity>::Shipment;
+#if 0
+  void Lock() { lock.lock(); }
+  void Unlock() { lock.unlock(); }
+  void AddNoLock(IndexEntity *ent) { queue.push_front(ent); }
+#endif
+};
+
+class IndexShipmentReceiver : public ShipmentReceiver<IndexEntity> {
+ public:
+  IndexShipmentReceiver(int fd) : ShipmentReceiver<IndexEntity>(fd) {}
+  void Run();
 };
 
 template <class IndexPolicy>

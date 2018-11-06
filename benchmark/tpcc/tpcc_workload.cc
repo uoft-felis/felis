@@ -14,25 +14,41 @@ using util::Instance;
 
 namespace felis {
 
-template <enum tpcc::loaders::LoaderType TLT>
-static tpcc::loaders::Loader<TLT> *CreateLoader(unsigned long seed, std::mutex *m,
-						std::atomic_int *count_down)
-{
-  return new tpcc::loaders::Loader<TLT>(seed, m, count_down);
-}
+class LoaderBuilder {
+  std::mutex *m;
+  std::atomic_int *count_down;
+  felis::IndexShipment *shipment;
+ public:
+  LoaderBuilder(std::mutex *m, std::atomic_int *count_down, felis::IndexShipment *shipment)
+      : m(m), count_down(count_down), shipment(shipment) {}
+
+  template <enum tpcc::loaders::LoaderType TLT>
+  tpcc::loaders::Loader<TLT> *CreateLoader(unsigned long seed) {
+    return new tpcc::loaders::Loader<TLT>(seed, m, count_down, shipment);
+  }
+};
 
 static void LoadTPCCDataSet()
 {
   std::mutex m;
   std::atomic_int count_down(6);
+
+  // HACK HACK HACK!
+  felis::IndexShipment *preship;
+  if (Instance<NodeConfiguration>().node_id() == 2) {
+    preship = new felis::IndexShipment("127.0.0.1", 43451);
+  }
+
   m.lock(); // use as a semaphore
 
-  go::GetSchedulerFromPool(1)->WakeUp(CreateLoader<tpcc::loaders::Warehouse>(9324, &m, &count_down));
-  go::GetSchedulerFromPool(2)->WakeUp(CreateLoader<tpcc::loaders::Item>(235443, &m, &count_down));
-  go::GetSchedulerFromPool(3)->WakeUp(CreateLoader<tpcc::loaders::Stock>(89785943, &m, &count_down));
-  go::GetSchedulerFromPool(4)->WakeUp(CreateLoader<tpcc::loaders::District>(129856349, &m, &count_down));
-  go::GetSchedulerFromPool(5)->WakeUp(CreateLoader<tpcc::loaders::Customer>(923587856425, &m, &count_down));
-  go::GetSchedulerFromPool(6)->WakeUp(CreateLoader<tpcc::loaders::Order>(2343352, &m, &count_down));
+  LoaderBuilder builder(&m, &count_down, preship);
+
+  go::GetSchedulerFromPool(1)->WakeUp(builder.CreateLoader<tpcc::loaders::Warehouse>(9324));
+  go::GetSchedulerFromPool(2)->WakeUp(builder.CreateLoader<tpcc::loaders::Item>(235443));
+  go::GetSchedulerFromPool(3)->WakeUp(builder.CreateLoader<tpcc::loaders::Stock>(89785943));
+  go::GetSchedulerFromPool(4)->WakeUp(builder.CreateLoader<tpcc::loaders::District>(129856349));
+  go::GetSchedulerFromPool(5)->WakeUp(builder.CreateLoader<tpcc::loaders::Customer>(923587856425));
+  go::GetSchedulerFromPool(6)->WakeUp(builder.CreateLoader<tpcc::loaders::Order>(2343352));
 
   m.lock(); // waits
 }

@@ -1,6 +1,8 @@
 #include <fstream>
 #include <iterator>
 #include <algorithm>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #include "json11/json11.hpp"
 #include "node_config.h"
@@ -8,6 +10,7 @@
 #include "log.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
+#include "index_common.h"
 
 #include "promise.h"
 
@@ -29,6 +32,7 @@ static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, 
 static void ParseNodeConfig(util::Optional<NodeConfiguration::NodeConfig> &config, json11::Json json)
 {
   config->worker_peer = ParseNodePeerConfig(json, "worker");
+  config->index_shipper_peer = ParseNodePeerConfig(json, "shipper");
   config->name = json.object_items().find("name")->second.string_value();
 }
 
@@ -160,8 +164,35 @@ void NodeConfiguration::SetupNodeName(std::string name)
   }
 }
 
+void NodeConfiguration::RunIndexShipmentReceiverThread(std::string host, unsigned short port)
+{
+  int srv = socket(AF_INET, SOCK_STREAM, 0);
+  int enable = 1;
+  setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+
+  go::TcpSocket::CommonInetAddr addr, claddr;
+  socklen_t socklen;
+  go::TcpSocket::FillSockAddr(addr, socklen, AF_INET, host, port);
+  abort_if(bind(srv, addr.sockaddr(), socklen) < 0,
+           "Cannot bind for index shipper, errno {} {}", errno, strerror(errno));
+  abort_if(listen(srv, 1) < 0,
+           "Cannot listen for index shipper, errno {} {}", errno, strerror(errno));
+  while (true) {
+    int fd = accept(srv, addr.sockaddr(), &socklen);
+    if (fd < 0) continue;
+    IndexShipmentReceiver receiver(fd);
+    receiver.Run();
+  }
+}
+
 void NodeConfiguration::RunAllServers()
 {
+  logger->info("Starting system thread for index shipment");
+  std::thread t(std::bind(NodeConfiguration::RunIndexShipmentReceiverThread,
+                          config().index_shipper_peer.host,
+                          config().index_shipper_peer.port));
+  t.detach();
+
   logger->info("Starting node server with id {}", node_id());
   go::GetSchedulerFromPool(1)->WakeUp(new NodeServerRoutine());
 }
