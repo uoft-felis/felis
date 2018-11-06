@@ -22,7 +22,10 @@ void IndexEntity::DecodeIOVec(struct iovec *vec)
 {
   auto p = (uint8_t *) vec->iov_base;
   auto key_size = vec->iov_len - 12;
-  k = VarStr::New(key_size);
+  if (k == nullptr || k->len < key_size) {
+    delete k;
+    k = VarStr::New(key_size);
+  }
   memcpy(&rel_id, p, 4);
   memcpy((uint8_t *) k + sizeof(VarStr), p + 4, key_size);
   memcpy(&handle_ptr, p + key_size + 4, 8); // This is a pointer on the original machine though.
@@ -37,9 +40,20 @@ void IndexEntity::EncodeIOVec(struct iovec *vec)
   memcpy(p + 4 + k->len, &handle_ptr, 8);
 }
 
+IndexEntity::~IndexEntity()
+{
+  delete k;
+}
+
 void IndexShipmentReceiver::Run()
 {
-  // TODO: Pop IndexEntity from the network and apply the changes.
+  IndexEntity ent;
+  auto &mgr = Instance<RelationManager>();
+  while (Receive(&ent)) {
+    // TODO: multi-thread this?
+    auto &rel = mgr[ent.rel_id];
+    rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
+  }
 }
 
 }

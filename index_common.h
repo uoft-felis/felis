@@ -87,14 +87,22 @@ class RelationManagerPolicy : public RelationManagerBase {
   std::array<T, kMaxNrRelations> relations;
 };
 
+class IndexShipment;
+class IndexShipmentReceiver;
+
 // A key-value pair, and thankfully, this is immutable.
 class IndexEntity {
+  friend class IndexShipment;
+  friend class IndexShipmentReceiver;
   int rel_id;
   VarStr *k;
   VHandle *handle_ptr;
   ShippingHandle shandle;
  public:
+  IndexEntity() : rel_id(-1), k(nullptr), handle_ptr(nullptr) {}
   IndexEntity(int rel_id, VarStr *k, VHandle *handle) : rel_id(rel_id), k(k), handle_ptr(handle) {}
+  ~IndexEntity();
+  IndexEntity(const IndexEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
   void EncodeIOVec(struct iovec *vec);
@@ -104,7 +112,7 @@ class IndexEntity {
 class IndexShipment : public Shipment<IndexEntity> {
  public:
   using Shipment<IndexEntity>::Shipment;
-#if 0
+#if 0 // Not sure if we need these?
   void Lock() { lock.lock(); }
   void Unlock() { lock.unlock(); }
   void AddNoLock(IndexEntity *ent) { queue.push_front(ent); }

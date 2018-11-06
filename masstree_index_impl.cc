@@ -112,7 +112,8 @@ void MasstreeIndex::Initialize(threadinfo *ti)
   map = tree;
 }
 
-VHandle *MasstreeIndex::InsertOrCreate(const VarStr *k)
+VHandle *MasstreeIndex::InsertOrDefault(const VarStr *k,
+                                        std::function<VHandle * ()> default_func)
 {
   VHandle *result;
   // result = this->Search(k);
@@ -121,9 +122,7 @@ VHandle *MasstreeIndex::InsertOrCreate(const VarStr *k)
   typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
   bool found = cursor.find_insert(*ti);
   if (!found) {
-    auto h = new VHandle();
-    asm volatile("": : :"memory"); // don't you dare to reorder the new after the commit!
-    cursor.value() = h;
+    cursor.value() = default_func();
     nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].add_cnt++;
   }
   result = cursor.value();
