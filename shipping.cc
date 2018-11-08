@@ -35,7 +35,7 @@ BaseShipment::BaseShipment(std::string host, unsigned int port)
   addr.sin_port = htons(port);
   addr.sin_addr.s_addr = inet_addr(host.c_str());
   abort_if(connect(fd, (sockaddr *) &addr, sizeof(sockaddr_in)) < 0,
-           "Cannot connect {}, errno {} {}", host, errno, strerror(errno));
+           "Cannot connect {}:{}, errno {} {}", host, port, errno, strerror(errno));
 }
 
 void BaseShipment::SendIOVec(struct iovec *vec, int nr_vec)

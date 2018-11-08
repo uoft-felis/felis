@@ -14,21 +14,29 @@ namespace {
 
 class TestObject {
   ShippingHandle handle;
-  int value;
  public:
+  int value;
   TestObject(int value) : value(value) {}
   TestObject() : value(0) {}
 
   void SetValue(int value) { this->value = value; }
 
   ShippingHandle *shipping_handle() { return &handle; }
-  void EncodeIOVec(struct iovec *vec) {
+  int EncodeIOVec(struct iovec *vec, int max_nr_vec) {
+    if (max_nr_vec < 1)
+      return 0;
     vec->iov_base = &value;
     vec->iov_len = 4;
+
+    encoded_len = 4;
+    return 1;
   }
+
+  uint64_t encoded_len;
+
   void DecodeIOVec(struct iovec *vec) {
     EXPECT_EQ(vec->iov_len, 4);
-    memcpy(vec->iov_base, &value, 4);
+    memcpy(&value, vec->iov_base, 4);
   }
 };
 
@@ -61,11 +69,14 @@ TEST_F(ShippingTest, SimplePipeTest) {
   ASSERT_GT(fd, 0);
 
   auto s = ShipmentReceiver<TestObject>(fd);
+  int i = 0;
   while (true) {
     TestObject o;
     if (!s.Receive(&o)) {
       break;
     }
+    ASSERT_EQ(o.value, i + 10);
+    i++;
   }
   t.join();
 }

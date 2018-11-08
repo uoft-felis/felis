@@ -56,8 +56,11 @@ class BaseShipment {
 /**
  * T is a concept:
  * ShippingHandle *shipping_handle();
- * void EncodeIOVec(struct iovec *vec);
+ * // returns how many iovec encoded, 0 means not enough
+ * int EncodeIOVec(struct iovec *vec, int max_nr_vec);
  * void DecodeIOVec(struct iovec *vec);
+ *
+ * uint64_t encoded_len; // Stored the total data length of EncodeIOVec();
  */
 template <typename T>
 class Shipment : public BaseShipment {
@@ -88,19 +91,23 @@ class Shipment : public BaseShipment {
       }
     }
 
-    int step = __IOV_MAX / 2;
-    for (int j = 0; j < nr_obj; j += step) {
-      int nr = std::min(nr_obj - j, step);
-
-      for (int i = 0; i < nr; i++) {
-        obj[j + i]->shipping_handle()->PrepareSend();
-        obj[j + i]->EncodeIOVec(&vec[2 * i + 1]);
-        vec[2 * i].iov_len = 8;
-        vec[2 * i].iov_base = &(vec[2 * i + 1].iov_len);
+    int i = 0;
+    int cur_iov = 0;
+    while (i < nr_obj) {
+      int n = 0;
+      if (cur_iov == __IOV_MAX
+          || (n = obj[i]->EncodeIOVec(&vec[cur_iov + 1], __IOV_MAX - cur_iov - 1)) == 0) {
+        SendIOVec(vec, cur_iov);
+        cur_iov = 0;
+        continue;
       }
-      SendIOVec(vec, 2 * nr);
-    }
+      vec[cur_iov].iov_len = 8;
+      vec[cur_iov].iov_base = &obj[i]->encoded_len;
 
+      cur_iov += n + 1;
+      i++;
+    }
+    SendIOVec(vec, cur_iov);
     ReceiveACK();
     return false;
   }

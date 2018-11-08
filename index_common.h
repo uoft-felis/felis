@@ -105,13 +105,24 @@ class IndexEntity {
   IndexEntity(const IndexEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
-  void EncodeIOVec(struct iovec *vec);
+  int EncodeIOVec(struct iovec *vec, int max_nr_vec);
+  uint64_t encoded_len;
+
   void DecodeIOVec(struct iovec *vec);
 };
 
 class IndexShipment : public Shipment<IndexEntity> {
  public:
   using Shipment<IndexEntity>::Shipment;
+  IndexShipment(const NodeConfiguration::NodePeerConfig &cfg)
+      : Shipment<IndexEntity>(cfg.host, cfg.port) {}
+
+  template <typename TableEnum, typename KeyType>
+  void AddShipment(TableEnum table, const KeyType &key, VHandle *handle) {
+    Shipment<IndexEntity>::AddShipment(
+        new IndexEntity(int(table), key.Encode(), handle));
+  }
+
 #if 0 // Not sure if we need these?
   void Lock() { lock.lock(); }
   void Unlock() { lock.unlock(); }

@@ -31,13 +31,21 @@ void IndexEntity::DecodeIOVec(struct iovec *vec)
   memcpy(&handle_ptr, p + key_size + 4, 8); // This is a pointer on the original machine though.
 }
 
-void IndexEntity::EncodeIOVec(struct iovec *vec)
+int IndexEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
 {
-  auto p = (uint8_t *) vec->iov_base;
-  vec->iov_len = k->len + 12;
-  memcpy(p, &rel_id, 4);
-  memcpy(p + 4, k->data, k->len);
-  memcpy(p + 4 + k->len, &handle_ptr, 8);
+  if (max_nr_vec < 3)
+    return 0;
+
+  vec[0].iov_len = 4;
+  vec[0].iov_base = &rel_id;
+  vec[1].iov_len = k->len;
+  vec[1].iov_base = (void *) k->data;
+  vec[2].iov_len = 8;
+  vec[2].iov_base = &handle_ptr;
+
+  encoded_len = 12 + k->len;
+
+  return 3;
 }
 
 IndexEntity::~IndexEntity()
@@ -49,11 +57,13 @@ void IndexShipmentReceiver::Run()
 {
   IndexEntity ent;
   auto &mgr = Instance<RelationManager>();
+  logger->info("New Shipment has arrived!");
   while (Receive(&ent)) {
     // TODO: multi-thread this?
     auto &rel = mgr[ent.rel_id];
     rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
   }
+  logger->info("Shipment processing finished");
 }
 
 }
