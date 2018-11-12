@@ -12,6 +12,7 @@
 
 #include "util.h"
 #include "log.h"
+#include "node_config.h"
 
 namespace felis {
 
@@ -45,6 +46,25 @@ class ShippingHandle : public util::ListNode {
   void PrepareSend();
 };
 
+template <typename T>
+struct ObjectShippingHandle : public ShippingHandle {
+  T *object;
+
+  ObjectShippingHandle(T *object) : ShippingHandle(), object(object) {}
+};
+
+class Slice;
+
+class SliceScanner {
+ protected:
+  std::vector<Slice *> slices;
+  // TODO: scanning status, like which slice, which list node are you in...
+
+  ShippingHandle *GetNextHandle();
+
+  SliceScanner(std::vector<Slice *> slices) : slices(slices) {}
+};
+
 /**
  * Slice is the granularity we handle the skew. Either by shipping data (which
  * is our baseline) or shipping index.
@@ -56,7 +76,25 @@ class ShippingHandle : public util::ListNode {
  * timestamp.
  */
 class Slice {
+  friend class SliceScanner;
+  struct SliceQueue {
+    std::mutex lock;
+    util::ListNode queue;
+    bool need_lock;
+    size_t size;
 
+    SliceQueue() : size(0), need_lock(false) {
+      queue.Initialize();
+    }
+
+    void Append(ShippingHandle *handle);
+  };
+
+  util::CacheAligned<SliceQueue> shared_q;
+  std::array<util::CacheAligned<SliceQueue>, NodeConfiguration::kMaxNrThreads> per_core_q;
+ public:
+  Slice();
+  void Append(ShippingHandle *handle);
 };
 
 class BaseShipment {
@@ -79,7 +117,7 @@ class BaseShipment {
 
 /**
  * T is a concept:
- * ShippingHandle *shipping_handle();
+ *
  * // returns how many iovec encoded, 0 means not enough
  * int EncodeIOVec(struct iovec *vec, int max_nr_vec);
  * void DecodeIOVec(struct iovec *vec);
@@ -93,9 +131,9 @@ class Shipment : public BaseShipment {
  public:
   using BaseShipment::BaseShipment;
 
-  void AddShipment(T *shipment) {
+  void AddShipment(T *object) {
     std::lock_guard _(lock);
-    queue.push_front(shipment);
+    queue.push_front(object);
   }
 
   bool RunSend() {
@@ -180,6 +218,29 @@ class ShipmentReceiver {
 
     free(buffer);
     return true;
+  }
+};
+
+template <typename T>
+class ObjectSliceScanner : public SliceScanner {
+  Shipment<T> *ship;
+ public:
+  ObjectSliceScanner(std::vector<Slice *> slices, Shipment<T> *shipment)
+      : SliceScanner(slices), ship(shipment) {}
+
+  Shipment<T> *shipment() { return ship; }
+
+  void AddShipment(T *object) {
+    if (ship) {
+      ship->AddShipment(object);
+    }
+  }
+
+  void Scan() {
+    ShippingHandle *handle = nullptr;
+    while ((handle = GetNextHandle())) {
+      AddShipment(((ObjectShippingHandle<T> *) handle)->object);
+    }
   }
 };
 

@@ -26,6 +26,13 @@ class PerfLog {
   if (cond) {                                   \
     logger->critical(__VA_ARGS__);              \
     std::abort();                               \
-  }                                             \
+  }
+
+#define TBD()                                                           \
+  do {                                                                  \
+    auto p = __PRETTY_FUNCTION__;                                       \
+    logger->critical("TBD: Implement {}", p);                           \
+    abort();                                                            \
+  } while (0)                                                           \
 
 #endif /* LOG_H */
