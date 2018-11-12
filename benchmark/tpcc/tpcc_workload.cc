@@ -34,9 +34,11 @@ static void LoadTPCCDataSet()
   std::atomic_int count_down(6);
 
   // HACK HACK HACK!
-  felis::IndexShipment *preship;
-  if (Instance<NodeConfiguration>().node_id() == 2) {
-    preship = new felis::IndexShipment("127.0.0.1", 43451);
+  felis::IndexShipment *preship = nullptr;
+  auto &conf = Instance<NodeConfiguration>();
+  if (conf.node_id() == 2) {
+    preship = new felis::IndexShipment(conf.config(1).index_shipper_peer);
+    logger->info("preship is ready!");
   }
 
   m.lock(); // use as a semaphore
@@ -51,6 +53,8 @@ static void LoadTPCCDataSet()
   go::GetSchedulerFromPool(6)->WakeUp(builder.CreateLoader<tpcc::loaders::Order>(2343352));
 
   m.lock(); // waits
+
+  while (preship && !preship->RunSend());
 }
 
 class TPCCModule : public Module<WorkloadModule> {
@@ -64,7 +68,7 @@ class TPCCModule : public Module<WorkloadModule> {
   void Init() override {
     Module<CoreModule>::InitModule("allocator");
 
-    Instance<tpcc::TableHandles>();
+    tpcc::InitializeTPCC();
     LoadTPCCDataSet();
 
     tpcc::TxnFactory::Initialize();

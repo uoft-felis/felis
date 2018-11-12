@@ -57,13 +57,17 @@ void IndexShipmentReceiver::Run()
 {
   IndexEntity ent;
   auto &mgr = Instance<RelationManager>();
+  mem::SetThreadLocalAllocAffinity(1);
   logger->info("New Shipment has arrived!");
+  PerfLog perf;
   while (Receive(&ent)) {
     // TODO: multi-thread this?
     auto &rel = mgr[ent.rel_id];
     rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
   }
   logger->info("Shipment processing finished");
+  perf.End();
+  perf.Show("Processing takes");
 }
 
 }

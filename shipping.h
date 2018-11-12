@@ -15,7 +15,17 @@
 
 namespace felis {
 
-class ShippingHandle {
+class ShippingHandle : public util::ListNode {
+  /**
+   * Which scanning session was this handle born?
+   *
+   * If the scanning session X is still scanning, then only add to the shipment
+   * when born == X. Because any born < X will be taken care of by the scan.
+   *
+   * If the scanning session X has finished scanning, then always add to the
+   * shipment.
+   */
+  uint64_t born;
   uint64_t generation;
   std::atomic_ullong sent_generation;
  public:
@@ -33,6 +43,20 @@ class ShippingHandle {
    * using multiple threads.
    */
   void PrepareSend();
+};
+
+/**
+ * Slice is the granularity we handle the skew. Either by shipping data (which
+ * is our baseline) or shipping index.
+ *
+ * Take TPC-C for example, a Slice will be a warehouse. Then the handles inside
+ * of this slice will come from many different tables.
+ *
+ * To help the shipment scanner, we would like to sort the handles by their born
+ * timestamp.
+ */
+class Slice {
+
 };
 
 class BaseShipment {

@@ -133,7 +133,7 @@ void NodeServerRoutine::Run()
   for (auto &config: configuration.all_config) {
     if (!config) continue;
     if (config->id == configuration.node_id()) continue;
-    logger->info("Connecting {}\n", config->id);
+    logger->info("Connecting worker peer on node {}\n", config->id);
     TcpSocket *remote_sock = new TcpSocket(1024, 1024);
     remote_sock->Connect(config->worker_peer.host, config->worker_peer.port);
     configuration.all_nodes[config->id] = remote_sock;
@@ -147,7 +147,7 @@ void NodeServerRoutine::Run()
   for (size_t i = 1; i < nr_nodes; i++) {
     TcpSocket *client_sock = server_sock->Accept();
     if (client_sock == nullptr) continue;
-    logger->info("New Connection");
+    logger->info("New worker peer connection");
     configuration.nr_clients++;
     go::Scheduler::Current()->WakeUp(new NodeServerThreadRoutine(client_sock, i));
   }

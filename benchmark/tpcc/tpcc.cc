@@ -1,28 +1,27 @@
 #include "table_decl.h"
 
-#include <sys/time.h>
 #include <string>
-#include <sys/types.h>
-#include <cstdlib>
-
 #include <cstdlib>
 #include <unistd.h>
-// #include <getopt.h>
+
+#include <sys/time.h>
+#include <sys/types.h>
 
 #include <set>
 #include <vector>
 #include <memory>
 #include <string>
-#include <mutex>
-#include <atomic>
 
 #include "util.h"
 #include "node_config.h"
+#include "console.h"
 #include "tpcc.h"
 
 using felis::Relation;
 using felis::RelationManager;
 using felis::NodeConfiguration;
+using felis::Console;
+using felis::VHandle;
 using util::Instance;
 
 namespace tpcc {
@@ -34,7 +33,34 @@ struct Config {
   size_t nr_warehouses = 8;
   size_t districts_per_warehouse = 10;
   size_t customers_per_district = 3000;
+
+  uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, then we set the bit to 1.
+
+  static constexpr size_t kMaxSupportedWarehouse = 64;
 } kTPCCConfig;
+
+void InitializeTPCC()
+{
+  auto conf = Instance<Console>().FindConfigSection("tpcc").object_items();
+  auto it = conf.find("hot_warehouses");
+  if (it != conf.end()) {
+    for (auto v: it->second.array_items()) {
+      int hotspot_warehouse = v.int_value();
+      if (hotspot_warehouse > Config::kMaxSupportedWarehouse)
+        continue;
+      kTPCCConfig.hotspot_warehouse_bitmap |= (1 << (hotspot_warehouse - 1));
+    }
+    logger->info("Hot Warehouses are {} (bitmap)", (void *) kTPCCConfig.hotspot_warehouse_bitmap);
+  }
+
+  auto &mgr = Instance<RelationManager>();
+  for (int table = 0; table < int(TableType::NRTable); table++) {
+    std::string name = kTPCCTableNames[static_cast<int>(table)];
+
+    logger->info("Initialize TPCC Table {} id {}", name, (int)table);
+    mgr.GetRelationOrCreate(int(table));
+  }
+}
 
 // TPC-C workload mix
 // 0: NewOrder
@@ -258,31 +284,6 @@ struct Checker {
 
 };
 
-TableHandles::TableHandles()
-{
-  assert(kTPCCConfig.nr_warehouses >= 1);
-  for (int table_id = 0; table_id < static_cast<int>(TableType::NRTable); table_id++) {
-    InitiateTable(static_cast<TableType>(table_id));
-  }
-}
-
-void TableHandles::InitiateTable(TableType table)
-{
-  RelationManager &mgr = Instance<RelationManager>();
-  std::string name = kTPCCTableNames[static_cast<int>(table)];
-
-  logger->info("Initialize TPCC Table {} id {}", name, (int) table);
-  mgr.GetRelationOrCreate(static_cast<int>(table));
-
-#if 0
-  int base_idx = static_cast<int>(table) * kTPCCConfig.nr_warehouses;
-  int thandle = (int) table;
-
-  for (size_t i = 0; i < kTPCCConfig.nr_warehouses; i++)
-    table_handles[base_idx + i] = thandle;
-#endif
-}
-
 felis::Relation &Util::relation(TableType table)
 {
   return Instance<RelationManager>()[static_cast<int>(table)];
@@ -325,7 +326,9 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
     Checker::SanityCheckWarehouse(&k, &v);
 
-    relation(TableType::Warehouse).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+    auto handle = relation(TableType::Warehouse).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+
+    if (shipment) shipment->AddShipment(TableType::Warehouse, k, handle);
   }
 
   for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
@@ -342,6 +345,7 @@ void Loader<LoaderType::Item>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= kTPCCConfig.nr_items; i++) {
     // items don't "belong" to a certain warehouse, so no pinning
+    // TOOD: can we also replicate its entire index too?
     auto k = Item::Key::New(i);
     auto v = Item::Value();
 
@@ -373,6 +377,7 @@ template <>
 void Loader<LoaderType::Stock>::DoLoad()
 {
   void *large_buf = alloca(1024);
+  VHandle *handle = nullptr;
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
     if (warehouse_to_node_id(w) != node_id)
       continue;
@@ -414,8 +419,11 @@ void Loader<LoaderType::Stock>::DoLoad()
 
       Checker::SanityCheckStock(&k, &v);
 
-      relation(TableType::Stock).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
-      relation(TableType::StockData).InitValue(k_data.EncodeFromAlloca(large_buf), v_data.Encode());
+      handle = relation(TableType::Stock).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+      if (shipment) shipment->AddShipment(TableType::Stock, k, handle);
+
+      handle = relation(TableType::StockData).InitValue(k_data.EncodeFromAlloca(large_buf), v_data.Encode());
+      if (shipment) shipment->AddShipment(TableType::StockData, k_data, handle);
     }
     relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
     relation(TableType::StockData).set_key_length(sizeof(StockData::Key));

@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include "util.h"
+#include "log.h"
 #include "gopp/channels.h"
 #include "promise.h"
 
@@ -48,10 +49,11 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   int node_id() const { return id; }
   void SetupNodeName(std::string name);
 
-  const NodeConfig &config() const {
-    if (!all_config[id])
-      std::abort();
-    return all_config[id].value();
+  const NodeConfig &config(int idx = -1) const {
+    if (idx == -1) idx = id;
+    abort_if(!all_config[idx],
+             "configuration for node {} does not exist!", idx);
+    return all_config[idx].value();
   }
 
   void RunAllServers();

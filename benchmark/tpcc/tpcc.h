@@ -24,7 +24,7 @@ class BaseTxn;
 
 namespace tpcc {
 
-enum struct TableType : int {
+enum class TableType : int {
   Customer, CustomerNameIdx, District, History, Item,
   NewOrder, OOrder, OOrderCIdIdx, OrderLine, Stock, StockData, Warehouse,
   NRTable
@@ -118,11 +118,15 @@ struct Warehouse {
   using Value = sql::WarehouseValue;
 };
 
+void InitializeTPCC();
+
 // We create a full set of table per warehouse
 class Util {
  public:
   static felis::Relation &relation(TableType table);
   static int warehouse_to_node_id(uint wid);
+
+  static bool is_warehouse_hotspot(uint wid);
 };
 
 class ClientBase {
@@ -191,20 +195,6 @@ class ClientBase {
   uint GetCurrentTime();
  public:
   ClientBase(const util::FastRandom &r, felis::IndexShipment *shipment);
-};
-
-class TableHandles {
-  int table_handles[felis::RelationManager::kMaxNrRelations];
-
-  TableHandles();
-  template <typename T> friend T &util::Instance();
-public:
-  int table_handle(int idx) const {
-    assert(idx < felis::RelationManager::kMaxNrRelations);
-    return table_handles[idx];
-  }
-
-  void InitiateTable(TableType table);
 };
 
 // loaders for each table

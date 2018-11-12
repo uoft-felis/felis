@@ -8,15 +8,32 @@
 
 namespace felis {
 
+static constexpr ulong kScanningSessionStatusBits = 1;
+static constexpr ulong kScanningSessionMask = (1 << kScanningSessionStatusBits) - 1;
+static constexpr ulong kScanningSessionActive = 0x00;
+
+static std::atomic_ulong g_scanning_session = 1;
+
 ShippingHandle::ShippingHandle()
-    : generation(1), sent_generation(0)
-{}
+    : born(g_scanning_session.load() >> kScanningSessionStatusBits),
+      generation(1), sent_generation(0)
+{
+  Initialize();
+  // TODO: adding to the slice queue based on the current go-routine ID.
+}
 
 bool ShippingHandle::MarkDirty()
 {
   if (generation == sent_generation.load(std::memory_order_acquire)) {
     generation++;
-    return true;
+
+    auto session = g_scanning_session.load();
+    if ((session & kScanningSessionMask) == kScanningSessionActive) {
+      // if born < session, then this handle will be scanned from the slice.
+      return born >= (session >> kScanningSessionStatusBits);
+    } else {
+      return true;
+    }
   }
   return false;
 }
