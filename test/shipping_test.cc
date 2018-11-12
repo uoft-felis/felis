@@ -1,12 +1,12 @@
+#include "gopp/channels.h"
 #include "shipping.h"
 #include "util.h"
-#include "gopp/channels.h"
 #include <gtest/gtest.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <thread>
 #include <random>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <thread>
+#include <unistd.h>
 
 namespace felis {
 
@@ -14,7 +14,8 @@ namespace {
 
 class TestObject {
   ShippingHandle handle;
- public:
+
+public:
   int value;
   TestObject(int value) : value(value) {}
   TestObject() : value(0) {}
@@ -41,10 +42,11 @@ class TestObject {
 };
 
 class ShippingTest : public testing::Test {
- public:
+public:
 };
 
-TEST_F(ShippingTest, SimplePipeTest) {
+TEST_F(ShippingTest, SimplePipeTest)
+{
   int srv = socket(AF_INET, SOCK_STREAM, 0);
   int enable = 1;
   setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
@@ -56,14 +58,14 @@ TEST_F(ShippingTest, SimplePipeTest) {
   ASSERT_EQ(listen(srv, 1), 0);
 
   // Run!
-  auto t = std::thread(
-      [] {
-        auto s = Shipment<TestObject>("127.0.0.1", 41345);
-        for (int i = 0; i < 2 << 17; i++) {
-          s.AddShipment(new TestObject(i + 10));
-        }
-        while (!s.RunSend());
-      });
+  auto t = std::thread([] {
+    auto s = Shipment<TestObject>("127.0.0.1", 41345);
+    for (int i = 0; i < 2 << 17; i++) {
+      s.AddShipment(new TestObject(i + 10));
+    }
+    while (!s.RunSend())
+      ;
+  });
 
   int fd = accept(srv, addr.sockaddr(), &socklen);
   ASSERT_GT(fd, 0);
@@ -81,7 +83,8 @@ TEST_F(ShippingTest, SimplePipeTest) {
   t.join();
 }
 
-void ThreadSend(TestObject obj[]) {
+void ThreadSend(TestObject obj[])
+{
   auto s = Shipment<TestObject>("127.0.0.1", 41346);
   for (int i = 0; i < 2 << 17; i++) {
     s.AddShipment(&obj[i]);
@@ -89,7 +92,8 @@ void ThreadSend(TestObject obj[]) {
   while (!s.RunSend());
 }
 
- void ThreadUpdate(TestObject obj[]) {
+void ThreadUpdate(TestObject obj[])
+{
   auto s = Shipment<TestObject>("127.0.0.1", 41346);
   std::random_device rd;
   std::default_random_engine gen = std::default_random_engine(rd());
@@ -102,9 +106,10 @@ void ThreadSend(TestObject obj[]) {
       s.AddShipment(&obj[i]);
     }
   }
- }
+}
 
-TEST_F(ShippingTest, MutableTest) {
+TEST_F(ShippingTest, MutableTest)
+{
   int srv = socket(AF_INET, SOCK_STREAM, 0);
   int enable = 1;
   setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
@@ -115,21 +120,18 @@ TEST_F(ShippingTest, MutableTest) {
   ASSERT_EQ(bind(srv, addr.sockaddr(), socklen), 0);
   ASSERT_EQ(listen(srv, 1), 0);
 
-  TestObject obj[2<<17];
+  TestObject obj[2 << 17];
   std::thread t(ThreadSend, obj);
   std::thread t1(ThreadUpdate, obj);
-
 
   int fd = accept(srv, addr.sockaddr(), &socklen);
   ASSERT_GT(fd, 0);
 
   auto s = ShipmentReceiver<TestObject>(fd);
-  
-  while (true)
-  {
+
+  while (true) {
     TestObject o;
-    if (!s.Receive(&o))
-    {
+    if (!s.Receive(&o)) {
       break;
     }
   }
