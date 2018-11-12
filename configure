@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python3
 # -*- mode: python -*-
 
 import os
@@ -7,17 +7,13 @@ import shutil
 import subprocess
 
 if not os.path.exists('./buck.pex'):
+    print("Getting Buck...")
     os.system('curl -o buck.pex -L https://jitpack.io/com/github/facebook/buck/8f1fc9e71badf47d298622e4c5ca8533ed6e5cef/buck-8f1fc9e71badf47d298622e4c5ca8533ed6e5cef.pex')
-
-if len(sys.argv) < 2:
-    print('configure debug|release|asan')
-    sys.exit(-1)
 
 with open('.buckconfig.local', 'w') as f:
     f.write('[cxx]\n')
     f.write('  cc = {clang}\n  cxx = {clangxx}\n  as = {clang}\n  ld = {clangxx}\n'.format(clang=shutil.which('clang'), clangxx=shutil.which('clang++')))
-    f.write('  cxxflags = $(config cxx.{conf}_cxxflags)\n  cflags = $(config cxx.{conf}_cflags)\n  ldflags = $(config cxx.{conf}_ldflags)\n'.format(conf=sys.argv[1]))
-
+    
     p = subprocess.run(['clang++', '-E', '-v', '-xc++', '-'], stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
     s = p.stderr.decode('utf-8').split('\n')
 

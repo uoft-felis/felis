@@ -5,15 +5,16 @@
 [cache]
   mode =
 
-[cxx]
+[base]
   base_cxxflags = -std=c++17 -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64
   base_cflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64
-  debug_cxxflags = -g -Og $(config cxx.base_cxxflags)
-  debug_cflags = -g -Og $(config cxx.base_cflags)
-  debug_ldflags = -g -Og
-  release_cxxflags = -Ofast -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer $(config cxx.base_cxxflags)
-  release_cflags = -Ofast -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer $(config cxx.base_cflags)
-  release_ldflags = -Ofast -flto -fwhole-program -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
-  asan_cxxflags = -fsanitize=address $(config cxx.release_cxxflags)
-  asan_cflags = -fsanitize=address $(config cxx.release_cflags)
-  asan_ldflags = -fsanitize=address
+
+[cxx]
+  cxxflags = -g -Og $(config base.base_cxxflags)
+  cflags = -g -Og $(config base.base_cflags)
+  ldflags = -g -Og
+
+[cxx#release]
+  cxxflags = -Ofast -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer $(config base.base_cxxflags)
+  cflags = -Ofast -flto -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer $(config base.base_cflags)
+  ldflags = -Ofast -flto -fwhole-program -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
