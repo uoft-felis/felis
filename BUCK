@@ -3,6 +3,11 @@
 common_cflags = ['-pthread', '-Wstrict-aliasing', '-DCACHE_LINE_SIZE=64']
 includes = ['-I.', '-Ispdlog/include']
 
+tpcc_headers = [
+    'benchmark/tpcc/table_decl.h',
+    'benchmark/tpcc/tpcc.h',
+]
+
 tpcc_srcs = [
     'benchmark/tpcc/tpcc.cc',
     'benchmark/tpcc/tpcc_workload.cc',
@@ -19,7 +24,7 @@ cxx_library(
     name='tpcc',
     srcs=tpcc_srcs,
     compiler_flags=includes,
-    headers=db_headers,
+    headers=db_headers + tpcc_headers,
     link_whole=True,
 )
 
@@ -43,7 +48,7 @@ test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_t
 cxx_binary(
     name='db',
     srcs=['main.cc', 'module.cc', 'iface.cc'] + db_srcs,
-    headers=db_headers,
+    headers=db_headers + tpcc_headers,
     compiler_flags=includes,
     linker_flags=libs,
     deps=[':tpcc'],
