@@ -87,12 +87,10 @@ class RelationManagerPolicy : public RelationManagerBase {
   std::array<T, kMaxNrRelations> relations;
 };
 
-class IndexShipment;
 class IndexShipmentReceiver;
 
 // A key-value pair, and thankfully, this is immutable.
 class IndexEntity {
-  friend class IndexShipment;
   friend class IndexShipmentReceiver;
   int rel_id;
   VarStr *k;
@@ -111,24 +109,8 @@ class IndexEntity {
   void DecodeIOVec(struct iovec *vec);
 };
 
-class IndexShipment : public Shipment<IndexEntity> {
- public:
-  using Shipment<IndexEntity>::Shipment;
-  IndexShipment(const NodeConfiguration::NodePeerConfig &cfg)
-      : Shipment<IndexEntity>(cfg.host, cfg.port) {}
-
-  template <typename TableEnum, typename KeyType>
-  void AddShipment(TableEnum table, const KeyType &key, VHandle *handle) {
-    Shipment<IndexEntity>::AddShipment(
-        new IndexEntity(int(table), key.Encode(), handle));
-  }
-
-#if 0 // Not sure if we need these?
-  void Lock() { lock.lock(); }
-  void Unlock() { lock.unlock(); }
-  void AddNoLock(IndexEntity *ent) { queue.push_front(ent); }
-#endif
-};
+using IndexSliceScanner = ObjectSliceScanner<IndexEntity>;
+using IndexShipment = felis::Shipment<felis::IndexEntity>;
 
 class IndexShipmentReceiver : public ShipmentReceiver<IndexEntity> {
  public:
@@ -168,6 +150,18 @@ class RelationPolicy : public BaseRelation,
       return nullptr;
     return handle;
   }
+};
+
+class RowSlicer {
+ protected:
+  Slice **index_slices;
+  IndexSliceScanner **index_slice_scanners;
+  size_t nr_slices;
+  RowSlicer(int nr_slices);
+ public:
+  IndexEntity *OnNewRow(int slice_idx, IndexEntity *ent);
+  std::vector<IndexShipment*> all_index_shipments();
+
 };
 
 }

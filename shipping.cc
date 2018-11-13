@@ -17,7 +17,7 @@ static std::atomic_ulong g_scanning_session = 1;
 
 ShippingHandle::ShippingHandle()
     : born(g_scanning_session.load() >> kScanningSessionStatusBits),
-      generation(1), sent_generation(0)
+      generation(0), sent_generation(0)
 {
   Initialize();
   // TODO: adding to the slice queue based on the current go-routine ID.
@@ -76,20 +76,31 @@ ShippingHandle *SliceScanner::GetNextHandle()
   TBD();
 }
 
-BaseShipment::BaseShipment(std::string host, unsigned int port)
+BaseShipment::BaseShipment(std::string host, unsigned int port, bool defer_connect)
 {
   fd = socket(AF_INET, SOCK_STREAM, 0);
-  sockaddr_in addr;
+
   memset(&addr, 0, sizeof(sockaddr_in));
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
   addr.sin_addr.s_addr = inet_addr(host.c_str());
-  abort_if(connect(fd, (sockaddr *) &addr, sizeof(sockaddr_in)) < 0,
-           "Cannot connect {}:{}, errno {} {}", host, port, errno, strerror(errno));
+  if (!defer_connect)
+    Connect();
+}
+
+void BaseShipment::Connect()
+{
+  abort_if(connect(fd, (sockaddr *)&addr, sizeof(sockaddr_in)) < 0,
+           "Cannot connect errno {} {}", errno,
+           strerror(errno));
+  connected = true;
 }
 
 void BaseShipment::SendIOVec(struct iovec *vec, int nr_vec)
 {
+  if (nr_vec > 0 && !connected)
+    Connect();
+
   while (nr_vec > 0) {
     ssize_t res = writev(fd, vec, nr_vec);
     abort_if(res < 0, "writev() failed {}", errno);
@@ -112,6 +123,9 @@ void BaseShipment::ReceiveACK()
 {
   uint64_t done = 0;
   ssize_t res = 0;
+  int disabled = 0;
+
+  setsockopt(fd, IPPROTO_TCP, TCP_CORK, &disabled, 4);
 
   res = send(fd, &done, 8, 0);
   if (res != 8) goto error;

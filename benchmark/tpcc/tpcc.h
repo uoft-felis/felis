@@ -119,6 +119,7 @@ struct Warehouse {
 };
 
 void InitializeTPCC();
+void RunShipment();
 
 // We create a full set of table per warehouse
 class Util {
@@ -133,7 +134,6 @@ class ClientBase {
  protected:
   util::FastRandom r;
   int node_id;
-  felis::IndexShipment *shipment;
 
  protected:
   static constexpr double kWarehouseSpread = 0.0;
@@ -193,8 +193,15 @@ class ClientBase {
   std::string RandomNStr(uint len);
 
   uint GetCurrentTime();
+ private:
+  felis::RowSlicer *slicer; // Each warehouse is a slice
+ protected:
+  template <typename TableType, typename KeyType>
+  void NewRow(int slice_idx, TableType table, const KeyType &k, felis::VHandle *handle) {
+    slicer->OnNewRow(slice_idx, new felis::IndexEntity(int(table), k.Encode(), handle));
+  }
  public:
-  ClientBase(const util::FastRandom &r, felis::IndexShipment *shipment);
+  ClientBase(const util::FastRandom &r);
 };
 
 // loaders for each table
@@ -208,9 +215,9 @@ template <enum LoaderType TLN>
 class Loader : public go::Routine, public tpcc::Util, public tpcc::ClientBase {
   std::mutex *m;
   std::atomic_int *count_down;
-public:
-  Loader(unsigned long seed, std::mutex *w, std::atomic_int *c, felis::IndexShipment *shipment)
-      : ClientBase(util::FastRandom(seed), shipment), m(w), count_down(c) {}
+ public:
+  Loader(unsigned long seed, std::mutex *w, std::atomic_int *c)
+      : ClientBase(util::FastRandom(seed)), m(w), count_down(c) {}
   void DoLoad();
   virtual void Run() {
     DoLoad();
@@ -225,7 +232,7 @@ class Client : public felis::EpochClient, public ClientBase {
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
  public:
 
-  Client() : felis::EpochClient(), ClientBase(kClientSeed, nullptr) {}
+  Client() : felis::EpochClient(), ClientBase(kClientSeed) {}
 
   template <class T> T GenerateTransactionInput();
 

@@ -61,7 +61,7 @@ TEST_F(ShippingTest, SimplePipeTest)
   auto t = std::thread([] {
     auto s = Shipment<TestObject>("127.0.0.1", 41345);
     for (int i = 0; i < 2 << 17; i++) {
-      s.AddShipment(new TestObject(i + 10));
+      s.AddObject(new TestObject(i + 10));
     }
     while (!s.RunSend())
       ;
@@ -87,7 +87,7 @@ void ThreadSend(TestObject obj[])
 {
   auto s = Shipment<TestObject>("127.0.0.1", 41346);
   for (int i = 0; i < 2 << 17; i++) {
-    s.AddShipment(&obj[i]);
+    s.AddObject(&obj[i]);
   }
   while (!s.RunSend());
 }
@@ -103,7 +103,7 @@ void ThreadUpdate(TestObject obj[])
     int idx = dis(gen);
     obj[idx].SetValue(i);
     if (obj[idx].shipping_handle()->MarkDirty()) {
-      s.AddShipment(&obj[i]);
+      s.AddObject(&obj[i]);
     }
   }
 }

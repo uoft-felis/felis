@@ -70,4 +70,34 @@ void IndexShipmentReceiver::Run()
   perf.Show("Processing takes");
 }
 
+RowSlicer::RowSlicer(int nr_slices)
+    : nr_slices(nr_slices)
+{
+  index_slices = new Slice*[nr_slices];
+  index_slice_scanners = new IndexSliceScanner*[nr_slices];
+}
+
+IndexEntity *RowSlicer::OnNewRow(int slice_idx, IndexEntity *ent)
+{
+  index_slices[slice_idx]->Append(ent->shipping_handle());
+
+  // We still need to call MarkDirty() just in case the scanner is running in
+  // progress.
+  if (ent->shipping_handle()->MarkDirty())
+    index_slice_scanners[slice_idx]->AddObject(ent);
+  return ent;
+}
+
+std::vector<IndexShipment *> RowSlicer::all_index_shipments()
+{
+  std::vector<IndexShipment *> all;
+  for (int i = 0; i < nr_slices; i++) {
+    if (index_slice_scanners[i] == nullptr)
+      continue;
+    auto shipment = index_slice_scanners[i]->shipment();
+    if (shipment) all.push_back(shipment);
+  }
+  return all;
+}
+
 }

@@ -34,10 +34,42 @@ struct Config {
   size_t districts_per_warehouse = 10;
   size_t customers_per_district = 3000;
 
-  uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, then we set the bit to 1.
+  uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, the bit is 1
+  std::vector<int> offload_nodes;
 
   static constexpr size_t kMaxSupportedWarehouse = 64;
 } kTPCCConfig;
+
+class RowSlicer : public felis::RowSlicer {
+ public:
+  RowSlicer();
+} *g_slicer = nullptr;
+
+RowSlicer::RowSlicer()
+    : felis::RowSlicer(kTPCCConfig.nr_warehouses)
+{
+  auto &conf = Instance<NodeConfiguration>();
+  for (int i = 0; i < kTPCCConfig.nr_warehouses; i++) {
+    int wh = i + 1;
+
+    // You, as node_id, should not touch these slices at all!
+    if (Util::warehouse_to_node_id(wh) != conf.node_id()) {
+      index_slices[i] = nullptr;
+      index_slice_scanners[i] = nullptr;
+      continue;
+    }
+
+    felis::IndexShipment *pre_shipment = nullptr;
+    index_slices[i] = new felis::Slice();
+
+    if (Util::is_warehouse_hotspot(wh)) {
+      auto &peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer; // HACK
+      pre_shipment = new felis::IndexShipment(peer.host, peer.port, true);
+    }
+
+    index_slice_scanners[i] = new felis::IndexSliceScanner(index_slices[i], pre_shipment);
+  }
+}
 
 void InitializeTPCC()
 {
@@ -53,12 +85,35 @@ void InitializeTPCC()
     logger->info("Hot Warehouses are {} (bitmap)", (void *) kTPCCConfig.hotspot_warehouse_bitmap);
   }
 
+  it = conf.find("offload_nodes");
+  if (it != conf.end()) {
+    for (auto v: it->second.array_items()) {
+      int node = v.int_value();
+      if (node >= NodeConfiguration::kMaxNrNode)
+        continue;
+      kTPCCConfig.offload_nodes.push_back(node);
+    }
+  }
+
   auto &mgr = Instance<RelationManager>();
   for (int table = 0; table < int(TableType::NRTable); table++) {
     std::string name = kTPCCTableNames[static_cast<int>(table)];
 
     logger->info("Initialize TPCC Table {} id {}", name, (int)table);
     mgr.GetRelationOrCreate(int(table));
+  }
+
+  g_slicer = new RowSlicer();
+}
+
+void RunShipment()
+{
+  auto all_shipments = g_slicer->all_index_shipments();
+  for (auto shipment: all_shipments) {
+    logger->info("Shipping index");
+    int iter = 0;
+    while (!shipment->RunSend()) iter++;
+    logger->info("Done shipping index, iter {}", iter);
   }
 }
 
@@ -92,8 +147,8 @@ static inline unsigned int CoreId(unsigned int wid)
   return partid;
 }
 
-ClientBase::ClientBase(const util::FastRandom &r, felis::IndexShipment *shipment)
-    : r(r), shipment(shipment)
+ClientBase::ClientBase(const util::FastRandom &r)
+    : r(r), slicer(g_slicer)
 {
   node_id = Instance<NodeConfiguration>().node_id();
 }
@@ -295,6 +350,11 @@ int Util::warehouse_to_node_id(unsigned int wid)
   return (wid - 1) * Instance<NodeConfiguration>().nr_nodes() / kTPCCConfig.nr_warehouses + 1;
 }
 
+bool Util::is_warehouse_hotspot(uint wid)
+{
+  return (kTPCCConfig.hotspot_warehouse_bitmap & (1 << (wid - 1))) != 0;
+}
+
 namespace loaders {
 
 template <>
@@ -305,6 +365,8 @@ void Loader<LoaderType::Warehouse>::DoLoad()
     if (warehouse_to_node_id(i) != node_id)
       continue;
 
+    util::PinToCPU(CoreId(i));
+    mem::SetThreadLocalAllocAffinity(CoreId(i));
     auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
 
@@ -328,14 +390,12 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
     auto handle = relation(TableType::Warehouse).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
 
-    if (shipment) shipment->AddShipment(TableType::Warehouse, k, handle);
+    NewRow(i - 1, TableType::Warehouse, k, handle);
   }
 
-  for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
-    if (warehouse_to_node_id(i) != node_id)
-      continue;
-    relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
-  }
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
+  mem::SetThreadLocalAllocAffinity(-1);
+  relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
   logger->info("Warehouse Table loading done.");
 }
 
@@ -420,14 +480,16 @@ void Loader<LoaderType::Stock>::DoLoad()
       Checker::SanityCheckStock(&k, &v);
 
       handle = relation(TableType::Stock).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
-      if (shipment) shipment->AddShipment(TableType::Stock, k, handle);
+      NewRow(w - 1, TableType::Stock, k, handle);
 
       handle = relation(TableType::StockData).InitValue(k_data.EncodeFromAlloca(large_buf), v_data.Encode());
-      if (shipment) shipment->AddShipment(TableType::StockData, k_data, handle);
+      NewRow(w - 1, TableType::StockData, k_data, handle);
     }
-    relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
-    relation(TableType::StockData).set_key_length(sizeof(StockData::Key));
   }
+  relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
+  relation(TableType::StockData).set_key_length(sizeof(StockData::Key));
+
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Stock Table loading done.");
 }
@@ -458,10 +520,12 @@ void Loader<LoaderType::District>::DoLoad()
 
       Checker::SanityCheckDistrict(&k, &v);
 
-      relation(TableType::District).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+      auto handle = relation(TableType::District).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+      NewRow(w - 1, TableType::District, k, handle);
     }
-    relation(TableType::District).set_key_length(sizeof(District::Key));
   }
+  relation(TableType::District).set_key_length(sizeof(District::Key));
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("District Table loading done.");
 }
@@ -470,6 +534,8 @@ template <>
 void Loader<LoaderType::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
+  VHandle *handle = nullptr;
+
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
     if (warehouse_to_node_id(w) != node_id)
       continue;
@@ -513,7 +579,8 @@ void Loader<LoaderType::Customer>::DoLoad()
         v.c_data.assign(RandomStr(RandomNumber(300, 500)));
 
         Checker::SanityCheckCustomer(&k, &v);
-        relation(TableType::Customer).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+        handle = relation(TableType::Customer).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
+        NewRow(w - 1, TableType::Customer, k, handle);
 
         // customer name index
         auto k_idx = CustomerNameIdx::Key::New(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -522,8 +589,9 @@ void Loader<LoaderType::Customer>::DoLoad()
         // index structure is:
         // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-        relation(TableType::CustomerNameIdx).InitValue(k_idx.EncodeFromAlloca(large_buf),
-                                                            v_idx.Encode());
+        handle = relation(TableType::CustomerNameIdx).InitValue(k_idx.EncodeFromAlloca(large_buf),
+                                                                v_idx.Encode());
+        NewRow(w - 1, TableType::CustomerNameIdx, k_idx, handle);
 
         History::Key k_hist;
 
@@ -538,14 +606,17 @@ void Loader<LoaderType::Customer>::DoLoad()
         v_hist.h_amount = 1000;
         v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
-        relation(TableType::History).InitValue(k_hist.EncodeFromAlloca(large_buf), v_hist.Encode());
+        handle = relation(TableType::History).InitValue(k_hist.EncodeFromAlloca(large_buf), v_hist.Encode());
+        NewRow(w - 1, TableType::History, k_hist, handle);
       }
     }
-
-    relation(TableType::Customer).set_key_length(sizeof(Customer::Key));
-    relation(TableType::CustomerNameIdx).set_key_length(sizeof(CustomerNameIdx::Key));
-    relation(TableType::History).set_key_length(sizeof(History::Key));
   }
+
+  relation(TableType::Customer).set_key_length(sizeof(Customer::Key));
+  relation(TableType::CustomerNameIdx).set_key_length(sizeof(CustomerNameIdx::Key));
+  relation(TableType::History).set_key_length(sizeof(History::Key));
+  logger->info("Customer Table loading done.");
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
   mem::SetThreadLocalAllocAffinity(-1);
 }
 
@@ -553,12 +624,14 @@ template <>
 void Loader<LoaderType::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
+  VHandle *handle = nullptr;
+
   for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
     if (warehouse_to_node_id(w) != node_id)
       continue;
 
     util::PinToCPU(CoreId(w));
-    mem::SetThreadLocalAllocAffinity(CoreId(w) % NodeConfiguration::kNrThreads);;
+    mem::SetThreadLocalAllocAffinity(CoreId(w) % NodeConfiguration::kNrThreads);
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;
@@ -586,12 +659,14 @@ void Loader<LoaderType::Order>::DoLoad()
 
         Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
-        relation(TableType::OOrder).InitValue(k_oo.EncodeFromAlloca(large_buf), v_oo.Encode());
+        handle = relation(TableType::OOrder).InitValue(k_oo.EncodeFromAlloca(large_buf), v_oo.Encode());
+        NewRow(w - 1, TableType::OOrder, k_oo, handle);
 
         const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
         const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
 
-        relation(TableType::OOrderCIdIdx).InitValue(k_oo_idx.EncodeFromAlloca(large_buf), v_oo_idx.Encode());
+        handle = relation(TableType::OOrderCIdIdx).InitValue(k_oo_idx.EncodeFromAlloca(large_buf), v_oo_idx.Encode());
+        NewRow(w - 1, TableType::OOrderCIdIdx, k_oo_idx, handle);
 
         if (c >= 2101) {
           auto k_no = NewOrder::Key::New(w, d, c);
@@ -599,7 +674,8 @@ void Loader<LoaderType::Order>::DoLoad()
 
           Checker::SanityCheckNewOrder(&k_no, &v_no);
 
-          relation(TableType::NewOrder).InitValue(k_no.EncodeFromAlloca(large_buf), v_no.Encode());
+          handle = relation(TableType::NewOrder).InitValue(k_no.EncodeFromAlloca(large_buf), v_no.Encode());
+          NewRow(w - 1, TableType::NewOrder, k_no, handle);
         }
 
         for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -622,16 +698,20 @@ void Loader<LoaderType::Order>::DoLoad()
           //v_ol.ol_dist_info = RandomStr(24);
 
           Checker::SanityCheckOrderLine(&k_ol, &v_ol);
-          relation(TableType::OrderLine).InitValue(k_ol.EncodeFromAlloca(large_buf), v_ol.Encode());
+          handle = relation(TableType::OrderLine).InitValue(k_ol.EncodeFromAlloca(large_buf), v_ol.Encode());
+          NewRow(w - 1, TableType::OrderLine, k_ol, handle);
         }
       }
     }
-    relation(TableType::OOrder).set_key_length(sizeof(OOrder::Key));
-    relation(TableType::OOrderCIdIdx).set_key_length(sizeof(OOrderCIdIdx::Key));
-    relation(TableType::NewOrder).set_key_length(sizeof(NewOrder::Key));
-    relation(TableType::OrderLine).set_key_length(sizeof(OrderLine::Key));
   }
+
+  relation(TableType::OOrder).set_key_length(sizeof(OOrder::Key));
+  relation(TableType::OOrderCIdIdx).set_key_length(sizeof(OOrderCIdIdx::Key));
+  relation(TableType::NewOrder).set_key_length(sizeof(NewOrder::Key));
+  relation(TableType::OrderLine).set_key_length(sizeof(OrderLine::Key));
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
   mem::SetThreadLocalAllocAffinity(-1);
+  logger->info("Order Table loading done.");
 }
 
 }

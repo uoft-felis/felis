@@ -188,9 +188,10 @@ void NodeConfiguration::RunIndexShipmentReceiverThread(std::string host, unsigne
 void NodeConfiguration::RunAllServers()
 {
   logger->info("Starting system thread for index shipment");
-  std::thread t(std::bind(NodeConfiguration::RunIndexShipmentReceiverThread,
-                          config().index_shipper_peer.host,
-                          config().index_shipper_peer.port));
+  auto &peer = config().index_shipper_peer;
+  std::thread t(std::bind(
+      NodeConfiguration::RunIndexShipmentReceiverThread,
+      peer.host, peer.port));
   t.detach();
 
   logger->info("Starting node server with id {}", node_id());

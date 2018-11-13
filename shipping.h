@@ -57,12 +57,12 @@ class Slice;
 
 class SliceScanner {
  protected:
-  std::vector<Slice *> slices;
+  Slice * slice;
   // TODO: scanning status, like which slice, which list node are you in...
 
   ShippingHandle *GetNextHandle();
 
-  SliceScanner(std::vector<Slice *> slices) : slices(slices) {}
+  SliceScanner(Slice * slice) : slice(slice) {}
 };
 
 /**
@@ -99,9 +99,11 @@ class Slice {
 
 class BaseShipment {
  public:
-  static constexpr int kSendBatch = 4 * __IOV_MAX;
+  static constexpr int kSendBatch = 32 * __IOV_MAX;
  protected:
+  sockaddr_in addr;
   int fd;
+  bool connected;
   bool finished;
   std::mutex lock;
 
@@ -111,8 +113,10 @@ class BaseShipment {
   bool has_finished() const { return finished; }
   std::mutex &mutex() { return lock; }
  public:
-  BaseShipment(int fd) : fd(fd), finished(false) {}
-  BaseShipment(std::string host, unsigned int port);
+  BaseShipment(int fd) : fd(fd), connected(true), finished(false) {}
+  BaseShipment(std::string host, unsigned int port, bool defer_connect = false);
+ private:
+  void Connect();
 };
 
 /**
@@ -131,7 +135,7 @@ class Shipment : public BaseShipment {
  public:
   using BaseShipment::BaseShipment;
 
-  void AddShipment(T *object) {
+  void AddObject(T *object) {
     std::lock_guard _(lock);
     queue.push_front(object);
   }
@@ -155,6 +159,9 @@ class Shipment : public BaseShipment {
 
     int i = 0;
     int cur_iov = 0;
+    int enabled = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_CORK, &enabled, 4);
+
     while (i < nr_obj) {
       int n = 0;
       if (cur_iov == __IOV_MAX
@@ -225,21 +232,22 @@ template <typename T>
 class ObjectSliceScanner : public SliceScanner {
   Shipment<T> *ship;
  public:
-  ObjectSliceScanner(std::vector<Slice *> slices, Shipment<T> *shipment)
-      : SliceScanner(slices), ship(shipment) {}
+  ObjectSliceScanner(Slice * slice, Shipment<T> *shipment)
+      : SliceScanner(slice), ship(shipment) {}
 
   Shipment<T> *shipment() { return ship; }
 
-  void AddShipment(T *object) {
+  void AddObject(T *object) {
     if (ship) {
-      ship->AddShipment(object);
+      ship->AddObject(object);
     }
   }
 
   void Scan() {
+    if (!ship) return;
     ShippingHandle *handle = nullptr;
     while ((handle = GetNextHandle())) {
-      AddShipment(((ObjectShippingHandle<T> *) handle)->object);
+      AddObject(((ObjectShippingHandle<T> *) handle)->object);
     }
   }
 };

@@ -86,8 +86,7 @@ int main(int argc, char *argv[])
   // init tables from the workload module
   Module<WorkloadModule>::InitModule(workload_name);
 
-  Module<CoreModule>::InitModule("node-server");
-
+  logger->info("Ready. Waiting for run command from the controller.");
   console.WaitForServerStatus(felis::Console::ServerStatus::Running);
 
   abort_if(EpochClient::gWorkloadClient == nullptr,
