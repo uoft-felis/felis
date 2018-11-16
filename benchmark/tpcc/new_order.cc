@@ -76,9 +76,21 @@ NewOrderTxn::NewOrderTxn(Client *client)
   PromiseProc _;
   auto district_key = District::Key::New(warehouse_id, district_id);
 
-  int p = warehouse_to_node_id(warehouse_id);
-  _ >> T(IndexContext<District>(warehouse_id, district_id), p, TxnIndexLookupOp<>)
-    >> T(Context(district_key), p, [](auto ctx, Tuple<VHandle *> vhandle) -> Optional<VoidValue> {
+  printf("warehouse %d\n", warehouse_id);
+  int node = warehouse_to_node_id(warehouse_id);
+  int lookup_node = node;
+  if (warehouse_id == 5) {
+    puts("Offloading!");
+    lookup_node = 1;
+  }
+  _ >> T(IndexContext<District>(district_key), lookup_node, TxnIndexLookupOp<>)
+    >> T(Context(district_key), node, [](auto ctx, Tuple<VHandle *> args) -> Optional<VoidValue> {
+        District::Key key;
+        VHandle *handle;
+        ctx.Unpack(key);
+        args.Unpack(handle);
+        if (key.d_w_id == 5)
+          printf("warehouse %u handle %p\n", key.d_w_id, handle);
         return nullopt;
       });
 

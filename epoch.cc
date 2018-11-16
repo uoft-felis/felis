@@ -34,9 +34,11 @@ static constexpr size_t kEpochMemoryLimit = 12 << 20;
 EpochMemory::EpochMemory(mem::Pool *pool)
     : pool(pool)
 {
+  logger->info("Setting up epoch memory pool and brks");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
     brks[i].mem = (uint8_t *) pool->Alloc();
+    brks[i].off = 0;
   }
 }
 

@@ -55,19 +55,29 @@ IndexEntity::~IndexEntity()
 
 void IndexShipmentReceiver::Run()
 {
+  // clear the affinity
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
   IndexEntity ent;
   auto &mgr = Instance<RelationManager>();
-  mem::SetThreadLocalAllocAffinity(1);
+
   logger->info("New Shipment has arrived!");
   PerfLog perf;
   while (Receive(&ent)) {
     // TODO: multi-thread this?
     auto &rel = mgr[ent.rel_id];
-    rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
+    auto handle = rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
   }
   logger->info("Shipment processing finished");
   perf.End();
   perf.Show("Processing takes");
+}
+
+IndexShipmentReceiver::~IndexShipmentReceiver()
+{
+  delete sock;
 }
 
 RowSlicer::RowSlicer(int nr_slices)

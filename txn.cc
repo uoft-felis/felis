@@ -13,7 +13,8 @@ Optional<Tuple<VHandle *>> BaseTxn::TxnIndexLookupOpImpl(const TxnIndexOpContext
 {
   auto &rel = util::Instance<RelationManager>().GetRelationOrCreate(ctx.rel_id);
   VarStr key((unsigned short) ctx.key_len, 0, ctx.key_data);
-  return Tuple<VHandle *>(rel.Search(&key));
+  auto handle = rel.Search(&key);
+  return Tuple<VHandle *>(handle);
 }
 
 }

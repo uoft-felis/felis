@@ -21,10 +21,10 @@ PromiseRoutinePool *PromiseRoutinePool::Create(size_t size)
 void PromiseRoutine::UnRef()
 {
   if (!pool->IsManaging(input.data))
-    free((void *) input.data);
+    // free((void *) input.data);
 
   if (pool->refcnt.fetch_sub(1) == 1) {
-    free(pool); // which also free this
+    // free(pool); // which also free this
   }
 }
 
@@ -59,6 +59,7 @@ PromiseRoutine *PromiseRoutine::CreateFromBufferedPool(PromiseRoutinePool *rpool
   memcpy(&len, p, 2);
   rpool->input_ptr = p + 2;
   p += util::Align(2 + len, 8);
+
   auto r = (PromiseRoutine *) p;
   r->DecodeTree(rpool);
   return r;
@@ -78,13 +79,12 @@ void PromiseRoutine::EncodeTree(uint8_t *p)
   memcpy(p + 2, input.data, input.len);
   p += util::Align(2 + input.len, 8);
   EncodeNode(p);
-  auto root = (PromiseRoutine *) p;
-  root->input.data = start;
 }
 
 void PromiseRoutine::DecodeTree(PromiseRoutinePool *rpool)
 {
-  input = VarStr(input.len, input.region_id, rpool->input_ptr);
+  // input = VarStr(input.len, input.region_id, rpool->input_ptr);
+  input.data = rpool->input_ptr;
   DecodeNode((uint8_t *) this, rpool);
 }
 
@@ -112,10 +112,8 @@ uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
 
   memcpy(p, capture_data, capture_len);
   p += util::Align(capture_len, 8);
-  size_t nr_children = 0;
-  if (next) {
-    nr_children = next->handlers.size();
-  }
+
+  size_t nr_children = next ? next->handlers.size() : 0;
   memcpy(p, &nr_children, 8);
   p += 8;
 
@@ -229,6 +227,7 @@ void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thr
           {
             // mem::Brk b(alloca(4096), 4096);
             // go::Scheduler::Current()->current_routine()->set_userdata(&b);
+            INIT_ROUTINE_BRK(4096);
             r->callback(r);
             // go::Scheduler::Current()->current_routine()->set_userdata(nullptr);
           }

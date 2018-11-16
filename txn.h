@@ -98,9 +98,9 @@ class BaseTxn {
     return TxnIndexOpContext(index_handle(), rel_id, key);
   }
 
-  template <typename TableT, typename ...Args>
-  TxnIndexOpContext IndexContext(Args... args) {
-    return IndexContextByStr(static_cast<int>(TableT::kTable), TableT::Key::New(args...).EncodeFromRoutine());
+  template <typename TableT>
+  TxnIndexOpContext IndexContext(const typename TableT::Key &key) {
+    return IndexContextByStr(static_cast<int>(TableT::kTable), key.EncodeFromRoutine());
   }
 
  private:
@@ -128,7 +128,7 @@ class Txn : public BaseTxn {
     State state() const { return this->template _<0>(); }
     TxnHandle handle() const { return this->template _<1>(); }
 
-    void Unpack(Types... args) const {
+    void Unpack(Types&... args) const {
       State _1;
       TxnHandle _2;
       sql::Tuple<State, TxnHandle, Types...>::Unpack(_1, _2, args...);

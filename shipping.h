@@ -182,39 +182,43 @@ class Shipment : public BaseShipment {
   }
 };
 
+//
+// Making the ShipmentReceiver a go-routine has a lot of benefits.
+//
+// 1. We have tons of very small read() in the process. The go-routine channel
+// can help us buffer and issue less system calls.
+//
+// 2. We need to create ThreadInfo to use MassTree and the index will create
+// that for you if you are a go-routine.
+//
 template <typename T>
-class ShipmentReceiver {
-  int fd;
+class ShipmentReceiver : public go::Routine {
+ protected:
+  go::TcpSocket *sock;
  public:
-  ShipmentReceiver(int fd) : fd(fd) {
-    int enable = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
-  }
+  ShipmentReceiver(go::TcpSocket *sock) : sock(sock) {}
 
   bool Receive(T *shipment) {
+    auto *in = sock->input_channel();
+    auto *out = sock->output_channel();
+
  again:
     uint64_t psz;
-    ssize_t res = recv(fd, &psz, 8, MSG_WAITALL);
-
-    abort_if(res < 0, "recv failed, errno {} {}", errno, strerror(errno));
-    if (res == 0) {
+    if (!in->Read(&psz, 8)) {
       return false;
     }
-    abort_if(res < 8, "incomplete read!");
 
     if (psz == 0) {
       uint8_t done = 0;
-      send(fd, &done, 1, 0);
+      out->Write(&done, 1);
+      out->Flush();
 
       goto again;
     }
     auto buffer = (uint8_t *) malloc(psz);
-    ulong off = 0;
-    res = 0;
-    while (off < psz) {
-      res = recv(fd, buffer + off, psz, MSG_WAITALL);
-      abort_if(res < 0, "error on receive, errno {} {}", errno, strerror(errno));
-      off += res;
+    if (!in->Read(buffer, psz)) {
+      logger->critical("Unexpected EOF while reading {} bytes", psz);
+      std::abort();
     }
 
     struct iovec vec = {

@@ -114,8 +114,10 @@ using IndexShipment = felis::Shipment<felis::IndexEntity>;
 
 class IndexShipmentReceiver : public ShipmentReceiver<IndexEntity> {
  public:
-  IndexShipmentReceiver(int fd) : ShipmentReceiver<IndexEntity>(fd) {}
-  void Run();
+  IndexShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<IndexEntity>(sock) {}
+  ~IndexShipmentReceiver();
+
+  void Run() override final;
 };
 
 template <class IndexPolicy>

@@ -86,6 +86,8 @@ BaseShipment::BaseShipment(std::string host, unsigned int port, bool defer_conne
   addr.sin_addr.s_addr = inet_addr(host.c_str());
   if (!defer_connect)
     Connect();
+  else
+    connected = false;
 }
 
 void BaseShipment::Connect()

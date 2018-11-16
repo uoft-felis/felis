@@ -45,8 +45,10 @@ class AllocatorModule : public Module<CoreModule> {
     Module<CoreModule>::InitModule("config");
 
     auto &console = util::Instance<Console>();
-    mem::InitThreadLocalRegions(NodeConfiguration::kNrThreads);
-    for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
+
+    // An extra one region for the ShipmentReceivers
+    mem::InitThreadLocalRegions(NodeConfiguration::kNrThreads + 1);
+    for (int i = 0; i < NodeConfiguration::kNrThreads + 1; i++) {
       auto &r = mem::GetThreadLocalRegion(i);
       r.ApplyFromConf(console.FindConfigSection("mem"));
       // logger->info("setting up regions {}", i);
@@ -72,7 +74,13 @@ class CoroutineModule : public Module<CoreModule> {
     go::WaitThreadPool();
   }
   void Init() override {
-    go::InitThreadPool(NodeConfiguration::kNrThreads);
+    // By default, gopp will create kNrThreads + 1 threads. Thread 0 is for
+    // background work, which we use for the Peer/Promise Server.
+    //
+    // In addition to that, we also need one extra shipper thread.
+    //
+    // In the future, we might need another GC thread?
+    go::InitThreadPool(NodeConfiguration::kNrThreads + 1);
   }
 };
 
@@ -88,6 +96,8 @@ class NodeServerModule : public Module<CoreModule> {
   }
   void Init() final override {
     Module<CoreModule>::InitModule("config");
+    Module<CoreModule>::InitModule("coroutine");
+
     util::Instance<NodeConfiguration>().RunAllServers();
   }
 };

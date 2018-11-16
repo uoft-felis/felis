@@ -95,6 +95,8 @@ void NodeServerThreadRoutine::Run()
         BasePromise::QueueRoutine(nullptr, idx, -1);
         break;
       }
+      // TODO: Tune for latency: we can force yield to the next routine, since
+      // we are on thread 0 anyway.
       auto pool = PromiseRoutinePool::Create(promise_size);
       in->Read(pool->mem, promise_size);
 
@@ -135,7 +137,9 @@ void NodeServerRoutine::Run()
     if (config->id == configuration.node_id()) continue;
     logger->info("Connecting worker peer on node {}\n", config->id);
     TcpSocket *remote_sock = new TcpSocket(1024, 1024);
-    remote_sock->Connect(config->worker_peer.host, config->worker_peer.port);
+    auto &peer = config->worker_peer;
+    bool rs = remote_sock->Connect(peer.host, peer.port);
+    abort_if(!rs, "Cannot connect to {}:{}", peer.host, peer.port);
     configuration.all_nodes[config->id] = remote_sock;
   }
 
@@ -164,24 +168,25 @@ void NodeConfiguration::SetupNodeName(std::string name)
   }
 }
 
-void NodeConfiguration::RunIndexShipmentReceiverThread(std::string host, unsigned short port)
-{
-  int srv = socket(AF_INET, SOCK_STREAM, 0);
-  int enable = 1;
-  setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+class NodeIndexShipmentReceiverRoutine : public go::Routine {
+  std::string host;
+  unsigned short port;
+ public:
+  NodeIndexShipmentReceiverRoutine(std::string host, unsigned short port) : host(host), port(port) {}
 
-  go::TcpSocket::CommonInetAddr addr, claddr;
-  socklen_t socklen;
-  go::TcpSocket::FillSockAddr(addr, socklen, AF_INET, host, port);
-  abort_if(bind(srv, addr.sockaddr(), socklen) < 0,
-           "Cannot bind for index shipper, errno {} {}", errno, strerror(errno));
-  abort_if(listen(srv, 1) < 0,
-           "Cannot listen for index shipper, errno {} {}", errno, strerror(errno));
+  void Run() final override;
+};
+
+void NodeIndexShipmentReceiverRoutine::Run()
+{
+  go::TcpSocket *server = new go::TcpSocket(8192, 1024);
+  server->Bind(host, port);
+  server->Listen();
+
   while (true) {
-    int fd = accept(srv, addr.sockaddr(), &socklen);
-    if (fd < 0) continue;
-    IndexShipmentReceiver receiver(fd);
-    receiver.Run();
+    auto *client_sock = server->Accept();
+    auto receiver = new IndexShipmentReceiver(client_sock);
+    go::Scheduler::Current()->WakeUp(receiver);
   }
 }
 
@@ -189,13 +194,11 @@ void NodeConfiguration::RunAllServers()
 {
   logger->info("Starting system thread for index shipment");
   auto &peer = config().index_shipper_peer;
-  std::thread t(std::bind(
-      NodeConfiguration::RunIndexShipmentReceiverThread,
-      peer.host, peer.port));
-  t.detach();
+  go::GetSchedulerFromPool(kNrThreads + 1)->WakeUp(
+      new NodeIndexShipmentReceiverRoutine(peer.host, peer.port));
 
   logger->info("Starting node server with id {}", node_id());
-  go::GetSchedulerFromPool(1)->WakeUp(new NodeServerRoutine());
+  go::GetSchedulerFromPool(0)->WakeUp(new NodeServerRoutine());
 }
 
 go::TcpOutputChannel *NodeConfiguration::GetOutputChannel(int node_id)
@@ -209,11 +212,19 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
 {
   if (routine->node_id != 0 && routine->node_id != node_id()) {
     uint64_t buffer_size = routine->TreeSize();
-    uint8_t *buffer = (uint8_t *) malloc(buffer_size);
-    routine->EncodeTree(buffer);
+    uint8_t *buffer = (uint8_t *) malloc(8 + buffer_size);
+
+    memcpy(buffer, &buffer_size, 8);
+    routine->EncodeTree(buffer + 8);
     auto out = GetOutputChannel(routine->node_id);
-    out->Write(&buffer_size, 8);
-    out->Write(buffer, buffer_size);
+
+    /*
+     * This stream is shared among all cores.
+     * Thankfully, our Write() is atomic.
+     */
+    out->Write(buffer, buffer_size + 8);
+    out->Flush();
+
     free(buffer);
     routine->input.data = nullptr;
     routine->UnRefRecursively();
