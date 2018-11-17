@@ -104,7 +104,7 @@ class BasePromise {
   long UnRef() {
     long r = refcnt.fetch_sub(1) - 1;
     if (r == 0) {
-      // delete this;
+      delete this;
     }
     return r;
   }

@@ -21,10 +21,10 @@ PromiseRoutinePool *PromiseRoutinePool::Create(size_t size)
 void PromiseRoutine::UnRef()
 {
   if (!pool->IsManaging(input.data))
-    // free((void *) input.data);
+    free((void *) input.data);
 
   if (pool->refcnt.fetch_sub(1) == 1) {
-    // free(pool); // which also free this
+    free(pool); // which also free this
   }
 }
 
