@@ -42,6 +42,8 @@ int CurrentAllocAffinity()
   else return go::Scheduler::CurrentThreadPoolId() - 1;
 }
 
+std::atomic_ulong Pool::gTotalAllocatedMem = 0;
+
 Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
     : len(cap * chunk_size), capacity(cap)
 {
@@ -54,6 +56,8 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
   } else {
     len = util::Align(len, 4 << 10);
   }
+
+  gTotalAllocatedMem.fetch_add(len);
 
   data = mmap(nullptr, len, PROT_READ | PROT_WRITE, flags, -1, 0);
   if (data == (void *) -1) {
@@ -68,7 +72,7 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
       std::abort();
     }
   }
-#ifdef NDEBUG
+
   // manually prefault
   size_t pgsz = 4096;
   if (flags & MAP_HUGETLB) {
@@ -82,7 +86,7 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
     */
     (*p) = 0;
   }
-#endif
+
   head = data;
   for (size_t i = 0; i < cap; i++) {
     uintptr_t p = (uintptr_t) head.load() + i * chunk_size;
@@ -94,7 +98,6 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
 
 Pool::~Pool()
 {
-
   if (__builtin_expect(data != nullptr, true))
     munmap(data, len);
 }

@@ -56,6 +56,7 @@ class AllocatorModule : public Module<CoreModule> {
     }
 
     VHandle::InitPools();
+    logger->info("Memory used {}MB", mem::Pool::gTotalAllocatedMem.load() / (1 << 20));
   }
 };
 

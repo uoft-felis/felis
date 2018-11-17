@@ -31,6 +31,8 @@ class Pool {
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
+
+  static std::atomic_ulong gTotalAllocatedMem;
 };
 
 static_assert(sizeof(Pool) == 64, "Pool object size is not 64 bytes");
