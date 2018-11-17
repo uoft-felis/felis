@@ -2,16 +2,20 @@
   polyglot_parsing_enabled = true
   default_build_file_syntax = SKYLARK
 
-[base]
-  base_cxxflags = -std=c++17 -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
-  base_cflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
+[alias]
+  db = //:db#debug
+  db_release = //:db#release
+  test = //:dbtest#debug
 
 [cxx]
-  cxxflags = -g -O0 -fstandalone-debug $(config base.base_cxxflags)
-  cflags = -g -O0 -fstandalone-debug $(config base.base_cflags)
+  cflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
+
+[cxx#debug]
+  cxxflags = -g -O0 -fstandalone-debug -std=c++17
+  cflags = -g -O0 -fstandalone-debug
   ldflags = -g -O0 -fstandalone-debug
 
 [cxx#release]
-  cxxflags = -Ofast -flto $(config base.base_cxxflags)
-  cflags = -Ofast -flto $(config base.base_cflags)
+  cxxflags = -Ofast -flto -std=c++17
+  cflags = -Ofast -flto
   ldflags = -Ofast -flto
