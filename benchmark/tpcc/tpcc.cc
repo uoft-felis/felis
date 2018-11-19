@@ -37,6 +37,7 @@ struct Config {
   uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, the bit is 1
   std::vector<int> offload_nodes;
 
+  static constexpr uint kHotspoLoadPercentage = 200;
   static constexpr size_t kMaxSupportedWarehouse = 64;
 } kTPCCConfig;
 
@@ -133,19 +134,6 @@ void RunShipment()
 //static unsigned g_txn_workload_mix[] = {0, 100, 0, 0, 0, 0, 0, 0};
 
 static int NMaxCustomerIdxScanElems = 512;
-
-// maps a wid => core id
-static inline unsigned int CoreId(unsigned int wid)
-{
-  assert(wid >= 1 && wid <= kTPCCConfig.nr_warehouses);
-  int nthreads = NodeConfiguration::kNrThreads;
-  wid -= 1; // 0-idx
-  if (kTPCCConfig.nr_warehouses <= nthreads)
-    return wid;
-  const unsigned nwhse_per_partition = kTPCCConfig.nr_warehouses / nthreads;
-  const unsigned partid = wid / nwhse_per_partition;
-  return partid;
-}
 
 ClientBase::ClientBase(const util::FastRandom &r)
     : r(r), slicer(g_slicer)
@@ -251,15 +239,46 @@ size_t ClientBase::nr_warehouses() const
   return kTPCCConfig.nr_warehouses;
 }
 
+std::tuple<ulong, ulong> ClientBase::LocalWarehouseRange()
+{
+  auto &conf = Instance<NodeConfiguration>();
+  uint min = kTPCCConfig.nr_warehouses * (node_id - 1) / conf.nr_nodes() + 1;
+  uint max = kTPCCConfig.nr_warehouses * node_id / conf.nr_nodes();
+  return std::tuple(min, max);
+}
+
 uint ClientBase::PickWarehouse()
 {
   if (kWarehouseSpread == 0 || r.next_uniform() >= kWarehouseSpread) {
-    auto &conf = Instance<NodeConfiguration>();
-    uint min = kTPCCConfig.nr_warehouses * (node_id - 1) / conf.nr_nodes() + 1;
-    uint max = kTPCCConfig.nr_warehouses * node_id / conf.nr_nodes();
-    return RandomNumber(min, max);
+    auto [min, max] = LocalWarehouseRange();
+    // Some warehouses are the hotspot, we need to extend such range for random
+    // number generation.
+    ulong rand_max = 0;
+    for (auto w = min; w <= max; w++) {
+      if (Util::is_warehouse_hotspot(w)) rand_max += Config::kHotspoLoadPercentage;
+      else rand_max += 100;
+    }
+    auto rand = long(r.next_uniform() * rand_max);
+    for (auto w = min; w <= max; w++) {
+      if (Util::is_warehouse_hotspot(w)) rand -= Config::kHotspoLoadPercentage;
+      else rand -= 100;
+      if (rand < 0)
+        return w;
+    }
+    return max;
   }
   return r.next() % kTPCCConfig.nr_warehouses + 1;
+}
+
+uint ClientBase::LoadPercentageByWarehouse()
+{
+  auto [min, max] = LocalWarehouseRange();
+  uint load = 0;
+  for (int w = min; w <= max; w++) {
+    if (Util::is_warehouse_hotspot(w)) load += Config::kHotspoLoadPercentage;
+    else load += 100;
+  }
+  return load / (max - min + 1);
 }
 
 uint ClientBase::PickDistrict()
@@ -361,12 +380,15 @@ template <>
 void Loader<LoaderType::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint i = 1; i <= kTPCCConfig.nr_warehouses; i++) {
-    if (warehouse_to_node_id(i) != node_id)
-      continue;
+  auto [min, max] = LocalWarehouseRange();
+  for (uint i = min; i <= max; i++) {
 
-    util::PinToCPU(CoreId(i));
-    mem::SetThreadLocalAllocAffinity(CoreId(i));
+    // TODO: if multiple CPUs are sharing the same warehouse? This configuration
+    // still make some sense, except it's not well balanced.
+
+    util::PinToCPU(i - min + NodeConfiguration::kCoreShifting);
+    mem::SetThreadLocalAllocAffinity(i - min);
+
     auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
 
@@ -393,7 +415,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
     NewRow(i - 1, TableType::Warehouse, k, handle);
   }
 
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
   mem::SetThreadLocalAllocAffinity(-1);
   relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
   logger->info("Warehouse Table loading done.");
@@ -405,7 +427,7 @@ void Loader<LoaderType::Item>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= kTPCCConfig.nr_items; i++) {
     // items don't "belong" to a certain warehouse, so no pinning
-    // TOOD: can we also replicate its entire index too?
+    // TODO: can we also replicate its entire index too?
     auto k = Item::Key::New(i);
     auto v = Item::Value();
 
@@ -438,12 +460,10 @@ void Loader<LoaderType::Stock>::DoLoad()
 {
   void *large_buf = alloca(1024);
   VHandle *handle = nullptr;
-  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    if (warehouse_to_node_id(w) != node_id)
-      continue;
-
-    util::PinToCPU(CoreId(w));
-    mem::SetThreadLocalAllocAffinity(CoreId(w));
+  auto [min, max] = LocalWarehouseRange();
+  for (uint w = min; w <= max; w++) {
+    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    mem::SetThreadLocalAllocAffinity(w - min);
 
     for(size_t i = 1; i <= kTPCCConfig.nr_items; i++) {
       const auto k = Stock::Key::New(w, i);
@@ -489,7 +509,7 @@ void Loader<LoaderType::Stock>::DoLoad()
   relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
   relation(TableType::StockData).set_key_length(sizeof(StockData::Key));
 
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Stock Table loading done.");
 }
@@ -498,12 +518,10 @@ template <>
 void Loader<LoaderType::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    if (warehouse_to_node_id(w) != node_id)
-      continue;
-
-    util::PinToCPU(CoreId(w));
-    mem::SetThreadLocalAllocAffinity(CoreId(w));
+  auto [min, max] = LocalWarehouseRange();
+  for (uint w = min; w <= max; w++) {
+    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    mem::SetThreadLocalAllocAffinity(w - min);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       const auto k = District::Key::New(w, d);
@@ -525,7 +543,7 @@ void Loader<LoaderType::District>::DoLoad()
     }
   }
   relation(TableType::District).set_key_length(sizeof(District::Key));
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("District Table loading done.");
 }
@@ -535,13 +553,11 @@ void Loader<LoaderType::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
   VHandle *handle = nullptr;
+  auto [min, max] = LocalWarehouseRange();
 
-  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    if (warehouse_to_node_id(w) != node_id)
-      continue;
-
-    util::PinToCPU(CoreId(w));
-    mem::SetThreadLocalAllocAffinity(CoreId(w));
+  for (uint w = min; w <= max; w++) {
+    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    mem::SetThreadLocalAllocAffinity(w - min);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       for (uint cidx0 = 0; cidx0 < kTPCCConfig.customers_per_district; cidx0++) {
@@ -616,7 +632,7 @@ void Loader<LoaderType::Customer>::DoLoad()
   relation(TableType::CustomerNameIdx).set_key_length(sizeof(CustomerNameIdx::Key));
   relation(TableType::History).set_key_length(sizeof(History::Key));
   logger->info("Customer Table loading done.");
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
   mem::SetThreadLocalAllocAffinity(-1);
 }
 
@@ -625,13 +641,11 @@ void Loader<LoaderType::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
   VHandle *handle = nullptr;
+  auto [min, max] = LocalWarehouseRange();
 
-  for (uint w = 1; w <= kTPCCConfig.nr_warehouses; w++) {
-    if (warehouse_to_node_id(w) != node_id)
-      continue;
-
-    util::PinToCPU(CoreId(w));
-    mem::SetThreadLocalAllocAffinity(CoreId(w) % NodeConfiguration::kNrThreads);
+  for (uint w = min; w <= max; w++) {
+    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    mem::SetThreadLocalAllocAffinity(w - min);
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;
@@ -709,7 +723,7 @@ void Loader<LoaderType::Order>::DoLoad()
   relation(TableType::OOrderCIdIdx).set_key_length(sizeof(OOrderCIdIdx::Key));
   relation(TableType::NewOrder).set_key_length(sizeof(NewOrder::Key));
   relation(TableType::OrderLine).set_key_length(sizeof(OrderLine::Key));
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Order Table loading done.");
 }

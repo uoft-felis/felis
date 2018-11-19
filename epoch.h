@@ -20,6 +20,8 @@ class EpochClient {
   virtual ~EpochClient() {}
 
   void Start();
+
+  virtual uint LoadPercentage() = 0;
  protected:
   void Worker();
   virtual BaseTxn *RunCreateTxn() = 0;

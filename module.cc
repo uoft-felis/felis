@@ -82,6 +82,15 @@ class CoroutineModule : public Module<CoreModule> {
     //
     // In the future, we might need another GC thread?
     go::InitThreadPool(NodeConfiguration::kNrThreads + 1);
+
+    for (int i = 1; i <= NodeConfiguration::kNrThreads; i++) {
+      // We need to change core affinity by kCoreShifting
+      auto r = go::Make(
+          [i] {
+            util::PinToCPU(i - 1 + NodeConfiguration::kCoreShifting);
+          });
+      go::GetSchedulerFromPool(i)->WakeUp(r);
+    }
   }
 };
 

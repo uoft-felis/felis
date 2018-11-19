@@ -16,7 +16,7 @@ class NodeServerRoutine;
 class PromiseRoutine;
 
 class PromiseRoundRobin {
-  std::atomic_ulong cur_thread = 1;
+  std::atomic_ulong cur_thread = 0;
  public:
   void QueueRoutine(PromiseRoutine *routine, int idx);
 };
@@ -32,6 +32,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
  public:
 
   static size_t kNrThreads;
+  static int kCoreShifting; // Starting to use from which core. Useful for debugging on a single node.
   static constexpr size_t kMaxNrThreads = 32;
 
   struct NodePeerConfig {

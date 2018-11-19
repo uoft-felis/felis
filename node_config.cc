@@ -17,6 +17,7 @@
 namespace felis {
 
 size_t NodeConfiguration::kNrThreads = 8;
+int NodeConfiguration::kCoreShifting = 0;
 
 static const std::string kNodeConfiguration = "nodes.json";
 
@@ -64,8 +65,8 @@ using util::Instance;
 
 void PromiseRoundRobin::QueueRoutine(PromiseRoutine *routine, int idx)
 {
-  BasePromise::QueueRoutine(routine, idx,
-                            cur_thread.fetch_add(1) % NodeConfiguration::kNrThreads);
+  auto routine_thread_id = cur_thread.fetch_add(1) % NodeConfiguration::kNrThreads + 1;
+  BasePromise::QueueRoutine(routine, idx, routine_thread_id);
 }
 
 class NodeServerThreadRoutine : public go::Routine {

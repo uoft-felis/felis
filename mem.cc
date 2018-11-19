@@ -4,7 +4,11 @@
 #include <sys/mman.h>
 #include <cassert>
 #include <cstring>
+
+#ifndef DISABLE_NUMA
 #include <numaif.h>
+#endif
+
 #include <fstream>
 
 #include "json11/json11.hpp"
@@ -64,6 +68,7 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
     perror("mmap");
     std::abort();
   }
+#ifndef DISABLE_NUMA
   if (numa_node >= 0) {
     unsigned long nodemask = 1 << numa_node;
     if (mbind(data, len, MPOL_BIND, &nodemask, sizeof(unsigned long) * 8,
@@ -72,6 +77,7 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
       std::abort();
     }
   }
+#endif
 
   // manually prefault
   size_t pgsz = 4096;

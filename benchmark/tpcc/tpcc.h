@@ -143,8 +143,11 @@ class ClientBase {
   static constexpr double kPaymentByName = 0.60;
 
   size_t nr_warehouses() const;
+  std::tuple<ulong, ulong> LocalWarehouseRange();
   uint PickWarehouse();
   uint PickDistrict();
+  uint LoadPercentageByWarehouse();
+
   static int CheckBetweenInclusive(int v, int lower, int upper);
 
   int RandomNumber(int min, int max);
@@ -235,6 +238,10 @@ class Client : public felis::EpochClient, public ClientBase {
   Client() : felis::EpochClient(), ClientBase(kClientSeed) {}
 
   template <class T> T GenerateTransactionInput();
+
+  uint LoadPercentage() final override {
+    return LoadPercentageByWarehouse();
+  }
 
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];

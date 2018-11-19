@@ -73,6 +73,7 @@ void IndexShipmentReceiver::Run()
   logger->info("Shipment processing finished");
   perf.End();
   perf.Show("Processing takes");
+  sock->Close();
 }
 
 IndexShipmentReceiver::~IndexShipmentReceiver()

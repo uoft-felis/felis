@@ -13,16 +13,17 @@ EpochClient::EpochClient() noexcept
 void EpochClient::Start()
 {
   auto worker = go::Make(std::bind(&EpochClient::Worker, this));
-  go::GetSchedulerFromPool(1)->WakeUp(worker);
+  go::GetSchedulerFromPool(0)->WakeUp(worker);
 }
 
 void EpochClient::Worker()
 {
   // TODO: Add epoch management here? At least right now this is essential.
   util::Instance<EpochManager>().DoAdvance();
+  auto base = 1000; // in 100 times
+  printf("load percentage %d\n", LoadPercentage());
 
-  for (int i = 0; i < 1000; i++) {
-    fprintf(stderr, "Creating txn %d\n", i);
+  for (int i = 0; i < base * LoadPercentage(); i++) {
     auto *txn = RunCreateTxn();
     // TODO: wait
     delete txn;

@@ -45,7 +45,8 @@ int main(int argc, char *argv[])
   int opt;
   std::string workload_name;
   std::string node_name;
-  while ((opt = getopt(argc, argv, "w:n:c:")) != -1) {
+
+  while ((opt = getopt(argc, argv, "w:n:c:p:s:")) != -1) {
     switch (opt) {
       case 'w':
         workload_name = std::string(optarg);
@@ -55,6 +56,12 @@ int main(int argc, char *argv[])
         break;
       case 'c':
         ParseControllerAddress(std::string(optarg));
+        break;
+      case 'p':
+        NodeConfiguration::kNrThreads = atoi(optarg);
+        break;
+      case 's':
+        NodeConfiguration::kCoreShifting = atoi(optarg);
         break;
       default:
         show_usage(argv[0]);

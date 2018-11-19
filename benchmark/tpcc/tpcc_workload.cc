@@ -27,6 +27,12 @@ class LoaderBuilder {
   }
 };
 
+static go::Scheduler *SelectThreadPool(int idx)
+{
+  int pool_id = 2 + idx % (NodeConfiguration::kNrThreads - 1);
+  return go::GetSchedulerFromPool(pool_id);
+}
+
 static void LoadTPCCDataSet()
 {
   std::mutex m;
@@ -36,12 +42,13 @@ static void LoadTPCCDataSet()
 
   LoaderBuilder builder(&m, &count_down);
 
-  go::GetSchedulerFromPool(2)->WakeUp(builder.CreateLoader<tpcc::loaders::Warehouse>(9324));
-  go::GetSchedulerFromPool(3)->WakeUp(builder.CreateLoader<tpcc::loaders::Item>(235443));
-  go::GetSchedulerFromPool(4)->WakeUp(builder.CreateLoader<tpcc::loaders::Stock>(89785943));
-  go::GetSchedulerFromPool(5)->WakeUp(builder.CreateLoader<tpcc::loaders::District>(129856349));
-  go::GetSchedulerFromPool(6)->WakeUp(builder.CreateLoader<tpcc::loaders::Customer>(923587856425));
-  go::GetSchedulerFromPool(7)->WakeUp(builder.CreateLoader<tpcc::loaders::Order>(2343352));
+  int i = 1;
+  SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::Warehouse>(9324));
+  SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::Item>(235443));
+  SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::Stock>(89785943));
+  SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::District>(129856349));
+  SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::Customer>(923587856425));
+  SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::Order>(2343352));
 
   m.lock(); // waits
   tpcc::RunShipment();
