@@ -13,14 +13,21 @@ namespace felis {
 
 class VHandle;
 class Relation;
+class EpochClient;
 
 class BaseTxn {
  protected:
+  friend class EpochClient;
+
   Epoch *epoch;
   uint64_t sid;
+
+  CompletionObject<util::Ref<CompletionObject<util::Ref<EpochCallback>>>> completion;
  public:
-  BaseTxn() {
-    epoch = util::Instance<EpochManager>().current_epoch();
+  BaseTxn()
+      : epoch(util::Instance<EpochManager>().current_epoch()),
+        completion(0, epoch->epoch_client()->completion) {
+    completion.Increment(1);
   }
 
   virtual ~BaseTxn() {}
@@ -86,13 +93,6 @@ class BaseTxn {
     }
   };
 
-  // We simply ignore the input type. This is just to compatible with the
-  // Promise Func.
-  template <typename T = DummyValue>
-  static Optional<Tuple<VHandle *>> TxnIndexLookupOp(const TxnIndexOpContext &ctx, T) {
-    return TxnIndexLookupOpImpl(ctx);
-  }
-
   TxnHandle index_handle() { return TxnHandle{sid, epoch->id()}; }
   TxnIndexOpContext IndexContextByStr(int32_t rel_id, VarStr *key) {
     return TxnIndexOpContext(index_handle(), rel_id, key);
@@ -103,8 +103,27 @@ class BaseTxn {
     return IndexContextByStr(static_cast<int>(TableT::kTable), key.EncodeFromRoutine());
   }
 
- private:
+  template <typename TableT>
+  std::tuple<TxnIndexOpContext,
+             int,
+             Optional<Tuple<VHandle *>> (*)(const TxnIndexOpContext &, DummyValue)>
+  TxnLookup(int node, const typename TableT::Key &key) {
+    return std::make_tuple(
+        IndexContext<TableT>(key),
+        node,
+        [](const TxnIndexOpContext &ctx, DummyValue _) -> Optional<Tuple<VHandle*>> {
+          return TxnIndexLookupOpImpl(ctx);
+        });
+  }
+
+ protected:
   static Optional<Tuple<VHandle *>> TxnIndexLookupOpImpl(const TxnIndexOpContext &);
+  static void TxnFuncUnref(BaseTxn *txn, int origin_node_id);
+  void TxnFuncRef();
+};
+
+struct BaseTxnState {
+  BaseTxn *txn;
 };
 
 template <typename TxnState>
@@ -117,27 +136,33 @@ class Txn : public BaseTxn {
  public:
   Txn() {
     state = epoch->AllocateEpochObjectOnCurrentNode<TxnState>();
-    // The state is only initialized on the current node, which is the coordinator.
-    new ((TxnState *) state) TxnState();
+    state->txn = this;
   }
 
-  template <typename ...Types>
-  struct ContextStruct : public sql::Tuple<State, TxnHandle, Types...> {
-    using sql::Tuple<State, TxnHandle, Types...>::Tuple;
+  template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, void *, Types...>;
 
-    State state() const { return this->template _<0>(); }
-    TxnHandle handle() const { return this->template _<1>(); }
+  template <typename Func, typename ...Types>
+  std::tuple<ContextType<Types...>,
+             int,
+             Optional<VoidValue> (*)(const ContextType<Types...>&, Tuple<VHandle *>)>
+  TxnSetupVersion(int node, Func func, Types... params) {
+    void * p = (void *) (void (*)(const ContextType<Types...> &, VHandle *)) func;
+    TxnFuncRef();
 
-    void Unpack(Types&... args) const {
-      State _1;
-      TxnHandle _2;
-      sql::Tuple<State, TxnHandle, Types...>::Unpack(_1, _2, args...);
-    }
-  };
+    return std::make_tuple(
+        ContextType<Types...>(state, index_handle(), p, params...),
+        node,
+        [](const ContextType<Types...> &ctx, Tuple<VHandle *> args) -> Optional<VoidValue> {
+          void *p = ctx.template _<2>();
+          auto state = ctx.template _<0>();
+          auto [handle] = args;
 
-  template <typename ...Types>
-  ContextStruct<Types...> Context(Types... args) {
-    return ContextStruct<Types...>(state, index_handle(), args...);
+          auto fp = (void (*)(const ContextType<Types...> &, VHandle *)) p;
+          fp(ctx, handle);
+
+          TxnFuncUnref(state->txn, state.origin_node_id());
+          return nullopt;
+        });
   }
 
 };

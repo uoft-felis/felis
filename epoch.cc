@@ -6,8 +6,16 @@ namespace felis {
 
 EpochClient *EpochClient::gWorkloadClient = nullptr;
 
-EpochClient::EpochClient() noexcept
+void EpochCallback::operator()()
 {
+  perf.End();
+  perf.Show("Hoola");
+}
+
+EpochClient::EpochClient() noexcept
+    : callback(EpochCallback()), completion(0, callback)
+{
+  callback.perf.End();
 }
 
 void EpochClient::Start()
@@ -19,14 +27,16 @@ void EpochClient::Start()
 void EpochClient::Worker()
 {
   // TODO: Add epoch management here? At least right now this is essential.
-  util::Instance<EpochManager>().DoAdvance();
+  util::Instance<EpochManager>().DoAdvance(this);
+
   auto base = 1000; // in 100 times
   printf("load percentage %d\n", LoadPercentage());
-
-  for (int i = 0; i < base * LoadPercentage(); i++) {
+  auto total_nr_txn = base * LoadPercentage();
+  completion.Increment(total_nr_txn);
+  callback.perf.Start();
+  for (int i = 0; i < total_nr_txn; i++) {
     auto *txn = RunCreateTxn();
-    // TODO: wait
-    delete txn;
+    txn->completion.Complete();
   }
 }
 
@@ -67,11 +77,11 @@ uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) cons
   return epoch(epoch_nr)->brks[node_id - 1].mem + offset;
 }
 
-void EpochManager::DoAdvance()
+void EpochManager::DoAdvance(EpochClient *client)
 {
   cur_epoch_nr++;
   delete concurrent_epochs[cur_epoch_nr % kMaxConcurrentEpochs];
-  concurrent_epochs[cur_epoch_nr % kMaxConcurrentEpochs] = new Epoch(cur_epoch_nr, pool);
+  concurrent_epochs[cur_epoch_nr % kMaxConcurrentEpochs] = new Epoch(cur_epoch_nr, client,pool);
 }
 
 EpochManager::EpochManager()

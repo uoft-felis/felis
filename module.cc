@@ -86,11 +86,21 @@ class CoroutineModule : public Module<CoreModule> {
     for (int i = 1; i <= NodeConfiguration::kNrThreads; i++) {
       // We need to change core affinity by kCoreShifting
       auto r = go::Make(
-          [i] {
+          [i]() {
             util::PinToCPU(i - 1 + NodeConfiguration::kCoreShifting);
           });
       go::GetSchedulerFromPool(i)->WakeUp(r);
     }
+
+    auto r = go::Make(
+        []() {
+          std::vector<int> cpus;
+          for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
+            cpus.push_back(i + NodeConfiguration::kCoreShifting);
+          }
+          util::PinToCPU(cpus);
+        });
+    go::GetSchedulerFromPool(0)->WakeUp(r);
   }
 };
 

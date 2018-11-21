@@ -49,16 +49,14 @@ NewOrderStruct Client::GenerateTransactionInput<NewOrderStruct>()
   return s;
 }
 
-using felis::VHandle;
+using namespace felis;
 
-struct NewOrderState {
+struct NewOrderState : public BaseTxnState {
   struct {
     VHandle *district;
     VHandle *stocks[15];
   } rows;
 };
-
-using namespace felis;
 
 class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct, public Util {
   Client *client;
@@ -83,15 +81,12 @@ NewOrderTxn::NewOrderTxn(Client *client)
     // puts("Offloading!");
     // lookup_node = 1;
   }
-  _ >> T(IndexContext<District>(district_key), lookup_node, TxnIndexLookupOp<>)
-    >> T(Context(district_key), node, [](auto ctx, Tuple<VHandle *> args) -> Optional<VoidValue> {
-        District::Key key;
-        VHandle *handle;
-        ctx.Unpack(key);
-        args.Unpack(handle);
-        return nullopt;
-      });
+  _ >> TxnLookup<District>(lookup_node, district_key)
+    >> TxnSetupVersion(
+        node,
+        [](const ContextType<int> &ctx, VHandle *handle) -> void {
 
+        }, 1);
 #if 0
   _ >> T(Context(warehouse_id, district_id), p, [](auto ctx, auto _) -> Optional<VoidValue> {
       uint warehouse_id;

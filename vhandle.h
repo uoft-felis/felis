@@ -23,8 +23,6 @@ class BaseVHandle {
   void Prefetch() const {}
 };
 
-class CompletionObject;
-
 class SortedArrayVHandle : public BaseVHandle {
   std::atomic_bool lock;
   short alloc_by_coreid;

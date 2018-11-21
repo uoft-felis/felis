@@ -479,11 +479,6 @@ struct TupleField : public TupleField<Types...> {
   TupleField() : ParentTupleFields() {}
   TupleField(const T &v, const Types&... args) : value(v), ParentTupleFields(args...) {}
 
-  void Unpack(T &v, Types&... args) const {
-    v = value;
-    ParentTupleFields::Unpack(args...);
-  }
-
   size_t EncodeSize() const {
     return ParentTupleFields::EncodeSize() + Serializer<T>::EncodeSize(&value);
   }
@@ -505,8 +500,6 @@ struct TupleField<T> {
   TupleField() {}
   TupleField(const T &v) : value(v) {}
 
-  void Unpack(T &v) const { v = value; }
-
   size_t EncodeSize() const {
     return Serializer<T>::EncodeSize(&value);
   }
@@ -527,9 +520,14 @@ class TupleImpl : public TupleField<Types...> {
 
   TupleImpl(const TupleField<Types...> &rhs) : TupleField<Types...>(rhs) {}
 
-  template <int N>
+  template <size_t N>
   typename TupleFieldType<N, TupleField, Types...>::ValueType _() const {
     return ((const typename TupleFieldType<N, TupleField, Types...>::Type *) this)->value;
+  }
+
+  template <size_t N>
+  typename TupleFieldType<N, TupleField, Types...>::ValueType get() const {
+    return _<N>();
   }
 };
 
@@ -571,5 +569,21 @@ namespace felis {
 using VarStr = sql::VarStr;
 using sql::Tuple;
 }
+
+// C++17 destructuring
+namespace std {
+
+template <typename T, typename ...Types>
+struct tuple_size<sql::Object<sql::TupleImpl<T, Types...>>> {
+  static constexpr size_t value = sizeof...(Types) + 1;
+};
+
+template <size_t N, typename T, typename ...Types>
+struct tuple_element<N, sql::Object<sql::TupleImpl<T, Types...>>> {
+  using type = typename sql::TupleFieldType<int(N), sql::TupleField, T, Types...>::ValueType;
+};
+
+}
+
 
 #endif /* SQLTYPES_H */

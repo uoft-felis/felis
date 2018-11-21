@@ -6,11 +6,20 @@
 #include "node_config.h"
 #include "util.h"
 #include "mem.h"
+#include "completion.h"
 
 namespace felis {
 
 class Epoch;
 class BaseTxn;
+class EpochClient;
+
+class EpochCallback {
+  friend EpochClient;
+  PerfLog perf;
+ public:
+  void operator()();
+};
 
 class EpochClient {
  public:
@@ -23,8 +32,14 @@ class EpochClient {
 
   virtual uint LoadPercentage() = 0;
  protected:
+  friend class BaseTxn;
+
   void Worker();
   virtual BaseTxn *RunCreateTxn() = 0;
+
+ protected:
+  EpochCallback callback;
+  CompletionObject<util::Ref<EpochCallback>> completion;
 };
 
 class EpochManager {
@@ -45,7 +60,7 @@ class EpochManager {
   uint64_t current_epoch_nr() const { return cur_epoch_nr; }
   Epoch *current_epoch() const { return epoch(cur_epoch_nr); }
 
-  void DoAdvance();
+  void DoAdvance(EpochClient *client);
 };
 
 template <typename T>
@@ -75,6 +90,8 @@ class EpochObject {
     int64_t off = p - self;
     return EpochObject<P>(epoch_nr, node_id, offset + off);
   }
+
+  int origin_node_id() const { return node_id; }
 };
 
 // This where we store objects across the entire cluster. Note that these
@@ -103,11 +120,12 @@ class EpochMemory {
 class Epoch : public EpochMemory {
  protected:
   uint64_t epoch_nr;
+  EpochClient *client;
   friend class EpochManager;
 
-  std::array<int, NodeConfiguration::kMaxNrNode> counter;
+  // std::array<int, NodeConfiguration::kMaxNrNode> counter;
  public:
-  Epoch(uint64_t epoch_nr, mem::Pool *pool) : epoch_nr(epoch_nr), EpochMemory(pool) {}
+  Epoch(uint64_t epoch_nr, EpochClient *client, mem::Pool *pool) : epoch_nr(epoch_nr), client(client), EpochMemory(pool) {}
   template <typename T>
   EpochObject<T> AllocateEpochObject(int node_id) {
     auto off = brks[node_id - 1].off;
@@ -121,6 +139,8 @@ class Epoch : public EpochMemory {
   }
 
   uint64_t id() const { return epoch_nr; }
+
+  EpochClient *epoch_client() const { return client; }
 };
 
 }

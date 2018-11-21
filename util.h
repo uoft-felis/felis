@@ -221,15 +221,19 @@ class Factory<T, 0, Args...> : public BaseFactory<T, Args...> {
 };
 
 // CPU pinning
-static inline void PinToCPU(int cpu)
+static inline void PinToCPU(std::vector<int> cpus)
 {
   // linux only
   cpu_set_t set;
   CPU_ZERO(&set);
-  CPU_SET(cpu % sysconf(_SC_NPROCESSORS_CONF), &set);
+  for (auto cpu : cpus) {
+    CPU_SET(cpu % sysconf(_SC_NPROCESSORS_CONF), &set);
+  }
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
   pthread_yield();
 }
+
+static inline void PinToCPU(int cpu) { PinToCPU(std::vector<int>{cpu}); }
 
 static inline size_t Align(size_t x, size_t a)
 {
@@ -249,6 +253,7 @@ struct GetArg<0, U, Args...> {
 };
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
+template <typename ValueType> using Ref = std::reference_wrapper<ValueType>;
 
 }
 
