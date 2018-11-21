@@ -31,8 +31,8 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   PromiseRoundRobin lb;
  public:
 
-  static size_t kNrThreads;
-  static int kCoreShifting; // Starting to use from which core. Useful for debugging on a single node.
+  static size_t g_nr_threads;
+  static int g_core_shifting; // Starting to use from which core. Useful for debugging on a single node.
   static constexpr size_t kMaxNrThreads = 32;
 
   struct NodePeerConfig {

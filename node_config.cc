@@ -16,8 +16,8 @@
 
 namespace felis {
 
-size_t NodeConfiguration::kNrThreads = 8;
-int NodeConfiguration::kCoreShifting = 0;
+size_t NodeConfiguration::g_nr_threads = 8;
+int NodeConfiguration::g_core_shifting = 0;
 
 static const std::string kNodeConfiguration = "nodes.json";
 
@@ -65,7 +65,7 @@ using util::Instance;
 
 void PromiseRoundRobin::QueueRoutine(PromiseRoutine *routine, int idx)
 {
-  auto routine_thread_id = cur_thread.fetch_add(1) % NodeConfiguration::kNrThreads + 1;
+  auto routine_thread_id = cur_thread.fetch_add(1) % NodeConfiguration::g_nr_threads + 1;
   BasePromise::QueueRoutine(routine, idx, routine_thread_id);
 }
 
@@ -117,7 +117,7 @@ void NodeServerRoutine::Run()
   auto &node_conf = configuration.config();
 
   auto nr_nodes = configuration.nr_nodes();
-  BasePromise::InitializeSourceCount(nr_nodes, configuration.kNrThreads);
+  BasePromise::InitializeSourceCount(nr_nodes, configuration.g_nr_threads);
 
   // Reuse addr just for debugging
   int enable = 1;
@@ -195,7 +195,7 @@ void NodeConfiguration::RunAllServers()
 {
   logger->info("Starting system thread for index shipment");
   auto &peer = config().index_shipper_peer;
-  go::GetSchedulerFromPool(kNrThreads + 1)->WakeUp(
+  go::GetSchedulerFromPool(g_nr_threads + 1)->WakeUp(
       new NodeIndexShipmentReceiverRoutine(peer.host, peer.port));
 
   logger->info("Starting node server with id {}", node_id());

@@ -91,7 +91,7 @@ class BasePromise {
   std::atomic<long> refcnt;
   std::vector<PromiseRoutine *> handlers;
  public:
-  static size_t kNrThreads;
+  static size_t g_nr_threads;
 
   BasePromise() : refcnt(1) {}
   void Complete(const VarStr &in);

@@ -47,8 +47,8 @@ class AllocatorModule : public Module<CoreModule> {
     auto &console = util::Instance<Console>();
 
     // An extra one region for the ShipmentReceivers
-    mem::InitThreadLocalRegions(NodeConfiguration::kNrThreads + 1);
-    for (int i = 0; i < NodeConfiguration::kNrThreads + 1; i++) {
+    mem::InitThreadLocalRegions(NodeConfiguration::g_nr_threads + 1);
+    for (int i = 0; i < NodeConfiguration::g_nr_threads + 1; i++) {
       auto &r = mem::GetThreadLocalRegion(i);
       r.ApplyFromConf(console.FindConfigSection("mem"));
       // logger->info("setting up regions {}", i);
@@ -81,13 +81,13 @@ class CoroutineModule : public Module<CoreModule> {
     // In addition to that, we also need one extra shipper thread.
     //
     // In the future, we might need another GC thread?
-    go::InitThreadPool(NodeConfiguration::kNrThreads + 1);
+    go::InitThreadPool(NodeConfiguration::g_nr_threads + 1);
 
-    for (int i = 1; i <= NodeConfiguration::kNrThreads; i++) {
+    for (int i = 1; i <= NodeConfiguration::g_nr_threads; i++) {
       // We need to change core affinity by kCoreShifting
       auto r = go::Make(
           [i]() {
-            util::PinToCPU(i - 1 + NodeConfiguration::kCoreShifting);
+            util::PinToCPU(i - 1 + NodeConfiguration::g_core_shifting);
           });
       go::GetSchedulerFromPool(i)->WakeUp(r);
     }
@@ -95,8 +95,8 @@ class CoroutineModule : public Module<CoreModule> {
     auto r = go::Make(
         []() {
           std::vector<int> cpus;
-          for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
-            cpus.push_back(i + NodeConfiguration::kCoreShifting);
+          for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+            cpus.push_back(i + NodeConfiguration::g_core_shifting);
           }
           util::PinToCPU(cpus);
         });

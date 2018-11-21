@@ -80,7 +80,7 @@ class MasstreeIndex {
 
   size_t nr_unique_keys() const {
     size_t rs = 0;
-    for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
+    for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
       rs += nr_keys[i].add_cnt - nr_keys[i].del_cnt;
     }
     return rs;

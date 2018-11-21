@@ -386,7 +386,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
     // TODO: if multiple CPUs are sharing the same warehouse? This configuration
     // still make some sense, except it's not well balanced.
 
-    util::PinToCPU(i - min + NodeConfiguration::kCoreShifting);
+    util::PinToCPU(i - min + NodeConfiguration::g_core_shifting);
     mem::SetThreadLocalAllocAffinity(i - min);
 
     auto k = Warehouse::Key::New(i);
@@ -415,7 +415,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
     NewRow(i - 1, TableType::Warehouse, k, handle);
   }
 
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
   mem::SetThreadLocalAllocAffinity(-1);
   relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
   logger->info("Warehouse Table loading done.");
@@ -462,7 +462,7 @@ void Loader<LoaderType::Stock>::DoLoad()
   VHandle *handle = nullptr;
   auto [min, max] = LocalWarehouseRange();
   for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
     mem::SetThreadLocalAllocAffinity(w - min);
 
     for(size_t i = 1; i <= kTPCCConfig.nr_items; i++) {
@@ -509,7 +509,7 @@ void Loader<LoaderType::Stock>::DoLoad()
   relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
   relation(TableType::StockData).set_key_length(sizeof(StockData::Key));
 
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Stock Table loading done.");
 }
@@ -520,7 +520,7 @@ void Loader<LoaderType::District>::DoLoad()
   void *large_buf = alloca(1024);
   auto [min, max] = LocalWarehouseRange();
   for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
     mem::SetThreadLocalAllocAffinity(w - min);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
@@ -543,7 +543,7 @@ void Loader<LoaderType::District>::DoLoad()
     }
   }
   relation(TableType::District).set_key_length(sizeof(District::Key));
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("District Table loading done.");
 }
@@ -556,7 +556,7 @@ void Loader<LoaderType::Customer>::DoLoad()
   auto [min, max] = LocalWarehouseRange();
 
   for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
     mem::SetThreadLocalAllocAffinity(w - min);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
@@ -632,7 +632,7 @@ void Loader<LoaderType::Customer>::DoLoad()
   relation(TableType::CustomerNameIdx).set_key_length(sizeof(CustomerNameIdx::Key));
   relation(TableType::History).set_key_length(sizeof(History::Key));
   logger->info("Customer Table loading done.");
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
   mem::SetThreadLocalAllocAffinity(-1);
 }
 
@@ -644,7 +644,7 @@ void Loader<LoaderType::Order>::DoLoad()
   auto [min, max] = LocalWarehouseRange();
 
   for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::kCoreShifting);
+    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
     mem::SetThreadLocalAllocAffinity(w - min);
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       std::set<uint> c_ids_s;
@@ -723,7 +723,7 @@ void Loader<LoaderType::Order>::DoLoad()
   relation(TableType::OOrderCIdIdx).set_key_length(sizeof(OOrderCIdIdx::Key));
   relation(TableType::NewOrder).set_key_length(sizeof(NewOrder::Key));
   relation(TableType::OrderLine).set_key_length(sizeof(OrderLine::Key));
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::kCoreShifting);
+  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
   mem::SetThreadLocalAllocAffinity(-1);
   logger->info("Order Table loading done.");
 }

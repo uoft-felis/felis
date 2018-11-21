@@ -24,7 +24,7 @@ struct DeletedGarbage : public util::ListNode {
 
 DeletedGarbageHeads::DeletedGarbageHeads()
 {
-  for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
+  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     garbage_heads[i].Initialize();
   }
 }

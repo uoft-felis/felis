@@ -255,8 +255,8 @@ mem::Pool *BaseVHandle::pools;
 
 static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
 {
-  auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * NodeConfiguration::kNrThreads);
-  for (int i = 0; i < NodeConfiguration::kNrThreads; i++) {
+  auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * NodeConfiguration::g_nr_threads);
+  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     new (&pools[i]) mem::Pool(ele_size, nr_ele, i / mem::kNrCorePerNode);
   }
   return pools;

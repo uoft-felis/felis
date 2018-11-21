@@ -58,10 +58,10 @@ int main(int argc, char *argv[])
         ParseControllerAddress(std::string(optarg));
         break;
       case 'p':
-        NodeConfiguration::kNrThreads = atoi(optarg);
+        NodeConfiguration::g_nr_threads = atoi(optarg);
         break;
       case 's':
-        NodeConfiguration::kCoreShifting = atoi(optarg);
+        NodeConfiguration::g_core_shifting = atoi(optarg);
         break;
       default:
         show_usage(argv[0]);

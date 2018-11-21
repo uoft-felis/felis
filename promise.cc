@@ -147,7 +147,7 @@ uint8_t *PromiseRoutine::DecodeNode(uint8_t *p, PromiseRoutinePool *rpool)
   return p;
 }
 
-size_t BasePromise::kNrThreads = 0;
+size_t BasePromise::g_nr_threads = 0;
 
 static size_t g_cur_thread = 1;
 
@@ -207,7 +207,7 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
   for (int i = 0; i < nr_sources; i++) {
     g_sources.emplace_back(1, new go::BufferChannel(nr_sources));
   }
-  kNrThreads = nr_threads;
+  g_nr_threads = nr_threads;
 }
 
 void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thread)

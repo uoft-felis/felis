@@ -29,7 +29,7 @@ class LoaderBuilder {
 
 static go::Scheduler *SelectThreadPool(int idx)
 {
-  int pool_id = 2 + idx % (NodeConfiguration::kNrThreads - 1);
+  int pool_id = 2 + idx % (NodeConfiguration::g_nr_threads - 1);
   return go::GetSchedulerFromPool(pool_id);
 }
 
