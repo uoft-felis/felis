@@ -181,6 +181,7 @@ class NodeIndexShipmentReceiverRoutine : public go::Routine {
 void NodeIndexShipmentReceiverRoutine::Run()
 {
   go::TcpSocket *server = new go::TcpSocket(8192, 1024);
+  logger->info("Shipment listening on {} {}", host, port);
   server->Bind(host, port);
   server->Listen();
 
@@ -213,7 +214,7 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
 {
   if (routine->node_id != 0 && routine->node_id != node_id()) {
     uint64_t buffer_size = routine->TreeSize();
-    uint8_t *buffer = (uint8_t *) malloc(8 + buffer_size);
+    uint8_t *buffer = (uint8_t *) alloca(8 + buffer_size);
 
     memcpy(buffer, &buffer_size, 8);
     routine->EncodeTree(buffer + 8);
@@ -224,9 +225,9 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
      * Thankfully, our Write() is atomic.
      */
     out->Write(buffer, buffer_size + 8);
-    out->Flush();
+    if (!BasePromise::g_enable_batching)
+      out->Flush();
 
-    free(buffer);
     routine->input.data = nullptr;
     routine->UnRefRecursively();
   } else {

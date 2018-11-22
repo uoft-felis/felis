@@ -10,6 +10,9 @@ struct NewOrderStruct {
   uint district_id;
   uint customer_id;
   uint nr_items;
+
+  ulong new_order_id;
+
   uint ts_now;
 
   uint item_id[15];
@@ -25,6 +28,8 @@ NewOrderStruct Client::GenerateTransactionInput<NewOrderStruct>()
   s.district_id = PickDistrict();
   s.customer_id = GetCustomerId();
   s.nr_items = RandomNumber(5, 15);
+  s.new_order_id = PickNewOrderId(s.warehouse_id, s.district_id);
+
   for (int i = 0; i < s.nr_items; i++) {
  again:
     auto id = GetItemId();
@@ -74,60 +79,32 @@ NewOrderTxn::NewOrderTxn(Client *client)
   PromiseProc _;
   auto district_key = District::Key::New(warehouse_id, district_id);
 
-  // printf("warehouse %d\n", warehouse_id);
   int node = warehouse_to_node_id(warehouse_id);
   int lookup_node = node;
   if (warehouse_id == 5) {
     // puts("Offloading!");
     // lookup_node = 1;
   }
+
   _ >> TxnLookup<District>(lookup_node, district_key)
     >> TxnSetupVersion(
         node,
-        [](const ContextType<int> &ctx, VHandle *handle) -> void {
+        [](const auto &ctx, auto *handle) {
+          ctx.template _<0>()->rows.district = handle;
+        });
 
-        }, 1);
-#if 0
-  _ >> T(Context(warehouse_id, district_id), p, [](auto ctx, auto _) -> Optional<VoidValue> {
-      uint warehouse_id;
-      uint district_id;
-      State state = ctx.state();
-      TxnHandle handle = ctx.handle();
-      ctx.Unpack(warehouse_id, district_id);
-
-      state->rows.district =
-          handle(relation(TableType::District, warehouse_id))
-          .Lookup(District::Key::New(warehouse_id, district_id).EncodeFromRoutine());
-      handle(state->rows.district).AppendNewVersion();
-
-      VHandle *oorder_range =
-          handle(relation(TableType::OOrder, warehouse_id))
-          .Lookup(OOrder::Key::New(warehouse_id, district_id, std::numeric_limits<int>::max()).EncodeFromRoutine());
-      handle(oorder_range).AppendNewVersion();
-
-      return nullopt;
-    });
-
-  for (uint i = 0; i < nr_items; i++) {
-    int p = partition(supplier_warehouse_id[i]);
-    printf("partition %d\n", p);
-    _ >> T(Context(i, supplier_warehouse_id[i], item_id[i]), p, [](auto ctx, auto _) -> Optional<VoidValue> {
-        uint i;
-        uint warehouse_id;
-        uint item_id;
-        State state = ctx.state();
-        TxnHandle handle = ctx.handle();
-        ctx.Unpack(i, warehouse_id, item_id);
-
-        state->rows.stocks[i] =
-            handle(relation(TableType::Stock, warehouse_id))
-            .Lookup(Stock::Key::New(warehouse_id, item_id).EncodeFromRoutine());
-        handle(state->rows.stocks[i]).AppendNewVersion();
-
-        return nullopt;
-      });
+  for (auto i = 0; i < nr_items; i++) {
+    auto stock_key = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
+    node = warehouse_to_node_id(supplier_warehouse_id[i]);
+    _ >> TxnLookup<Stock>(node, stock_key)
+      >> TxnSetupVersion(
+          node,
+          [](const auto &ctx, auto *handle) {
+            uint i = ctx.template _<3>();
+            ctx.template _<0>()->rows.stocks[i] = handle;
+          },
+          i);
   }
-#endif
 }
 
 void NewOrderTxn::Run()

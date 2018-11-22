@@ -8,6 +8,7 @@
 #include <string>
 #include <cassert>
 #include <atomic>
+#include <memory>
 #include <unistd.h>
 #include <sched.h>
 #include <pthread.h>
@@ -254,7 +255,7 @@ struct GetArg<0, U, Args...> {
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
 template <typename ValueType> using Ref = std::reference_wrapper<ValueType>;
-
+template <typename ValueType> using OwnPtr = std::unique_ptr<ValueType>;
 }
 
 #endif /* UTIL_H */

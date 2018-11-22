@@ -134,18 +134,23 @@ class ClientBase {
  protected:
   util::FastRandom r;
   int node_id;
+  uint min_warehouse;
+  uint max_warehouse;
+
+  util::OwnPtr<ulong []> new_order_id_counters;
 
  protected:
   static constexpr double kWarehouseSpread = 0.0;
-  static constexpr double kNewOrderRemoteItem = 0.1; // default 0.01
+  static constexpr double kNewOrderRemoteItem = 0.01;
   static constexpr double kCreditCheckRemoteCustomer = 0.15;
   static constexpr double kPaymentRemoteCustomer = 0.15;
   static constexpr double kPaymentByName = 0.60;
 
   size_t nr_warehouses() const;
-  std::tuple<ulong, ulong> LocalWarehouseRange();
   uint PickWarehouse();
   uint PickDistrict();
+  ulong PickNewOrderId(uint warehouse_id, uint district_id);
+
   uint LoadPercentageByWarehouse();
 
   static int CheckBetweenInclusive(int v, int lower, int upper);

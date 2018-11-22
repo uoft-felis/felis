@@ -48,9 +48,9 @@ struct PromiseRoutinePool {
 
 struct PromiseRoutine {
   VarStr input;
+  int node_id; // -1 if dynamic placement
   uint32_t capture_len;
   uint8_t *capture_data;
-  int node_id; // -1 if dynamic placement
 
   void (*callback)(PromiseRoutine *);
   int (*placement)(PromiseRoutine *);
@@ -88,26 +88,13 @@ class PromiseRoutineTransportService {
 class BasePromise {
  protected:
   friend struct PromiseRoutine;
-  std::atomic<long> refcnt;
   std::vector<PromiseRoutine *> handlers;
  public:
   static size_t g_nr_threads;
+  static bool g_enable_batching;
 
-  BasePromise() : refcnt(1) {}
+  BasePromise() {}
   void Complete(const VarStr &in);
-
-  BasePromise *Ref() {
-    refcnt.fetch_add(1);
-    return this;
-  }
-
-  long UnRef() {
-    long r = refcnt.fetch_sub(1) - 1;
-    if (r == 0) {
-      delete this;
-    }
-    return r;
-  }
 
   static void InitializeSourceCount(int nr_sources, size_t nr_threads);
   static void QueueRoutine(PromiseRoutine *r, int source_idx, int thread);

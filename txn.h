@@ -119,7 +119,7 @@ class BaseTxn {
  protected:
   static Optional<Tuple<VHandle *>> TxnIndexLookupOpImpl(const TxnIndexOpContext &);
   static void TxnFuncUnref(BaseTxn *txn, int origin_node_id);
-  void TxnFuncRef();
+  void TxnFuncRef(int origin_node_id);
 };
 
 struct BaseTxnState {
@@ -147,7 +147,7 @@ class Txn : public BaseTxn {
              Optional<VoidValue> (*)(const ContextType<Types...>&, Tuple<VHandle *>)>
   TxnSetupVersion(int node, Func func, Types... params) {
     void * p = (void *) (void (*)(const ContextType<Types...> &, VHandle *)) func;
-    TxnFuncRef();
+    TxnFuncRef(node);
 
     return std::make_tuple(
         ContextType<Types...>(state, index_handle(), p, params...),
@@ -155,7 +155,13 @@ class Txn : public BaseTxn {
         [](const ContextType<Types...> &ctx, Tuple<VHandle *> args) -> Optional<VoidValue> {
           void *p = ctx.template _<2>();
           auto state = ctx.template _<0>();
+          auto index_handle = ctx.template _<1>();
           auto [handle] = args;
+
+          // TODO: insert if not there...
+          if (handle) {
+            index_handle(handle).AppendNewVersion();
+          }
 
           auto fp = (void (*)(const ContextType<Types...> &, VHandle *)) p;
           fp(ctx, handle);

@@ -20,6 +20,9 @@ PromiseRoutinePool *PromiseRoutinePool::Create(size_t size)
 
 void PromiseRoutine::UnRef()
 {
+  delete next;
+  next = nullptr;
+
   if (!pool->IsManaging(input.data))
     free((void *) input.data);
 
@@ -31,11 +34,8 @@ void PromiseRoutine::UnRef()
 void PromiseRoutine::UnRefRecursively()
 {
   if (next) {
-    auto handlers = next->handlers;
-    if (next->UnRef() == 0) {
-      for (auto child: handlers) {
-        child->UnRefRecursively();
-      }
+    for (auto child: next->handlers) {
+      child->UnRefRecursively();
     }
   }
   UnRef();
@@ -148,6 +148,7 @@ uint8_t *PromiseRoutine::DecodeNode(uint8_t *p, PromiseRoutinePool *rpool)
 }
 
 size_t BasePromise::g_nr_threads = 0;
+bool BasePromise::g_enable_batching = false;
 
 static size_t g_cur_thread = 1;
 
@@ -164,15 +165,15 @@ void BasePromise::Complete(const VarStr &in)
 
     transport.TransportPromiseRoutine(routine);
   }
-  UnRef();
 }
 
 struct PromiseSourceDesc {
-  std::atomic<long> finish_count;
+  std::atomic_long finish_count;
   go::BufferChannel *wait_channel;
 
   PromiseSourceDesc(long cnt, go::BufferChannel *wait_channel)
-      : finish_count(cnt), wait_channel(wait_channel) {}
+      : finish_count(cnt), wait_channel(wait_channel) {
+  }
 
   PromiseSourceDesc(const PromiseSourceDesc &rhs) {
     // Not thread safe
@@ -187,6 +188,7 @@ struct PromiseSourceDesc {
 };
 
 static std::vector<PromiseSourceDesc> g_sources;
+static std::unique_ptr<util::CacheAligned<std::atomic_ulong>[]> batch_counts;
 
 void PromiseSourceDesc::WaitLocalBarrier()
 {
@@ -208,11 +210,16 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
     g_sources.emplace_back(1, new go::BufferChannel(nr_sources));
   }
   g_nr_threads = nr_threads;
+  batch_counts.reset(new util::CacheAligned<std::atomic_ulong>[g_nr_threads + 1]);
+  for (int i = 0; i < g_nr_threads; i++) {
+    batch_counts[i].elem = 0;
+  }
 }
 
 void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thread)
 {
   auto &desc = g_sources[source_idx];
+  /*
   if (r == nullptr) {
     if (desc.finish_count.fetch_sub(1) == 1) {
       desc.BroadcastLocalBarrier();
@@ -221,17 +228,27 @@ void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thr
     desc.finish_count.fetch_add(1);
     return;
   }
-  desc.finish_count.fetch_add(1);
+  */
+  // desc.finish_count.fetch_add(1);
+  bool would_batch = g_enable_batching;
+  if (g_enable_batching
+      && batch_counts[thread]->fetch_add(1) % 65536 == 65535) {
+    would_batch = false;
+  }
   go::GetSchedulerFromPool(thread)->WakeUp(
-      go::Make([r, &desc]() {
-          {
-            INIT_ROUTINE_BRK(4096);
-            r->callback(r);
-          }
-          if (desc.finish_count.fetch_sub(1) == 1) {
-            desc.BroadcastLocalBarrier();
-          }
-        }));
+      go::Make(
+          [r, &desc]() {
+            {
+              INIT_ROUTINE_BRK(4096);
+              r->callback(r);
+            }
+            /*
+            if (desc.finish_count.fetch_sub(1) == 1) {
+              desc.BroadcastLocalBarrier();
+            }
+            */
+          }),
+      would_batch);
 }
 
 }

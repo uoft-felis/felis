@@ -138,7 +138,17 @@ static int NMaxCustomerIdxScanElems = 512;
 ClientBase::ClientBase(const util::FastRandom &r)
     : r(r), slicer(g_slicer)
 {
-  node_id = Instance<NodeConfiguration>().node_id();
+  auto &conf = Instance<NodeConfiguration>();
+  node_id = conf.node_id();
+
+  min_warehouse = kTPCCConfig.nr_warehouses * (node_id - 1) / conf.nr_nodes() + 1;
+  max_warehouse = kTPCCConfig.nr_warehouses * node_id / conf.nr_nodes();
+
+  auto cap =
+      (max_warehouse - min_warehouse + 1) * kTPCCConfig.districts_per_warehouse;
+
+  new_order_id_counters.reset(new ulong[cap]);
+  memset(new_order_id_counters.get(), 0, sizeof(ulong) * cap);
 }
 
 // utils for generating random #s and strings
@@ -239,46 +249,36 @@ size_t ClientBase::nr_warehouses() const
   return kTPCCConfig.nr_warehouses;
 }
 
-std::tuple<ulong, ulong> ClientBase::LocalWarehouseRange()
-{
-  auto &conf = Instance<NodeConfiguration>();
-  uint min = kTPCCConfig.nr_warehouses * (node_id - 1) / conf.nr_nodes() + 1;
-  uint max = kTPCCConfig.nr_warehouses * node_id / conf.nr_nodes();
-  return std::tuple(min, max);
-}
-
 uint ClientBase::PickWarehouse()
 {
   if (kWarehouseSpread == 0 || r.next_uniform() >= kWarehouseSpread) {
-    auto [min, max] = LocalWarehouseRange();
     // Some warehouses are the hotspot, we need to extend such range for random
     // number generation.
     ulong rand_max = 0;
-    for (auto w = min; w <= max; w++) {
+    for (auto w = min_warehouse; w <= max_warehouse; w++) {
       if (Util::is_warehouse_hotspot(w)) rand_max += Config::kHotspoLoadPercentage;
       else rand_max += 100;
     }
     auto rand = long(r.next_uniform() * rand_max);
-    for (auto w = min; w <= max; w++) {
+    for (auto w = min_warehouse; w <= max_warehouse; w++) {
       if (Util::is_warehouse_hotspot(w)) rand -= Config::kHotspoLoadPercentage;
       else rand -= 100;
       if (rand < 0)
         return w;
     }
-    return max;
+    return max_warehouse;
   }
   return r.next() % kTPCCConfig.nr_warehouses + 1;
 }
 
 uint ClientBase::LoadPercentageByWarehouse()
 {
-  auto [min, max] = LocalWarehouseRange();
   uint load = 0;
-  for (int w = min; w <= max; w++) {
+  for (int w = min_warehouse; w <= max_warehouse; w++) {
     if (Util::is_warehouse_hotspot(w)) load += Config::kHotspoLoadPercentage;
     else load += 100;
   }
-  return load / (max - min + 1);
+  return load / (max_warehouse - min_warehouse + 1);
 }
 
 uint ClientBase::PickDistrict()
@@ -286,10 +286,16 @@ uint ClientBase::PickDistrict()
   return RandomNumber(1, kTPCCConfig.districts_per_warehouse);
 }
 
+ulong ClientBase::PickNewOrderId(uint warehouse_id, uint district_id)
+{
+  uint idx = (warehouse_id - min_warehouse) * kTPCCConfig.districts_per_warehouse + district_id - 1;
+  return ++new_order_id_counters[idx];
+}
+
 uint ClientBase::GetCurrentTime()
 {
   static __thread uint tl_hack = 0;
-  return tl_hack;
+  return ++tl_hack;
 }
 
 struct Checker {
@@ -380,14 +386,13 @@ template <>
 void Loader<LoaderType::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  auto [min, max] = LocalWarehouseRange();
-  for (uint i = min; i <= max; i++) {
+  for (uint i = min_warehouse; i <= max_warehouse; i++) {
 
     // TODO: if multiple CPUs are sharing the same warehouse? This configuration
     // still make some sense, except it's not well balanced.
 
-    util::PinToCPU(i - min + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(i - min);
+    util::PinToCPU(i - min_warehouse + NodeConfiguration::g_core_shifting);
+    mem::SetThreadLocalAllocAffinity(i - min_warehouse);
 
     auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
@@ -460,10 +465,9 @@ void Loader<LoaderType::Stock>::DoLoad()
 {
   void *large_buf = alloca(1024);
   VHandle *handle = nullptr;
-  auto [min, max] = LocalWarehouseRange();
-  for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min);
+  for (uint w = min_warehouse; w <= max_warehouse; w++) {
+    util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
+    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
 
     for(size_t i = 1; i <= kTPCCConfig.nr_items; i++) {
       const auto k = Stock::Key::New(w, i);
@@ -518,10 +522,9 @@ template <>
 void Loader<LoaderType::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  auto [min, max] = LocalWarehouseRange();
-  for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min);
+  for (uint w = min_warehouse; w <= max_warehouse; w++) {
+    util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
+    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       const auto k = District::Key::New(w, d);
@@ -553,11 +556,10 @@ void Loader<LoaderType::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
   VHandle *handle = nullptr;
-  auto [min, max] = LocalWarehouseRange();
 
-  for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min);
+  for (uint w = min_warehouse; w <= max_warehouse; w++) {
+    util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
+    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       for (uint cidx0 = 0; cidx0 < kTPCCConfig.customers_per_district; cidx0++) {
@@ -641,11 +643,10 @@ void Loader<LoaderType::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
   VHandle *handle = nullptr;
-  auto [min, max] = LocalWarehouseRange();
 
-  for (uint w = min; w <= max; w++) {
-    util::PinToCPU(w - min + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min);
+  for (uint w = min_warehouse; w <= max_warehouse; w++) {
+    util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
+    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;

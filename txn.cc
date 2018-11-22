@@ -17,9 +17,11 @@ Optional<Tuple<VHandle *>> BaseTxn::TxnIndexLookupOpImpl(const TxnIndexOpContext
   return Tuple<VHandle *>(handle);
 }
 
-void BaseTxn::TxnFuncRef()
+void BaseTxn::TxnFuncRef(int origin_node_id)
 {
-  completion.Increment(1);
+  auto cur_node_id = util::Instance<NodeConfiguration>().node_id();
+  if (cur_node_id == origin_node_id)
+    completion.Increment(1);
 }
 
 void BaseTxn::TxnFuncUnref(BaseTxn *txn, int origin_node_id)

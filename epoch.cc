@@ -34,13 +34,16 @@ void EpochClient::Worker()
   auto total_nr_txn = base * LoadPercentage();
   completion.Increment(total_nr_txn);
   callback.perf.Start();
+  BasePromise::g_enable_batching = true;
   for (int i = 0; i < total_nr_txn; i++) {
+    if (i == total_nr_txn - 1)
+      BasePromise::g_enable_batching = false;
     auto *txn = RunCreateTxn();
     txn->completion.Complete();
   }
 }
 
-static constexpr size_t kEpochMemoryLimit = 12 << 20;
+static constexpr size_t kEpochMemoryLimit = 256 << 20;
 
 EpochMemory::EpochMemory(mem::Pool *pool)
     : pool(pool)
