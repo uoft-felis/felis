@@ -44,6 +44,13 @@ void ShippingHandle::PrepareSend()
   sent_generation.fetch_add(1, std::memory_order_seq_cst);
 }
 
+bool ShippingHandle::CheckSession()
+{
+  auto session = g_scanning_session.load();
+  // if born < session, then this handle should be added by the scanner.
+  return born < (session >> kScanningSessionStatusBits);
+}
+
 void Slice::SliceQueue::Append(ShippingHandle *handle)
 {
   std::unique_lock l(lock, std::defer_lock);
@@ -71,9 +78,43 @@ void Slice::Append(ShippingHandle *handle)
   q->Append(handle);
 }
 
+SliceScanner::SliceScanner(Slice * slice) : slice(slice) 
+{
+  current_q = &slice->shared_q.elem;
+  current_node = &(current_q->queue); 
+}
+
 ShippingHandle *SliceScanner::GetNextHandle()
 {
-  TBD();
+  while (current_q != nullptr) {
+    if (current_node != nullptr) {
+      auto h = (ShippingHandle *)current_node;
+      if (h->CheckSession()) {
+        current_node = current_node->next;
+        return h;
+      }
+    }
+
+    // scan of current queue is over, switch to the next queue
+    // queue order: shared_q, per_core_q[]
+    if (current_q == &slice->shared_q.elem) {
+      current_q = &slice->per_core_q[0].elem;
+    }
+    else if (current_q == &slice->per_core_q[NodeConfiguration::kMaxNrThreads - 1].elem) {
+      current_q = nullptr;
+    }
+    else {
+      for (int i = 0; i < NodeConfiguration::kMaxNrThreads - 1; i++) {
+        if (current_q == &slice->per_core_q[i].elem) {
+          current_q = &slice->per_core_q[i+1].elem;
+          break;
+        }
+      }
+    }
+
+    current_node = current_q?&(current_q->queue):nullptr;
+  }
+  return nullptr;
 }
 
 BaseShipment::BaseShipment(std::string host, unsigned int port, bool defer_connect)

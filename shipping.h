@@ -44,6 +44,12 @@ class ShippingHandle : public util::ListNode {
    * using multiple threads.
    */
   void PrepareSend();
+
+  /**
+   * 
+   * @return if the handle should be put into queue by the scanner
+   */
+  bool CheckSession();
 };
 
 template <typename T>
@@ -53,18 +59,7 @@ struct ObjectShippingHandle : public ShippingHandle {
   ObjectShippingHandle(T *object) : ShippingHandle(), object(object) {}
 };
 
-class Slice;
-
-class SliceScanner {
- protected:
-  Slice * slice;
-  // TODO: scanning status, like which slice, which list node are you in...
-
-  ShippingHandle *GetNextHandle();
-
-  SliceScanner(Slice * slice) : slice(slice) {}
-};
-
+class SliceScanner;
 /**
  * Slice is the granularity we handle the skew. Either by shipping data (which
  * is our baseline) or shipping index.
@@ -95,6 +90,19 @@ class Slice {
  public:
   Slice();
   void Append(ShippingHandle *handle);
+};
+
+class SliceScanner {
+ protected:
+  Slice * slice;
+  // TODO: scanning status, like which slice, which list node are you in...
+  
+  Slice::SliceQueue * current_q;
+  util::ListNode * current_node;
+
+  SliceScanner(Slice * slice);
+
+  ShippingHandle *GetNextHandle();
 };
 
 class BaseShipment {
