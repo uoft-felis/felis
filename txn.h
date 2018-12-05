@@ -22,19 +22,19 @@ class BaseTxn {
   Epoch *epoch;
   uint64_t sid;
 
-  CompletionObject<util::Ref<CompletionObject<util::Ref<EpochCallback>>>> completion;
+  PromiseProc proc;
  public:
-  BaseTxn()
-      : epoch(util::Instance<EpochManager>().current_epoch()),
-        completion(0, epoch->epoch_client()->completion) {
-    completion.Increment(1);
-  }
+  BaseTxn(uint64_t serial_id)
+      : epoch(util::Instance<EpochManager>().current_epoch()), sid(serial_id) {}
 
   virtual ~BaseTxn() {}
   virtual void Run() = 0;
 
+  Promise<DummyValue> *root_promise() {
+    return proc.promise();
+  }
+
   uint64_t serial_id() const { return sid; }
-  void set_serial_id(uint64_t s) { sid = s; }
 
   template <typename Api>
   class TxnApi {
@@ -118,12 +118,6 @@ class BaseTxn {
 
  protected:
   static Optional<Tuple<VHandle *>> TxnIndexLookupOpImpl(const TxnIndexOpContext &);
-  static void TxnFuncUnref(BaseTxn *txn, int origin_node_id);
-  void TxnFuncRef(int origin_node_id);
-};
-
-struct BaseTxnState {
-  BaseTxn *txn;
 };
 
 template <typename TxnState>
@@ -134,9 +128,8 @@ class Txn : public BaseTxn {
  protected:
   State state;
  public:
-  Txn() {
+  Txn(uint64_t serial_id) : BaseTxn(serial_id) {
     state = epoch->AllocateEpochObjectOnCurrentNode<TxnState>();
-    state->txn = this;
   }
 
   template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, void *, Types...>;
@@ -147,8 +140,6 @@ class Txn : public BaseTxn {
              Optional<VoidValue> (*)(const ContextType<Types...>&, Tuple<VHandle *>)>
   TxnSetupVersion(int node, Func func, Types... params) {
     void * p = (void *) (void (*)(const ContextType<Types...> &, VHandle *)) func;
-    TxnFuncRef(node);
-
     return std::make_tuple(
         ContextType<Types...>(state, index_handle(), p, params...),
         node,
@@ -165,8 +156,6 @@ class Txn : public BaseTxn {
 
           auto fp = (void (*)(const ContextType<Types...> &, VHandle *)) p;
           fp(ctx, handle);
-
-          TxnFuncUnref(state->txn, state.origin_node_id());
           return nullopt;
         });
   }

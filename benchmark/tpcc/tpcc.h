@@ -236,7 +236,7 @@ class Loader : public go::Routine, public tpcc::Util, public tpcc::ClientBase {
 
 }
 
-class Client : public felis::EpochClient, public ClientBase {
+class Client : public felis::EpochClient, public ClientBase, public Util {
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
  public:
 
@@ -248,10 +248,17 @@ class Client : public felis::EpochClient, public ClientBase {
     return LoadPercentageByWarehouse();
   }
 
+  uint warehouse_to_lookup_node_id(uint warehouse_id) const {
+    if (disable_load_balance || !is_warehouse_hotspot(warehouse_id))
+      return warehouse_to_node_id(warehouse_id);
+    else
+      return 1;
+  }
+
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];
  protected:
-  felis::BaseTxn *RunCreateTxn() final override;
+  felis::BaseTxn *RunCreateTxn(uint64_t serial_id) final override;
 };
 
 enum class TxnType : int {
@@ -263,7 +270,7 @@ enum class TxnType : int {
   AllTxn,
 };
 
-using TxnFactory = util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *>;
+using TxnFactory = util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *, uint64_t>;
 
 }
 

@@ -109,9 +109,13 @@ class Brk {
     return new (p) Brk(p + sizeof(Brk), sz - sizeof(Brk));
   }
 
+  bool Check(size_t s) { return offset + s <= limit; }
+  void Reset() { offset = 0; }
+
   void *Alloc(size_t s);
   void *Alloc(size_t s, std::function<void (void *)> deleter);
   uint8_t *ptr() const { return data; }
+  size_t current_size() const { return offset; }
 };
 
 #define NewStackBrk(sz) mem::Brk::New(alloca(sz), sz)

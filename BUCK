@@ -42,7 +42,7 @@ db_srcs = [
 	('masstree/straccum.cc', ['-include', 'masstree/build/config.h']),
     ]
 
-libs = ['-pthread', '-lrt', '-ldl', '-lnuma', '-ljemalloc']
+libs = ['-pthread', '-lrt', '-ldl', '-lnuma', '-ltcmalloc']
 test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
 
 cxx_binary(

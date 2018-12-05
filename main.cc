@@ -96,11 +96,11 @@ int main(int argc, char *argv[])
   logger->info("Ready. Waiting for run command from the controller.");
   console.WaitForServerStatus(felis::Console::ServerStatus::Running);
 
-  abort_if(EpochClient::gWorkloadClient == nullptr,
+  abort_if(EpochClient::g_workload_client == nullptr,
            "Workload Module did not setup the EpochClient properly");
 
   logger->info("Starting workload");
-  EpochClient::gWorkloadClient->Start();
+  EpochClient::g_workload_client->Start();
 
   console.WaitForServerStatus(Console::ServerStatus::Exiting);
 

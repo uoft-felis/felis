@@ -27,6 +27,10 @@ class CompletionObject {
   void Increment(ulong inc) {
     comp_count.fetch_add(inc);
   }
+
+  ulong left_over() const {
+    return comp_count.load();
+  }
 };
 
 

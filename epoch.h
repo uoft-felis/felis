@@ -23,23 +23,27 @@ class EpochCallback {
 
 class EpochClient {
  public:
-  static EpochClient *gWorkloadClient;
+  static EpochClient *g_workload_client;
 
   EpochClient() noexcept;
   virtual ~EpochClient() {}
 
   void Start();
 
+  auto completion_object() { return &completion; }
+
   virtual uint LoadPercentage() = 0;
  protected:
   friend class BaseTxn;
 
   void Worker();
-  virtual BaseTxn *RunCreateTxn() = 0;
+  virtual BaseTxn *RunCreateTxn(uint64_t serial_id) = 0;
 
  protected:
   EpochCallback callback;
   CompletionObject<util::Ref<EpochCallback>> completion;
+
+  bool disable_load_balance;
 };
 
 class EpochManager {

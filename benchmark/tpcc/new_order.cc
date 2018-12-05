@@ -56,7 +56,7 @@ NewOrderStruct Client::GenerateTransactionInput<NewOrderStruct>()
 
 using namespace felis;
 
-struct NewOrderState : public BaseTxnState {
+struct NewOrderState {
   struct {
     VHandle *district;
     VHandle *stocks[15];
@@ -66,44 +66,42 @@ struct NewOrderState : public BaseTxnState {
 class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct, public Util {
   Client *client;
  public:
-  NewOrderTxn(Client *client);
+  NewOrderTxn(Client *client, uint64_t serial_id);
   void Run() override final;
 };
 
-NewOrderTxn::NewOrderTxn(Client *client)
-    : client(client),
-      NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>())
+NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
+    : Txn<NewOrderState>(serial_id),
+      NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
+      client(client)
 {
   INIT_ROUTINE_BRK(4096);
 
-  PromiseProc _;
   auto district_key = District::Key::New(warehouse_id, district_id);
 
   int node = warehouse_to_node_id(warehouse_id);
-  int lookup_node = node;
-  if (warehouse_id == 5) {
-    // puts("Offloading!");
-    // lookup_node = 1;
-  }
+  int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
 
-  _ >> TxnLookup<District>(lookup_node, district_key)
-    >> TxnSetupVersion(
-        node,
-        [](const auto &ctx, auto *handle) {
-          ctx.template _<0>()->rows.district = handle;
-        });
+  proc >> TxnLookup<District>(lookup_node, district_key)
+       >> TxnSetupVersion(
+           node,
+           [](const auto &ctx, auto *handle) {
+             ctx.template _<0>()->rows.district = handle;
+           });
 
   for (auto i = 0; i < nr_items; i++) {
     auto stock_key = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
     node = warehouse_to_node_id(supplier_warehouse_id[i]);
-    _ >> TxnLookup<Stock>(node, stock_key)
-      >> TxnSetupVersion(
-          node,
-          [](const auto &ctx, auto *handle) {
-            uint i = ctx.template _<3>();
-            ctx.template _<0>()->rows.stocks[i] = handle;
-          },
-          i);
+    lookup_node = client->warehouse_to_lookup_node_id(supplier_warehouse_id[i]);
+
+    proc >> TxnLookup<Stock>(lookup_node, stock_key)
+         >> TxnSetupVersion(
+             node,
+             [](const auto &ctx, auto *handle) {
+               uint i = ctx.template _<3>();
+               ctx.template _<0>()->rows.stocks[i] = handle;
+             },
+             i);
   }
 }
 
@@ -119,9 +117,9 @@ using namespace felis;
 using namespace tpcc;
 
 template <>
-BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::NewOrder), Client *>::Construct(tpcc::Client * client)
+BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::NewOrder), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
 {
-  return new tpcc::NewOrderTxn(client);
+  return new tpcc::NewOrderTxn(client, serial_id);
 }
 
 }

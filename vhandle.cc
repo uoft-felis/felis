@@ -57,12 +57,8 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   auto objects = versions + capacity;
   objects[size - 1] = kPendingValue;
 
-  // now we need to swap backwards... hope this won't take too long...
-  // ERMIA 2.0 guarantee there is no duplicate write set keys now
-  // TODO: replace this with a cleverer binary search if matters
   uint64_t last = versions[size - 1];
-  int i = size - 1;
-  while (i > 0 && versions[i - 1] > last) i--;
+  int i = std::lower_bound(versions, versions + size - 1, last) - versions;
 
   memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
   versions[i] = last;

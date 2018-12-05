@@ -71,7 +71,7 @@ class TPCCModule : public Module<WorkloadModule> {
 
     tpcc::TxnFactory::Initialize();
 
-    EpochClient::gWorkloadClient = new tpcc::Client();
+    EpochClient::g_workload_client = new tpcc::Client();
   }
 };
 

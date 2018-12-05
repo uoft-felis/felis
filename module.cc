@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <sys/mman.h>
 
 #include "module.h"
 
@@ -7,6 +8,7 @@
 #include "console.h"
 #include "index.h"
 #include "log.h"
+#include "promise.h"
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -47,15 +49,26 @@ class AllocatorModule : public Module<CoreModule> {
     auto &console = util::Instance<Console>();
 
     // An extra one region for the ShipmentReceivers
+    std::vector<std::thread> tasks;
     mem::InitThreadLocalRegions(NodeConfiguration::g_nr_threads + 1);
     for (int i = 0; i < NodeConfiguration::g_nr_threads + 1; i++) {
       auto &r = mem::GetThreadLocalRegion(i);
       r.ApplyFromConf(console.FindConfigSection("mem"));
       // logger->info("setting up regions {}", i);
-      r.InitPools(i / mem::kNrCorePerNode);
+      tasks.emplace_back(
+          [&r, i]() {
+            r.InitPools(i / mem::kNrCorePerNode);
+          });
     }
+    tasks.emplace_back(VHandle::InitPools);
 
-    VHandle::InitPools();
+    BasePromise::g_brk = mem::Brk(
+        mmap(NULL, 10UL << 30, PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0),
+        10UL << 30);
+
+    for (auto &t: tasks) t.join();
+
     logger->info("Memory used {}MB", mem::Pool::gTotalAllocatedMem.load() / (1 << 20));
   }
 };

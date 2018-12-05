@@ -32,52 +32,52 @@ auto T(Args&&... args) -> decltype(std::make_tuple(std::forward<Args>(args)...))
 
 class BasePromise;
 
-struct PromiseRoutinePool {
-  std::atomic<uint64_t> refcnt;
-  uint8_t *input_ptr;
-  size_t mem_size;
-  uint8_t mem[];
-
-  bool IsManaging(const uint8_t *ptr) const {
-    return (ptr >= mem && ptr < mem + mem_size);
-  }
-
-  static PromiseRoutinePool *Create(size_t size);
-};
-
-
 struct PromiseRoutine {
   VarStr input;
-  int node_id; // -1 if dynamic placement
-  uint32_t capture_len;
+  int node_id;
   uint8_t *capture_data;
+  uint32_t capture_len;
+  int level;
 
   void (*callback)(PromiseRoutine *);
-  int (*placement)(PromiseRoutine *);
-
   void *callback_native_func;
-  void *placement_native_func;
 
   size_t NodeSize() const;
   size_t TreeSize() const;
 
   uint8_t *EncodeNode(uint8_t *p);
-  uint8_t *DecodeNode(uint8_t *p, PromiseRoutinePool *pool);
+  uint8_t *DecodeNode(uint8_t *p);
   void EncodeTree(uint8_t *p);
-  void DecodeTree(PromiseRoutinePool *pool);
 
   BasePromise *next;
-  PromiseRoutinePool *pool;
 
-  void Ref() {
-    pool->refcnt.fetch_add(1);
-  }
+  static PromiseRoutine *CreateFromCapture(size_t capture_len);
+  static PromiseRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
+};
 
-  void UnRef();
-  void UnRefRecursively();
+class BasePromise {
+ protected:
+  friend struct PromiseRoutine;
+  size_t nr_handlers;
+  size_t limit;
+  PromiseRoutine **handlers;
+ public:
+  static mem::Brk g_brk;
+  static size_t g_nr_threads;
+  static constexpr size_t kMaxHandlersLimit = 32;
 
-  static PromiseRoutine *CreateWithDedicatePool(size_t capture_len);
-  static PromiseRoutine *CreateFromBufferedPool(PromiseRoutinePool *pool);
+  BasePromise(size_t limit = kMaxHandlersLimit);
+  void Complete(const VarStr &in);
+  void Add(PromiseRoutine *child);
+
+  static void *operator new(std::size_t size);
+
+  static void InitializeSourceCount(int nr_sources, size_t nr_threads);
+  static void QueueRoutine(PromiseRoutine **routines, size_t nr_routines, int source_idx, int thread, bool batch = true);
+  static void FlushScheduler();
+
+  size_t nr_routines() const { return nr_handlers; }
+  PromiseRoutine **routines() { return handlers; }
 };
 
 class PromiseRoutineTransportService {
@@ -85,20 +85,6 @@ class PromiseRoutineTransportService {
   virtual void TransportPromiseRoutine(PromiseRoutine *routine) = 0;
 };
 
-class BasePromise {
- protected:
-  friend struct PromiseRoutine;
-  std::vector<PromiseRoutine *> handlers;
- public:
-  static size_t g_nr_threads;
-  static bool g_enable_batching;
-
-  BasePromise() {}
-  void Complete(const VarStr &in);
-
-  static void InitializeSourceCount(int nr_sources, size_t nr_threads);
-  static void QueueRoutine(PromiseRoutine *r, int source_idx, int thread);
-};
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
 
@@ -145,9 +131,8 @@ class Promise : public BasePromise {
         VarStr *output_str = output->EncodeFromAlloca(buffer);
         routine->next->Complete(*output_str);
       }
-      routine->UnRef();
     };
-    auto routine = PromiseRoutine::CreateWithDedicatePool(capture.EncodeSize());
+    auto routine = PromiseRoutine::CreateFromCapture(capture.EncodeSize());
     routine->input.data = nullptr;
     routine->callback = (void (*)(PromiseRoutine *)) static_func;
     routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
@@ -155,7 +140,7 @@ class Promise : public BasePromise {
     routine->capture_len = capture.EncodeSize();
     capture.EncodeTo(routine->capture_data);
 
-    handlers.push_back(routine);
+    Add(routine);
     return routine;
   }
 
@@ -165,16 +150,7 @@ class Promise : public BasePromise {
   Promise<typename Next<Func, Closure>::Type> *Then(const Closure &capture, int placement, Func func) {
     auto routine = AttachRoutine(capture, func);
     routine->node_id = placement;
-    auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
-    routine->next = next_promise;
-    return next_promise;
-  }
-
-  template <typename PlacementFunc, typename Func, typename Closure>
-  Promise<typename Next<Func, Closure>::Type> *Then(const Closure &capture, PlacementFunc on, Func func) {
-    auto routine = AttachRoutine(capture, func);
-    routine->node_id = -1;
-    routine->placement_native_func = on;
+    routine->level = 0;
     auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
     routine->next = next_promise;
     return next_promise;
@@ -231,9 +207,7 @@ class PromiseProc : public PromiseStream<DummyValue> {
   PromiseProc() : PromiseStream<DummyValue>(new Promise<DummyValue>()) {}
   PromiseProc(const PromiseProc &rhs) = delete;
   PromiseProc(PromiseProc &&rhs) = delete;
-  ~PromiseProc() {
-    p->Complete(VarStr());
-  }
+  ~PromiseProc();
 };
 
 struct BaseCombinerState {

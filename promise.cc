@@ -1,67 +1,37 @@
 #include "promise.h"
+#include "epoch.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 #include <queue>
 #include "util.h"
+#include "mem.h"
 
 using util::Instance;
 using util::Impl;
 
 namespace felis {
 
-PromiseRoutinePool *PromiseRoutinePool::Create(size_t size)
+mem::Brk BasePromise::g_brk;
+
+PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
 {
-  PromiseRoutinePool *p = (PromiseRoutinePool *) malloc(sizeof(PromiseRoutinePool) + size);
-  p->mem_size = size;
-  p->refcnt = 0;
-  p->input_ptr = nullptr;
-  return p;
-}
-
-void PromiseRoutine::UnRef()
-{
-  delete next;
-  next = nullptr;
-
-  if (!pool->IsManaging(input.data))
-    free((void *) input.data);
-
-  if (pool->refcnt.fetch_sub(1) == 1) {
-    free(pool); // which also free this
-  }
-}
-
-void PromiseRoutine::UnRefRecursively()
-{
-  if (next) {
-    for (auto child: next->handlers) {
-      child->UnRefRecursively();
-    }
-  }
-  UnRef();
-}
-
-PromiseRoutine *PromiseRoutine::CreateWithDedicatePool(size_t capture_len)
-{
-  auto *p = PromiseRoutinePool::Create(sizeof(PromiseRoutine) + capture_len);
-  auto *r = (PromiseRoutine *) p->mem;
+  auto *p = (uint8_t *) BasePromise::g_brk.Alloc(sizeof(PromiseRoutine) + capture_len);
+  auto *r = (PromiseRoutine *) p;
   r->capture_len = capture_len;
-  r->capture_data = p->mem + sizeof(PromiseRoutine);
-  r->pool = p;
-  r->Ref();
+  r->capture_data = p + sizeof(PromiseRoutine);
   return r;
 }
 
-PromiseRoutine *PromiseRoutine::CreateFromBufferedPool(PromiseRoutinePool *rpool)
+PromiseRoutine *PromiseRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
 {
-  uint8_t *p = rpool->mem;
   uint16_t len;
   memcpy(&len, p, 2);
-  rpool->input_ptr = p + 2;
+  uint8_t * input_ptr = p + 2;
   p += util::Align(2 + len, 8);
 
   auto r = (PromiseRoutine *) p;
-  r->DecodeTree(rpool);
+  r->DecodeNode(p);
+  r->input.data = input_ptr;
   return r;
 }
 
@@ -81,20 +51,14 @@ void PromiseRoutine::EncodeTree(uint8_t *p)
   EncodeNode(p);
 }
 
-void PromiseRoutine::DecodeTree(PromiseRoutinePool *rpool)
-{
-  // input = VarStr(input.len, input.region_id, rpool->input_ptr);
-  input.data = rpool->input_ptr;
-  DecodeNode((uint8_t *) this, rpool);
-}
-
 size_t PromiseRoutine::NodeSize() const
 {
   size_t s = util::Align(sizeof(PromiseRoutine), 8)
              + util::Align(capture_len, 8)
              + 8;
   if (next) {
-    for (auto child: next->handlers) {
+    for (size_t i = 0; i < next->nr_handlers; i++) {
+      auto *child = next->handlers[i];
       s += child->NodeSize();
     }
   }
@@ -108,61 +72,78 @@ uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
   p += util::Align(sizeof(PromiseRoutine), 8);
   node->capture_data = p;
   node->next = nullptr;
-  node->pool = nullptr;
 
   memcpy(p, capture_data, capture_len);
   p += util::Align(capture_len, 8);
 
-  size_t nr_children = next ? next->handlers.size() : 0;
+  size_t nr_children = next ? next->nr_handlers : 0;
   memcpy(p, &nr_children, 8);
   p += 8;
 
   if (next) {
-    for (auto child: next->handlers) {
+    for (size_t i = 0; i < next->nr_handlers; i++) {
+      auto *child = next->handlers[i];
       p = child->EncodeNode(p);
     }
   }
   return p;
 }
 
-uint8_t *PromiseRoutine::DecodeNode(uint8_t *p, PromiseRoutinePool *rpool)
+uint8_t *PromiseRoutine::DecodeNode(uint8_t *p)
 {
   p += util::Align(sizeof(PromiseRoutine), 8);
   capture_data = p;
   p += util::Align(capture_len, 8);
   next = nullptr;
-  pool = rpool;
-  Ref();
+
   size_t nr_children = 0;
   memcpy(&nr_children, p, 8);
   p += 8;
   if (nr_children > 0) {
-    next = new BasePromise();
+    next = new BasePromise(nr_children);
     for (int i = 0; i < nr_children; i++) {
       auto child = (PromiseRoutine *) p;
-      p = child->DecodeNode(p, rpool);
-      next->handlers.push_back(child);
+      p = child->DecodeNode(p);
+      next->Add(child);
     }
   }
   return p;
 }
 
+PromiseProc::~PromiseProc()
+{
+}
+
 size_t BasePromise::g_nr_threads = 0;
-bool BasePromise::g_enable_batching = false;
 
 static size_t g_cur_thread = 1;
+
+BasePromise::BasePromise(size_t limit)
+    : limit(limit), nr_handlers(0)
+{
+  handlers = (PromiseRoutine **) g_brk.Alloc(sizeof(PromiseRoutine *) * limit);
+}
+
+void *BasePromise::operator new(std::size_t size)
+{
+  return g_brk.Alloc(size);
+}
+
+void BasePromise::Add(PromiseRoutine *child)
+{
+  abort_if(nr_handlers == kMaxHandlersLimit,
+           "nr_handlers {} exceeding limits!", nr_handlers);
+  handlers[nr_handlers++] = child;
+
+}
 
 void BasePromise::Complete(const VarStr &in)
 {
   auto &transport = util::Impl<PromiseRoutineTransportService>();
-  for (auto routine: handlers) {
+  for (size_t i = 0; i < nr_handlers; i++) {
+    auto routine = handlers[i];
     routine->input = in;
-
-    if (routine->node_id == -1) {
-      routine->node_id = routine->placement(routine);
-    }
     if (routine->node_id < 0) std::abort();
-
     transport.TransportPromiseRoutine(routine);
   }
 }
@@ -216,7 +197,8 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
   }
 }
 
-void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thread)
+void BasePromise::QueueRoutine(felis::PromiseRoutine **routines, size_t nr_routines,
+                               int source_idx, int thread, bool batch)
 {
   auto &desc = g_sources[source_idx];
   /*
@@ -230,25 +212,36 @@ void BasePromise::QueueRoutine(felis::PromiseRoutine *r, int source_idx, int thr
   }
   */
   // desc.finish_count.fetch_add(1);
-  bool would_batch = g_enable_batching;
-  if (g_enable_batching
-      && batch_counts[thread]->fetch_add(1) % 65536 == 65535) {
-    would_batch = false;
+  go::Routine *grt[nr_routines];
+  for (int i = 0; i < nr_routines; i++) {
+    auto r = routines[i];
+    auto gr =
+        go::Make(
+            [r, &desc]() {
+              {
+                INIT_ROUTINE_BRK(4096);
+                r->callback(r);
+              }
+              auto cmp = EpochClient::g_workload_client->completion_object();
+              cmp->Complete();
+              /*
+                if (desc.finish_count.fetch_sub(1) == 1) {
+                desc.BroadcastLocalBarrier();
+                }
+              */
+            });
+    grt[i] = gr;
+    if (i == nr_routines - 1)
+      gr->set_busy_poll(true);
   }
-  go::GetSchedulerFromPool(thread)->WakeUp(
-      go::Make(
-          [r, &desc]() {
-            {
-              INIT_ROUTINE_BRK(4096);
-              r->callback(r);
-            }
-            /*
-            if (desc.finish_count.fetch_sub(1) == 1) {
-              desc.BroadcastLocalBarrier();
-            }
-            */
-          }),
-      would_batch);
+  go::GetSchedulerFromPool(thread)->WakeUp(grt, nr_routines, batch);
+}
+
+void BasePromise::FlushScheduler()
+{
+  for (int i = 1; i <= g_nr_threads; i++) {
+    go::GetSchedulerFromPool(i)->WakeUp();
+  }
 }
 
 }

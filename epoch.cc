@@ -4,7 +4,7 @@
 
 namespace felis {
 
-EpochClient *EpochClient::gWorkloadClient = nullptr;
+EpochClient *EpochClient::g_workload_client = nullptr;
 
 void EpochCallback::operator()()
 {
@@ -13,7 +13,7 @@ void EpochCallback::operator()()
 }
 
 EpochClient::EpochClient() noexcept
-    : callback(EpochCallback()), completion(0, callback)
+    : callback(EpochCallback()), completion(0, callback), disable_load_balance(false)
 {
   callback.perf.End();
 }
@@ -28,19 +28,42 @@ void EpochClient::Worker()
 {
   // TODO: Add epoch management here? At least right now this is essential.
   util::Instance<EpochManager>().DoAdvance(this);
+  auto &conf = util::Instance<NodeConfiguration>();
 
-  auto base = 1000; // in 100 times
+  auto base = 3000; // in 100 times
   printf("load percentage %d\n", LoadPercentage());
   auto total_nr_txn = base * LoadPercentage();
-  completion.Increment(total_nr_txn);
-  callback.perf.Start();
-  BasePromise::g_enable_batching = true;
+  auto nr_threads = NodeConfiguration::g_nr_threads;
+  BasePromise **roots = new BasePromise*[total_nr_txn];
+
+  disable_load_balance = true;
   for (int i = 0; i < total_nr_txn; i++) {
-    if (i == total_nr_txn - 1)
-      BasePromise::g_enable_batching = false;
-    auto *txn = RunCreateTxn();
-    txn->completion.Complete();
+    if (i == total_nr_txn * 0.3)
+      disable_load_balance = true;
+    auto *txn = RunCreateTxn(i + 1);
+    conf.CollectBufferPlan(txn->root_promise());
+    roots[i] = txn->root_promise();
   }
+
+  conf.FlushBufferPlan();
+  callback.perf.Start();
+  for (ulong i = 0; i < nr_threads; i++) {
+    auto r = go::Make(
+        [i, total_nr_txn, nr_threads, roots] {
+          logger->info("Beginning to dispatch {}", i + 1);
+          for (ulong j = i * total_nr_txn / nr_threads;
+               j < (i + 1) * total_nr_txn / nr_threads;
+               j++) {
+            roots[j]->Complete(VarStr());
+            roots[j] = nullptr;
+          }
+          logger->info("Dispatch done {}", i + 1);
+        });
+    r->set_urgent(true);
+    go::GetSchedulerFromPool(i + 1)->WakeUp(r);
+  }
+
+  disable_load_balance = false;
 }
 
 static constexpr size_t kEpochMemoryLimit = 256 << 20;

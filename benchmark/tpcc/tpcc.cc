@@ -37,7 +37,7 @@ struct Config {
   uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, the bit is 1
   std::vector<int> offload_nodes;
 
-  static constexpr uint kHotspoLoadPercentage = 200;
+  static constexpr uint kHotspoLoadPercentage = 500;
   static constexpr size_t kMaxSupportedWarehouse = 64;
 } kTPCCConfig;
 
@@ -731,11 +731,11 @@ void Loader<LoaderType::Order>::DoLoad()
 
 }
 
-felis::BaseTxn *Client::RunCreateTxn()
+felis::BaseTxn *Client::RunCreateTxn(uint64_t serial_id)
 {
   // TODO: generate standard TPC-C txn mix here
   // currently, only NewOrder is available
-  return TxnFactory::Create(static_cast<int>(TxnType::NewOrder), this);
+  return TxnFactory::Create(static_cast<int>(TxnType::NewOrder), this, serial_id);
 }
 
 }
