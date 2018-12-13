@@ -33,12 +33,13 @@ void EpochClient::Worker()
   auto base = 3000; // in 100 times
   printf("load percentage %d\n", LoadPercentage());
   auto total_nr_txn = base * LoadPercentage();
+  auto watermark = base * 70;
   auto nr_threads = NodeConfiguration::g_nr_threads;
   BasePromise **roots = new BasePromise*[total_nr_txn];
 
-  disable_load_balance = true;
+  // disable_load_balance = true;
   for (int i = 0; i < total_nr_txn; i++) {
-    if (i == total_nr_txn * 0.3)
+    if (i == watermark)
       disable_load_balance = true;
     auto *txn = RunCreateTxn(i + 1);
     conf.CollectBufferPlan(txn->root_promise());
@@ -49,13 +50,20 @@ void EpochClient::Worker()
   callback.perf.Start();
   for (ulong i = 0; i < nr_threads; i++) {
     auto r = go::Make(
-        [i, total_nr_txn, nr_threads, roots] {
+        [i, watermark, total_nr_txn, nr_threads, roots] {
           logger->info("Beginning to dispatch {}", i + 1);
-          for (ulong j = i * total_nr_txn / nr_threads;
-               j < (i + 1) * total_nr_txn / nr_threads;
+          for (ulong j = i * watermark / nr_threads;
+               j < (i + 1) * watermark / nr_threads;
                j++) {
             roots[j]->Complete(VarStr());
             roots[j] = nullptr;
+          }
+          ulong left_over = total_nr_txn - watermark;
+          for (ulong j = i * left_over / nr_threads;
+               j < (i + 1) * left_over / nr_threads;
+               j++) {
+            roots[j + watermark]->Complete(VarStr());
+            roots[j + watermark] = nullptr;
           }
           logger->info("Dispatch done {}", i + 1);
         });

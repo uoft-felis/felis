@@ -93,15 +93,32 @@ class Brk {
     Deleter *next;
   };
 
-  size_t offset;
+  std::atomic_size_t offset;
   size_t limit;
   uint8_t *data;
   Deleter *deleters;
+
+  std::memory_order ord = std::memory_order_relaxed;;
 
  public:
   Brk() : offset(0), limit(0), data(nullptr), deleters(nullptr) {}
   Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), deleters(nullptr) {}
   ~Brk();
+
+  void move(Brk &&rhs) {
+    data = rhs.data;
+    limit = rhs.limit;
+    offset.store(rhs.offset.load());
+    deleters = rhs.deleters;
+    rhs.deleters = nullptr;
+  }
+
+  void set_thread_safe(bool safe) {
+    if (safe)
+      ord = std::memory_order_seq_cst;
+    else
+      ord = std::memory_order_relaxed;
+  }
 
   // This is a special New() function. It avoids memory allocation.
   static Brk *New(void *buf, size_t sz) {

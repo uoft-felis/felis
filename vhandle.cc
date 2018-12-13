@@ -8,6 +8,170 @@
 
 namespace felis {
 
+static constexpr int kMaxSupportedCores = 63;
+
+// Spinner Slots Because we're using a coroutine library, so our coroutines are
+// not preemptive.  When a coroutine needs to wait for some condition, it just
+// spins on this per-cpu spinner slot rather than the condition.
+//
+// This also requires the condition notifier be able to aware of that. What we
+// can do for our sorted versioning is to to store a bitmap in the magic number
+// count. This limits us to *63 cores* at maximum though. Exceeding this limit
+// might lead us to use share spinner slots.
+
+class SpinnerSlot {
+ public:
+  static constexpr int kNrSpinners = 32;
+ private:
+  struct {
+    volatile long done;
+    long __padding__[7];
+  } slots[kNrSpinners];
+ public:
+  SpinnerSlot() { memset(slots, 0, 64 * kNrSpinners); }
+
+  void Wait(uint64_t sid, uint64_t ver);
+  void NotifyAll(uint64_t bitmap);
+};
+
+
+void SpinnerSlot::Wait(uint64_t sid, uint64_t ver)
+{
+  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
+  if (unlikely(idx < 0)) {
+    std::abort();
+  }
+
+  long dt = 0;
+  while (!slots[idx].done) {
+    asm("pause" : : :"memory");
+    dt++;
+  }
+
+  asm volatile("" : : :"memory");
+
+  DTRACE_PROBE3(felis, wait_jiffies, dt, sid, ver);
+  slots[idx].done = 0;
+}
+
+void SpinnerSlot::NotifyAll(uint64_t bitmap)
+{
+  while (bitmap) {
+    int idx = __builtin_ctzll(bitmap);
+    slots[idx].done = 1;
+    bitmap &= ~(1 << idx);
+  }
+}
+
+static SpinnerSlot gSpinnerSlots;
+
+static bool IsPendingVal(uintptr_t val)
+{
+  if ((val >> 32) == (kPendingValue >> 32))
+    return true;
+  return false;
+}
+
+static void __attribute__((noinline))
+WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
+{
+  DTRACE_PROBE1(felis, version_read, handle);
+
+  uintptr_t oldval = *addr;
+  if (!IsPendingVal(oldval)) return;
+  DTRACE_PROBE1(felis, blocking_version_read, handle);
+
+  int core = go::Scheduler::CurrentThreadPoolId() - 1;
+
+  while (true) {
+    uintptr_t val = oldval;
+    uint64_t mask = 1ULL << core;
+    uintptr_t newval = val & ~mask;
+    oldval = __sync_val_compare_and_swap(addr, val, newval);
+    if (oldval == val) {
+      gSpinnerSlots.Wait(sid, ver);
+      oldval = *addr;
+    }
+    if (!IsPendingVal(oldval))
+      return;
+  }
+}
+
+mem::Pool *SkipListVHandle::Block::pool;
+
+void SkipListVHandle::Block::InitPool()
+{
+  pool = new mem::Pool(sizeof(Block), 1 << 30);
+}
+
+SkipListVHandle::Block::Block()
+{
+  min = 0;
+  size = 0;
+  memset(versions, 0xff, kLimit * sizeof(uint64_t));
+  for (int i = 0; i < kLimit; i++) objects[i] = kPendingValue;
+  for (int i = 0; i < kLevels; i++) levels[i] = nullptr;
+}
+
+bool SkipListVHandle::Block::Add(uint64_t view, uint64_t version)
+{
+  auto tot_size = size.load();
+  do {
+    if ((tot_size >> kLimitBits) != (view >> kLimitBits)) {
+      // The block must have been splitted after I viewed it. We cannot simply
+      // append this version in this block, as it might be larger than the
+      // maximum of this block can hold.
+      return false;
+    }
+    if ((tot_size & kSizeMask) == kLimitBits + 1) {
+      // Somebody is splitting this block right now.
+      return false;
+    }
+  } while (!size.compare_exchange_strong(tot_size, tot_size + 1));
+  int idx = tot_size & kSizeMask;
+
+  if (idx < kLimit) {
+    versions[idx] = version;
+    return true;
+  }
+
+  assert(idx == kLimit);
+  // Split this block
+  Block *next_block = new Block();
+  uint64_t half_size = kLimit / 2;
+  std::sort(versions, versions + kLimit);
+  memcpy(next_block->versions, versions + half_size, sizeof(uint64_t) * (kLimit - half_size));
+  next_block->min = next_block->versions[0];
+  next_block->size = kLimit - half_size;
+  next_block->levels[0].store(levels[0].load(), std::memory_order_relaxed);
+
+  if (version > next_block->min) {
+    next_block->versions[next_block->size] = version;
+    next_block->size.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    versions[half_size] = version;
+    half_size++;
+  }
+
+  tot_size &= ~kSizeMask;
+  tot_size += (1UL << kLimitBits) + half_size;
+
+  levels[0].store(next_block);
+  size.store(tot_size);
+
+  return true;
+}
+
+SkipListVHandle::SkipListVHandle()
+    : lock(false), alloc_by_coreid(mem::CurrentAllocAffinity()),
+      flush_tid(0), size(0), shared_blocks(nullptr)
+{
+}
+
+
+
+#if 0
+
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
 {
@@ -89,91 +253,6 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   return &objects[pos];
 }
 
-// Spinner Slots Because we're using a coroutine library, so our coroutines are
-// not preemptive.  When a coroutine needs to wait for some condition, it just
-// spins on this per-cpu spinner slot rather than the condition.
-//
-// This also requires the condition notifier be able to aware of that. What we
-// can do for our sorted versioning is to to store a bitmap in the magic number
-// count. This limits us to *63 cores* at maximum though. Exceeding this limit
-// might lead us to use share spinner slots.
-
-class SpinnerSlot {
-  static const int kNrSpinners = 32;
-  struct {
-    volatile long done;
-    long __padding__[7];
-  } slots[kNrSpinners];
- public:
-  SpinnerSlot() { memset(slots, 0, 64 * kNrSpinners); }
-
-  void Wait(uint64_t sid, uint64_t ver);
-  void NotifyAll(uint64_t bitmap);
-};
-
-
-void SpinnerSlot::Wait(uint64_t sid, uint64_t ver)
-{
-  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
-  if (unlikely(idx < 0)) {
-    std::abort();
-  }
-
-  long dt = 0;
-  while (!slots[idx].done) {
-    asm("pause" : : :"memory");
-    dt++;
-  }
-
-  asm volatile("" : : :"memory");
-
-  DTRACE_PROBE3(felis, wait_jiffies, dt, sid, ver);
-  slots[idx].done = 0;
-}
-
-void SpinnerSlot::NotifyAll(uint64_t bitmap)
-{
-  while (bitmap) {
-    int idx = __builtin_ctzll(bitmap);
-    slots[idx].done = 1;
-    bitmap &= ~(1 << idx);
-  }
-}
-
-static SpinnerSlot gSpinnerSlots;
-
-static bool IsPendingVal(uintptr_t val)
-{
-  if ((val >> 32) == (kPendingValue >> 32))
-    return true;
-  return false;
-}
-
-static void __attribute__((noinline))
-WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
-{
-  DTRACE_PROBE1(felis, version_read, handle);
-
-  uintptr_t oldval = *addr;
-  if (!IsPendingVal(oldval)) return;
-  DTRACE_PROBE1(felis, blocking_version_read, handle);
-
-  int core = go::Scheduler::CurrentThreadPoolId() - 1;
-
-  while (true) {
-    uintptr_t val = oldval;
-    uint64_t mask = 1ULL << core;
-    uintptr_t newval = val & ~mask;
-    oldval = __sync_val_compare_and_swap(addr, val, newval);
-    if (oldval == val) {
-      gSpinnerSlots.Wait(sid, ver);
-      oldval = *addr;
-    }
-    if (!IsPendingVal(oldval))
-      return;
-  }
-}
-
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   // if (versions.size() > 0) assert(versions[0] == 0);
@@ -246,6 +325,8 @@ done:
   value_mark = size;
   return;
 }
+
+#endif
 
 mem::Pool *BaseVHandle::pools;
 

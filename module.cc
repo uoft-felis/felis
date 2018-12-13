@@ -26,9 +26,13 @@ class LoggingModule : public Module<CoreModule> {
     required = true;
   }
   void Init() override {
+    auto &console = util::Instance<Console>();
     InitializeLogger();
 
-    std::ofstream pid_fout("/tmp/dolly.pid");
+    std::stringstream ss;
+    ss << "/tmp/felis-" << console.server_node_name() << ".pid";
+
+    std::ofstream pid_fout(ss.str());
     pid_fout << (unsigned long) getpid();
   }
 };
@@ -61,11 +65,13 @@ class AllocatorModule : public Module<CoreModule> {
           });
     }
     tasks.emplace_back(VHandle::InitPools);
+    tasks.emplace_back(SkipListVHandle::Block::InitPool);
 
-    BasePromise::g_brk = mem::Brk(
-        mmap(NULL, 10UL << 30, PROT_READ | PROT_WRITE,
+    BasePromise::g_brk.move(mem::Brk(
+        mmap(NULL, 5UL << 30, PROT_READ | PROT_WRITE,
              MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0),
-        10UL << 30);
+        5UL << 30));
+    BasePromise::g_brk.set_thread_safe(true);
 
     for (auto &t: tasks) t.join();
 

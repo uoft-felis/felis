@@ -21,7 +21,7 @@ class Console {
   std::mutex mutex;
   std::condition_variable cond;
   ServerStatus server_status = ServerStatus::Booting;
-  std::string server_node_name;
+  std::string node_name;
   std::map<std::string, std::function<json11::Json (Console *, json11::Json)>> handlers;
 
   json11::Json conf;
@@ -31,7 +31,8 @@ class Console {
   Console();
   Console(const Console &rhs) = delete;
 
-  void set_server_node_name(std::string name) { server_node_name = name; }
+  void set_server_node_name(std::string name) { node_name = name; }
+  std::string server_node_name() const { return node_name; }
   void UpdateServerStatus(ServerStatus status) {
     std::unique_lock<std::mutex> _(mutex);
     server_status = status;
@@ -66,7 +67,7 @@ class Console {
   json11::Json JsonResponse() {
     return json11::Json::object({
         {"type", "OK"},
-        {"host", server_node_name},
+        {"host", node_name},
       });
   }
   json11::Json JsonResponse(json11::Json::object props) {

@@ -156,19 +156,19 @@ void Region::ApplyFromConf(json11::Json conf_doc)
 {
   auto json_map = conf_doc.object_items();
   for (auto it = json_map.begin(); it != json_map.end(); ++it) {
-    set_pool_capacity(atoi(it->first.c_str()), it->second.int_value() << 20);
+    set_pool_capacity(atoi(it->first.c_str()), it->second.int_value() << 10);
   }
 }
 
 void *Brk::Alloc(size_t s)
 {
   s = util::Align(s, 8);
-  if (__builtin_expect(offset + s > limit, 0)) {
+  auto off = offset.fetch_add(s);
+  if (__builtin_expect(off + s > limit, 0)) {
     fprintf(stderr, "Brk of limit %lu is not large enough!\n", limit);
     std::abort();
   }
-  uint8_t *p = data + offset;
-  offset += s;
+  uint8_t *p = data + off;
   return p;
 }
 

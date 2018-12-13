@@ -151,7 +151,7 @@ class Txn : public BaseTxn {
 
           // TODO: insert if not there...
           if (handle) {
-            index_handle(handle).AppendNewVersion();
+            while (!index_handle(handle).AppendNewVersion());
           }
 
           auto fp = (void (*)(const ContextType<Types...> &, VHandle *)) p;

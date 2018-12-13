@@ -15,7 +15,8 @@ mem::Brk BasePromise::g_brk;
 
 PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
 {
-  auto *p = (uint8_t *) BasePromise::g_brk.Alloc(sizeof(PromiseRoutine) + capture_len);
+  auto *p = (uint8_t *) BasePromise::g_brk.Alloc(
+      util::Align(sizeof(PromiseRoutine) + capture_len, CACHE_LINE_SIZE));
   auto *r = (PromiseRoutine *) p;
   r->capture_len = capture_len;
   r->capture_data = p + sizeof(PromiseRoutine);
@@ -116,12 +117,14 @@ PromiseProc::~PromiseProc()
 
 size_t BasePromise::g_nr_threads = 0;
 
-static size_t g_cur_thread = 1;
-
 BasePromise::BasePromise(size_t limit)
     : limit(limit), nr_handlers(0)
 {
-  handlers = (PromiseRoutine **) g_brk.Alloc(sizeof(PromiseRoutine *) * limit);
+  if (limit <= kInlineLimit)
+    handlers = inline_handlers;
+  else
+    handlers = (PromiseRoutine **) g_brk.Alloc(
+        util::Align(sizeof(PromiseRoutine *) * limit, CACHE_LINE_SIZE));
 }
 
 void *BasePromise::operator new(std::size_t size)
@@ -143,7 +146,7 @@ void BasePromise::Complete(const VarStr &in)
   for (size_t i = 0; i < nr_handlers; i++) {
     auto routine = handlers[i];
     routine->input = in;
-    if (routine->node_id < 0) std::abort();
+    // if (routine->node_id < 0) std::abort();
     transport.TransportPromiseRoutine(routine);
   }
 }

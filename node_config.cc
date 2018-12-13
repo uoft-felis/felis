@@ -170,7 +170,7 @@ SendChannelImpl::SendChannelImpl(go::TcpOutputChannel *out)
   auto buffer =
       (uint8_t *) malloc((NodeConfiguration::g_nr_threads + 1) * kPerThreadBuffer);
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
-    channels[i]->brk = mem::Brk(buffer + i * kPerThreadBuffer, kPerThreadBuffer);
+    channels[i]->brk.move(mem::Brk(buffer + i * kPerThreadBuffer, kPerThreadBuffer));
     channels[i]->lock = false;
   }
 }
@@ -332,7 +332,8 @@ void NodeServerThreadRoutine::Run()
       abort_if(src_node_id == 0,
                "Protocol error. Should always send the updated counters first");
 
-      auto *p = (uint8_t *) BasePromise::g_brk.Alloc(promise_size);
+      auto *p = (uint8_t *) BasePromise::g_brk.Alloc(
+          util::Align(promise_size, CACHE_LINE_SIZE));
       in->Read(p, promise_size);
 
       auto r = PromiseRoutine::CreateFromPacket(p, promise_size);
@@ -524,10 +525,10 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
 
     routine->input.data = nullptr;
   } else {
-    auto &in = routine->input;
-    uint8_t *p = (uint8_t *) malloc(in.len);
-    memcpy(p, in.data, in.len);
-    routine->input = VarStr(in.len, in.region_id, p);
+    // auto &in = routine->input;
+    // uint8_t *p = (uint8_t *) malloc(in.len);
+    // memcpy(p, in.data, in.len);
+    // routine->input = VarStr(in.len, in.region_id, p);
 
     lb->QueueRoutine(routine);
     if (current_cnt.fetch_add(1) + 1 == target_cnt) {

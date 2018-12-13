@@ -61,6 +61,9 @@ class BasePromise {
   size_t nr_handlers;
   size_t limit;
   PromiseRoutine **handlers;
+  static constexpr size_t kInlineLimit = 5;
+
+  PromiseRoutine *inline_handlers[kInlineLimit];
  public:
   static mem::Brk g_brk;
   static size_t g_nr_threads;
@@ -80,11 +83,12 @@ class BasePromise {
   PromiseRoutine **routines() { return handlers; }
 };
 
+static_assert(sizeof(BasePromise) == CACHE_LINE_SIZE, "BasePromise is not cache line aligned");
+
 class PromiseRoutineTransportService {
  public:
   virtual void TransportPromiseRoutine(PromiseRoutine *routine) = 0;
 };
-
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
 
@@ -127,7 +131,7 @@ class Promise : public BasePromise {
 
       auto output = native_func(capture, t);
       if (routine->next && output) {
-        void *buffer = alloca(output->EncodeSize() + sizeof(VarStr) + 1);
+        void *buffer = BasePromise::g_brk.Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
         VarStr *output_str = output->EncodeFromAlloca(buffer);
         routine->next->Complete(*output_str);
       }

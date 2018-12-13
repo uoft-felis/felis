@@ -9,6 +9,6 @@ stdenv.mkDerivation rec {
    '';
    
   buildInputs = [
-    jemalloc numactl llvm_6 clang_6 lldb_6 gtest gperftools python36 watchman nailgun
+    numactl llvm_7 clang_7 lldb_7 gtest gperftools python36 watchman nailgun
   ];
 }
