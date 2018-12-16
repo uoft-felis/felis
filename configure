@@ -2,13 +2,16 @@
 # -*- mode: python -*-
 
 import os
+import stat
 import sys
+import platform
 import shutil
 import subprocess
 
-if not os.path.exists('./buck.pex'):
+if not os.path.exists('./buck.pex') and platform.system() != 'Darwin':
     print("Getting Buck...")
     os.system('curl -o buck.pex -L https://jitpack.io/com/github/facebook/buck/8f1fc9e71badf47d298622e4c5ca8533ed6e5cef/buck-8f1fc9e71badf47d298622e4c5ca8533ed6e5cef.pex')
+    os.system('chmod +x buck.pex')
 
 with open('.buckconfig.local', 'w') as f:
     f.write('[cxx]\n')
@@ -33,3 +36,5 @@ with open('.buckconfig.local', 'w') as f:
 
     with open('.ccls', 'w') as f:
         f.write('\n'.join('clang++ -std=c++17 -I. -Ispdlog/include -DCACHE_LINE_SIZE=64'.split(' ') + ccls_inc_path))
+        if platform.system() == 'Darwin':
+            f.write('-DDISABLE_NUMA\n')
