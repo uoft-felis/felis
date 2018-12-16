@@ -23,6 +23,7 @@ class BaseVHandle {
   void Prefetch() const {}
 };
 
+#if 0
 class SkipListVHandle : public BaseVHandle {
  public:
   struct Block {
@@ -52,6 +53,9 @@ class SkipListVHandle : public BaseVHandle {
     uint64_t objects[kLimit];
 
     bool Add(uint64_t view, uint64_t version);
+    Block *Find(uint64_t version, bool inclusive);
+   private:
+    Block *Find(uint64_t version, bool inclusive, ulong &iterations);
   };
  private:
   std::atomic_bool lock;
@@ -83,8 +87,8 @@ class SkipListVHandle : public BaseVHandle {
 };
 
 static_assert(sizeof(SkipListVHandle) <= 64, "SortedBlockVHandle is larger than a cache line");
+#endif
 
-#if 0
 class SortedArrayVHandle : public BaseVHandle {
   std::atomic_bool lock;
   short alloc_by_coreid;
@@ -127,8 +131,6 @@ class SortedArrayVHandle : public BaseVHandle {
 };
 
 static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
-
-#endif
 
 #ifdef LL_REPLAY
 class LinkListVHandle : public BaseVHandle {
@@ -246,9 +248,9 @@ class VHandle : public CalvinVHandle {};
 #endif
 
 #else
-// class VHandle : public SortedArrayVHandle {};
+class VHandle : public SortedArrayVHandle {};
 
-class VHandle : public SkipListVHandle {};
+// class VHandle : public SkipListVHandle {};
 #endif
 
 }

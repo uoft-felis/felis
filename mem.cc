@@ -156,7 +156,7 @@ void Region::ApplyFromConf(json11::Json conf_doc)
 {
   auto json_map = conf_doc.object_items();
   for (auto it = json_map.begin(); it != json_map.end(); ++it) {
-    set_pool_capacity(atoi(it->first.c_str()), it->second.int_value() << 10);
+    set_pool_capacity(atoi(it->first.c_str()), it->second.int_value() << 20);
   }
 }
 

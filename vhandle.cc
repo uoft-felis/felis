@@ -97,6 +97,7 @@ WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
   }
 }
 
+#if 0
 mem::Pool *SkipListVHandle::Block::pool;
 
 void SkipListVHandle::Block::InitPool()
@@ -162,15 +163,28 @@ bool SkipListVHandle::Block::Add(uint64_t view, uint64_t version)
   return true;
 }
 
+SkipListVHandle::Block *SkipListVHandle::Block::Find(uint64_t version, bool inclusive, ulong &iterations)
+{
+  if (min > version)
+    return nullptr;
+  if (!inclusive && min == version)
+    return nullptr;
+  for (int i = kLevels - 1; i >= 0; i--) {
+    if (levels[i].load() == nullptr) continue;
+    auto next = levels[i].load()->Find(version, inclusive, iterations);
+    if (next)
+      return next;
+  }
+  return this;
+}
+
 SkipListVHandle::SkipListVHandle()
     : lock(false), alloc_by_coreid(mem::CurrentAllocAffinity()),
       flush_tid(0), size(0), shared_blocks(nullptr)
 {
 }
 
-
-
-#if 0
+#endif
 
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
@@ -325,8 +339,6 @@ done:
   value_mark = size;
   return;
 }
-
-#endif
 
 mem::Pool *BaseVHandle::pools;
 

@@ -65,7 +65,7 @@ class AllocatorModule : public Module<CoreModule> {
           });
     }
     tasks.emplace_back(VHandle::InitPools);
-    tasks.emplace_back(SkipListVHandle::Block::InitPool);
+    // tasks.emplace_back(SkipListVHandle::Block::InitPool);
 
     BasePromise::g_brk.move(mem::Brk(
         mmap(NULL, 5UL << 30, PROT_READ | PROT_WRITE,

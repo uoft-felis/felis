@@ -6,9 +6,10 @@ stdenv.mkDerivation rec {
      unset CC CXX
      export CC=clang
      export CXX=clang++
+     export JAVA_HOME=/usr/java
    '';
    
   buildInputs = [
-    numactl llvm_7 clang_7 lldb_7 gtest gperftools python36 watchman nailgun
+    numactl llvm_7 clang_7 lldb_7 lld_7 gtest gperftools python36 watchman nailgun
   ];
 }
