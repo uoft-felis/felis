@@ -58,7 +58,7 @@ Run The Workload
 Nodes need to be specified first. They are speicified in `config.json` on the felis-controller side. Once they are defined, you just need to run.
 
 ```
-buck-out/gen/db#release -c 127.0.0.1 -n host1 -w tpcc
+buck-out/gen/db#release -c 127.0.0.1:<rpc_port> -n host1 -w tpcc
 ```
 
 `-c` is the felis-controller IP address, `-n` is the host name for this node, and `-w` means run `tpcc` workload. With the default configuration, you are able to run two nodes: `host1` and `host2`.

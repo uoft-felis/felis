@@ -30,7 +30,12 @@ class LoggingModule : public Module<CoreModule> {
     InitializeLogger();
 
     std::stringstream ss;
-    ss << "/tmp/felis-" << console.server_node_name() << ".pid";
+    ss << "/tmp/";
+
+    auto username = getenv("USER");
+    if (username)
+      ss << username << "-";
+    ss << "felis-" << console.server_node_name() << ".pid";
 
     std::ofstream pid_fout(ss.str());
     pid_fout << (unsigned long) getpid();
