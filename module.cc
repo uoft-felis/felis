@@ -52,7 +52,7 @@ class AllocatorModule : public Module<CoreModule> {
       .description = "Memory Allocator"
     };
   }
-  static constexpr size_t kBasePromisePreAllocation = 4UL << 30;
+  static constexpr size_t kBasePromisePreAllocation = 5UL << 30;
   void Init() override {
     Module<CoreModule>::InitModule("config");
 
