@@ -52,6 +52,7 @@ class AllocatorModule : public Module<CoreModule> {
       .description = "Memory Allocator"
     };
   }
+  static constexpr size_t kBasePromisePreAllocation = 4UL << 30;
   void Init() override {
     Module<CoreModule>::InitModule("config");
 
@@ -66,7 +67,8 @@ class AllocatorModule : public Module<CoreModule> {
       // logger->info("setting up regions {}", i);
       tasks.emplace_back(
           [&r, i]() {
-            r.InitPools(i / mem::kNrCorePerNode);
+            auto node = (i + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+            r.InitPools(node);
           });
     }
     tasks.emplace_back(VHandle::InitPools);
@@ -75,12 +77,16 @@ class AllocatorModule : public Module<CoreModule> {
     BasePromise::g_brk.move(mem::Brk(
         mmap(NULL, 5UL << 30, PROT_READ | PROT_WRITE,
              MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0),
-        5UL << 30));
+        kBasePromisePreAllocation));
     BasePromise::g_brk.set_thread_safe(true);
 
     for (auto &t: tasks) t.join();
 
-    logger->info("Memory used {}MB", mem::Pool::gTotalAllocatedMem.load() / (1 << 20));
+    logger->info("Memory used: {}MB in regular pages, {}MB in huge pages.",
+                 mem::Pool::g_total_page_mem.load() / (1 << 20),
+                 mem::Pool::g_total_hugepage_mem.load() / (1 << 20));
+    logger->info("Memory used: BasePromise {}GB",
+                 kBasePromisePreAllocation / (1 << 30));
   }
 };
 

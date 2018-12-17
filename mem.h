@@ -23,16 +23,25 @@ class Pool {
   Pool() : data(nullptr), len(0) {}
 
   Pool(size_t chunk_size, size_t cap, int numa_node = -1);
-
   Pool(const Pool &rhs) = delete;
   ~Pool();
+
+  void move(Pool &&rhs) {
+    data = rhs.data;
+    len = rhs.len;
+    head.store(rhs.head.load());
+    rhs.data = nullptr;
+    rhs.head.store(nullptr);
+    rhs.len = 0;
+  }
 
   void *Alloc();
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
 
-  static std::atomic_ulong gTotalAllocatedMem;
+  static std::atomic_ulong g_total_page_mem;
+  static std::atomic_ulong g_total_hugepage_mem;
 };
 
 static_assert(sizeof(Pool) == 64, "Pool object size is not 64 bytes");

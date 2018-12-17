@@ -46,7 +46,8 @@ int CurrentAllocAffinity()
   else return go::Scheduler::CurrentThreadPoolId() - 1;
 }
 
-std::atomic_ulong Pool::gTotalAllocatedMem = 0;
+std::atomic_ulong Pool::g_total_page_mem = 0;
+std::atomic_ulong Pool::g_total_hugepage_mem = 0;
 
 Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
     : len(cap * chunk_size), capacity(cap)
@@ -60,8 +61,11 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
   } else {
     len = util::Align(len, 4 << 10);
   }
-
-  gTotalAllocatedMem.fetch_add(len);
+  if (flags & MAP_HUGETLB) {
+    g_total_hugepage_mem.fetch_add(len);
+  } else {
+    g_total_page_mem.fetch_add(len);
+  }
 
   data = mmap(nullptr, len, PROT_READ | PROT_WRITE, flags, -1, 0);
   if (data == (void *) -1) {

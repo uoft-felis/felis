@@ -346,7 +346,8 @@ static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
 {
   auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * NodeConfiguration::g_nr_threads);
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-    new (&pools[i]) mem::Pool(ele_size, nr_ele, i / mem::kNrCorePerNode);
+    auto node = (i + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+    pools[i].move(mem::Pool(ele_size, nr_ele, node));
   }
   return pools;
 }
