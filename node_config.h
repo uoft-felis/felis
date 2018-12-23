@@ -62,7 +62,8 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   void RunAllServers();
   void TransportPromiseRoutine(PromiseRoutine *routine) final override;
   void CollectBufferPlan(BasePromise *root);
-  void FlushBufferPlan();
+  void FlushBufferPlan(bool sync);
+  void FlushBufferPlanCompletion(uint64_t epoch_nr);
 
   void SendBarrier(int node_id);
   void BroadcastBarrier();
@@ -76,7 +77,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   SendChannel *GetOutputChannel(int node_id);
 
-  size_t nr_clients;
+  std::vector<go::TcpSocket *> clients;
 
  private:
   friend class NodeServerRoutine;

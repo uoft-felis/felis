@@ -34,6 +34,10 @@ class BaseTxn {
     return proc.promise();
   }
 
+  void ResetRoot() {
+    proc.Reset();
+  }
+
   uint64_t serial_id() const { return sid; }
 
   template <typename Api>
@@ -51,6 +55,16 @@ class BaseTxn {
    public:
     using TxnApi<VHandle>::TxnApi;
     bool AppendNewVersion();
+
+    VarStr *ReadVarStr();
+    template <typename T> T Read() {
+      return ReadVarStr()->ToType<T>();
+    }
+
+    bool WriteVarStr(VarStr *obj);
+    template <typename T> bool Write(const T &o) {
+      return WriteVarStr(o.Encode());
+    }
   };
 
   class TxnHandle {
@@ -60,7 +74,7 @@ class BaseTxn {
     TxnHandle(uint64_t sid, uint64_t epoch_nr) : sid(sid), epoch_nr(epoch_nr) {}
     TxnHandle() {}
 
-    TxnVHandle operator()(VHandle *vhandle) { return TxnVHandle(sid, epoch_nr, vhandle); }
+    TxnVHandle operator()(VHandle *vhandle) const { return TxnVHandle(sid, epoch_nr, vhandle); }
   };
 
   struct TxnIndexOpContext {
@@ -132,18 +146,18 @@ class Txn : public BaseTxn {
     state = epoch->AllocateEpochObjectOnCurrentNode<TxnState>();
   }
 
-  template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, void *, Types...>;
+  template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, Types...>;
 
   template <typename Func, typename ...Types>
-  std::tuple<ContextType<Types...>,
+  std::tuple<ContextType<void *, Types...>,
              int,
-             Optional<VoidValue> (*)(const ContextType<Types...>&, Tuple<VHandle *>)>
+             Optional<VoidValue> (*)(const ContextType<void *, Types...>&, Tuple<VHandle *>)>
   TxnSetupVersion(int node, Func func, Types... params) {
-    void * p = (void *) (void (*)(const ContextType<Types...> &, VHandle *)) func;
+    void * p = (void *) (void (*)(const ContextType<void *, Types...> &, VHandle *)) func;
     return std::make_tuple(
-        ContextType<Types...>(state, index_handle(), p, params...),
+        ContextType<void *, Types...>(state, index_handle(), p, params...),
         node,
-        [](const ContextType<Types...> &ctx, Tuple<VHandle *> args) -> Optional<VoidValue> {
+        [](const ContextType<void *, Types...> &ctx, Tuple<VHandle *> args) -> Optional<VoidValue> {
           void *p = ctx.template _<2>();
           auto state = ctx.template _<0>();
           auto index_handle = ctx.template _<1>();
@@ -154,10 +168,20 @@ class Txn : public BaseTxn {
             while (!index_handle(handle).AppendNewVersion());
           }
 
-          auto fp = (void (*)(const ContextType<Types...> &, VHandle *)) p;
+          auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *)) p;
           fp(ctx, handle);
           return nullopt;
         });
+  }
+
+  template <typename Func, typename ...Types>
+  std::tuple<ContextType<Types...>,
+             int,
+             Func>
+  TxnProc(int node, Func func, Types... params) {
+    return std::make_tuple(ContextType<Types...>(state, index_handle(), params...),
+                           node,
+                           func);
   }
 
 };

@@ -100,7 +100,7 @@ class SendChannelImpl {
 
  public:
   static constexpr size_t kPerThreadBuffer = 16 << 10;
-  SendChannelImpl(go::TcpOutputChannel *out);
+  SendChannelImpl(go::TcpSocket *sock);
   void *Alloc(size_t sz);
   void Unlock() {
     Unlock(go::Scheduler::CurrentThreadPoolId());
@@ -164,8 +164,8 @@ void PromiseRoundRobinImpl::PushRelease(int thr)
   }
 }
 
-SendChannelImpl::SendChannelImpl(go::TcpOutputChannel *out)
-    : out(out)
+SendChannelImpl::SendChannelImpl(go::TcpSocket *sock)
+    : out(sock->output_channel())
 {
   auto buffer =
       (uint8_t *) malloc((NodeConfiguration::g_nr_threads + 1) * kPerThreadBuffer);
@@ -260,8 +260,6 @@ NodeConfiguration::NodeConfiguration()
     max_node_id = std::max((int) max_node_id, idx);
   }
 
-  nr_clients = 0;
-
   total_batch_counters = new std::atomic_ulong[kPromiseMaxLevels * nr_nodes() * nr_nodes()];
   local_batch_counters = new ulong[2 + kPromiseMaxLevels * nr_nodes() * nr_nodes()];
 
@@ -291,7 +289,8 @@ class NodeServerThreadRoutine : public go::Routine {
   ulong src_node_id;
  public:
   NodeServerThreadRoutine(TcpSocket *client_sock, int idx)
-      : in(client_sock->input_channel()), idx(idx), src_node_id(0) {
+      : in(client_sock->input_channel()),
+        idx(idx), src_node_id(0) {
     set_urgent(true);
     client_sock->OmitReadLock();
   }
@@ -431,7 +430,7 @@ void NodeServerRoutine::Run()
     bool rs = remote_sock->Connect(peer.host, peer.port);
     abort_if(!rs, "Cannot connect to {}:{}", peer.host, peer.port);
     conf.all_nodes[config->id] = remote_sock;
-    conf.all_out_channels[config->id] = new SendChannel(remote_sock->output_channel());
+    conf.all_out_channels[config->id] = new SendChannel(remote_sock);
   }
 
   // Now we can begining to accept. Each client sock is a source for our Promise.
@@ -443,7 +442,7 @@ void NodeServerRoutine::Run()
     TcpSocket *client_sock = server_sock->Accept();
     if (client_sock == nullptr) continue;
     logger->info("New worker peer connection");
-    conf.nr_clients++;
+    conf.clients.push_back(client_sock);
     go::GetSchedulerFromPool(1)->WakeUp(new NodeServerThreadRoutine(client_sock, i));
   }
   console.UpdateServerStatus(Console::ServerStatus::Running);
@@ -568,7 +567,7 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, int level
   }
 }
 
-void NodeConfiguration::FlushBufferPlan()
+void NodeConfiguration::FlushBufferPlan(bool sync)
 {
   EpochClient::g_workload_client->completion_object()->Increment(nr_nodes() - 1);
   local_batch_counters[1] = (ulong) node_id();
@@ -590,11 +589,39 @@ void NodeConfiguration::FlushBufferPlan()
     if (i < kPromiseMaxDebugLevels) puts("");
   }
 
+  std::vector<std::function<void ()>> funcs;
+
   for (int id = 1; id <= nr_nodes(); id++) {
     if (id == node_id()) continue;
+
     auto out = all_nodes[id]->output_channel();
+    auto in = all_nodes[id]->input_channel();
     auto buffer_size = 16 + kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(ulong);
-    out->Write(local_batch_counters, buffer_size);
+    auto buffer = local_batch_counters;
+    funcs.emplace_back(
+        [in, out, buffer, buffer_size]() {
+          uint64_t remote_epoch_finished;
+          in->Read(&remote_epoch_finished, 8);
+          out->Write(buffer, buffer_size);
+          out->Flush();
+        });
+  }
+
+  if (sync) {
+    for (auto &f: funcs) f();
+  } else {
+    auto sched = go::Scheduler::Current();
+    for (auto &f: funcs)
+      sched->WakeUp(go::Make(f));
+    sched->current_routine()->VoluntarilyPreempt(false);
+  }
+}
+
+void NodeConfiguration::FlushBufferPlanCompletion(uint64_t epoch_nr)
+{
+  for (auto *sock: clients) {
+    auto out = sock->output_channel();
+    out->Write(&epoch_nr, 8);
     out->Flush();
   }
 }

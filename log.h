@@ -19,6 +19,7 @@ class PerfLog {
   void Start();
   void End();
   void Show(const char *msg);
+  void Show(std::string str) { Show(str.c_str()); }
   void Clear();
 };
 

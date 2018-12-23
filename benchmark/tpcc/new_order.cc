@@ -82,12 +82,18 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
   int node = warehouse_to_node_id(warehouse_id);
   int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
 
+  // Looks like we only need this when FastIdGen is off? In a distributed
+  // environment, it makes sense to assume FastIdGen is always on.
+  /*
+
   proc >> TxnLookup<District>(lookup_node, district_key)
        >> TxnSetupVersion(
            node,
            [](const auto &ctx, auto *handle) {
              ctx.template _<0>()->rows.district = handle;
            });
+
+  */
 
   for (auto i = 0; i < nr_items; i++) {
     auto stock_key = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
@@ -98,8 +104,8 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
          >> TxnSetupVersion(
              node,
              [](const auto &ctx, auto *handle) {
-               uint i = ctx.template _<3>();
-               ctx.template _<0>()->rows.stocks[i] = handle;
+               auto &[state, _1, _2, i] = ctx;
+               state->rows.stocks[i] = handle;
              },
              i);
   }
@@ -107,6 +113,27 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
 
 void NewOrderTxn::Run()
 {
+  for (auto i = 0; i < nr_items; i++) {
+    int node = warehouse_to_node_id(supplier_warehouse_id[i]);
+    proc >> TxnProc(
+        node,
+        [](const auto &ctx, auto args) -> Optional<VoidValue> {
+          auto &[state, index_handle,
+                 i, ol_quantity, ol_supply_warehouse, warehouse_id] = ctx;
+          TxnVHandle vhandle = index_handle(state->rows.stocks[i]);
+          auto stock = vhandle.Read<Stock::Value>();
+          if (stock.s_quantity - ol_quantity < 10) {
+            stock.s_quantity += 91;
+          }
+          stock.s_quantity -= ol_quantity;
+          stock.s_ytd += ol_quantity;
+          stock.s_remote_cnt += (ol_supply_warehouse == warehouse_id) ? 0 : 1;
+
+          vhandle.Write(stock);
+          return nullopt;
+        },
+        i, order_quantities[i], supplier_warehouse_id[i], warehouse_id);
+  }
 }
 
 }

@@ -9,69 +9,97 @@ EpochClient *EpochClient::g_workload_client = nullptr;
 void EpochCallback::operator()()
 {
   perf.End();
-  perf.Show("Hoola");
+  perf.Show(label + std::string(" finishes"));
+
+  // Don't call the continuation directly.
+  //
+  // This is because we might Reset() the BasePromise::g_brk, which would free
+  // the current go::Routine.
+  go::Scheduler::Current()->WakeUp(go::Make(continuation));
 }
 
 EpochClient::EpochClient() noexcept
-    : callback(EpochCallback()), completion(0, callback), disable_load_balance(false)
+    : callback(EpochCallback(this)),
+      completion(0, callback),
+      disable_load_balance(false),
+      conf(util::Instance<NodeConfiguration>())
 {
   callback.perf.End();
 }
 
 void EpochClient::Start()
 {
-  auto worker = go::Make(std::bind(&EpochClient::Worker, this));
+  auto worker = go::Make(std::bind(&EpochClient::InitializeEpoch, this));
   go::GetSchedulerFromPool(0)->WakeUp(worker);
 }
 
-void EpochClient::Worker()
+uint64_t EpochClient::GenerateSerialId(uint64_t sequence)
 {
-  // TODO: Add epoch management here? At least right now this is essential.
-  util::Instance<EpochManager>().DoAdvance(this);
-  auto &conf = util::Instance<NodeConfiguration>();
+  return (sequence << 8) | (conf.node_id() & 0x00FF);
+}
 
-  auto base = 3000; // in 100 times
-  printf("load percentage %d\n", LoadPercentage());
-  auto total_nr_txn = base * LoadPercentage();
-  auto watermark = base * 70;
-  auto nr_threads = NodeConfiguration::g_nr_threads;
-  BasePromise **roots = new BasePromise*[total_nr_txn];
-
-  // disable_load_balance = true;
-  for (int i = 0; i < total_nr_txn; i++) {
-    if (i == watermark)
-      disable_load_balance = true;
-    auto *txn = RunCreateTxn(i + 1);
-    conf.CollectBufferPlan(txn->root_promise());
-    roots[i] = txn->root_promise();
-  }
-
-  conf.FlushBufferPlan();
+void EpochClient::RunTxnPromises(std::string label, std::function<void ()> continuation)
+{
+  callback.label = label;
+  callback.continuation = continuation;
   callback.perf.Start();
+  auto nr_threads = NodeConfiguration::g_nr_threads;
   for (ulong i = 0; i < nr_threads; i++) {
     auto r = go::Make(
-        [i, watermark, total_nr_txn, nr_threads, roots] {
-          logger->info("Beginning to dispatch {}", i + 1);
-          for (ulong j = i * watermark / nr_threads;
-               j < (i + 1) * watermark / nr_threads;
+        [i, nr_threads, this] {
+          for (ulong j = i * total_nr_txn / nr_threads;
+               j < (i + 1) * total_nr_txn / nr_threads;
                j++) {
-            roots[j]->Complete(VarStr());
-            roots[j] = nullptr;
+            txns[j]->root_promise()->Complete(VarStr());
+            txns[j]->ResetRoot();
           }
-          ulong left_over = total_nr_txn - watermark;
-          for (ulong j = i * left_over / nr_threads;
-               j < (i + 1) * left_over / nr_threads;
-               j++) {
-            roots[j + watermark]->Complete(VarStr());
-            roots[j + watermark] = nullptr;
-          }
-          logger->info("Dispatch done {}", i + 1);
         });
     r->set_urgent(true);
     go::GetSchedulerFromPool(i + 1)->WakeUp(r);
   }
+}
 
-  disable_load_balance = false;
+void EpochClient::InitializeEpoch()
+{
+  // TODO: Add epoch management here? At least right now this is essential.
+  util::Instance<EpochManager>().DoAdvance(this);
+
+  BasePromise::g_brk.Reset();
+
+  conf.FlushBufferPlanCompletion(0);
+
+  auto base = 3000; // in 100 times
+  printf("load percentage %d\n", LoadPercentage());
+  total_nr_txn = base * LoadPercentage();
+
+  txns.reset(new BaseTxn*[total_nr_txn]);
+
+  disable_load_balance = true;
+  for (uint64_t i = 0; i < total_nr_txn; i++) {
+    auto sequence = i + 1;
+    auto *txn = RunCreateTxn(GenerateSerialId(i + 1));
+    conf.CollectBufferPlan(txn->root_promise());
+    txns[i] = txn;
+  }
+  conf.FlushBufferPlan(false);
+
+  RunTxnPromises("Epoch Initialization",
+                 std::bind(&EpochClient::ExecuteEpoch, this));
+}
+
+void EpochClient::ExecuteEpoch()
+{
+  BasePromise::g_brk.Reset();
+
+  conf.FlushBufferPlanCompletion(1);
+
+  for (ulong i = 0; i < total_nr_txn; i++) {
+    txns[i]->Run();
+    txns[i]->root_promise()->AssignSchedulingKey(txns[i]->serial_id());
+    conf.CollectBufferPlan(txns[i]->root_promise());
+  }
+  conf.FlushBufferPlan(true);
+  RunTxnPromises("Epoch Execution", []() {});
 }
 
 static constexpr size_t kEpochMemoryLimit = 256 << 20;

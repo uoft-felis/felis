@@ -17,7 +17,11 @@ class EpochClient;
 class EpochCallback {
   friend EpochClient;
   PerfLog perf;
+  EpochClient *client;
+  std::string label;
+  std::function<void ()> continuation;
  public:
+  EpochCallback(EpochClient *client) : client(client) {}
   void operator()();
 };
 
@@ -35,15 +39,27 @@ class EpochClient {
   virtual uint LoadPercentage() = 0;
  protected:
   friend class BaseTxn;
+  friend class EpochCallback;
 
-  void Worker();
+  void InitializeEpoch();
+  void ExecuteEpoch();
+
+  uint64_t GenerateSerialId(uint64_t sequence);
+
   virtual BaseTxn *RunCreateTxn(uint64_t serial_id) = 0;
+
+ private:
+  void RunTxnPromises(std::string label, std::function<void ()> continuation);
 
  protected:
   EpochCallback callback;
   CompletionObject<util::Ref<EpochCallback>> completion;
 
+  util::OwnPtr<BaseTxn *[]> txns;
+  unsigned long total_nr_txn;
   bool disable_load_balance;
+
+  NodeConfiguration &conf;
 };
 
 class EpochManager {
@@ -77,13 +93,12 @@ class EpochObject {
   EpochObject(uint64_t epoch_nr, int node_id, uint64_t offset) : epoch_nr(epoch_nr), node_id(node_id), offset(offset) {}
  public:
   EpochObject() : epoch_nr(0), node_id(0), offset(0) {}
-  typedef T Type;
 
-  operator T*() {
+  operator T*() const {
     return this->operator->();
   }
 
-  T *operator->() {
+  T *operator->() const {
     return (T *) util::Instance<EpochManager>().ptr(epoch_nr, node_id, offset);
   }
 

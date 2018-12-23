@@ -20,6 +20,7 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   auto *r = (PromiseRoutine *) p;
   r->capture_len = capture_len;
   r->capture_data = p + sizeof(PromiseRoutine);
+  r->sched_key = 0;
   return r;
 }
 
@@ -57,12 +58,12 @@ size_t PromiseRoutine::NodeSize() const
   size_t s = util::Align(sizeof(PromiseRoutine), 8)
              + util::Align(capture_len, 8)
              + 8;
-  if (next) {
-    for (size_t i = 0; i < next->nr_handlers; i++) {
-      auto *child = next->handlers[i];
-      s += child->NodeSize();
-    }
+
+  for (size_t i = 0; next && i < next->nr_handlers; i++) {
+    auto *child = next->handlers[i];
+    s += child->NodeSize();
   }
+
   return s;
 }
 
@@ -132,12 +133,20 @@ void *BasePromise::operator new(std::size_t size)
   return g_brk.Alloc(size);
 }
 
+void BasePromise::AssignSchedulingKey(uint64_t key)
+{
+  for (size_t i = 0; i < nr_handlers; i++) {
+    auto *child = handlers[i];
+    child->sched_key = key;
+   if (child->next) child->next->AssignSchedulingKey(key);
+  }
+}
+
 void BasePromise::Add(PromiseRoutine *child)
 {
   abort_if(nr_handlers == kMaxHandlersLimit,
            "nr_handlers {} exceeding limits!", nr_handlers);
   handlers[nr_handlers++] = child;
-
 }
 
 void BasePromise::Complete(const VarStr &in)
@@ -146,53 +155,14 @@ void BasePromise::Complete(const VarStr &in)
   for (size_t i = 0; i < nr_handlers; i++) {
     auto routine = handlers[i];
     routine->input = in;
-    // if (routine->node_id < 0) std::abort();
     transport.TransportPromiseRoutine(routine);
   }
 }
 
-struct PromiseSourceDesc {
-  std::atomic_long finish_count;
-  go::BufferChannel *wait_channel;
-
-  PromiseSourceDesc(long cnt, go::BufferChannel *wait_channel)
-      : finish_count(cnt), wait_channel(wait_channel) {
-  }
-
-  PromiseSourceDesc(const PromiseSourceDesc &rhs) {
-    // Not thread safe
-    wait_channel = rhs.wait_channel;
-    finish_count.store(rhs.finish_count.load());
-  }
-
-  ~PromiseSourceDesc() {}
-
-  void WaitLocalBarrier();
-  static void BroadcastLocalBarrier();
-};
-
-static std::vector<PromiseSourceDesc> g_sources;
 static std::unique_ptr<util::CacheAligned<std::atomic_ulong>[]> batch_counts;
-
-void PromiseSourceDesc::WaitLocalBarrier()
-{
-  uint8_t done[g_sources.size()];
-  wait_channel->Read(done, g_sources.size());
-}
-
-void PromiseSourceDesc::BroadcastLocalBarrier()
-{
-  for (auto &desc: g_sources) {
-    uint8_t done = 0;
-    desc.wait_channel->Write(&done, 1);
-  }
-}
 
 void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
 {
-  for (int i = 0; i < nr_sources; i++) {
-    g_sources.emplace_back(1, new go::BufferChannel(nr_sources));
-  }
   g_nr_threads = nr_threads;
   batch_counts.reset(new util::CacheAligned<std::atomic_ulong>[g_nr_threads + 1]);
   for (int i = 0; i < g_nr_threads; i++) {
@@ -200,42 +170,34 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
   }
 }
 
+void *BasePromise::ExecutionRoutine::operator new(std::size_t size)
+{
+  return g_brk.Alloc(size);
+}
+
+void BasePromise::ExecutionRoutine::Run()
+{
+  {
+    INIT_ROUTINE_BRK(4096);
+    r->callback(r);
+  }
+  auto cmp = client->completion_object();
+  cmp->Complete();
+}
+
 void BasePromise::QueueRoutine(felis::PromiseRoutine **routines, size_t nr_routines,
                                int source_idx, int thread, bool batch)
 {
-  auto &desc = g_sources[source_idx];
-  /*
-  if (r == nullptr) {
-    if (desc.finish_count.fetch_sub(1) == 1) {
-      desc.BroadcastLocalBarrier();
-    }
-    desc.WaitLocalBarrier();
-    desc.finish_count.fetch_add(1);
-    return;
-  }
-  */
-  // desc.finish_count.fetch_add(1);
   go::Routine *grt[nr_routines];
+  auto *client = EpochClient::g_workload_client;
   for (int i = 0; i < nr_routines; i++) {
-    auto r = routines[i];
-    auto gr =
-        go::Make(
-            [r, &desc]() {
-              {
-                INIT_ROUTINE_BRK(4096);
-                r->callback(r);
-              }
-              auto cmp = EpochClient::g_workload_client->completion_object();
-              cmp->Complete();
-              /*
-                if (desc.finish_count.fetch_sub(1) == 1) {
-                desc.BroadcastLocalBarrier();
-                }
-              */
-            });
-    grt[i] = gr;
+    auto r = new ExecutionRoutine(routines[i], client);
+    grt[i] = r;
     if (i == nr_routines - 1)
-      gr->set_busy_poll(true);
+      r->set_busy_poll(true);
+    if (routines[i]->sched_key != 0) {
+      util::Impl<PromiseRoutineLookupService>().AddRoutine(r);
+    }
   }
   go::GetSchedulerFromPool(thread)->WakeUp(grt, nr_routines, batch);
 }
@@ -245,6 +207,21 @@ void BasePromise::FlushScheduler()
   for (int i = 1; i <= g_nr_threads; i++) {
     go::GetSchedulerFromPool(i)->WakeUp();
   }
+}
+
+void PromiseRoutineLookupService::Reset()
+{
+  for (size_t i = 0; i < exec_htable_size; i++)
+    exec_htable[i].store(nullptr);
+}
+
+void PromiseRoutineLookupService::AddRoutine(BasePromise::ExecutionRoutine *routine)
+{
+  auto &root = Root(routine->r->sched_key);
+  auto ptr = root.load();
+  do {
+    routine->hnext = ptr;
+  } while (!root.compare_exchange_strong(ptr, routine));
 }
 
 }

@@ -137,6 +137,7 @@ class ClientBase {
   uint min_warehouse;
   uint max_warehouse;
 
+  // TPC-C NewOrder FastIdGen optimization
   util::OwnPtr<ulong []> new_order_id_counters;
 
  protected:
@@ -237,10 +238,11 @@ class Loader : public go::Routine, public tpcc::Util, public tpcc::ClientBase {
 }
 
 class Client : public felis::EpochClient, public ClientBase, public Util {
-  static constexpr unsigned long kClientSeed = 0xdeadbeef;
+  unsigned long dice;
  public:
+  static constexpr unsigned long kClientSeed = 0xdeadbeef;
 
-  Client() : felis::EpochClient(), ClientBase(kClientSeed) {}
+  Client() : felis::EpochClient(), ClientBase(kClientSeed), dice(0) {}
 
   template <class T> T GenerateTransactionInput();
 
@@ -248,12 +250,7 @@ class Client : public felis::EpochClient, public ClientBase, public Util {
     return LoadPercentageByWarehouse();
   }
 
-  uint warehouse_to_lookup_node_id(uint warehouse_id) const {
-    if (disable_load_balance || !is_warehouse_hotspot(warehouse_id))
-      return warehouse_to_node_id(warehouse_id);
-    else
-      return 1;
-  }
+  uint warehouse_to_lookup_node_id(uint warehouse_id);
 
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];

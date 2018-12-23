@@ -731,6 +731,15 @@ void Loader<LoaderType::Order>::DoLoad()
 
 }
 
+uint Client::warehouse_to_lookup_node_id(uint warehouse_id)
+{
+  auto &conf = Instance<NodeConfiguration>();
+  if (disable_load_balance || !is_warehouse_hotspot(warehouse_id))
+    return warehouse_to_node_id(warehouse_id);
+  else
+    return (dice++) % conf.nr_nodes() + 1;
+}
+
 felis::BaseTxn *Client::RunCreateTxn(uint64_t serial_id)
 {
   // TODO: generate standard TPC-C txn mix here

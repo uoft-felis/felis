@@ -38,6 +38,7 @@ struct PromiseRoutine {
   uint8_t *capture_data;
   uint32_t capture_len;
   int level;
+  uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
 
   void (*callback)(PromiseRoutine *);
   void *callback_native_func;
@@ -55,6 +56,8 @@ struct PromiseRoutine {
   static PromiseRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
 };
 
+class EpochClient;
+
 class BasePromise {
  protected:
   friend struct PromiseRoutine;
@@ -69,9 +72,27 @@ class BasePromise {
   static size_t g_nr_threads;
   static constexpr size_t kMaxHandlersLimit = 32;
 
+  class ExecutionRoutine : public go::Routine {
+    friend class PromiseRoutineLookupService;
+
+    PromiseRoutine *r;
+    EpochClient *client;
+    // Because r can have a scheduling key, we need to put this go::Routine into
+    // a hashtable.
+    ExecutionRoutine *hnext;
+   public:
+    ExecutionRoutine(PromiseRoutine *r, EpochClient *client)
+        : r(r), client(client), hnext(nullptr) {
+      set_reuse(true);
+    }
+    static void *operator new(std::size_t size);
+    void Run() final override;
+  };
+
   BasePromise(size_t limit = kMaxHandlersLimit);
   void Complete(const VarStr &in);
   void Add(PromiseRoutine *child);
+  void AssignSchedulingKey(uint64_t key);
 
   static void *operator new(std::size_t size);
 
@@ -84,6 +105,27 @@ class BasePromise {
 };
 
 static_assert(sizeof(BasePromise) == CACHE_LINE_SIZE, "BasePromise is not cache line aligned");
+
+class PromiseRoutineLookupService {
+  std::atomic<BasePromise::ExecutionRoutine *> *exec_htable;
+  size_t exec_htable_size;
+
+  std::atomic<BasePromise::ExecutionRoutine *> &Root(uint64_t sched_key) {
+    return exec_htable[sched_key % exec_htable_size];
+  }
+ public:
+  virtual size_t Hash(uint64_t sched_key) { return sched_key; }
+
+  void Reset();
+  void AddRoutine(BasePromise::ExecutionRoutine *routine);
+
+  template <typename Func>
+  void Iterate(uint64_t sched_key, Func f) {
+    for (auto p = Root(sched_key).load(); p; p = p->hnext) {
+      if (p->r->sched_key == sched_key) f(p->r);
+    }
+  }
+};
 
 class PromiseRoutineTransportService {
  public:
@@ -212,6 +254,10 @@ class PromiseProc : public PromiseStream<DummyValue> {
   PromiseProc(const PromiseProc &rhs) = delete;
   PromiseProc(PromiseProc &&rhs) = delete;
   ~PromiseProc();
+
+  void Reset() {
+    p = new Promise<DummyValue>();
+  }
 };
 
 struct BaseCombinerState {
