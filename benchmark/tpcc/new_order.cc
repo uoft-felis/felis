@@ -21,7 +21,7 @@ struct NewOrderStruct {
 };
 
 template <>
-NewOrderStruct Client::GenerateTransactionInput<NewOrderStruct>()
+NewOrderStruct ClientBase::GenerateTransactionInput<NewOrderStruct>()
 {
   NewOrderStruct s;
   s.warehouse_id = PickWarehouse();
@@ -63,7 +63,7 @@ struct NewOrderState {
   } rows;
 };
 
-class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct, public Util {
+class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
   Client *client;
  public:
   NewOrderTxn(Client *client, uint64_t serial_id);
@@ -79,7 +79,7 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
 
   auto district_key = District::Key::New(warehouse_id, district_id);
 
-  int node = warehouse_to_node_id(warehouse_id);
+  int node = Client::warehouse_to_node_id(warehouse_id);
   int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
 
   // Looks like we only need this when FastIdGen is off? In a distributed
@@ -97,7 +97,7 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
 
   for (auto i = 0; i < nr_items; i++) {
     auto stock_key = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
-    node = warehouse_to_node_id(supplier_warehouse_id[i]);
+    node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
     lookup_node = client->warehouse_to_lookup_node_id(supplier_warehouse_id[i]);
 
     proc >> TxnLookup<Stock>(lookup_node, stock_key)
@@ -114,7 +114,7 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
 void NewOrderTxn::Run()
 {
   for (auto i = 0; i < nr_items; i++) {
-    int node = warehouse_to_node_id(supplier_warehouse_id[i]);
+    int node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
     proc >> TxnProc(
         node,
         [](const auto &ctx, auto args) -> Optional<VoidValue> {

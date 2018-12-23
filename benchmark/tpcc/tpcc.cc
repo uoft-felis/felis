@@ -54,7 +54,7 @@ RowSlicer::RowSlicer()
     int wh = i + 1;
 
     // You, as node_id, should not touch these slices at all!
-    if (Util::warehouse_to_node_id(wh) != conf.node_id()) {
+    if (ClientBase::warehouse_to_node_id(wh) != conf.node_id()) {
       index_slices[i] = nullptr;
       index_slice_scanners[i] = nullptr;
       continue;
@@ -63,7 +63,7 @@ RowSlicer::RowSlicer()
     felis::IndexShipment *pre_shipment = nullptr;
     index_slices[i] = new felis::Slice();
 
-    if (Util::is_warehouse_hotspot(wh)) {
+    if (ClientBase::is_warehouse_hotspot(wh)) {
       auto &peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer; // HACK
       pre_shipment = new felis::IndexShipment(peer.host, peer.port, true);
     }
@@ -256,12 +256,12 @@ uint ClientBase::PickWarehouse()
     // number generation.
     ulong rand_max = 0;
     for (auto w = min_warehouse; w <= max_warehouse; w++) {
-      if (Util::is_warehouse_hotspot(w)) rand_max += Config::kHotspoLoadPercentage;
+      if (ClientBase::is_warehouse_hotspot(w)) rand_max += Config::kHotspoLoadPercentage;
       else rand_max += 100;
     }
     auto rand = long(r.next_uniform() * rand_max);
     for (auto w = min_warehouse; w <= max_warehouse; w++) {
-      if (Util::is_warehouse_hotspot(w)) rand -= Config::kHotspoLoadPercentage;
+      if (ClientBase::is_warehouse_hotspot(w)) rand -= Config::kHotspoLoadPercentage;
       else rand -= 100;
       if (rand < 0)
         return w;
@@ -275,7 +275,7 @@ uint ClientBase::LoadPercentageByWarehouse()
 {
   uint load = 0;
   for (int w = min_warehouse; w <= max_warehouse; w++) {
-    if (Util::is_warehouse_hotspot(w)) load += Config::kHotspoLoadPercentage;
+    if (ClientBase::is_warehouse_hotspot(w)) load += Config::kHotspoLoadPercentage;
     else load += 100;
   }
   return load / (max_warehouse - min_warehouse + 1);
@@ -364,18 +364,18 @@ struct Checker {
 
 };
 
-felis::Relation &Util::relation(TableType table)
+felis::Relation &ClientBase::relation(TableType table)
 {
   return Instance<RelationManager>()[static_cast<int>(table)];
 }
 
-int Util::warehouse_to_node_id(unsigned int wid)
+int ClientBase::warehouse_to_node_id(unsigned int wid)
 {
   // partition id also starts from 1 because 0 means local shard. See node_config.cc
   return (wid - 1) * Instance<NodeConfiguration>().nr_nodes() / kTPCCConfig.nr_warehouses + 1;
 }
 
-bool Util::is_warehouse_hotspot(uint wid)
+bool ClientBase::is_warehouse_hotspot(uint wid)
 {
   return (kTPCCConfig.hotspot_warehouse_bitmap & (1 << (wid - 1))) != 0;
 }

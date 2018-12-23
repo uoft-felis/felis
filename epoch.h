@@ -162,6 +162,11 @@ class Epoch : public EpochMemory {
   EpochClient *epoch_client() const { return client; }
 };
 
+class EpochPromiseRoutineLookupService : public PromiseRoutineLookupService {
+ public:
+  // TODO:
+};
+
 }
 
 #endif /* EPOCH_H */

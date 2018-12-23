@@ -121,15 +121,6 @@ struct Warehouse {
 void InitializeTPCC();
 void RunShipment();
 
-// We create a full set of table per warehouse
-class Util {
- public:
-  static felis::Relation &relation(TableType table);
-  static int warehouse_to_node_id(uint wid);
-
-  static bool is_warehouse_hotspot(uint wid);
-};
-
 class ClientBase {
  protected:
   util::FastRandom r;
@@ -211,6 +202,13 @@ class ClientBase {
   }
  public:
   ClientBase(const util::FastRandom &r);
+
+  static felis::Relation &relation(TableType table);
+  static int warehouse_to_node_id(uint wid);
+
+  static bool is_warehouse_hotspot(uint wid);
+
+  template <class T> T GenerateTransactionInput();
 };
 
 // loaders for each table
@@ -221,7 +219,7 @@ enum LoaderType {
 };
 
 template <enum LoaderType TLN>
-class Loader : public go::Routine, public tpcc::Util, public tpcc::ClientBase {
+class Loader : public go::Routine, public tpcc::ClientBase {
   std::mutex *m;
   std::atomic_int *count_down;
  public:
@@ -237,14 +235,12 @@ class Loader : public go::Routine, public tpcc::Util, public tpcc::ClientBase {
 
 }
 
-class Client : public felis::EpochClient, public ClientBase, public Util {
+class Client : public felis::EpochClient, public ClientBase {
   unsigned long dice;
  public:
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
 
   Client() : felis::EpochClient(), ClientBase(kClientSeed), dice(0) {}
-
-  template <class T> T GenerateTransactionInput();
 
   uint LoadPercentage() final override {
     return LoadPercentageByWarehouse();
