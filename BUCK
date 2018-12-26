@@ -17,19 +17,11 @@ tpcc_srcs = [
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'module.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
-    'txn.h', 'util.h', 'vhandle.h', 'shipping.h', 'completion.h'
+    'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'shipping.h', 'completion.h'
 ]
 
-cxx_library(
-    name='tpcc',
-    srcs=tpcc_srcs,
-    compiler_flags=includes,
-    headers=db_headers + tpcc_headers,
-    link_whole=True,
-)
-
 db_srcs = [
-    'epoch.cc', 'txn.cc', 'log.cc', 'vhandle.cc', 'gc.cc', 'index.cc', 'mem.cc',
+    'epoch.cc', 'txn.cc', 'log.cc', 'vhandle.cc', 'vhandle_sync.cc', 'gc.cc', 'index.cc', 'mem.cc',
     'promise.cc', 'masstree_index_impl.cc', 'node_config.cc', 'console.cc', 'console_client.cc',
     'shipping.cc',
     'felis_probes.cc',
@@ -42,14 +34,22 @@ db_srcs = [
 	('masstree/straccum.cc', ['-include', 'masstree/build/config.h']),
     ]
 
-libs = ['-pthread', '-lrt', '-ldl', '-lnuma', '-ltcmalloc']
+libs = ['-pthread', '-lrt', '-ldl', '-ltcmalloc']
 test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
+
+cxx_library(
+    name='tpcc',
+    srcs=tpcc_srcs,
+    compiler_flags=includes + ['-DDEFAULT_IFACE_CONFIG'],
+    headers=db_headers + tpcc_headers,
+    link_whole=True,
+)
 
 cxx_binary(
     name='db',
-    srcs=['main.cc', 'module.cc', 'iface.cc'] + db_srcs,
+    srcs=['main.cc', 'module.cc'] + db_srcs,
     headers=db_headers + tpcc_headers,
-    compiler_flags=includes,
+    compiler_flags=includes + ['-DDEFAULT_IFACE_CONFIG'],
     linker_flags=libs,
     deps=[':tpcc'],
 )

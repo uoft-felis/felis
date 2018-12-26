@@ -242,7 +242,7 @@ class Client : public felis::EpochClient, public ClientBase {
 
   Client() : felis::EpochClient(), ClientBase(kClientSeed), dice(0) {}
 
-  uint LoadPercentage() final override {
+  unsigned int LoadPercentage() final override {
     return LoadPercentageByWarehouse();
   }
 

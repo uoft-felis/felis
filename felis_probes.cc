@@ -28,30 +28,30 @@ static thread_local struct {
   AGG(tot_local_cache);
 
   int last_rel_id;
-} stat;
+} statcnt;
 
 PROBE(felis, wait_jiffies, long jiffies, uint64_t sid, uint64_t ver) {
   if (sid % 2 == 0 && ver % 2 == 1) {
-    stat.tot_wait << jiffies;
-    stat.tot_wait_avg << jiffies;
+    statcnt.tot_wait << jiffies;
+    statcnt.tot_wait_avg << jiffies;
   }
 }
 
 PROBE(felis, local_index_cache, void *p) {
   int c = p ? 1 : 0;
-  stat.tot_local_cache << c;
+  statcnt.tot_local_cache << c;
 }
 
 PROBE(felis, index_get, int id, const void *key, uint64_t sid) {
-  stat.last_rel_id = id;
+  statcnt.last_rel_id = id;
 }
 
 PROBE(felis, linklist_search_read, int cnt, size_t size) {
-  stat.read_ll_skip << cnt;
+  statcnt.read_ll_skip << cnt;
 }
 
 PROBE(felis, linklist_search_write, int cnt, size_t size) {
-  stat.write_ll_skip << cnt;
+  statcnt.write_ll_skip << cnt;
 }
 
 AT_EXIT() {

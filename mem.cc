@@ -6,7 +6,7 @@
 #include <cstring>
 
 #ifndef DISABLE_NUMA
-#include <numaif.h>
+#include <syscall.h>
 #endif
 
 #include <fstream>
@@ -75,8 +75,9 @@ Pool::Pool(size_t chunk_size, size_t cap, int numa_node)
 #ifndef DISABLE_NUMA
   if (numa_node >= 0) {
     unsigned long nodemask = 1 << numa_node;
-    if (mbind(data, len, MPOL_BIND, &nodemask, sizeof(unsigned long) * 8,
-              MPOL_MF_STRICT) < 0) {
+    if (syscall(__NR_mbind,
+                data, len, 2 /* MPOL_BIND */, &nodemask, sizeof(unsigned long) * 8,
+                1 << 0 /* MPOL_MF_STRICT */) < 0) {
       perror("mbind");
       std::abort();
     }
@@ -167,7 +168,13 @@ void Region::ApplyFromConf(json11::Json conf_doc)
 void *Brk::Alloc(size_t s)
 {
   s = util::Align(s, 8);
-  auto off = offset.fetch_add(s);
+  size_t off = 0;
+  if (ord == std::memory_order_relaxed) {
+    off = offset.load(ord);
+    offset.store(off + s, ord);
+  } else {
+    off = offset.fetch_add(s, ord);
+  }
   if (__builtin_expect(off + s > limit, 0)) {
     fprintf(stderr, "Brk of limit %lu is not large enough!\n", limit);
     std::abort();

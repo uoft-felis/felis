@@ -13,6 +13,7 @@
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 
+#include "iface.h"
 
 namespace felis {
 
@@ -52,7 +53,6 @@ class AllocatorModule : public Module<CoreModule> {
       .description = "Memory Allocator"
     };
   }
-  static constexpr size_t kBasePromisePreAllocation = 5UL << 30;
   void Init() override {
     Module<CoreModule>::InitModule("config");
 
@@ -73,20 +73,12 @@ class AllocatorModule : public Module<CoreModule> {
     }
     tasks.emplace_back(VHandle::InitPools);
     // tasks.emplace_back(SkipListVHandle::Block::InitPool);
-
-    BasePromise::g_brk.move(mem::Brk(
-        mmap(NULL, 5UL << 30, PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0),
-        kBasePromisePreAllocation));
-    BasePromise::g_brk.set_thread_safe(true);
-
+    tasks.emplace_back(util::Impl<PromiseAllocationService>);
     for (auto &t: tasks) t.join();
 
     logger->info("Memory used: {}MB in regular pages, {}MB in huge pages.",
                  mem::Pool::g_total_page_mem.load() / (1 << 20),
                  mem::Pool::g_total_hugepage_mem.load() / (1 << 20));
-    logger->info("Memory used: BasePromise {}GB",
-                 kBasePromisePreAllocation / (1 << 30));
   }
 };
 

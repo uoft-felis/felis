@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <array>
+#include <map>
 #include "node_config.h"
 #include "util.h"
 #include "mem.h"
@@ -36,7 +37,10 @@ class EpochClient {
 
   auto completion_object() { return &completion; }
 
-  virtual uint LoadPercentage() = 0;
+  virtual unsigned int LoadPercentage() = 0;
+
+  // This x100 will be total number of txns.
+  static constexpr size_t kEpochBase = 3000;
  protected:
   friend class BaseTxn;
   friend class EpochCallback;
@@ -66,7 +70,7 @@ class EpochManager {
   mem::Pool *pool;
 
   static EpochManager *instance;
-  template <class T> friend T& util::Instance();
+  template <class T> friend T& util::Instance() noexcept;
 
   static constexpr int kMaxConcurrentEpochs = 2;
   std::array<Epoch *, kMaxConcurrentEpochs> concurrent_epochs;
@@ -162,9 +166,32 @@ class Epoch : public EpochMemory {
   EpochClient *epoch_client() const { return client; }
 };
 
-class EpochPromiseRoutineLookupService : public PromiseRoutineLookupService {
+
+// For scheduling transactions during execution
+class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
+  template <typename T> friend T &util::Instance() noexcept;
+  EpochExecutionDispatchService();
+
+  using ExecutionRoutine = BasePromise::ExecutionRoutine;
+  using Mapping = std::map<uint64_t, BasePromise::ExecutionRoutine *>;
+
+  std::array<Mapping, NodeConfiguration::kMaxNrThreads> mappings;
  public:
-  // TODO:
+  void Dispatch(int core_id, BasePromise::ExecutionRoutine *exec_routine,
+                go::Scheduler::Queue *q) final override;
+  void Reset() final override;
+};
+
+// We use thread-local brks to reduce the memory allocation cost for all
+// promises within an epoch. After an epoch is done, we can reclaim all of them.
+class EpochPromiseAllocationService : public PromiseAllocationService {
+  template <typename T> friend T &util::Instance() noexcept;
+  EpochPromiseAllocationService();
+
+  mem::Brk *brks;
+ public:
+  void *Alloc(size_t size) final override;
+  void Reset() final override;
 };
 
 }

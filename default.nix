@@ -7,9 +7,10 @@ stdenv.mkDerivation rec {
      export CC=clang
      export CXX=clang++
      export JAVA_HOME=/usr/java
+     export LD_LIBRARY_PATH=~/.nix-profile/lib/ # To deal with lld
    '';
    
   buildInputs = [
-    numactl llvm_7 clang_7 lldb_7 lld_7 gtest gperftools python36 watchman nailgun
+    llvm_7 clang_7 lldb_7 lld_7 gtest gperftools python36 watchman nailgun
   ];
 }

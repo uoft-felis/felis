@@ -12,6 +12,15 @@ namespace felis {
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
 
+class VHandleSyncService {
+ public:
+  virtual void Spin(uint64_t sid, uint64_t ver) = 0;
+  virtual void Notify(uint64_t bitmap) = 0;
+  virtual bool IsPendingVal(uintptr_t val) = 0;
+  virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;
+  virtual void OfferData(volatile uintptr_t *addr, uintptr_t obj) = 0;
+};
+
 class BaseVHandle {
  public:
   static mem::Pool *pools;
@@ -21,6 +30,8 @@ class BaseVHandle {
  public:
   uint64_t last_update_epoch() const { return gc_rule.last_gc_epoch; }
   void Prefetch() const {}
+
+  VHandleSyncService &sync();
 };
 
 #if 0
@@ -97,13 +108,6 @@ class SortedArrayVHandle : public BaseVHandle {
   size_t size;
   size_t value_mark;
   uint64_t *versions;
-  // uintptr_t *objects;
-
-  // struct TxnWaitSlot {
-  //   std::mutex lock;
-  //   go::WaitSlot slot;
-  // };
-  // TxnWaitSlot *slots;
 
  public:
   static void *operator new(size_t nr_bytes) {

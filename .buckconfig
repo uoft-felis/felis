@@ -13,9 +13,9 @@
 [cxx#debug]
   cxxflags = -g -O0 -fstandalone-debug -std=c++17 -U_FORTIFY_SOURCE
   cflags = -g -O0 -fstandalone-debug -U_FORTIFY_SOURCE
-  ldflags = -g -O0 -fstandalone-debug
+  ldflags = -fuse-ld=lld -g -O0 -fstandalone-debug
 
 [cxx#release]
-  cxxflags = -Ofast -flto -std=c++17
-  cflags = -Ofast -flto
-  ldflags = -Ofast -flto -fwhole-program -fwhole-program-vtables
+  cxxflags = -Ofast -flto -std=c++17 -fvisibility=hidden
+  cflags = -Ofast -flto -fvisibility=hidden
+  ldflags = -fuse-ld=lld -Ofast -flto -fwhole-program-vtables -fvisibility=hidden

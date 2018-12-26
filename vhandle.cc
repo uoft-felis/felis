@@ -5,96 +5,13 @@
 #include "log.h"
 #include "vhandle.h"
 #include "node_config.h"
+#include "iface.h"
 
 namespace felis {
 
-static constexpr int kMaxSupportedCores = 63;
-
-// Spinner Slots Because we're using a coroutine library, so our coroutines are
-// not preemptive.  When a coroutine needs to wait for some condition, it just
-// spins on this per-cpu spinner slot rather than the condition.
-//
-// This also requires the condition notifier be able to aware of that. What we
-// can do for our sorted versioning is to to store a bitmap in the magic number
-// count. This limits us to *63 cores* at maximum though. Exceeding this limit
-// might lead us to use share spinner slots.
-
-class SpinnerSlot {
- public:
-  static constexpr int kNrSpinners = 32;
- private:
-  struct {
-    volatile long done;
-    long __padding__[7];
-  } slots[kNrSpinners];
- public:
-  SpinnerSlot() { memset(slots, 0, 64 * kNrSpinners); }
-
-  void Wait(uint64_t sid, uint64_t ver);
-  void NotifyAll(uint64_t bitmap);
-};
-
-
-void SpinnerSlot::Wait(uint64_t sid, uint64_t ver)
+VHandleSyncService &BaseVHandle::sync()
 {
-  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
-  if (unlikely(idx < 0)) {
-    std::abort();
-  }
-
-  long dt = 0;
-  while (!slots[idx].done) {
-    asm("pause" : : :"memory");
-    dt++;
-  }
-
-  asm volatile("" : : :"memory");
-
-  DTRACE_PROBE3(felis, wait_jiffies, dt, sid, ver);
-  slots[idx].done = 0;
-}
-
-void SpinnerSlot::NotifyAll(uint64_t bitmap)
-{
-  while (bitmap) {
-    int idx = __builtin_ctzll(bitmap);
-    slots[idx].done = 1;
-    bitmap &= ~(1 << idx);
-  }
-}
-
-static SpinnerSlot gSpinnerSlots;
-
-static bool IsPendingVal(uintptr_t val)
-{
-  if ((val >> 32) == (kPendingValue >> 32))
-    return true;
-  return false;
-}
-
-static void __attribute__((noinline))
-WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
-{
-  DTRACE_PROBE1(felis, version_read, handle);
-
-  uintptr_t oldval = *addr;
-  if (!IsPendingVal(oldval)) return;
-  DTRACE_PROBE1(felis, blocking_version_read, handle);
-
-  int core = go::Scheduler::CurrentThreadPoolId() - 1;
-
-  while (true) {
-    uintptr_t val = oldval;
-    uint64_t mask = 1ULL << core;
-    uintptr_t newval = val & ~mask;
-    oldval = __sync_val_compare_and_swap(addr, val, newval);
-    if (oldval == val) {
-      gSpinnerSlots.Wait(sid, ver);
-      oldval = *addr;
-    }
-    if (!IsPendingVal(oldval))
-      return;
-  }
+  return util::Impl<VHandleSyncService>();
 }
 
 #if 0
@@ -274,7 +191,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   volatile uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
 
-  WaitForData(addr, sid, versions[pos], (void *) this);
+  sync().WaitForData(addr, sid, versions[pos], (void *) this);
 
   return (VarStr *) *addr;
 }
@@ -293,28 +210,13 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     logger->critical("Versions: {}", ss.str());
     return false;
   }
-  if (!dry_run) {
-    auto objects = versions + capacity;
-    volatile uintptr_t *addr = &objects[it - versions];
-    auto oldval = *addr;
-    auto newval = (uintptr_t) obj;
 
-    // installing newval
-    while (true) {
-      uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
-      if (val == oldval) break;
-      oldval = val;
-    }
+  if (dry_run) return true;
 
-    // need to notify according to the bitmaps, which is oldval
-    uint64_t mask = (uint64_t{1} << 32) - 1;
-    uint64_t bitmap = mask - (oldval & mask);
-    gSpinnerSlots.NotifyAll(bitmap);
+  auto objects = versions + capacity;
+  volatile uintptr_t *addr = &objects[it - versions];
 
-    if (obj == nullptr && it - versions == size - 1) {
-      // deleted garbage
-    }
-  }
+  sync().OfferData(addr, (uintptr_t) obj);
   return true;
 }
 
@@ -429,25 +331,10 @@ bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch
     logger->critical("Diverging outcomes! sid {}", sid);
     return false;
   }
-  if (!dry_run) {
-    volatile uintptr_t *addr = &p->object;
-    auto oldval = *addr;
-    auto newval = (uintptr_t) obj;
+  if (dry_run) return true;
 
-    while (true) {
-      uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
-      if (val == oldval) break;
-      oldval = val;
-    }
-
-    uint64_t mask = (uint64_t{1} << 32) - 1;
-    uint64_t bitmap = mask - (oldval & mask);
-    gSpinnerSlots.NotifyAll(bitmap);
-
-    if (obj == nullptr && p->next == nullptr) {
-      // delete the garbage
-    }
-  }
+  volatile uintptr_t *addr = &p->object;
+  sync.OfferData(addr, (uintptr_t) obj);
   return true;
 }
 

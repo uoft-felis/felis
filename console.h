@@ -26,7 +26,7 @@ class Console {
 
   json11::Json conf;
 
-  template <typename T> friend T &util::Instance();
+  template <typename T> friend T &util::Instance() noexcept;
  public:
   Console();
   Console(const Console &rhs) = delete;

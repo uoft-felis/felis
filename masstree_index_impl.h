@@ -98,7 +98,7 @@ class RelationManager : public RelationManagerPolicy<Relation> {
   threadinfo *ti;
 
   RelationManager();
-  template <typename T> friend T &util::Instance();
+  template <typename T> friend T &util::Instance() noexcept;
  public:
   threadinfo *GetThreadInfo() { return ti; }
 };

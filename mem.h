@@ -120,6 +120,7 @@ class Brk {
     offset.store(rhs.offset.load());
     deleters = rhs.deleters;
     rhs.deleters = nullptr;
+    ord = rhs.ord;
   }
 
   void set_thread_safe(bool safe) {

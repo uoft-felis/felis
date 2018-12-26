@@ -14,7 +14,7 @@ namespace felis {
 
 class NodeServerRoutine;
 class NodeServerThreadRoutine;
-class PromiseRoutine;
+struct PromiseRoutine;
 
 template <typename T> class FlushImpl;
 class PromiseRoundRobinImpl;
@@ -26,7 +26,7 @@ using SendChannel = FlushImpl<SendChannelImpl>;
 class NodeConfiguration : public PromiseRoutineTransportService {
   NodeConfiguration();
 
-  template <typename T> friend T &util::Instance();
+  template <typename T> friend T &util::Instance() noexcept;
 
   int id;
   // Round Robin for local transport
@@ -61,6 +61,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   void RunAllServers();
   void TransportPromiseRoutine(PromiseRoutine *routine) final override;
+  void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root);
   void FlushBufferPlan(bool sync);
   void FlushBufferPlanCompletion(uint64_t epoch_nr);

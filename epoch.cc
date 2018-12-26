@@ -1,7 +1,10 @@
+#include <sys/mman.h>
+
 #include "epoch.h"
 #include "txn.h"
 #include "log.h"
-
+#include "vhandle.h"
+#include "iface.h"
 namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
@@ -13,7 +16,7 @@ void EpochCallback::operator()()
 
   // Don't call the continuation directly.
   //
-  // This is because we might Reset() the BasePromise::g_brk, which would free
+  // This is because we might Reset() the PromiseAllocationService, which would free
   // the current go::Routine.
   go::Scheduler::Current()->WakeUp(go::Make(continuation));
 }
@@ -64,17 +67,17 @@ void EpochClient::InitializeEpoch()
   // TODO: Add epoch management here? At least right now this is essential.
   util::Instance<EpochManager>().DoAdvance(this);
 
-  BasePromise::g_brk.Reset();
+  util::Impl<PromiseAllocationService>().Reset();
 
   conf.FlushBufferPlanCompletion(0);
 
-  auto base = 3000; // in 100 times
   printf("load percentage %d\n", LoadPercentage());
-  total_nr_txn = base * LoadPercentage();
+  total_nr_txn = kEpochBase * LoadPercentage();
 
   txns.reset(new BaseTxn*[total_nr_txn]);
 
   disable_load_balance = true;
+  conf.ResetBufferPlan();
   for (uint64_t i = 0; i < total_nr_txn; i++) {
     auto sequence = i + 1;
     auto *txn = RunCreateTxn(GenerateSerialId(i + 1));
@@ -89,10 +92,11 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::ExecuteEpoch()
 {
-  BasePromise::g_brk.Reset();
+  // util::Impl<PromiseAllocationService>().Reset();
 
   conf.FlushBufferPlanCompletion(1);
 
+  conf.ResetBufferPlan();
   for (ulong i = 0; i < total_nr_txn; i++) {
     txns[i]->Run();
     txns[i]->root_promise()->AssignSchedulingKey(txns[i]->serial_id());
@@ -100,6 +104,88 @@ void EpochClient::ExecuteEpoch()
   }
   conf.FlushBufferPlan(true);
   RunTxnPromises("Epoch Execution", []() {});
+}
+
+EpochExecutionDispatchService::EpochExecutionDispatchService()
+{
+}
+
+void EpochExecutionDispatchService::Reset()
+{
+  for (size_t i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+    mappings[i].clear();
+  }
+}
+
+void EpochExecutionDispatchService::Dispatch(int core_id,
+                                             BasePromise::ExecutionRoutine *exe,
+                                             go::Scheduler::Queue *q)
+{
+  auto key = exe->schedule_key();
+  if (key == 0) {
+    exe->AddToReadyQueue(q);
+    return;
+  }
+
+  auto &mapping = mappings[core_id];
+  auto it = mapping.lower_bound(key);
+  bool front = false;
+  if (it == mapping.end()) {
+    exe->Add(q);
+    front = true;
+    mapping.insert(std::make_pair(key, exe));
+  } else {
+    if (it->second->is_detached()) {
+      exe->Add(q);
+      front = true;
+    } else {
+      exe->Add(it->second);
+    }
+    if (it->first != key) {
+      mapping.insert(it, std::make_pair(key, exe));
+    } else {
+      it->second = exe;
+    }
+  }
+
+  if (front) {
+    auto &sync = util::Impl<VHandleSyncService>();
+    sync.Notify(1 << core_id);
+  }
+}
+
+static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 30;
+static constexpr size_t kEpochPromiseAllocationMainLimit = 4UL << 30;
+
+EpochPromiseAllocationService::EpochPromiseAllocationService()
+{
+  brks = new mem::Brk[NodeConfiguration::g_nr_threads + 1];
+  size_t acc = 0;
+  for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
+    auto s = kEpochPromiseAllocationPerThreadLimit;
+    if (i == 0) s = kEpochPromiseAllocationMainLimit;
+    brks[i].move(mem::Brk(
+        mmap(NULL, s,
+             PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE,
+             -1, 0),
+        s));
+    acc += s;
+  }
+  logger->info("Memory used: PromiseAllocator {}GB", acc >> 30);
+}
+
+void *EpochPromiseAllocationService::Alloc(size_t size)
+{
+  int thread_id = go::Scheduler::CurrentThreadPoolId();
+  return brks[thread_id].Alloc(size);
+}
+
+void EpochPromiseAllocationService::Reset()
+{
+  for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
+    brks[i].Reset();
+  }
 }
 
 static constexpr size_t kEpochMemoryLimit = 256 << 20;

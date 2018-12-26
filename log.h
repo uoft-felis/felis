@@ -24,7 +24,7 @@ class PerfLog {
 };
 
 #define abort_if(cond, ...)                     \
-  if (cond) {                                   \
+  if (__builtin_expect(cond, 0)) {              \
     logger->critical(__VA_ARGS__);              \
     std::abort();                               \
   }

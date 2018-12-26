@@ -15,6 +15,8 @@
 
 #include "promise.h"
 
+#include "iface.h"
+
 namespace felis {
 
 template <typename T>
@@ -272,9 +274,7 @@ NodeConfiguration::NodeConfiguration()
       batch_counters[i][j] = 0;
     }
   }
-  local_batch_counters[0] = std::numeric_limits<ulong>::max();
-  memset(local_batch_counters + 2, 0,
-         kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(ulong));
+  ResetBufferPlan();
 }
 
 using go::TcpSocket;
@@ -331,7 +331,7 @@ void NodeServerThreadRoutine::Run()
       abort_if(src_node_id == 0,
                "Protocol error. Should always send the updated counters first");
 
-      auto *p = (uint8_t *) BasePromise::g_brk.Alloc(
+      auto *p = (uint8_t *) util::Impl<PromiseAllocationService>().Alloc(
           util::Align(promise_size, CACHE_LINE_SIZE));
       in->Read(p, promise_size);
 
@@ -537,6 +537,13 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
   }
 }
 
+void NodeConfiguration::ResetBufferPlan()
+{
+  local_batch_counters[0] = std::numeric_limits<ulong>::max();
+  memset(local_batch_counters + 2, 0,
+         kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(ulong));
+}
+
 void NodeConfiguration::CollectBufferPlan(BasePromise *root)
 {
   auto src_node = node_id();
@@ -637,6 +644,9 @@ void NodeConfiguration::SendBarrier(int node_id)
 
 void NodeConfiguration::BroadcastBarrier()
 {
+  // TODO:
+  TBD();
+
   for (auto &config: all_config) {
     if (!config) continue;
     SendBarrier(config->id);

@@ -167,7 +167,7 @@ template <class... M>
 class MixIn : public M... {};
 
 // instance of a global object. So that we don't need the ugly extern.
-template <class O> O &Instance()
+template <class O> O &Instance() noexcept
 {
   static O o;
   return o;
@@ -181,7 +181,10 @@ struct InstanceInit {
 };
 
 // Interface implementation. The real implementation usually is in iface.cc
-template <class IFace> IFace &Impl();
+template <class IFace> IFace &Impl() noexcept;
+
+#define IMPL(IFace, ImplClass) \
+  template<> inline IFace &Impl() noexcept { return Instance<ImplClass>(); }
 
 template <typename T, typename ...Args>
 class BaseFactory {

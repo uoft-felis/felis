@@ -32,12 +32,13 @@ auto T(Args&&... args) -> decltype(std::make_tuple(std::forward<Args>(args)...))
 
 class BasePromise;
 
+// Performance: It seems critical to keep this struct fits in one cache line!
 struct PromiseRoutine {
   VarStr input;
-  int node_id;
   uint8_t *capture_data;
   uint32_t capture_len;
-  int level;
+  unsigned short level;
+  unsigned short node_id;
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
 
   void (*callback)(PromiseRoutine *);
@@ -56,6 +57,8 @@ struct PromiseRoutine {
   static PromiseRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
 };
 
+static_assert(sizeof(PromiseRoutine) <= CACHE_LINE_SIZE, "PromiseRoutine too large.");
+
 class EpochClient;
 
 class BasePromise {
@@ -68,7 +71,6 @@ class BasePromise {
 
   PromiseRoutine *inline_handlers[kInlineLimit];
  public:
-  static mem::Brk g_brk;
   static size_t g_nr_threads;
   static constexpr size_t kMaxHandlersLimit = 32;
 
@@ -76,16 +78,14 @@ class BasePromise {
     friend class PromiseRoutineLookupService;
 
     PromiseRoutine *r;
-    EpochClient *client;
-    // Because r can have a scheduling key, we need to put this go::Routine into
-    // a hashtable.
-    ExecutionRoutine *hnext;
    public:
-    ExecutionRoutine(PromiseRoutine *r, EpochClient *client)
-        : r(r), client(client), hnext(nullptr) {
+    ExecutionRoutine(PromiseRoutine *r)
+        : r(r) {
       set_reuse(true);
     }
     static void *operator new(std::size_t size);
+    static void operator delete(void *ptr) {}
+    uint64_t schedule_key() const { return r->sched_key; }
     void Run() final override;
   };
 
@@ -95,7 +95,7 @@ class BasePromise {
   void AssignSchedulingKey(uint64_t key);
 
   static void *operator new(std::size_t size);
-
+  static void *Alloc(size_t size);
   static void InitializeSourceCount(int nr_sources, size_t nr_threads);
   static void QueueRoutine(PromiseRoutine **routines, size_t nr_routines, int source_idx, int thread, bool batch = true);
   static void FlushScheduler();
@@ -106,30 +106,22 @@ class BasePromise {
 
 static_assert(sizeof(BasePromise) == CACHE_LINE_SIZE, "BasePromise is not cache line aligned");
 
-class PromiseRoutineLookupService {
-  std::atomic<BasePromise::ExecutionRoutine *> *exec_htable;
-  size_t exec_htable_size;
-
-  std::atomic<BasePromise::ExecutionRoutine *> &Root(uint64_t sched_key) {
-    return exec_htable[sched_key % exec_htable_size];
-  }
- public:
-  virtual size_t Hash(uint64_t sched_key) { return sched_key; }
-
-  void Reset();
-  void AddRoutine(BasePromise::ExecutionRoutine *routine);
-
-  template <typename Func>
-  void Iterate(uint64_t sched_key, Func f) {
-    for (auto p = Root(sched_key).load(); p; p = p->hnext) {
-      if (p->r->sched_key == sched_key) f(p->r);
-    }
-  }
-};
-
 class PromiseRoutineTransportService {
  public:
   virtual void TransportPromiseRoutine(PromiseRoutine *routine) = 0;
+};
+
+class PromiseRoutineDispatchService {
+ public:
+  virtual void Dispatch(int core_id, BasePromise::ExecutionRoutine *exec_routine,
+                        go::Scheduler::Queue *q) = 0;
+  virtual void Reset() = 0;
+};
+
+class PromiseAllocationService {
+ public:
+  virtual void *Alloc(size_t size) = 0;
+  virtual void Reset() = 0;
 };
 
 template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
@@ -173,7 +165,7 @@ class Promise : public BasePromise {
 
       auto output = native_func(capture, t);
       if (routine->next && output) {
-        void *buffer = BasePromise::g_brk.Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
+        void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
         VarStr *output_str = output->EncodeFromAlloca(buffer);
         routine->next->Complete(*output_str);
       }

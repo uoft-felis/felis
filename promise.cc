@@ -5,17 +5,16 @@
 #include <queue>
 #include "util.h"
 #include "mem.h"
+#include "iface.h"
 
 using util::Instance;
 using util::Impl;
 
 namespace felis {
 
-mem::Brk BasePromise::g_brk;
-
 PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
 {
-  auto *p = (uint8_t *) BasePromise::g_brk.Alloc(
+  auto *p = (uint8_t *) BasePromise::Alloc(
       util::Align(sizeof(PromiseRoutine) + capture_len, CACHE_LINE_SIZE));
   auto *r = (PromiseRoutine *) p;
   r->capture_len = capture_len;
@@ -124,13 +123,18 @@ BasePromise::BasePromise(size_t limit)
   if (limit <= kInlineLimit)
     handlers = inline_handlers;
   else
-    handlers = (PromiseRoutine **) g_brk.Alloc(
+    handlers = (PromiseRoutine **) Alloc(
         util::Align(sizeof(PromiseRoutine *) * limit, CACHE_LINE_SIZE));
 }
 
 void *BasePromise::operator new(std::size_t size)
 {
-  return g_brk.Alloc(size);
+  return BasePromise::Alloc(size);
+}
+
+void *BasePromise::Alloc(size_t size)
+{
+  return util::Impl<PromiseAllocationService>().Alloc(size);
 }
 
 void BasePromise::AssignSchedulingKey(uint64_t key)
@@ -172,7 +176,7 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
 
 void *BasePromise::ExecutionRoutine::operator new(std::size_t size)
 {
-  return g_brk.Alloc(size);
+  return BasePromise::Alloc(size);
 }
 
 void BasePromise::ExecutionRoutine::Run()
@@ -181,7 +185,7 @@ void BasePromise::ExecutionRoutine::Run()
     INIT_ROUTINE_BRK(4096);
     r->callback(r);
   }
-  auto cmp = client->completion_object();
+  auto cmp = EpochClient::g_workload_client->completion_object();
   cmp->Complete();
 }
 
@@ -189,17 +193,14 @@ void BasePromise::QueueRoutine(felis::PromiseRoutine **routines, size_t nr_routi
                                int source_idx, int thread, bool batch)
 {
   go::Routine *grt[nr_routines];
-  auto *client = EpochClient::g_workload_client;
-  for (int i = 0; i < nr_routines; i++) {
-    auto r = new ExecutionRoutine(routines[i], client);
+  for (size_t i = 0; i < nr_routines; i++) {
+    auto r = new ExecutionRoutine(routines[i]);
     grt[i] = r;
     if (i == nr_routines - 1)
       r->set_busy_poll(true);
-    if (routines[i]->sched_key != 0) {
-      util::Impl<PromiseRoutineLookupService>().AddRoutine(r);
-    }
   }
-  go::GetSchedulerFromPool(thread)->WakeUp(grt, nr_routines, batch);
+  go::GetSchedulerFromPool(thread)
+      ->WakeUp(grt, nr_routines, batch);
 }
 
 void BasePromise::FlushScheduler()
@@ -207,21 +208,6 @@ void BasePromise::FlushScheduler()
   for (int i = 1; i <= g_nr_threads; i++) {
     go::GetSchedulerFromPool(i)->WakeUp();
   }
-}
-
-void PromiseRoutineLookupService::Reset()
-{
-  for (size_t i = 0; i < exec_htable_size; i++)
-    exec_htable[i].store(nullptr);
-}
-
-void PromiseRoutineLookupService::AddRoutine(BasePromise::ExecutionRoutine *routine)
-{
-  auto &root = Root(routine->r->sched_key);
-  auto ptr = root.load();
-  do {
-    routine->hnext = ptr;
-  } while (!root.compare_exchange_strong(ptr, routine));
 }
 
 }
