@@ -282,7 +282,6 @@ using go::TcpInputChannel;
 using go::BufferChannel;
 using util::Instance;
 
-
 class NodeServerThreadRoutine : public go::Routine {
   TcpInputChannel *in;
   int idx;

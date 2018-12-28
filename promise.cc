@@ -189,6 +189,25 @@ void BasePromise::ExecutionRoutine::Run()
   cmp->Complete();
 }
 
+void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q)
+{
+  if (schedule_key() == 0) {
+    go::Routine::AddToReadyQueue(q);
+    return;
+  }
+
+  util::Impl<PromiseRoutineDispatchService>().Dispatch(
+      scheduler()->thread_pool_id() - 1, this, q);
+}
+
+void BasePromise::ExecutionRoutine::OnDetached()
+{
+  if (schedule_key() != 0) {
+    util::Impl<PromiseRoutineDispatchService>().Detach(
+        scheduler()->thread_pool_id() - 1, this);
+  }
+}
+
 void BasePromise::QueueRoutine(felis::PromiseRoutine **routines, size_t nr_routines,
                                int source_idx, int thread, bool batch)
 {

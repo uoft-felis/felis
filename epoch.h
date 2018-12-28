@@ -173,13 +173,22 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   EpochExecutionDispatchService();
 
   using ExecutionRoutine = BasePromise::ExecutionRoutine;
-  using Mapping = std::map<uint64_t, BasePromise::ExecutionRoutine *>;
+
+  struct Entity {
+    size_t dupcnt;
+    BasePromise::ExecutionRoutine *last;
+  };
+  using Mapping = std::map<uint64_t, Entity>;
 
   std::array<Mapping, NodeConfiguration::kMaxNrThreads> mappings;
  public:
-  void Dispatch(int core_id, BasePromise::ExecutionRoutine *exec_routine,
+  void Dispatch(int core_id,
+                BasePromise::ExecutionRoutine *exec_routine,
                 go::Scheduler::Queue *q) final override;
+  void Detach(int core_id,
+              BasePromise::ExecutionRoutine *exec_routine) final override;
   void Reset() final override;
+  void PrintInfo() final override;
 };
 
 // We use thread-local brks to reduce the memory allocation cost for all

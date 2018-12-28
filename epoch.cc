@@ -122,35 +122,56 @@ void EpochExecutionDispatchService::Dispatch(int core_id,
                                              go::Scheduler::Queue *q)
 {
   auto key = exe->schedule_key();
-  if (key == 0) {
-    exe->AddToReadyQueue(q);
-    return;
-  }
-
   auto &mapping = mappings[core_id];
-  auto it = mapping.lower_bound(key);
-  bool front = false;
-  if (it == mapping.end()) {
+  auto it = mapping.upper_bound(key);
+  if (it == mapping.begin()) {
     exe->Add(q);
-    front = true;
-    mapping.insert(std::make_pair(key, exe));
-  } else {
-    if (it->second->is_detached()) {
-      exe->Add(q);
-      front = true;
-    } else {
-      exe->Add(it->second);
-    }
-    if (it->first != key) {
-      mapping.insert(it, std::make_pair(key, exe));
-    } else {
-      it->second = exe;
-    }
-  }
-
-  if (front) {
+    mapping.insert(std::make_pair(key, Entity{1, exe}));
+    printf("Adding %lu at the head on core %d\n", key, core_id);
     auto &sync = util::Impl<VHandleSyncService>();
     sync.Notify(1 << core_id);
+  } else {
+    --it;
+    exe->Add(it->second.last);
+    if (it->first != key) {
+      mapping.insert(it, std::make_pair(key, Entity{1, exe}));
+    } else {
+      auto &entity = it->second;
+      entity.dupcnt++;
+      entity.last = exe;
+    }
+  }
+}
+
+void EpochExecutionDispatchService::Detach(int core_id,
+                                           BasePromise::ExecutionRoutine *exe)
+{
+  auto key = exe->schedule_key();
+  auto &mapping = mappings[core_id];
+  printf("Detaching %lu from core %d\n", key, core_id);
+  if (!mapping.empty() && mapping.begin()->first != key) {
+    printf("Why not %lu?\n", mapping.begin()->first);
+    std::abort();
+  }
+  auto it = mapping.find(key);
+  if (it == mapping.end()) {
+    puts("WTF?");
+    std::abort();
+  }
+  if (--it->second.dupcnt == 0) {
+    printf("Erasing %lu from core %d\n", key, core_id);
+    mapping.erase(it);
+  }
+}
+
+void EpochExecutionDispatchService::PrintInfo()
+{
+  int i = 0;
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  for (auto it = mappings[core_id].begin();
+       it != mappings[core_id].end() && i < 20;
+       ++it, ++i) {
+    printf("DEBUG: %lu on this core (core %d)\n", it->first, core_id);
   }
 }
 

@@ -87,6 +87,8 @@ class BasePromise {
     static void operator delete(void *ptr) {}
     uint64_t schedule_key() const { return r->sched_key; }
     void Run() final override;
+    void AddToReadyQueue(go::Scheduler::Queue *q) final override;
+    void OnDetached() final override;
   };
 
   BasePromise(size_t limit = kMaxHandlersLimit);
@@ -115,7 +117,10 @@ class PromiseRoutineDispatchService {
  public:
   virtual void Dispatch(int core_id, BasePromise::ExecutionRoutine *exec_routine,
                         go::Scheduler::Queue *q) = 0;
+  virtual void Detach(int core_id, BasePromise::ExecutionRoutine *exec_routine) = 0;
   virtual void Reset() = 0;
+  // For debugging
+  virtual void PrintInfo() {};
 };
 
 class PromiseAllocationService {
