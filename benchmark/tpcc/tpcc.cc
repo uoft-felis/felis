@@ -26,20 +26,7 @@ using util::Instance;
 
 namespace tpcc {
 
-struct Config {
-  bool uniform_item_distribution = false;
-
-  size_t nr_items = 100000;
-  size_t nr_warehouses = 8;
-  size_t districts_per_warehouse = 10;
-  size_t customers_per_district = 3000;
-
-  uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, the bit is 1
-  std::vector<int> offload_nodes;
-
-  static constexpr uint kHotspoLoadPercentage = 500;
-  static constexpr size_t kMaxSupportedWarehouse = 64;
-} kTPCCConfig;
+Config kTPCCConfig;
 
 class RowSlicer : public felis::RowSlicer {
  public:
@@ -135,14 +122,14 @@ void RunShipment()
 
 static int NMaxCustomerIdxScanElems = 512;
 
-ClientBase::ClientBase(const util::FastRandom &r)
+ClientBase::ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes)
     : r(r), slicer(g_slicer)
 {
-  auto &conf = Instance<NodeConfiguration>();
-  node_id = conf.node_id();
+  this->node_id = node_id;
 
-  min_warehouse = kTPCCConfig.nr_warehouses * (node_id - 1) / conf.nr_nodes() + 1;
-  max_warehouse = kTPCCConfig.nr_warehouses * node_id / conf.nr_nodes();
+  min_warehouse = kTPCCConfig.nr_warehouses * (node_id - 1) / nr_nodes + 1;
+  max_warehouse = kTPCCConfig.nr_warehouses * node_id / nr_nodes;
+
 
   auto cap =
       (max_warehouse - min_warehouse + 1) * kTPCCConfig.districts_per_warehouse;

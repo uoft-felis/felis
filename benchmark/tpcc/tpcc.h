@@ -24,6 +24,23 @@ class BaseTxn;
 
 namespace tpcc {
 
+struct Config {
+  bool uniform_item_distribution = false;
+
+  size_t nr_items = 100000;
+  size_t nr_warehouses = 8;
+  size_t districts_per_warehouse = 10;
+  size_t customers_per_district = 3000;
+
+  uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, the bit is 1
+  std::vector<int> offload_nodes;
+
+  static constexpr uint kHotspoLoadPercentage = 500;
+  static constexpr size_t kMaxSupportedWarehouse = 64;
+
+};
+extern Config kTPCCConfig;
+
 enum class TableType : int {
   Customer, CustomerNameIdx, District, History, Item,
   NewOrder, OOrder, OOrderCIdIdx, OrderLine, Stock, StockData, Warehouse,
@@ -201,8 +218,7 @@ class ClientBase {
     slicer->OnNewRow(slice_idx, new felis::IndexEntity(int(table), k.Encode(), handle));
   }
  public:
-  ClientBase(const util::FastRandom &r);
-
+  ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes);
   static felis::Relation &relation(TableType table);
   static int warehouse_to_node_id(uint wid);
 
@@ -224,8 +240,10 @@ class Loader : public go::Routine, public tpcc::ClientBase {
   std::atomic_int *count_down;
  public:
   Loader(unsigned long seed, std::mutex *w, std::atomic_int *c)
-      : ClientBase(util::FastRandom(seed)), m(w), count_down(c) {}
-  void DoLoad();
+      : m(w), count_down(c), ClientBase(
+          util::FastRandom(seed),
+          util::Instance<felis::NodeConfiguration>().node_id(),
+          util::Instance<felis::NodeConfiguration>().nr_nodes()){}  void DoLoad();
   virtual void Run() {
     DoLoad();
     if (count_down->fetch_sub(1) == 1)
@@ -240,7 +258,11 @@ class Client : public felis::EpochClient, public ClientBase {
  public:
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
 
-  Client() : felis::EpochClient(), ClientBase(kClientSeed), dice(0) {}
+  Client()
+      : felis::EpochClient(), dice(0), ClientBase(
+        kClientSeed,
+        util::Instance<felis::NodeConfiguration>().node_id(),
+        util::Instance<felis::NodeConfiguration>().nr_nodes()){}
 
   unsigned int LoadPercentage() final override {
     return LoadPercentageByWarehouse();

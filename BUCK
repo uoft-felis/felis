@@ -35,7 +35,8 @@ db_srcs = [
     ]
 
 libs = ['-pthread', '-lrt', '-ldl', '-ltcmalloc']
-test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
+#test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
+test_srcs = ['test/xnode_measure_test.cc']
 
 cxx_library(
     name='tpcc',
@@ -58,7 +59,7 @@ cxx_test(
     name='dbtest',
     srcs=test_srcs + db_srcs,
     headers=db_headers,
-    compiler_flags=includes,
+    compiler_flags=includes + ['-DDEFAULT_IFACE_CONFIG'],
     linker_flags=libs + ['-lgtest_main', '-lgtest'],
     deps=[':tpcc']
 )
