@@ -45,6 +45,7 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
 {
   callback.label = label;
   callback.continuation = continuation;
+  callback.perf.Clear();
   callback.perf.Start();
   auto nr_threads = NodeConfiguration::g_nr_threads;
   for (ulong i = 0; i < nr_threads; i++) {
