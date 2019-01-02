@@ -14,7 +14,6 @@ static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer 
 
 class VHandleSyncService {
  public:
-  virtual void Spin(uint64_t sid, uint64_t ver) = 0;
   virtual void Notify(uint64_t bitmap) = 0;
   virtual bool IsPendingVal(uintptr_t val) = 0;
   virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;

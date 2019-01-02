@@ -50,12 +50,15 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
   for (ulong i = 0; i < nr_threads; i++) {
     auto r = go::Make(
         [i, nr_threads, this] {
+          conf.IncrementExtraIOPending(i);
           for (ulong j = i * total_nr_txn / nr_threads;
                j < (i + 1) * total_nr_txn / nr_threads;
                j++) {
             txns[j]->root_promise()->Complete(VarStr());
             txns[j]->ResetRoot();
           }
+          conf.DecrementExtraIOPending(i);
+          logger->info("core {} finished issuing promises", i);
         });
     r->set_urgent(true);
     go::GetSchedulerFromPool(i + 1)->WakeUp(r);
@@ -69,6 +72,7 @@ void EpochClient::InitializeEpoch()
 
   util::Impl<PromiseAllocationService>().Reset();
 
+  conf.ResetBufferPlan();
   conf.FlushBufferPlanCompletion(0);
 
   printf("load percentage %d\n", LoadPercentage());
@@ -77,7 +81,6 @@ void EpochClient::InitializeEpoch()
   txns.reset(new BaseTxn*[total_nr_txn]);
 
   disable_load_balance = true;
-  conf.ResetBufferPlan();
   for (uint64_t i = 0; i < total_nr_txn; i++) {
     auto sequence = i + 1;
     auto *txn = RunCreateTxn(GenerateSerialId(i + 1));
@@ -94,9 +97,9 @@ void EpochClient::ExecuteEpoch()
 {
   // util::Impl<PromiseAllocationService>().Reset();
 
+  conf.ResetBufferPlan();
   conf.FlushBufferPlanCompletion(1);
 
-  conf.ResetBufferPlan();
   for (ulong i = 0; i < total_nr_txn; i++) {
     txns[i]->Run();
     txns[i]->root_promise()->AssignSchedulingKey(txns[i]->serial_id());
@@ -125,9 +128,13 @@ void EpochExecutionDispatchService::Dispatch(int core_id,
   auto &mapping = mappings[core_id];
   auto it = mapping.upper_bound(key);
   if (it == mapping.begin()) {
+    // Add to the head. However, we need to skip all urgent routines!!!
+    auto head = q;
+    while (q->next != head && ((go::Routine *) q->next)->is_urgent())
+      q = q->next;
+
     exe->Add(q);
     mapping.insert(std::make_pair(key, Entity{1, exe}));
-    printf("Adding %lu at the head on core %d\n", key, core_id);
     auto &sync = util::Impl<VHandleSyncService>();
     sync.Notify(1 << core_id);
   } else {
@@ -148,31 +155,34 @@ void EpochExecutionDispatchService::Detach(int core_id,
 {
   auto key = exe->schedule_key();
   auto &mapping = mappings[core_id];
-  printf("Detaching %lu from core %d\n", key, core_id);
+
+  auto it = mapping.find(key);
+
+#if 0
   if (!mapping.empty() && mapping.begin()->first != key) {
     printf("Why not %lu?\n", mapping.begin()->first);
     std::abort();
   }
-  auto it = mapping.find(key);
-  if (it == mapping.end()) {
-    puts("WTF?");
-    std::abort();
-  }
+
+  abort_if(it == mapping.end(), "Cannot find {} in the scheduler! on core {}", key, core_id);
+#endif
   if (--it->second.dupcnt == 0) {
-    printf("Erasing %lu from core %d\n", key, core_id);
+    // printf("Erasing %lu from core %d\n", key, core_id);
     mapping.erase(it);
   }
 }
 
 void EpochExecutionDispatchService::PrintInfo()
 {
-  int i = 0;
-  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-  for (auto it = mappings[core_id].begin();
-       it != mappings[core_id].end() && i < 20;
-       ++it, ++i) {
-    printf("DEBUG: %lu on this core (core %d)\n", it->first, core_id);
+  puts("===================================");
+  for (int core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
+    int i = 0;
+    for (auto it = mappings[core_id].begin();
+         it != mappings[core_id].end() && i < 3; ++it, ++i) {
+      printf("DEBUG: %lu on this core (core %d)\n", it->first, core_id);
+    }
   }
+  puts("===================================");
 }
 
 static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 30;

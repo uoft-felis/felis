@@ -42,6 +42,7 @@ class FlushImpl : public T {
 
   void Flush() {
     uint64_t flushed[kThreadBitmapSize];
+    bool need_do_flush = false;
     size_t nr_flushed = 0;
     // Also flush the main go-routine
     auto nr_threads = NodeConfiguration::g_nr_threads + 1;
@@ -51,14 +52,16 @@ class FlushImpl : public T {
       for (int i = 0; i < nr_threads; i++) {
         if (!ThreadBitmapIsMarked(flushed, i)
             && this->TryLock(i)) {
-          this->PushRelease(i);
+          if (this->PushRelease(i))
+            need_do_flush = true;
           ThreadBitmapMark(flushed, i);
           nr_flushed++;
           this->Unlock(i);
         }
       }
     }
-    this->DoFlush();
+    if (need_do_flush)
+      this->DoFlush();
   }
 
   using T::T;
@@ -79,7 +82,7 @@ class PromiseRoundRobinImpl {
   PromiseRoundRobinImpl(int idx);
   void QueueRoutine(PromiseRoutine *routine);
  protected:
-  void PushRelease(int thr);
+  bool PushRelease(int thr);
   void DoFlush() { BasePromise::FlushScheduler(); }
   bool TryLock(int i) {
     bool locked = false;
@@ -96,6 +99,20 @@ class SendChannelImpl {
   struct Channel {
     mem::Brk brk;
     std::atomic_bool lock;
+    go::BufferChannel *flusher_channel;
+    long flusher_cnt;
+  };
+
+  // We need to create a per-thread, long-running flusher go::Routine.
+  class FlusherRoutine : public go::Routine {
+    Channel *chn;
+    go::TcpOutputChannel *out;
+   public:
+    FlusherRoutine(Channel *chn, go::TcpOutputChannel *out)
+        : chn(chn), out(out) {
+      set_urgent(true);
+    }
+    void Run() final override;
   };
 
   util::CacheAligned<Channel> channels[NodeConfiguration::kMaxNrThreads + 1];
@@ -108,8 +125,10 @@ class SendChannelImpl {
     Unlock(go::Scheduler::CurrentThreadPoolId());
   }
 
+  long PendingFlush(int core_id);
+
  protected:
-  void PushRelease(int thr);
+  bool PushRelease(int thr);
   void DoFlush();
   bool TryLock(int i) {
     bool locked = false;
@@ -144,7 +163,7 @@ void PromiseRoundRobinImpl::QueueRoutine(PromiseRoutine *routine)
   }
 }
 
-void PromiseRoundRobinImpl::PushRelease(int thr)
+bool PromiseRoundRobinImpl::PushRelease(int thr)
 {
   size_t nr_routines = queues[thr]->nr_routines;
   PromiseRoutine *routines[kBufferSize];
@@ -164,6 +183,7 @@ void PromiseRoundRobinImpl::PushRelease(int thr)
                               (i + rnd) % NodeConfiguration::g_nr_threads + 1,
                               false);
   }
+  return nr_routines > 0;
 }
 
 SendChannelImpl::SendChannelImpl(go::TcpSocket *sock)
@@ -172,8 +192,12 @@ SendChannelImpl::SendChannelImpl(go::TcpSocket *sock)
   auto buffer =
       (uint8_t *) malloc((NodeConfiguration::g_nr_threads + 1) * kPerThreadBuffer);
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
-    channels[i]->brk.move(mem::Brk(buffer + i * kPerThreadBuffer, kPerThreadBuffer));
-    channels[i]->lock = false;
+    auto &chn = channels[i];
+    chn->brk.move(mem::Brk(buffer + i * kPerThreadBuffer, kPerThreadBuffer));
+    chn->lock = false;
+    chn->flusher_channel = new go::BufferChannel(1024);
+    chn->flusher_cnt = 0;
+    go::GetSchedulerFromPool(i + 1)->WakeUp(new FlusherRoutine(&chn.elem, out));
   }
 }
 
@@ -194,7 +218,7 @@ void *SendChannelImpl::Alloc(size_t sz)
   return b.Alloc(sz);
 }
 
-void SendChannelImpl::PushRelease(int tid)
+bool SendChannelImpl::PushRelease(int tid)
 {
   auto &b = channels[tid]->brk;
   if (b.current_size() > 0) {
@@ -204,19 +228,38 @@ void SendChannelImpl::PushRelease(int tid)
     b.Reset();
     Unlock(tid);
     out->Write(buf, sz);
+    return true;
   } else {
     Unlock(tid);
+    return false;
   }
 }
 
 void SendChannelImpl::DoFlush()
 {
-  auto r = go::Make(
-      [this]() {
-        this->out->Flush();
-      });
-  r->set_urgent(true);
-  go::Scheduler::Current()->WakeUp(r);
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  auto &chn = channels[core_id];
+  if (chn->flusher_cnt++ == 0) {
+    uint8_t signal = 0;
+    chn->flusher_channel->Write(&signal, 1);
+  }
+  go::Scheduler::Current()->current_routine()->VoluntarilyPreempt(true);
+}
+
+void SendChannelImpl::FlusherRoutine::Run()
+{
+  while (true) {
+    uint8_t signal = 0;
+    if (chn->flusher_cnt == 0)
+      chn->flusher_channel->Read(&signal, 1);
+    out->Flush();
+    chn->flusher_cnt--;
+  }
+}
+
+long SendChannelImpl::PendingFlush(int core_id)
+{
+  return channels[core_id]->flusher_cnt;
 }
 
 size_t NodeConfiguration::g_nr_threads = 8;
@@ -275,6 +318,8 @@ NodeConfiguration::NodeConfiguration()
     }
   }
   ResetBufferPlan();
+
+  memset(extra_iopendings, 0, sizeof(ulong) * kMaxNrThreads);
 }
 
 using go::TcpSocket;
@@ -283,16 +328,25 @@ using go::BufferChannel;
 using util::Instance;
 
 class NodeServerThreadRoutine : public go::Routine {
-  TcpInputChannel *in;
+  TcpSocket *sock;
   int idx;
   ulong src_node_id;
+  std::atomic<long> tid;
+  PromiseRoundRobin lb;
+  NodeConfiguration &conf;
  public:
   NodeServerThreadRoutine(TcpSocket *client_sock, int idx)
-      : in(client_sock->input_channel()),
-        idx(idx), src_node_id(0) {
+      : sock(client_sock),
+        idx(idx), src_node_id(0),
+        tid(1),
+        lb(idx), conf(Instance<NodeConfiguration>()) {
     set_urgent(true);
     client_sock->OmitReadLock();
   }
+  void Flush() {
+    lb.Flush();
+  }
+  int thread_pool_id() const { return tid.load(std::memory_order_relaxed); }
   virtual void Run() final;
  private:
   void UpdateBatchCounters();
@@ -305,14 +359,13 @@ class NodeServerRoutine : public go::Routine {
 
 void NodeServerThreadRoutine::Run()
 {
-  PromiseRoundRobin lb(idx);
-  auto &conf = Instance<NodeConfiguration>();
   while (true) {
     ulong nr_recv[NodeConfiguration::kPromiseMaxLevels];
     memset(nr_recv, 0, sizeof(ulong) * NodeConfiguration::kPromiseMaxLevels);
     ulong nr_recv_bytes = 0;
 
     while (true) {
+      auto in = sock->input_channel();
       ulong promise_size = 0;
       in->Read(&promise_size, 8);
 
@@ -341,19 +394,21 @@ void NodeServerThreadRoutine::Run()
       nr_recv_bytes += 8 + promise_size;
       auto cnt = ++nr_recv[level];
       auto idx = conf.BatchBufferIndex(level, src_node_id, conf.node_id());
+
       if (cnt == conf.total_batch_counters[idx].load()) {
         logger->info("Flush from node {}, level = {}, cur_recv_bytes {}",
                      src_node_id, level, nr_recv_bytes);
-        lb.Flush();
+        Flush();
       }
       if (cnt % (1 << 17) == 0) {
         auto sched = go::Scheduler::Current();
-        auto tid = go::Scheduler::CurrentThreadPoolId();
         auto r =
             go::Make(
-                [this, tid]() {
-                  auto new_tid = (tid + 1) % NodeConfiguration::g_nr_threads + 1;
-                  auto sched = go::GetSchedulerFromPool(new_tid);
+                [this]() {
+                  auto ord = std::memory_order_relaxed;
+                  auto new_tid = (tid.load(ord) + 1) % NodeConfiguration::g_nr_threads + 1;
+                  tid.store(new_tid, ord);
+                  auto sched = go::GetSchedulerFromPool(tid.load());
                   sched->WakeUp(this);
                 });
         r->set_urgent(true);
@@ -371,6 +426,8 @@ void NodeServerThreadRoutine::UpdateBatchCounters()
   auto cmp = EpochClient::g_workload_client->completion_object();
   auto buffer_size = 8 + NodeConfiguration::kPromiseMaxLevels * nr_nodes * nr_nodes * sizeof(ulong);
   auto *counters = (ulong *) alloca(buffer_size);
+  auto in = sock->input_channel();
+
   in->Read(counters, buffer_size);
   src_node_id = counters[0];
 
@@ -442,7 +499,10 @@ void NodeServerRoutine::Run()
     if (client_sock == nullptr) continue;
     logger->info("New worker peer connection");
     conf.clients.push_back(client_sock);
-    go::GetSchedulerFromPool(1)->WakeUp(new NodeServerThreadRoutine(client_sock, i));
+    auto *routine = new NodeServerThreadRoutine(client_sock, i);
+
+    conf.all_in_routines[i - 1] = routine;
+    go::GetSchedulerFromPool(1)->WakeUp(routine);
   }
   console.UpdateServerStatus(Console::ServerStatus::Running);
 }
@@ -536,11 +596,46 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine)
   }
 }
 
+void NodeConfiguration::FlushPromiseRoutine()
+{
+  for (int i = 1; i < nr_nodes(); i++) {
+    all_in_routines[i - 1]->Flush();
+  }
+  for (int i = 1; i <= nr_nodes(); i++) {
+    if (i == node_id()) continue;
+    GetOutputChannel(i)->Flush();
+  }
+  lb->Flush();
+}
+
+long NodeConfiguration::IOPending(int core_id)
+{
+  long s = extra_iopendings[core_id];
+
+  // Has this core being used as a in_routine (the one reading promises from
+  // other nodes)?
+  for (int i = 1; i < nr_nodes(); i++) {
+    if (core_id + 1 == all_in_routines[i - 1]->thread_pool_id())
+      s++;
+  }
+  for (int i = 1; i <= nr_nodes(); i++) {
+    if (i == node_id()) continue;
+    s += GetOutputChannel(i)->PendingFlush(core_id);
+  }
+  return s;
+}
+
 void NodeConfiguration::ResetBufferPlan()
 {
   local_batch_counters[0] = std::numeric_limits<ulong>::max();
   memset(local_batch_counters + 2, 0,
          kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(ulong));
+  for (ulong i = 0; i < kPromiseMaxLevels * nr_nodes() * nr_nodes(); i++)
+    total_batch_counters[i].store(0);
+  for (ulong l = 0; l < kPromiseMaxLevels; l++) {
+    for (ulong i = 0; i < nr_nodes(); i++)
+      batch_counters[l][i] = 0;
+  }
 }
 
 void NodeConfiguration::CollectBufferPlan(BasePromise *root)
@@ -584,9 +679,9 @@ void NodeConfiguration::FlushBufferPlan(bool sync)
       for (int dst = 0; dst < nr_nodes(); dst++) {
         auto idx = BatchBufferIndex(i, src + 1, dst + 1);
         auto counter = local_batch_counters[2 + idx];
-        total_batch_counters[idx].fetch_add(counter);
+        auto current_cnt = total_batch_counters[idx].fetch_add(counter) + counter;
         if (i < kPromiseMaxDebugLevels)
-          printf(" %d->%d=%lu", src + 1, dst + 1, counter);
+          printf(" %d->%d=%lu(%lu)", src + 1, dst + 1, current_cnt, counter);
         if (dst + 1 == node_id()) {
           EpochClient::g_workload_client->completion_object()->Increment(counter);
         }

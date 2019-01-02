@@ -189,7 +189,7 @@ void BasePromise::ExecutionRoutine::Run()
   cmp->Complete();
 }
 
-void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q)
+void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready)
 {
   if (schedule_key() == 0) {
     go::Routine::AddToReadyQueue(q);
@@ -200,7 +200,7 @@ void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q)
       scheduler()->thread_pool_id() - 1, this, q);
 }
 
-void BasePromise::ExecutionRoutine::OnDetached()
+void BasePromise::ExecutionRoutine::OnRemoveFromReadyQueue()
 {
   if (schedule_key() != 0) {
     util::Impl<PromiseRoutineDispatchService>().Detach(

@@ -15,18 +15,22 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
 
   int core = go::Scheduler::CurrentThreadPoolId() - 1;
   uint64_t mask = 1ULL << core;
+  ulong wait_cnt = 0;
 
   while (true) {
     uintptr_t val = oldval;
     uintptr_t newval = val & ~mask;
-    if (newval == val
-        || (oldval = __sync_val_compare_and_swap(addr, val, newval)) == val) {
-      Spin(sid, ver);
+    bool notified = false;
+    if ((oldval = __sync_val_compare_and_swap(addr, val, newval)) == val) {
+      notified = Spin(sid, ver, wait_cnt);
       oldval = *addr;
     }
     if (!IsPendingVal(oldval))
       return;
-    go::Scheduler::Current()->RunNext(go::Scheduler::State::ReadyState);
+    if (notified) {
+      go::Scheduler::Current()->current_routine()->VoluntarilyPreempt(false);
+    }
+    oldval = *addr;
   }
 }
 
@@ -48,19 +52,30 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
   Notify(bitmap);
 }
 
-
-void SpinnerSlot::Spin(uint64_t sid, uint64_t ver)
+bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
 {
   int idx = go::Scheduler::CurrentThreadPoolId() - 1;
+  auto sched = go::Scheduler::Current();
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
+  sched->current_routine()->set_busy_poll(true);
+
   abort_if(idx < 0, "We should not running on thread pool 0!");
 
-  unsigned long wait_cnt = 0;
   while (!slots[idx].done) {
     asm("pause" : : :"memory");
     wait_cnt++;
+
     if ((wait_cnt & 0x7FFFFFF) == 0) {
-      printf("Deadlock? %lu waiting for %lu\n", sid, ver);
+      printf("Deadlock on core %d? %lu waiting for %lu\n", idx, sid, ver);
+      printf("IOPendings for core %d is %lu\n", idx, transport.IOPending(idx));
       util::Impl<PromiseRoutineDispatchService>().PrintInfo();
+    }
+
+    if ((wait_cnt & 0x7FFF) == 0) {
+      transport.FlushPromiseRoutine();
+      if (transport.IOPending(idx) > 0)
+        sched->RunNext(go::Scheduler::NextReadyState);
+      return false;
     }
   }
 
@@ -68,6 +83,7 @@ void SpinnerSlot::Spin(uint64_t sid, uint64_t ver)
 
   DTRACE_PROBE3(felis, wait_jiffies, wait_cnt, sid, ver);
   slots[idx].done = 0;
+  return true;
 }
 
 void SpinnerSlot::Notify(uint64_t bitmap)

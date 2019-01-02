@@ -87,8 +87,8 @@ class BasePromise {
     static void operator delete(void *ptr) {}
     uint64_t schedule_key() const { return r->sched_key; }
     void Run() final override;
-    void AddToReadyQueue(go::Scheduler::Queue *q) final override;
-    void OnDetached() final override;
+    void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready) final override;
+    void OnRemoveFromReadyQueue() final override;
   };
 
   BasePromise(size_t limit = kMaxHandlersLimit);
@@ -111,6 +111,8 @@ static_assert(sizeof(BasePromise) == CACHE_LINE_SIZE, "BasePromise is not cache 
 class PromiseRoutineTransportService {
  public:
   virtual void TransportPromiseRoutine(PromiseRoutine *routine) = 0;
+  virtual void FlushPromiseRoutine() {};
+  virtual long IOPending(int core_id) { return -1; }
 };
 
 class PromiseRoutineDispatchService {

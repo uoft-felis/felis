@@ -25,7 +25,7 @@ class SpinnerSlot : public VHandleSyncService {
  public:
   SpinnerSlot() { memset(slots, 0, 64 * kNrSpinners); }
 
-  void Spin(uint64_t sid, uint64_t ver) final override;
+  bool Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt);
   void Notify(uint64_t bitmap) final override;
   bool IsPendingVal(uintptr_t val)  final override {
     return (val >> 32) == (kPendingValue >> 32);

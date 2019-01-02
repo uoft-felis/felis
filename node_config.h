@@ -60,7 +60,13 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   }
 
   void RunAllServers();
+
   void TransportPromiseRoutine(PromiseRoutine *routine) final override;
+  void FlushPromiseRoutine() final override;
+  long IOPending(int core_id) final override;
+  void IncrementExtraIOPending(int core_id) { extra_iopendings[core_id]++; }
+  void DecrementExtraIOPending(int core_id) { extra_iopendings[core_id]--; }
+
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root);
   void FlushBufferPlan(bool sync);
@@ -85,6 +91,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   friend class NodeServerThreadRoutine;
   std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;
   std::array<go::TcpSocket *, kMaxNrNode> all_nodes;
+  std::array<NodeServerThreadRoutine *, kMaxNrNode> all_in_routines;
   std::array<SendChannel *, kMaxNrNode> all_out_channels;
   size_t max_node_id;
 
@@ -102,6 +109,17 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   std::atomic_ulong *batch_counters[kPromiseMaxLevels];
   ulong *local_batch_counters;
 
+  // Transactions can execute without having to wait for all IOs to
+  // complete. However, this is very likely to introduce deadlocks.
+  //
+  // We introduce IOPendings to tell the transactions to yield to IOs instead of
+  // dedicately spin there.
+  //
+  // IOPendings automatically take account into currently in-flight flushes,
+  // current IO routine running on this core. However, there are some other
+  // types of IOs we need to keep track of: for example, unfinished issuers.
+  //
+  ulong extra_iopendings[kMaxNrThreads];
  private:
   void CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);
