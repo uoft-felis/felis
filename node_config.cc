@@ -168,21 +168,40 @@ bool PromiseRoundRobinImpl::PushRelease(int thr)
   size_t nr_routines = queues[thr]->nr_routines;
   PromiseRoutine *routines[kBufferSize];
   int nr_threads = NodeConfiguration::g_nr_threads;
-  ulong delta = nr_threads - nr_routines % nr_threads;
+  // ulong delta = nr_threads - nr_routines % nr_threads;
+  ulong delta = nr_routines % nr_threads;
   ulong rnd = round.fetch_add(delta);
   memcpy(routines, queues[thr]->routines, nr_routines * sizeof(PromiseRoutine *));
   queues[thr]->nr_routines = 0;
   Unlock(thr);
 
+#if 0
+  // This is putting promise that's co-located together on the same thread.
+  // It's not real roundrobin
   for (int i = 0; i < nr_threads; i++) {
     size_t start = i * nr_routines / nr_threads;
     size_t end = (i + 1) * nr_routines / nr_threads;
 
     if (end == start) continue;
     BasePromise::QueueRoutine(routines + start, end - start, idx,
-                              (i + rnd) % NodeConfiguration::g_nr_threads + 1,
+                              (i + rnd) % nr_threads + 1,
                               false);
   }
+#endif
+
+  // True roundrobin
+  PromiseRoutine *rounds[kBufferSize / nr_threads + 1];
+  for (int i = 0; i < nr_threads; i++) {
+    int sz = 0;
+    for (int j = i; j < nr_routines; j += nr_threads) {
+      rounds[sz++] = routines[j];
+    }
+    if (sz == 0) continue;
+    BasePromise::QueueRoutine(rounds, sz, idx,
+                              (i + rnd) % nr_threads + 1,
+                              false);
+  }
+
   return nr_routines > 0;
 }
 
