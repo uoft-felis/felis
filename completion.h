@@ -14,8 +14,8 @@ class CompletionObject {
   CompletionObject(ulong count, T callback)
       : comp_count(count), callback(callback) {}
 
-  void Complete() {
-    if (comp_count.fetch_sub(1) == 1) {
+  void Complete(ulong dec = 1) {
+    if (comp_count.fetch_sub(dec) == dec) {
       callback();
     }
   }

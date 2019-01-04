@@ -12,26 +12,30 @@ using util::Impl;
 
 namespace felis {
 
+static constexpr size_t kPromiseRoutineHeader = sizeof(go::Routine);
+static_assert(kPromiseRoutineHeader % 8 == 0); // Has to be aligned!
+
 PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
 {
-  auto *p = (uint8_t *) BasePromise::Alloc(
-      util::Align(sizeof(PromiseRoutine) + capture_len, CACHE_LINE_SIZE));
-  auto *r = (PromiseRoutine *) p;
+  PromiseRoutine *r = new BasePromise::ExecutionRoutine();
   r->capture_len = capture_len;
-  r->capture_data = p + sizeof(PromiseRoutine);
+  r->capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len, 8));
   r->sched_key = 0;
+  r->next = nullptr;
   return r;
 }
 
-PromiseRoutine *PromiseRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
+PromiseRoutine *PromiseRoutine::CreateFromPacket(go::TcpInputChannel *in, size_t packet_len)
 {
   uint16_t len;
-  memcpy(&len, p, 2);
-  uint8_t * input_ptr = p + 2;
-  p += util::Align(2 + len, 8);
+  in->Read(&len, 2);
 
-  auto r = (PromiseRoutine *) p;
-  r->DecodeNode(p);
+  uint16_t aligned_len = util::Align(2 + len, 8);
+  auto *input_ptr = (uint8_t *) BasePromise::Alloc(aligned_len);
+  in->Read(input_ptr, aligned_len - 2);
+
+  auto r = (PromiseRoutine *) new BasePromise::ExecutionRoutine();
+  r->DecodeNode(in);
   r->input.data = input_ptr;
   return r;
 }
@@ -59,7 +63,7 @@ size_t PromiseRoutine::NodeSize() const
              + 8;
 
   for (size_t i = 0; next && i < next->nr_handlers; i++) {
-    auto *child = next->handlers[i];
+    auto *child = next->routine(i);
     s += child->NodeSize();
   }
 
@@ -71,8 +75,6 @@ uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
   memcpy(p, this, sizeof(PromiseRoutine));
   auto node = (PromiseRoutine *) p;
   p += util::Align(sizeof(PromiseRoutine), 8);
-  node->capture_data = p;
-  node->next = nullptr;
 
   memcpy(p, capture_data, capture_len);
   p += util::Align(capture_len, 8);
@@ -83,32 +85,33 @@ uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
 
   if (next) {
     for (size_t i = 0; i < next->nr_handlers; i++) {
-      auto *child = next->handlers[i];
+      auto *child = next->routine(i);
       p = child->EncodeNode(p);
     }
   }
   return p;
 }
 
-uint8_t *PromiseRoutine::DecodeNode(uint8_t *p)
+void PromiseRoutine::DecodeNode(go::TcpInputChannel *in)
 {
-  p += util::Align(sizeof(PromiseRoutine), 8);
-  capture_data = p;
-  p += util::Align(capture_len, 8);
+  in->Read(this, util::Align(sizeof(PromiseRoutine), 8));
+
+  capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len, 8));
+  in->Read(capture_data, util::Align(capture_len, 8));
+
   next = nullptr;
 
   size_t nr_children = 0;
-  memcpy(&nr_children, p, 8);
-  p += 8;
+  in->Read(&nr_children, 8);
+
   if (nr_children > 0) {
     next = new BasePromise(nr_children);
     for (int i = 0; i < nr_children; i++) {
-      auto child = (PromiseRoutine *) p;
-      p = child->DecodeNode(p);
+      PromiseRoutine *child = new BasePromise::ExecutionRoutine();
+      child->DecodeNode(in);
       next->Add(child);
     }
   }
-  return p;
 }
 
 PromiseProc::~PromiseProc()
@@ -117,14 +120,13 @@ PromiseProc::~PromiseProc()
 
 size_t BasePromise::g_nr_threads = 0;
 
-BasePromise::BasePromise(size_t limit)
-    : limit(limit), nr_handlers(0)
+BasePromise::BasePromise(int limit)
+    : limit(limit), nr_handlers(0), extra_handlers(nullptr)
 {
-  if (limit <= kInlineLimit)
-    handlers = inline_handlers;
-  else
-    handlers = (PromiseRoutine **) Alloc(
-        util::Align(sizeof(PromiseRoutine *) * limit, CACHE_LINE_SIZE));
+  if (limit > kInlineLimit) {
+    extra_handlers = (PromiseRoutine **)Alloc(util::Align(
+        sizeof(PromiseRoutine *) * (limit - kInlineLimit), CACHE_LINE_SIZE));
+  }
 }
 
 void *BasePromise::operator new(std::size_t size)
@@ -139,8 +141,8 @@ void *BasePromise::Alloc(size_t size)
 
 void BasePromise::AssignSchedulingKey(uint64_t key)
 {
-  for (size_t i = 0; i < nr_handlers; i++) {
-    auto *child = handlers[i];
+  for (int i = 0; i < nr_handlers; i++) {
+    auto *child = routine(i);
     child->sched_key = key;
    if (child->next) child->next->AssignSchedulingKey(key);
   }
@@ -148,18 +150,21 @@ void BasePromise::AssignSchedulingKey(uint64_t key)
 
 void BasePromise::Add(PromiseRoutine *child)
 {
-  abort_if(nr_handlers == kMaxHandlersLimit,
+  abort_if(nr_handlers >= kMaxHandlersLimit,
            "nr_handlers {} exceeding limits!", nr_handlers);
-  handlers[nr_handlers++] = child;
+  routine(nr_handlers++) = child;
 }
 
 void BasePromise::Complete(const VarStr &in)
 {
   auto &transport = util::Impl<PromiseRoutineTransportService>();
+
+  __builtin_prefetch(extra_handlers);
+
   for (size_t i = 0; i < nr_handlers; i++) {
-    auto routine = handlers[i];
-    routine->input = in;
-    transport.TransportPromiseRoutine(routine);
+    auto r = routine(i);
+    r->input = in;
+    transport.TransportPromiseRoutine(r);
   }
 }
 
@@ -174,38 +179,26 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
   }
 }
 
-void *BasePromise::ExecutionRoutine::operator new(std::size_t size)
-{
-  return BasePromise::Alloc(size);
-}
-
 void BasePromise::ExecutionRoutine::Run()
 {
   {
     INIT_ROUTINE_BRK(4096);
-    r->callback(r);
+    this->callback((PromiseRoutine *) this);
   }
-  auto cmp = EpochClient::g_workload_client->completion_object();
-  cmp->Complete();
+  util::Impl<PromiseRoutineDispatchService>().Complete(
+      scheduler()->thread_pool_id() - 1);
 }
 
 void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready)
 {
-  if (schedule_key() == 0) {
-    go::Routine::AddToReadyQueue(q);
-    return;
-  }
-
   util::Impl<PromiseRoutineDispatchService>().Dispatch(
       scheduler()->thread_pool_id() - 1, this, q);
 }
 
 void BasePromise::ExecutionRoutine::OnRemoveFromReadyQueue()
 {
-  if (schedule_key() != 0) {
-    util::Impl<PromiseRoutineDispatchService>().Detach(
+  util::Impl<PromiseRoutineDispatchService>().Detach(
         scheduler()->thread_pool_id() - 1, this);
-  }
 }
 
 void BasePromise::QueueRoutine(felis::PromiseRoutine **routines, size_t nr_routines,
@@ -213,7 +206,7 @@ void BasePromise::QueueRoutine(felis::PromiseRoutine **routines, size_t nr_routi
 {
   go::Routine *grt[nr_routines];
   for (size_t i = 0; i < nr_routines; i++) {
-    auto r = new ExecutionRoutine(routines[i]);
+    auto r = (ExecutionRoutine *) routines[i];
     grt[i] = r;
     if (i == nr_routines - 1)
       r->set_busy_poll(true);

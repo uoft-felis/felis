@@ -179,8 +179,17 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     BasePromise::ExecutionRoutine *last;
   };
   using Mapping = std::map<uint64_t, Entity>;
+  struct CompleteCounter {
+    ulong completed;
+    bool force;
+    CompleteCounter() : completed(0), force(false) {}
+  };
 
-  std::array<Mapping, NodeConfiguration::kMaxNrThreads> mappings;
+  static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
+
+  std::array<Mapping, kMaxNrThreads> mappings;
+  std::array<ulong, kMaxNrThreads> nr_zeros;
+  std::array<CompleteCounter, kMaxNrThreads> completed_counters;
  public:
   void Dispatch(int core_id,
                 BasePromise::ExecutionRoutine *exec_routine,
@@ -188,6 +197,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Detach(int core_id,
               BasePromise::ExecutionRoutine *exec_routine) final override;
   void Reset() final override;
+  void Complete(int core_id) final override;
   void PrintInfo() final override;
 };
 
@@ -198,6 +208,7 @@ class EpochPromiseAllocationService : public PromiseAllocationService {
   EpochPromiseAllocationService();
 
   mem::Brk *brks;
+  mem::Brk *minibrks; // for mini objects
  public:
   void *Alloc(size_t size) final override;
   void Reset() final override;

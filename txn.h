@@ -75,6 +75,8 @@ class BaseTxn {
     TxnHandle() {}
 
     TxnVHandle operator()(VHandle *vhandle) const { return TxnVHandle(sid, epoch_nr, vhandle); }
+
+    uint64_t serial_id() const { return sid; }
   };
 
   struct TxnIndexOpContext {
@@ -93,7 +95,7 @@ class BaseTxn {
     TxnIndexOpContext() {}
 
     size_t EncodeSize() const {
-      return sizeof(TxnHandle) + sizeof(int32_t) + sizeof(uint32_t) + key_len;
+      return kHeaderSize + key_len;
     }
     uint8_t *EncodeTo(uint8_t *buf) const {
       memcpy(buf, this, kHeaderSize);

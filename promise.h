@@ -7,6 +7,8 @@
 #include <atomic>
 #include <experimental/optional>
 #include "sqltypes.h"
+#include "gopp/gopp.h"
+#include "gopp/channels.h"
 
 namespace felis {
 
@@ -48,13 +50,13 @@ struct PromiseRoutine {
   size_t TreeSize() const;
 
   uint8_t *EncodeNode(uint8_t *p);
-  uint8_t *DecodeNode(uint8_t *p);
+  void DecodeNode(go::TcpInputChannel *in);
   void EncodeTree(uint8_t *p);
 
   BasePromise *next;
 
   static PromiseRoutine *CreateFromCapture(size_t capture_len);
-  static PromiseRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
+  static PromiseRoutine *CreateFromPacket(go::TcpInputChannel *in, size_t packet_len);
 };
 
 static_assert(sizeof(PromiseRoutine) <= CACHE_LINE_SIZE, "PromiseRoutine too large.");
@@ -64,34 +66,39 @@ class EpochClient;
 class BasePromise {
  protected:
   friend struct PromiseRoutine;
-  size_t nr_handlers;
-  size_t limit;
-  PromiseRoutine **handlers;
-  static constexpr size_t kInlineLimit = 5;
+  int nr_handlers;
+  int limit;
+  PromiseRoutine **extra_handlers;
+  static constexpr size_t kInlineLimit = 6;
 
   PromiseRoutine *inline_handlers[kInlineLimit];
  public:
   static size_t g_nr_threads;
-  static constexpr size_t kMaxHandlersLimit = 32;
+  static constexpr int kMaxHandlersLimit = 32 + kInlineLimit;
 
-  class ExecutionRoutine : public go::Routine {
+  class ExecutionRoutine : public go::Routine, public PromiseRoutine {
     friend class PromiseRoutineLookupService;
-
-    PromiseRoutine *r;
    public:
-    ExecutionRoutine(PromiseRoutine *r)
-        : r(r) {
+    ExecutionRoutine() {
       set_reuse(true);
     }
-    static void *operator new(std::size_t size);
+    static void *operator new(std::size_t size) {
+      return BasePromise::Alloc(util::Align(size, CACHE_LINE_SIZE));
+    }
     static void operator delete(void *ptr) {}
-    uint64_t schedule_key() const { return r->sched_key; }
+    uint64_t schedule_key() const { return sched_key; }
     void Run() final override;
     void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready) final override;
     void OnRemoveFromReadyQueue() final override;
+
+    void PlainAddToReadyQueue(go::Scheduler::Queue *q) {
+      go::Routine::AddToReadyQueue(q);
+    }
   };
 
-  BasePromise(size_t limit = kMaxHandlersLimit);
+  static_assert(sizeof(ExecutionRoutine) % CACHE_LINE_SIZE == 0);
+
+  BasePromise(int limit = kMaxHandlersLimit);
   void Complete(const VarStr &in);
   void Add(PromiseRoutine *child);
   void AssignSchedulingKey(uint64_t key);
@@ -103,10 +110,15 @@ class BasePromise {
   static void FlushScheduler();
 
   size_t nr_routines() const { return nr_handlers; }
-  PromiseRoutine **routines() { return handlers; }
+  PromiseRoutine *&routine(int idx) {
+    if (idx < kInlineLimit)
+      return inline_handlers[idx];
+    else
+      return extra_handlers[idx - kInlineLimit];
+  }
 };
 
-static_assert(sizeof(BasePromise) == CACHE_LINE_SIZE, "BasePromise is not cache line aligned");
+static_assert(sizeof(BasePromise) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");
 
 class PromiseRoutineTransportService {
  public:
@@ -121,6 +133,8 @@ class PromiseRoutineDispatchService {
                         go::Scheduler::Queue *q) = 0;
   virtual void Detach(int core_id, BasePromise::ExecutionRoutine *exec_routine) = 0;
   virtual void Reset() = 0;
+  virtual void Complete(int core_id) = 0;
+
   // For debugging
   virtual void PrintInfo() {};
 };
@@ -172,7 +186,7 @@ class Promise : public BasePromise {
 
       auto output = native_func(capture, t);
       if (routine->next && output) {
-        void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
+        void *buffer = Alloc(util::Align(output->EncodeSize() + sizeof(VarStr) + 1, 8));
         VarStr *output_str = output->EncodeFromAlloca(buffer);
         routine->next->Complete(*output_str);
       }
@@ -181,8 +195,6 @@ class Promise : public BasePromise {
     routine->input.data = nullptr;
     routine->callback = (void (*)(PromiseRoutine *)) static_func;
     routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
-
-    routine->capture_len = capture.EncodeSize();
     capture.EncodeTo(routine->capture_data);
 
     Add(routine);

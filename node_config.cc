@@ -402,11 +402,7 @@ void NodeServerThreadRoutine::Run()
       abort_if(src_node_id == 0,
                "Protocol error. Should always send the updated counters first");
 
-      auto *p = (uint8_t *) util::Impl<PromiseAllocationService>().Alloc(
-          util::Align(promise_size, CACHE_LINE_SIZE));
-      in->Read(p, promise_size);
-
-      auto r = PromiseRoutine::CreateFromPacket(p, promise_size);
+      auto r = PromiseRoutine::CreateFromPacket(in, promise_size);
       auto level = r->level;
       lb.QueueRoutine(r);
 
@@ -660,9 +656,8 @@ void NodeConfiguration::ResetBufferPlan()
 void NodeConfiguration::CollectBufferPlan(BasePromise *root)
 {
   auto src_node = node_id();
-  auto *routines = root->routines();
   for (size_t i = 0; i < root->nr_routines(); i++) {
-    auto *routine = routines[i];
+    auto *routine = root->routine(i);
     CollectBufferPlanImpl(routine, 0, src_node);
   }
 }
@@ -680,9 +675,8 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, int level
   if (routine->next == nullptr)
     return;
 
-  auto *subroutines = routine->next->routines();
   for (size_t i = 0; i < routine->next->nr_routines(); i++) {
-    auto *subroutine = subroutines[i];
+    auto *subroutine = routine->next->routine(i);
     CollectBufferPlanImpl(subroutine, level + 1, dst_node);
   }
 }

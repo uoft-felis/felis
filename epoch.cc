@@ -112,6 +112,7 @@ void EpochClient::ExecuteEpoch()
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
+  nr_zeros.fill(0);
 }
 
 void EpochExecutionDispatchService::Reset()
@@ -126,6 +127,13 @@ void EpochExecutionDispatchService::Dispatch(int core_id,
                                              go::Scheduler::Queue *q)
 {
   auto key = exe->schedule_key();
+
+  if (key == 0) {
+    exe->PlainAddToReadyQueue(q);
+    nr_zeros[core_id]++;
+    return;
+  }
+
   auto &mapping = mappings[core_id];
   auto it = mapping.upper_bound(key);
   if (it == mapping.begin()) {
@@ -155,10 +163,17 @@ void EpochExecutionDispatchService::Detach(int core_id,
                                            BasePromise::ExecutionRoutine *exe)
 {
   auto key = exe->schedule_key();
+
+  if (key == 0) {
+    if (--nr_zeros[core_id] == 0) {
+      completed_counters[core_id].force = true;
+    }
+    return;
+  }
+
   auto &mapping = mappings[core_id];
 
   auto it = mapping.find(key);
-
 #if 0
   if (!mapping.empty() && mapping.begin()->first != key) {
     printf("Why not %lu?\n", mapping.begin()->first);
@@ -170,6 +185,20 @@ void EpochExecutionDispatchService::Detach(int core_id,
   if (--it->second.dupcnt == 0) {
     // printf("Erasing %lu from core %d\n", key, core_id);
     mapping.erase(it);
+    if (mapping.empty()) {
+      completed_counters[core_id].force = true;
+    }
+  }
+}
+
+void EpochExecutionDispatchService::Complete(int core_id)
+{
+  auto &c = completed_counters[core_id];
+  c.completed++;
+  if (c.force) {
+    auto n = c.completed;
+    c.completed = 0;
+    EpochClient::g_workload_client->completion_object()->Complete(n);
   }
 }
 
@@ -187,11 +216,13 @@ void EpochExecutionDispatchService::PrintInfo()
 }
 
 static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 30;
-static constexpr size_t kEpochPromiseAllocationMainLimit = 4UL << 30;
+static constexpr size_t kEpochPromiseAllocationMainLimit = 6UL << 30;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()
 {
   brks = new mem::Brk[NodeConfiguration::g_nr_threads + 1];
+  minibrks = new mem::Brk[NodeConfiguration::g_nr_threads + 1];
+
   size_t acc = 0;
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     auto s = kEpochPromiseAllocationPerThreadLimit;
@@ -203,6 +234,8 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
              -1, 0),
         s));
     acc += s;
+    minibrks[i].move(mem::Brk(
+        brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
   }
   logger->info("Memory used: PromiseAllocator {}GB", acc >> 30);
 }
@@ -210,13 +243,24 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
 void *EpochPromiseAllocationService::Alloc(size_t size)
 {
   int thread_id = go::Scheduler::CurrentThreadPoolId();
-  return brks[thread_id].Alloc(size);
+  if (size < CACHE_LINE_SIZE) {
+    auto &b = minibrks[thread_id];
+    if (!b.Check(size)) {
+      b.move(mem::Brk(
+          brks[thread_id].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
+    }
+    return b.Alloc(size);
+  } else {
+    return brks[thread_id].Alloc(util::Align(size, CACHE_LINE_SIZE));
+  }
 }
 
 void EpochPromiseAllocationService::Reset()
 {
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     brks[i].Reset();
+    minibrks[i].move(
+        mem::Brk(brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
   }
 }
 

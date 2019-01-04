@@ -117,7 +117,7 @@ class Brk {
   void move(Brk &&rhs) {
     data = rhs.data;
     limit = rhs.limit;
-    offset.store(rhs.offset.load());
+    offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
     deleters = rhs.deleters;
     rhs.deleters = nullptr;
     ord = rhs.ord;
