@@ -7,6 +7,7 @@
 #include "mem.h"
 #include "sqltypes.h"
 #include "gc.h"
+#include "shipping.h"
 
 namespace felis {
 
@@ -99,7 +100,47 @@ class SkipListVHandle : public BaseVHandle {
 static_assert(sizeof(SkipListVHandle) <= 64, "SortedBlockVHandle is larger than a cache line");
 #endif
 
+class SortedArrayVHandle;
+
+// TODO: move this out of the vhandle
+class RowEntity {
+  friend class RowShipmentReceiver;
+  friend class SortedArrayVHandle;
+
+  int rel_id;
+  VarStr *k;
+  VHandle *handle_ptr;
+  ShippingHandle shandle;
+  std::atomic_ulong newest_version;
+ public:
+  RowEntity() : rel_id(-1), k(nullptr), handle_ptr(nullptr) {}
+  RowEntity(int rel_id, VarStr *k, VHandle *handle) : rel_id(rel_id), k(k), handle_ptr(handle) {}
+  ~RowEntity() {delete k;}
+  RowEntity(const RowEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
+
+  ShippingHandle *shipping_handle() { return &shandle; }
+  int EncodeIOVec(struct iovec *vec, int max_nr_vec);
+  uint64_t encoded_len;
+
+  void DecodeIOVec(struct iovec *vec);
+};
+
+using RowSliceScanner = ObjectSliceScanner<RowEntity>;
+using RowShipment = felis::Shipment<felis::RowEntity>;
+
+class RowShipmentReceiver : public ShipmentReceiver<RowEntity> {
+ public:
+  RowShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<RowEntity>(sock) {}
+  ~RowShipmentReceiver() {delete sock;}
+
+  void Run() override final {// TODO: do something...
+  }
+};
+
+
 class SortedArrayVHandle : public BaseVHandle {
+  friend class RowEntity;
+
   std::atomic_bool lock;
   short alloc_by_coreid;
   short this_coreid;
@@ -107,6 +148,7 @@ class SortedArrayVHandle : public BaseVHandle {
   size_t size;
   size_t value_mark;
   uint64_t *versions;
+  RowEntity *rowEntity;
 
  public:
   static void *operator new(size_t nr_bytes) {

@@ -158,10 +158,13 @@ class RowSlicer {
  protected:
   Slice **index_slices;
   IndexSliceScanner **index_slice_scanners;
+  Slice **row_slices;
+  RowSliceScanner **row_slice_scanners;
   size_t nr_slices;
   RowSlicer(int nr_slices);
  public:
   IndexEntity *OnNewRow(int slice_idx, IndexEntity *ent);
+  RowEntity *OnNewRow(int slice_idx, RowEntity *ent);
   std::vector<IndexShipment*> all_index_shipments();
 
 };

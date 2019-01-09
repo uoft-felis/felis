@@ -103,6 +103,24 @@ SkipListVHandle::SkipListVHandle()
 
 #endif
 
+int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
+{
+  if (max_nr_vec < 3)
+    return 0;
+
+  vec[0].iov_len = 4;
+  vec[0].iov_base = &rel_id;
+  vec[1].iov_len = k->len;
+  vec[1].iov_base = (void *) k->data;
+  ulong n_ver = this->newest_version.load();
+  vec[2].iov_len = handle_ptr->ReadWithVersion(n_ver)->len;
+  vec[2].iov_base = (void *) handle_ptr->ReadWithVersion(n_ver)->data;
+
+  encoded_len = 4 + k->len + handle_ptr->ReadWithVersion(n_ver)->len;
+
+  return 3;
+}
+
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
 {
@@ -209,6 +227,11 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     }
     logger->critical("Versions: {}", ss.str());
     return false;
+  }
+
+  ulong nversion = this->rowEntity->newest_version.load();
+  if (it - versions > nversion) {
+    this->rowEntity->newest_version.compare_exchange_strong(nversion, it - versions);
   }
 
   if (dry_run) return true;
