@@ -118,7 +118,14 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
 
   encoded_len = 4 + k->len + handle_ptr->ReadWithVersion(n_ver)->len;
 
+  shipping_handle()->PrepareSend();
+
   return 3;
+}
+
+void RowShipmentReceiver::Run()
+{
+  TBD();
 }
 
 SortedArrayVHandle::SortedArrayVHandle()
@@ -230,8 +237,9 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   }
 
   ulong nversion = this->rowEntity->newest_version.load();
-  if (it - versions > nversion) {
-    this->rowEntity->newest_version.compare_exchange_strong(nversion, it - versions);
+  while (it - versions > nversion) {
+    if (rowEntity->newest_version.compare_exchange_strong(nversion, it - versions))
+      break;
   }
 
   if (dry_run) return true;

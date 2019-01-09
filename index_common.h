@@ -165,12 +165,46 @@ class RowSlicer {
   size_t nr_slices;
   RowSlicer(int nr_slices);
  public:
-  IndexEntity *OnNewRow(int slice_idx, IndexEntity *ent);
-  RowEntity *OnNewRow(int slice_idx, RowEntity *ent);
+  IndexEntity *OnNewRow(int slice_idx, IndexEntity *ent) {
+    return OnNewRow(index_slices, index_slice_scanners, slice_idx, ent);
+  }
+  RowEntity *OnNewRow(int slice_idx, RowEntity *ent) {
+    return OnNewRow(row_slices, row_slice_scanners, slice_idx, ent);
+  }
+  RowEntity *OnUpdateRow(int slice_idx, RowEntity *ent) {
+    return OnUpdateRow(row_slice_scanners, slice_idx, ent);
+  }
+
   std::vector<IndexShipment*> all_index_shipments();
 
-  // Run all scanners!
-  void ScanAll();
+  void ScanAllIndex() { ScanAll(index_slice_scanners); }
+  void ScanAllRow() { ScanAll(row_slice_scanners); }
+
+ private:
+  template <typename T, typename ScannerType>
+  T *OnNewRow(Slice ** slices, ScannerType ** scanners, int slice_idx, T *ent) {
+    slices[slice_idx]->Append(ent->shipping_handle());
+    // We still need to call MarkDirty() just in case the scanner is running in
+    // progress.
+    return OnUpdateRow(scanners, slice_idx, ent);
+  }
+  template <typename T, typename ScannerType>
+  T *OnUpdateRow(ScannerType **scanners, int slice_idx, T* ent) {
+    if (ent->shipping_handle()->MarkDirty()) {
+      scanners[slice_idx]->AddObject(ent);
+    }
+    return ent;
+  }
+
+  template <typename ScannerType> void ScanAll(ScannerType ** scanners) {
+    SliceScanner::ScannerBegin();
+    for (int i = 0; i < nr_slices; i++) {
+      if (scanners[i] == nullptr)
+        continue;
+      scanners[i]->Scan();
+    }
+    SliceScanner::ScannerEnd();
+  }
 };
 
 }

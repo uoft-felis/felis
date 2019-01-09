@@ -97,7 +97,7 @@ void InitializeTPCC()
 void RunShipment()
 {
   logger->info("Scanning...");
-  g_slicer->ScanAll();
+  g_slicer->ScanAllIndex();
   logger->info("Scanning done");
   auto all_shipments = g_slicer->all_index_shipments();
   for (auto shipment: all_shipments) {
@@ -106,7 +106,6 @@ void RunShipment()
     while (!shipment->RunSend()) iter++;
     logger->info("Done shipping index, iter {}", iter);
   }
-}
 }
 
 // TPC-C workload mix

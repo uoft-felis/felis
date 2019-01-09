@@ -93,29 +93,6 @@ RowSlicer::RowSlicer(int nr_slices)
   row_slice_scanners = new RowSliceScanner*[nr_slices];
 }
 
-IndexEntity *RowSlicer::OnNewRow(int slice_idx, IndexEntity *ent)
-{
-  index_slices[slice_idx]->Append(ent->shipping_handle());
-
-  // We still need to call MarkDirty() just in case the scanner is running in
-  // progress.
-  if (ent->shipping_handle()->MarkDirty()) {
-    index_slice_scanners[slice_idx]->AddObject(ent);
-  }
-  return ent;
-}
-
-RowEntity *RowSlicer::OnNewRow(int slice_idx, RowEntity *ent)
-{
-  row_slices[slice_idx]->Append(ent->shipping_handle());
-
-  // We still need to call MarkDirty() just in case the scanner is running in
-  // progress.
-  if (ent->shipping_handle()->MarkDirty())
-    row_slice_scanners[slice_idx]->AddObject(ent);
-  return ent;
-}
-
 std::vector<IndexShipment *> RowSlicer::all_index_shipments()
 {
   std::vector<IndexShipment *> all;
@@ -126,17 +103,6 @@ std::vector<IndexShipment *> RowSlicer::all_index_shipments()
     if (shipment) all.push_back(shipment);
   }
   return all;
-}
-
-void RowSlicer::ScanAll()
-{
-  SliceScanner::ScannerBegin();
-  for (int i = 0; i < nr_slices; i++) {
-    if (index_slice_scanners[i] == nullptr)
-      continue;
-    index_slice_scanners[i]->Scan();
-  }
-  SliceScanner::ScannerEnd();
 }
 
 }

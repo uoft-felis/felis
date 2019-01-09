@@ -133,8 +133,7 @@ class RowShipmentReceiver : public ShipmentReceiver<RowEntity> {
   RowShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<RowEntity>(sock) {}
   ~RowShipmentReceiver() {delete sock;}
 
-  void Run() override final {// TODO: do something...
-  }
+  void Run() override final;
 };
 
 
