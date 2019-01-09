@@ -95,10 +95,12 @@ class IndexEntity {
   int rel_id;
   VarStr *k;
   VHandle *handle_ptr;
-  ShippingHandle shandle;
+  ObjectShippingHandle<IndexEntity> shandle;
  public:
-  IndexEntity() : rel_id(-1), k(nullptr), handle_ptr(nullptr) {}
-  IndexEntity(int rel_id, VarStr *k, VHandle *handle) : rel_id(rel_id), k(k), handle_ptr(handle) {}
+  IndexEntity()
+      : rel_id(-1), k(nullptr), handle_ptr(nullptr), shandle(this) {}
+  IndexEntity(int rel_id, VarStr *k, VHandle *handle)
+      : rel_id(rel_id), k(k), handle_ptr(handle), shandle(this) {}
   ~IndexEntity();
   IndexEntity(const IndexEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
 
@@ -167,6 +169,8 @@ class RowSlicer {
   RowEntity *OnNewRow(int slice_idx, RowEntity *ent);
   std::vector<IndexShipment*> all_index_shipments();
 
+  // Run all scanners!
+  void ScanAll();
 };
 
 }

@@ -4,6 +4,7 @@
 #define LOG_H
 
 #include <memory>
+#include <mutex>
 #include "spdlog/spdlog.h"
 
 extern std::shared_ptr<spdlog::logger> logger;
@@ -31,9 +32,18 @@ class PerfLog {
 
 #define TBD()                                                           \
   do {                                                                  \
-    auto p = __PRETTY_FUNCTION__;                                       \
-    logger->critical("TBD: Implement {}", p);                           \
+    logger->critical("TBD: Implement {}", __PRETTY_FUNCTION__);         \
     abort();                                                            \
   } while (0)                                                           \
+
+#define REMINDER(msg)                                                   \
+  static std::once_flag __call_once_flag;                               \
+  std::call_once(                                                       \
+      __call_once_flag,                                                 \
+      []() {                                                            \
+        auto p = __PRETTY_FUNCTION__;                                   \
+        logger->critical("TODO: In {}:{}, {} {}", __FILE__, __LINE__,   \
+                         __PRETTY_FUNCTION__, msg);                     \
+      })                                                                \
 
 #endif /* LOG_H */

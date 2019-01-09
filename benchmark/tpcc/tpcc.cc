@@ -47,15 +47,15 @@ RowSlicer::RowSlicer()
       continue;
     }
 
-    felis::IndexShipment *pre_shipment = nullptr;
+    felis::IndexShipment *shipment = nullptr;
     index_slices[i] = new felis::Slice();
 
     if (ClientBase::is_warehouse_hotspot(wh)) {
-      auto &peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer; // HACK
-      pre_shipment = new felis::IndexShipment(peer.host, peer.port, true);
+      auto &peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer;
+      shipment = new felis::IndexShipment(peer.host, peer.port, true);
     }
 
-    index_slice_scanners[i] = new felis::IndexSliceScanner(index_slices[i], pre_shipment);
+    index_slice_scanners[i] = new felis::IndexSliceScanner(index_slices[i], shipment);
   }
 }
 
@@ -96,6 +96,9 @@ void InitializeTPCC()
 
 void RunShipment()
 {
+  logger->info("Scanning...");
+  g_slicer->ScanAll();
+  logger->info("Scanning done");
   auto all_shipments = g_slicer->all_index_shipments();
   for (auto shipment: all_shipments) {
     logger->info("Shipping index");
@@ -103,6 +106,7 @@ void RunShipment()
     while (!shipment->RunSend()) iter++;
     logger->info("Done shipping index, iter {}", iter);
   }
+}
 }
 
 // TPC-C workload mix

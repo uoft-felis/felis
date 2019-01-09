@@ -9,18 +9,34 @@
 
 namespace felis {
 
-static constexpr ulong kScanningSessionStatusBits = 1;
-static constexpr ulong kScanningSessionMask = (1 << kScanningSessionStatusBits) - 1;
-static constexpr ulong kScanningSessionActive = 0x00;
+static constexpr uint64_t kScanningSessionStatusBits = 2;
+static constexpr uint64_t kScanningSessionMask = (1 << kScanningSessionStatusBits) - 1;
 
-static std::atomic_ulong g_scanning_session = 1;
+static constexpr uint64_t kScanningSessionConverged = 0x03;
+static constexpr uint64_t kScanningSessionActive = 0x00;
+static constexpr uint64_t kScanningSessionInactive = 0x01;
+
+/**
+ * Scanning session timestamp uses laste two bits for shipping/scanning status.
+ *
+ * [   ts   ] 11: currently there is nothing to ship. Either we have not started
+ * the shipping process, or we have already migrated to the new sharding plan,
+ * which means the live-migration has converged.
+ *
+ * [ ts + 1 ] 00: a new live-migration session has just started, so a scanner is
+ * currently active. The scanner might take some of the newly inserted rows, but
+ * most importantly, it will take ALL the old rows.
+ *
+ * [ ts + 1 ] 01: the scanner has finished, but the live-migration is still
+ * going on now.
+ */
+static std::atomic_ulong g_scanning_session = kScanningSessionConverged;
 
 ShippingHandle::ShippingHandle()
     : born(g_scanning_session.load() >> kScanningSessionStatusBits),
       generation(0), sent_generation(0)
 {
   Initialize();
-  // TODO: adding to the slice queue based on the current go-routine ID.
 }
 
 bool ShippingHandle::MarkDirty()
@@ -29,10 +45,16 @@ bool ShippingHandle::MarkDirty()
     generation++;
 
     auto session = g_scanning_session.load();
+
     if ((session & kScanningSessionMask) == kScanningSessionActive) {
       // if born < session, then this handle will be scanned from the slice.
+      printf("born %lu, session %lu\n", born, session >> kScanningSessionStatusBits);
       return born >= (session >> kScanningSessionStatusBits);
-    } else {
+    } else if ((session & kScanningSessionMask) == kScanningSessionConverged) {
+      // It's already converged, you don't need to send this at all. If it is
+      // necessary, it will be picked up by the next scanner.
+      return false;
+    }  else {
       return true;
     }
   }
@@ -78,17 +100,50 @@ void Slice::Append(ShippingHandle *handle)
   q->Append(handle);
 }
 
-SliceScanner::SliceScanner(Slice * slice) : slice(slice) 
+static std::atomic_ulong g_objects_added = 0;
+
+void SliceScanner::ScannerBegin()
+{
+  auto session = g_scanning_session.fetch_add(1);
+  abort_if((session & kScanningSessionMask) != kScanningSessionConverged,
+           "Cannot begin scanner because last session ({}) has not converged",
+           session);
+}
+
+void SliceScanner::ScannerEnd()
+{
+  auto session = g_scanning_session.fetch_add(1);
+  abort_if((session & kScanningSessionMask) != kScanningSessionActive,
+           "Cannot end scanner because last session ({}) is not active",
+           session);
+}
+
+void SliceScanner::StatAddObject()
+{
+  g_objects_added.fetch_add(1);
+}
+
+void SliceScanner::MigrationEnd()
+{
+  logger->info("Migration finishes {} objects were added", g_objects_added.load());
+  auto session = g_scanning_session.fetch_add(2);
+  abort_if((session & kScanningSessionMask) != kScanningSessionInactive,
+           "Cannot end migration because scanner isn't inactive {}",
+           session);
+  g_objects_added.store(0);
+}
+
+SliceScanner::SliceScanner(Slice * slice) : slice(slice)
 {
   current_q = &slice->shared_q.elem;
-  current_node = &(current_q->queue); 
+  current_node = current_q->queue.next;
 }
 
 ShippingHandle *SliceScanner::GetNextHandle()
 {
   while (current_q != nullptr) {
-    if (current_node != nullptr) {
-      auto h = (ShippingHandle *)current_node;
+    if (current_node != &current_q->queue) {
+      auto h = (ShippingHandle *) current_node;
       if (h->CheckSession()) {
         current_node = current_node->next;
         return h;
@@ -99,20 +154,17 @@ ShippingHandle *SliceScanner::GetNextHandle()
     // queue order: shared_q, per_core_q[]
     if (current_q == &slice->shared_q.elem) {
       current_q = &slice->per_core_q[0].elem;
-    }
-    else if (current_q == &slice->per_core_q[NodeConfiguration::kMaxNrThreads - 1].elem) {
+    } else if (current_q == &slice->per_core_q[NodeConfiguration::g_nr_threads - 1].elem) {
       current_q = nullptr;
-    }
-    else {
-      for (int i = 0; i < NodeConfiguration::kMaxNrThreads - 1; i++) {
+    } else {
+      for (int i = 0; i < NodeConfiguration::g_nr_threads - 1; i++) {
         if (current_q == &slice->per_core_q[i].elem) {
-          current_q = &slice->per_core_q[i+1].elem;
+          current_q = &slice->per_core_q[i + 1].elem;
           break;
         }
       }
     }
-
-    current_node = current_q?&(current_q->queue):nullptr;
+    current_node = current_q ? current_q->queue.next : nullptr;
   }
   return nullptr;
 }

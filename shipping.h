@@ -46,7 +46,7 @@ class ShippingHandle : public util::ListNode {
   void PrepareSend();
 
   /**
-   * 
+   *
    * @return if the handle should be put into queue by the scanner
    */
   bool CheckSession();
@@ -95,14 +95,18 @@ class Slice {
 class SliceScanner {
  protected:
   Slice * slice;
-  // TODO: scanning status, like which slice, which list node are you in...
-  
+
   Slice::SliceQueue * current_q;
   util::ListNode * current_node;
 
   SliceScanner(Slice * slice);
 
   ShippingHandle *GetNextHandle();
+ public:
+  static void ScannerBegin();
+  static void ScannerEnd();
+  static void MigrationEnd();
+  static void StatAddObject();
 };
 
 class BaseShipment {
@@ -161,6 +165,7 @@ class Shipment : public BaseShipment {
       if (nr_obj == 0) {
         finished = true;
         close(fd);
+        SliceScanner::MigrationEnd();
         return true;
       }
     }
@@ -179,7 +184,7 @@ class Shipment : public BaseShipment {
         continue;
       }
       vec[cur_iov].iov_len = 8;
-      vec[cur_iov].iov_base = &obj[i]->encoded_len;
+      vec [cur_iov].iov_base = &obj[i]->encoded_len;
 
       cur_iov += n + 1;
       i++;
@@ -252,15 +257,19 @@ class ObjectSliceScanner : public SliceScanner {
   void AddObject(T *object) {
     if (ship) {
       ship->AddObject(object);
+      StatAddObject();
     }
   }
 
   void Scan() {
     if (!ship) return;
     ShippingHandle *handle = nullptr;
+    size_t cnt = 0;
     while ((handle = GetNextHandle())) {
       AddObject(((ObjectShippingHandle<T> *) handle)->object);
+      cnt++;
     }
+    logger->info("ObjectSliceScanner found {} objects", cnt);
   }
 };
 
