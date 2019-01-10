@@ -156,23 +156,47 @@ class RelationPolicy : public BaseRelation,
   }
 };
 
-class RowSlicer {
+class DataSlicer {
  protected:
   Slice **index_slices;
   IndexSliceScanner **index_slice_scanners;
   Slice **row_slices;
   RowSliceScanner **row_slice_scanners;
   size_t nr_slices;
-  RowSlicer(int nr_slices);
+ private:
+  template <typename T> friend T &util::Instance() noexcept;
+  DataSlicer() {}
  public:
-  IndexEntity *OnNewRow(int slice_idx, IndexEntity *ent) {
-    return OnNewRow(index_slices, index_slice_scanners, slice_idx, ent);
+  void Initialize(int nr_slices);
+  void InstallIndexSlice(int i, IndexShipment *shipment) {
+    index_slices[i] = new Slice();
+    index_slice_scanners[i] = new IndexSliceScanner(index_slices[i], shipment);
   }
-  RowEntity *OnNewRow(int slice_idx, RowEntity *ent) {
-    return OnNewRow(row_slices, row_slice_scanners, slice_idx, ent);
+  void InstallRowSlice(int i, RowShipment *shipment) {
+    row_slices[i] = new Slice();
+    row_slice_scanners[i] = new RowSliceScanner(row_slices[i], shipment);
   }
-  RowEntity *OnUpdateRow(int slice_idx, RowEntity *ent) {
-    return OnUpdateRow(row_slice_scanners, slice_idx, ent);
+
+  IndexEntity *OnNewRow(int slice_id, IndexEntity *ent) {
+    return OnNewRow(index_slices, index_slice_scanners, slice_id, ent);
+  }
+  RowEntity *OnNewRow(int slice_id, RowEntity *ent) {
+    return OnNewRow(row_slices, row_slice_scanners, slice_id, ent);
+  }
+  RowEntity *OnUpdateRow(int slice_id, RowEntity *ent) {
+    return OnUpdateRow(row_slice_scanners, slice_id, ent);
+  }
+
+  template <typename TableType, typename KeyType>
+  void OnNewRow(int slice_id, TableType table, const KeyType &k, VHandle *handle) {
+    auto *kstr = k.Encode();
+    OnNewRow(slice_id, new felis::IndexEntity(int(table), kstr, handle));
+    OnNewRow(slice_id, new felis::RowEntity(int(table), kstr, handle, slice_id));
+  }
+
+  void OnUpdateRow(VHandle *handle) {
+    auto *ent = handle->row_entity.get();
+    OnUpdateRow(ent->slice_id(), ent);
   }
 
   std::vector<IndexShipment*> all_index_shipments();

@@ -74,6 +74,7 @@ class AllocatorModule : public Module<CoreModule> {
     tasks.emplace_back(VHandle::InitPools);
     // tasks.emplace_back(SkipListVHandle::Block::InitPool);
     tasks.emplace_back(util::Impl<PromiseAllocationService>);
+    tasks.emplace_back(RowEntity::InitPools);
     for (auto &t: tasks) t.join();
 
     logger->info("Memory used: {}MB in regular pages, {}MB in huge pages.",

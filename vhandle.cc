@@ -123,6 +123,19 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
   return 3;
 }
 
+RowEntity::RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id)
+    : rel_id(rel_id), k(k), handle_ptr(handle), shandle(this), slice(slice_id)
+{
+  handle_ptr->row_entity.reset(this);
+}
+
+mem::Pool RowEntity::pool;
+
+void RowEntity::InitPools()
+{
+  pool.move(mem::Pool(sizeof(RowEntity), 64 << 20));
+}
+
 void RowShipmentReceiver::Run()
 {
   TBD();
@@ -236,9 +249,9 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     return false;
   }
 
-  ulong nversion = this->rowEntity->newest_version.load();
+  ulong nversion = row_entity->newest_version.load();
   while (it - versions > nversion) {
-    if (rowEntity->newest_version.compare_exchange_strong(nversion, it - versions))
+    if (row_entity->newest_version.compare_exchange_strong(nversion, it - versions))
       break;
   }
 

@@ -210,13 +210,12 @@ class ClientBase {
   std::string RandomNStr(uint len);
 
   uint GetCurrentTime();
- private:
-  felis::RowSlicer *slicer; // Each warehouse is a slice
+
  protected:
-  template <typename TableType, typename KeyType>
-  void NewRow(int slice_idx, TableType table, const KeyType &k, felis::VHandle *handle) {
-    slicer->OnNewRow(slice_idx, new felis::IndexEntity(int(table), k.Encode(), handle));
-  }
+   template <typename TableType, typename KeyType>
+   static void OnNewRow(int slice_id, TableType table, const KeyType &k, felis::VHandle *handle) {
+     util::Instance<felis::DataSlicer>().OnNewRow(slice_id, table, k, handle);
+   }
  public:
   ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes);
   static felis::Relation &relation(TableType table);

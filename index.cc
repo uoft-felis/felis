@@ -83,17 +83,21 @@ IndexShipmentReceiver::~IndexShipmentReceiver()
   delete sock;
 }
 
-RowSlicer::RowSlicer(int nr_slices)
-    : nr_slices(nr_slices)
+void DataSlicer::Initialize(int nr_slices)
 {
+  this->nr_slices = nr_slices;
   index_slices = new Slice*[nr_slices];
   index_slice_scanners = new IndexSliceScanner*[nr_slices];
+  memset(index_slices, 0, sizeof(Slice *));
+  memset(index_slice_scanners, 0, sizeof(IndexSliceScanner *));
 
   row_slices = new Slice*[nr_slices];
   row_slice_scanners = new RowSliceScanner*[nr_slices];
+  memset(row_slices, 0, sizeof(Slice *));
+  memset(row_slices, 0, sizeof(RowSliceScanner *));
 }
 
-std::vector<IndexShipment *> RowSlicer::all_index_shipments()
+std::vector<IndexShipment *> DataSlicer::all_index_shipments()
 {
   std::vector<IndexShipment *> all;
   for (int i = 0; i < nr_slices; i++) {

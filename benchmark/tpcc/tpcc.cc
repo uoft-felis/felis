@@ -28,34 +28,28 @@ namespace tpcc {
 
 Config kTPCCConfig;
 
-class RowSlicer : public felis::RowSlicer {
- public:
-  RowSlicer();
-} *g_slicer = nullptr;
-
-RowSlicer::RowSlicer()
-    : felis::RowSlicer(kTPCCConfig.nr_warehouses)
+static void InitializeDataSlicer()
 {
+  auto &slicer = Instance<felis::DataSlicer>();
   auto &conf = Instance<NodeConfiguration>();
+
+  slicer.Initialize(kTPCCConfig.nr_warehouses);
+
   for (int i = 0; i < kTPCCConfig.nr_warehouses; i++) {
     int wh = i + 1;
 
     // You, as node_id, should not touch these slices at all!
     if (ClientBase::warehouse_to_node_id(wh) != conf.node_id()) {
-      index_slices[i] = nullptr;
-      index_slice_scanners[i] = nullptr;
       continue;
     }
 
     felis::IndexShipment *shipment = nullptr;
-    index_slices[i] = new felis::Slice();
-
     if (ClientBase::is_warehouse_hotspot(wh)) {
       auto &peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer;
       shipment = new felis::IndexShipment(peer.host, peer.port, true);
     }
 
-    index_slice_scanners[i] = new felis::IndexSliceScanner(index_slices[i], shipment);
+    slicer.InstallIndexSlice(i, shipment);
   }
 }
 
@@ -91,15 +85,16 @@ void InitializeTPCC()
     mgr.GetRelationOrCreate(int(table));
   }
 
-  g_slicer = new RowSlicer();
+  InitializeDataSlicer();
 }
 
 void RunShipment()
 {
   logger->info("Scanning...");
-  g_slicer->ScanAllIndex();
+  auto &slicer = Instance<felis::DataSlicer>();
+  slicer.ScanAllIndex();
   logger->info("Scanning done");
-  auto all_shipments = g_slicer->all_index_shipments();
+  auto all_shipments = slicer.all_index_shipments();
   for (auto shipment: all_shipments) {
     logger->info("Shipping index");
     int iter = 0;
@@ -126,7 +121,7 @@ void RunShipment()
 static int NMaxCustomerIdxScanElems = 512;
 
 ClientBase::ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes)
-    : r(r), slicer(g_slicer)
+    : r(r)
 {
   this->node_id = node_id;
 
@@ -407,7 +402,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
     auto handle = relation(TableType::Warehouse).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
 
-    NewRow(i - 1, TableType::Warehouse, k, handle);
+    OnNewRow(i - 1, TableType::Warehouse, k, handle);
   }
 
   util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
@@ -494,10 +489,10 @@ void Loader<LoaderType::Stock>::DoLoad()
       Checker::SanityCheckStock(&k, &v);
 
       handle = relation(TableType::Stock).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
-      NewRow(w - 1, TableType::Stock, k, handle);
+      OnNewRow(w - 1, TableType::Stock, k, handle);
 
       handle = relation(TableType::StockData).InitValue(k_data.EncodeFromAlloca(large_buf), v_data.Encode());
-      NewRow(w - 1, TableType::StockData, k_data, handle);
+      OnNewRow(w - 1, TableType::StockData, k_data, handle);
     }
   }
   relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
@@ -532,7 +527,7 @@ void Loader<LoaderType::District>::DoLoad()
       Checker::SanityCheckDistrict(&k, &v);
 
       auto handle = relation(TableType::District).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
-      NewRow(w - 1, TableType::District, k, handle);
+      OnNewRow(w - 1, TableType::District, k, handle);
     }
   }
   relation(TableType::District).set_key_length(sizeof(District::Key));
@@ -588,7 +583,7 @@ void Loader<LoaderType::Customer>::DoLoad()
 
         Checker::SanityCheckCustomer(&k, &v);
         handle = relation(TableType::Customer).InitValue(k.EncodeFromAlloca(large_buf), v.Encode());
-        NewRow(w - 1, TableType::Customer, k, handle);
+        OnNewRow(w - 1, TableType::Customer, k, handle);
 
         // customer name index
         auto k_idx = CustomerNameIdx::Key::New(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -599,7 +594,7 @@ void Loader<LoaderType::Customer>::DoLoad()
 
         handle = relation(TableType::CustomerNameIdx).InitValue(k_idx.EncodeFromAlloca(large_buf),
                                                                 v_idx.Encode());
-        NewRow(w - 1, TableType::CustomerNameIdx, k_idx, handle);
+        OnNewRow(w - 1, TableType::CustomerNameIdx, k_idx, handle);
 
         History::Key k_hist;
 
@@ -615,7 +610,7 @@ void Loader<LoaderType::Customer>::DoLoad()
         v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
         handle = relation(TableType::History).InitValue(k_hist.EncodeFromAlloca(large_buf), v_hist.Encode());
-        NewRow(w - 1, TableType::History, k_hist, handle);
+        OnNewRow(w - 1, TableType::History, k_hist, handle);
       }
     }
   }
@@ -665,13 +660,13 @@ void Loader<LoaderType::Order>::DoLoad()
         Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
         handle = relation(TableType::OOrder).InitValue(k_oo.EncodeFromAlloca(large_buf), v_oo.Encode());
-        NewRow(w - 1, TableType::OOrder, k_oo, handle);
+        OnNewRow(w - 1, TableType::OOrder, k_oo, handle);
 
         const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
         const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
 
         handle = relation(TableType::OOrderCIdIdx).InitValue(k_oo_idx.EncodeFromAlloca(large_buf), v_oo_idx.Encode());
-        NewRow(w - 1, TableType::OOrderCIdIdx, k_oo_idx, handle);
+        OnNewRow(w - 1, TableType::OOrderCIdIdx, k_oo_idx, handle);
 
         if (c >= 2101) {
           auto k_no = NewOrder::Key::New(w, d, c);
@@ -680,7 +675,7 @@ void Loader<LoaderType::Order>::DoLoad()
           Checker::SanityCheckNewOrder(&k_no, &v_no);
 
           handle = relation(TableType::NewOrder).InitValue(k_no.EncodeFromAlloca(large_buf), v_no.Encode());
-          NewRow(w - 1, TableType::NewOrder, k_no, handle);
+          OnNewRow(w - 1, TableType::NewOrder, k_no, handle);
         }
 
         for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -704,7 +699,7 @@ void Loader<LoaderType::Order>::DoLoad()
 
           Checker::SanityCheckOrderLine(&k_ol, &v_ol);
           handle = relation(TableType::OrderLine).InitValue(k_ol.EncodeFromAlloca(large_buf), v_ol.Encode());
-          NewRow(w - 1, TableType::OrderLine, k_ol, handle);
+          OnNewRow(w - 1, TableType::OrderLine, k_ol, handle);
         }
       }
     }
