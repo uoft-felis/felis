@@ -18,43 +18,6 @@ namespace felis {
 
 std::map<std::string, Checkpoint *> Checkpoint::impl;
 
-void IndexEntity::DecodeIOVec(struct iovec *vec)
-{
-  auto p = (uint8_t *) vec->iov_base;
-  auto key_size = vec->iov_len - 12;
-  if (k == nullptr || k->len < key_size) {
-    delete k;
-    k = VarStr::New(key_size);
-  }
-  memcpy(&rel_id, p, 4);
-  memcpy((uint8_t *) k + sizeof(VarStr), p + 4, key_size);
-  memcpy(&handle_ptr, p + key_size + 4, 8); // This is a pointer on the original machine though.
-}
-
-int IndexEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
-{
-  if (max_nr_vec < 3)
-    return 0;
-
-  vec[0].iov_len = 4;
-  vec[0].iov_base = &rel_id;
-  vec[1].iov_len = k->len;
-  vec[1].iov_base = (void *) k->data;
-  vec[2].iov_len = 8;
-  vec[2].iov_base = &handle_ptr;
-
-  encoded_len = 12 + k->len;
-
-  shipping_handle()->PrepareSend();
-
-  return 3;
-}
-
-IndexEntity::~IndexEntity()
-{
-  delete k;
-}
-
 void IndexShipmentReceiver::Run()
 {
   // clear the affinity
@@ -107,6 +70,16 @@ std::vector<IndexShipment *> DataSlicer::all_index_shipments()
     if (shipment) all.push_back(shipment);
   }
   return all;
+}
+
+void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue) {
+  while (!handle->AppendNewVersion(0, 0)) {
+      asm("pause" : : :"memory");
+    }
+    if (obj != (void *) kPendingValue) {
+      abort_if(!handle->WriteWithVersion(0, obj, 0),
+               "Diverging outcomes during setup setup");
+    }
 }
 
 }

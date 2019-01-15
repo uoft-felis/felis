@@ -87,74 +87,14 @@ class RelationManagerPolicy : public RelationManagerBase {
   std::array<T, kMaxNrRelations> relations;
 };
 
-class IndexShipmentReceiver;
-
-// A key-value pair, and thankfully, this is immutable.
-class IndexEntity {
-  friend class IndexShipmentReceiver;
-  int rel_id;
-  VarStr *k;
-  VHandle *handle_ptr;
-  ObjectShippingHandle<IndexEntity> shandle;
- public:
-  IndexEntity()
-      : rel_id(-1), k(nullptr), handle_ptr(nullptr), shandle(this) {}
-  IndexEntity(int rel_id, VarStr *k, VHandle *handle)
-      : rel_id(rel_id), k(k), handle_ptr(handle), shandle(this) {}
-  ~IndexEntity();
-  IndexEntity(const IndexEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
-
-  ShippingHandle *shipping_handle() { return &shandle; }
-  int EncodeIOVec(struct iovec *vec, int max_nr_vec);
-  uint64_t encoded_len;
-
-  void DecodeIOVec(struct iovec *vec);
-};
-
-using IndexSliceScanner = ObjectSliceScanner<IndexEntity>;
-using IndexShipment = felis::Shipment<felis::IndexEntity>;
-
-class IndexShipmentReceiver : public ShipmentReceiver<IndexEntity> {
- public:
-  IndexShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<IndexEntity>(sock) {}
-  ~IndexShipmentReceiver();
-
-  void Run() override final;
-};
-
 template <class IndexPolicy>
 class RelationPolicy : public BaseRelation,
 		       public IndexPolicy {
  public:
-
-  VHandle *SetupReExec(const VarStr *k, uint64_t sid, uint64_t epoch_nr, VarStr *obj = (VarStr *) kPendingValue) {
-    auto handle = this->InsertOrCreate(k);
-    while (!handle->AppendNewVersion(sid, epoch_nr)) {
-      asm("pause" : : :"memory");
-    }
-    if (obj != (void *) kPendingValue) {
-      abort_if(!handle->WriteWithVersion(sid, obj, epoch_nr),
-               "Diverging outcomes during setup setup");
-    }
-    return handle;
-  }
-
-  VHandle *InitValue(const VarStr *k, VarStr *obj) {
-    return SetupReExec(k, 0, 0, obj);
-  }
-
-  bool SetupReExecSync(const VarStr *k, uint64_t sid, uint64_t epoch_nr) {
-    SetupReExec(k, sid, epoch_nr);
-    return true;
-  }
-
-  VHandle *SetupReExecAsync(const VarStr *k, uint64_t sid, uint64_t epoch_nr) {
-    auto handle = this->InsertOrCreate(k);
-    if (!handle->AppendNewVersion(sid, epoch_nr))
-      return nullptr;
-    return handle;
-  }
+  // TODO ?
 };
+
+void InitVersion(felis::VHandle *, VarStr *);
 
 class DataSlicer {
  protected:

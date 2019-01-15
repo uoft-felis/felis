@@ -8,6 +8,7 @@
 #include "sqltypes.h"
 #include "gc.h"
 #include "shipping.h"
+#include "entity.h"
 
 namespace felis {
 
@@ -100,56 +101,7 @@ class SkipListVHandle : public BaseVHandle {
 static_assert(sizeof(SkipListVHandle) <= 64, "SortedBlockVHandle is larger than a cache line");
 #endif
 
-class SortedArrayVHandle;
-
-// TODO: move this out of the vhandle
-class RowEntity {
-  friend class RowShipmentReceiver;
-  friend class SortedArrayVHandle;
-
-  int rel_id;
-  int slice;
-  VarStr *k;
-  VHandle *handle_ptr;
-  ObjectShippingHandle<RowEntity> shandle;
-  std::atomic_ulong newest_version;
- public:
-  RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id);
-  RowEntity() : RowEntity(-1, nullptr, nullptr, -1) {}
-  ~RowEntity() { delete k; }
-  RowEntity(const RowEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
-
-  ShippingHandle *shipping_handle() { return &shandle; }
-  int EncodeIOVec(struct iovec *vec, int max_nr_vec);
-  uint64_t encoded_len;
-
-  void DecodeIOVec(struct iovec *vec);
-
-  int slice_id() const { return slice; }
-
-  static void *operator new(size_t s) {
-    return pool.Alloc();
-  }
-
-  static void operator delete(void *p) {
-    pool.Free(p);
-  }
-
-  static void InitPools();
-  static mem::Pool pool;
-};
-
-using RowSliceScanner = ObjectSliceScanner<RowEntity>;
-using RowShipment = felis::Shipment<felis::RowEntity>;
-
-class RowShipmentReceiver : public ShipmentReceiver<RowEntity> {
- public:
-  RowShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<RowEntity>(sock) {}
-  ~RowShipmentReceiver() {delete sock;}
-
-  void Run() override final;
-};
-
+class RowEntity;
 class DataSlicer;
 
 class SortedArrayVHandle : public BaseVHandle {

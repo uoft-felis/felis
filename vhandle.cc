@@ -103,44 +103,6 @@ SkipListVHandle::SkipListVHandle()
 
 #endif
 
-int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
-{
-  if (max_nr_vec < 3)
-    return 0;
-
-  vec[0].iov_len = 4;
-  vec[0].iov_base = &rel_id;
-  vec[1].iov_len = k->len;
-  vec[1].iov_base = (void *) k->data;
-  ulong n_ver = this->newest_version.load();
-  vec[2].iov_len = handle_ptr->ReadWithVersion(n_ver)->len;
-  vec[2].iov_base = (void *) handle_ptr->ReadWithVersion(n_ver)->data;
-
-  encoded_len = 4 + k->len + handle_ptr->ReadWithVersion(n_ver)->len;
-
-  shipping_handle()->PrepareSend();
-
-  return 3;
-}
-
-RowEntity::RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id)
-    : rel_id(rel_id), k(k), handle_ptr(handle), shandle(this), slice(slice_id)
-{
-  handle_ptr->row_entity.reset(this);
-}
-
-mem::Pool RowEntity::pool;
-
-void RowEntity::InitPools()
-{
-  pool.move(mem::Pool(sizeof(RowEntity), 64 << 20));
-}
-
-void RowShipmentReceiver::Run()
-{
-  TBD();
-}
-
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
 {
