@@ -42,12 +42,16 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
  public:
   NewOrderTxn(Client *client, uint64_t serial_id);
   void Run() override final;
+  void Prepare() override final;
 };
 
 NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
     : Txn<NewOrderState>(serial_id),
       NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
       client(client)
+{}
+
+void NewOrderTxn::Prepare()
 {
   INIT_ROUTINE_BRK(4096);
 

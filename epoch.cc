@@ -76,6 +76,7 @@ void EpochClient::InitializeEpoch()
 
   conf.ResetBufferPlan();
   conf.FlushBufferPlanCompletion(0);
+  auto nr_threads = NodeConfiguration::g_nr_threads;
 
   printf("load percentage %d\n", LoadPercentage());
   total_nr_txn = kEpochBase * LoadPercentage();
@@ -85,9 +86,28 @@ void EpochClient::InitializeEpoch()
   disable_load_balance = true;
   for (uint64_t i = 0; i < total_nr_txn; i++) {
     auto sequence = i + 1;
-    auto *txn = RunCreateTxn(GenerateSerialId(i + 1));
-    conf.CollectBufferPlan(txn->root_promise());
-    txns[i] = txn;
+    txns[i] = RunCreateTxn(GenerateSerialId(i + 1));
+  }
+  uint8_t buf[nr_threads];
+  go::BufferChannel *comp = new go::BufferChannel(nr_threads);
+
+  for (ulong t = 0; t < nr_threads; t++) {
+    auto r = go::Make(
+        [t, comp, this, nr_threads]() {
+          for (uint64_t i = t * total_nr_txn / nr_threads;
+               i < (t + 1) * total_nr_txn / nr_threads; i++) {
+            txns[i]->Prepare();
+          }
+          uint8_t done = 0;
+          comp->Write(&done, 1);
+        });
+    r->set_urgent(true);
+    go::GetSchedulerFromPool(t + 1)->WakeUp(r);
+  }
+
+  comp->Read(buf, nr_threads);
+  for (uint64_t i = 0; i < total_nr_txn; i++) {
+    conf.CollectBufferPlan(txns[i]->root_promise());
   }
   conf.FlushBufferPlan(false);
 

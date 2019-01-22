@@ -28,6 +28,7 @@ class BaseTxn {
       : epoch(util::Instance<EpochManager>().current_epoch()), sid(serial_id) {}
 
   virtual ~BaseTxn() {}
+  virtual void Prepare() = 0;
   virtual void Run() = 0;
 
   Promise<DummyValue> *root_promise() {

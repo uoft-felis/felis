@@ -81,7 +81,7 @@ class PromiseRoundRobinImpl {
   util::CacheAligned<Queue> queues[NodeConfiguration::kMaxNrThreads + 1];
   int idx;
   std::atomic_ulong round;
-  static constexpr size_t kBufferSize = 4096;
+  static constexpr size_t kBufferSize = 16384;
  public:
   PromiseRoundRobinImpl(int idx);
   void QueueRoutine(PromiseRoutine *routine, const VarStr &in);
