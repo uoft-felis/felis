@@ -53,8 +53,8 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
 
   auto district_key = District::Key::New(warehouse_id, district_id);
 
-  int node = Client::warehouse_to_node_id(warehouse_id);
-  int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
+  // int node = Client::warehouse_to_node_id(warehouse_id);
+  // int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
 
   // Looks like we only need this when FastIdGen is off? In a distributed
   // environment, it makes sense to assume FastIdGen is always on.
@@ -69,6 +69,59 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
 
   */
 
+  int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
+  struct Selector {
+    int nr;
+    int sel[15];
+  };
+  Selector *selectors[nr_nodes][nr_nodes];
+
+  std::vector<std::tuple<int, int>> paths;
+  memset(selectors, 0, sizeof(Selector *) * nr_nodes * nr_nodes);
+
+  for (uint i = 0; i < nr_items; i++) {
+    auto node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
+    auto lookup_node = client->warehouse_to_lookup_node_id(supplier_warehouse_id[i]);
+    auto &p = selectors[lookup_node - 1][node - 1];
+    if (p == nullptr) {
+      paths.push_back(std::make_tuple(lookup_node, node));
+      p = (Selector *) alloca(sizeof(Selector));
+      p->nr = 0;
+    }
+    p->sel[p->nr++] = i;
+  }
+
+  Stock::Key stock_keys[15];
+  for (int i = 0; i < nr_items; i++) {
+    stock_keys[i] = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
+  }
+
+  for (auto [lookup_node, node]: paths) {
+    auto sel = selectors[lookup_node - 1][node - 1];
+    proc >> TxnPipelineProc(
+        lookup_node,
+        [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
+          const auto &[state, handle, selector] = ctx.value();
+
+          for (int i = 0; i < selector.nr; i++) {
+            ctx.Yield(Tuple<int>(selector.sel[i]));
+          }
+
+          return nullopt;
+        },
+        sel->nr, *sel)
+         >> TxnLookupMany<Stock>(
+             lookup_node,
+             stock_keys, stock_keys + nr_items)
+         >> TxnSetupVersion(
+             node,
+             [](const auto &ctx, auto *handle, int i) {
+               auto &[state, _1, _2] = ctx;
+               state->rows.stocks[i] = handle;
+             });
+  }
+
+  /*
   for (auto i = 0; i < nr_items; i++) {
     auto stock_key = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
     node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
@@ -77,12 +130,12 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
     proc >> TxnLookup<Stock>(lookup_node, stock_key)
          >> TxnSetupVersion(
              node,
-             [](const auto &ctx, auto *handle) {
+             [](const auto &ctx, auto *handle, int i) {
                auto &[state, _1, _2, i] = ctx;
                state->rows.stocks[i] = handle;
-             },
-             i);
+             });
   }
+  */
 }
 
 void NewOrderTxn::Run()

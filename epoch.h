@@ -174,28 +174,66 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
 
   using ExecutionRoutine = BasePromise::ExecutionRoutine;
 
-  struct Entity {
-    size_t dupcnt;
-    BasePromise::ExecutionRoutine *last;
-  };
-  using Mapping = std::map<uint64_t, Entity>;
   struct CompleteCounter {
     ulong completed;
-    bool force;
-    CompleteCounter() : completed(0), force(false) {}
+    CompleteCounter() : completed(0) {}
+  };
+ public:
+
+  struct QueueItem {
+    uint64_t key;
+    State state;
+    uint16_t input_len;
+    const uint8_t *input_data;
+    PromiseRoutine *routine;
+
+    QueueItem(PromiseRoutine *r, const VarStr &in, State state)
+        : key(r->sched_key), state(state), input_len(in.len),
+          input_data(in.data), routine(r) {}
+
+    QueueItem(PromiseRoutineWithInput r, State state)
+        : QueueItem(std::get<0>(r), std::get<1>(r), state) {}
+  };
+  static_assert(sizeof(QueueItem) == 32); // Will swap() becomes the bottleneck?
+
+ private:
+  // We decided to preallocate the entire priority queue. In practice, this
+  // should be dynamically allocated on the fly by using a radix tree.
+  struct PriorityQueue {
+    QueueItem *q;
+    size_t len;
   };
 
+  struct ZeroQueue {
+    PromiseRoutineWithInput *q;
+    std::atomic_ulong end;
+    size_t start;
+  };
+
+  struct Queue {
+    PriorityQueue pq;
+    ZeroQueue zq;
+    std::atomic_bool lock;
+
+    uint8_t __padding__[16];
+  };
+
+  static_assert(sizeof(Queue) == 64);
+
+  static constexpr size_t kMaxItemPerCore = 8 << 20;
   static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
 
-  std::array<Mapping, kMaxNrThreads> mappings;
-  std::array<ulong, kMaxNrThreads> nr_zeros;
+  std::array<Queue, kMaxNrThreads> queues;
+  std::array<PromiseRoutineWithInput, kMaxNrThreads> currents;
   std::array<CompleteCounter, kMaxNrThreads> completed_counters;
+
+  std::atomic_ulong tot_bubbles;
+
  public:
-  void Dispatch(int core_id,
-                BasePromise::ExecutionRoutine *exec_routine,
-                go::Scheduler::Queue *q) final override;
-  void Detach(int core_id,
-              BasePromise::ExecutionRoutine *exec_routine) final override;
+  void Add(int core_id, PromiseRoutineWithInput *routines, size_t nr_routines) final override;
+  void AddBubble() final override;
+  std::tuple<PromiseRoutineWithInput, State> Pop(int core_id) final override;
+  void Preempt(int core_id) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   void PrintInfo() final override;

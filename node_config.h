@@ -61,7 +61,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   void RunAllServers();
 
-  void TransportPromiseRoutine(PromiseRoutine *routine) final override;
+  void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
   void FlushPromiseRoutine() final override;
   long IOPending(int core_id) final override;
   void IncrementExtraIOPending(int core_id) { extra_iopendings[core_id]++; }
@@ -121,7 +121,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   //
   ulong extra_iopendings[kMaxNrThreads];
  private:
-  void CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src);
+  void CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src, int nr_extra);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);
 };
 

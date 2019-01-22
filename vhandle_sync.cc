@@ -57,7 +57,8 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
   int idx = go::Scheduler::CurrentThreadPoolId() - 1;
   auto sched = go::Scheduler::Current();
   auto &transport = util::Impl<PromiseRoutineTransportService>();
-  sched->current_routine()->set_busy_poll(true);
+  auto routine = sched->current_routine();
+  routine->set_busy_poll(true);
 
   abort_if(idx < 0, "We should not running on thread pool 0!");
 
@@ -74,7 +75,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
     if ((wait_cnt & 0x7FFF) == 0) {
       transport.FlushPromiseRoutine();
       if (transport.IOPending(idx) > 0)
-        sched->RunNext(go::Scheduler::NextReadyState);
+        ((BasePromise::ExecutionRoutine *) routine)->Preempt();
       return false;
     }
   }

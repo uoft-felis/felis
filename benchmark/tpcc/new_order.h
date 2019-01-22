@@ -1,3 +1,6 @@
+#ifndef TPCC_NEW_ORDER_H
+#define TPCC_NEW_ORDER_H
+
 #include "tpcc.h"
 #include "txn.h"
 #include "promise.h"
@@ -31,3 +34,5 @@ struct NewOrderState {
 };
 
 }
+
+#endif

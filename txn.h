@@ -80,60 +80,109 @@ class BaseTxn {
   };
 
   struct TxnIndexOpContext {
+    static constexpr size_t kMaxPackedKeys = 15;
     TxnHandle handle;
     int32_t rel_id;
-    uint32_t key_len;
-    const uint8_t *key_data;
+    uint32_t nr_keys; // we can batch a lot of keys in the same context
+
+    uint32_t key_len[kMaxPackedKeys];
+    const uint8_t *key_data[kMaxPackedKeys];
 
     // We don't need to worry about padding because TxnHandle is perfectly padded.
     static constexpr size_t kHeaderSize =
         sizeof(TxnHandle) + sizeof(int32_t) + sizeof(uint32_t);
 
     TxnIndexOpContext(TxnHandle handle, int32_t rel_id, VarStr *key)
-        : handle(handle), rel_id(rel_id), key_len(key->len), key_data(key->data) {}
+        : handle(handle), rel_id(rel_id), nr_keys(1) {
+      key_len[0] = key->len;
+      key_data[0] = key->data;
+    }
+
+    TxnIndexOpContext(TxnHandle handle, int32_t rel_id, uint32_t nr_keys, VarStr **keys)
+        : handle(handle), rel_id(rel_id), nr_keys(nr_keys) {
+      for (uint32_t i = 0; i < nr_keys; i++) {
+        key_len[i] = keys[i]->len;
+        key_data[i] = keys[i]->data;
+      }
+    }
 
     TxnIndexOpContext() {}
 
     size_t EncodeSize() const {
-      return kHeaderSize + key_len;
+      size_t sum = 0;
+      for (uint32_t i = 0; i < nr_keys; i++) sum += key_len[i];
+      return kHeaderSize + sum;
     }
     uint8_t *EncodeTo(uint8_t *buf) const {
       memcpy(buf, this, kHeaderSize);
-      memcpy(buf + kHeaderSize, key_data, key_len);
-      return buf + kHeaderSize + key_len;
+      uint8_t *p = buf + kHeaderSize;
+      for (uint32_t i = 0; i < nr_keys; i++) {
+        memcpy(p, &key_len[i], 4);
+        memcpy(p + 4, key_data[i], key_len[i]);
+        p += 4 + key_len[i];
+      }
+      return p;
     }
     const uint8_t *DecodeFrom(const uint8_t *buf) {
       memcpy(this, buf, kHeaderSize);
-      key_data = (uint8_t *) buf + kHeaderSize; // key_data ptr is always borrowed.
-      return buf + kHeaderSize + key_len;
+
+      const uint8_t *p = buf + kHeaderSize;
+      for (uint32_t i = 0; i < nr_keys; i++) {
+        memcpy(&key_len[i], p, 4);
+        key_data[i] = (uint8_t *) p + 4;
+        p += 4 + key_len[i];
+      }
+      return p;
     }
   };
 
   TxnHandle index_handle() { return TxnHandle{sid, epoch->id()}; }
-  TxnIndexOpContext IndexContextByStr(int32_t rel_id, VarStr *key) {
-    return TxnIndexOpContext(index_handle(), rel_id, key);
-  }
 
   template <typename TableT>
   TxnIndexOpContext IndexContext(const typename TableT::Key &key) {
-    return IndexContextByStr(static_cast<int>(TableT::kTable), key.EncodeFromRoutine());
+    return TxnIndexOpContext(index_handle(), static_cast<int>(TableT::kTable),
+                             key.EncodeFromRoutine());
+  }
+
+  template <typename TableT, typename KeyIter>
+  TxnIndexOpContext IndexContext(const KeyIter &begin, const KeyIter &end) {
+    VarStr *keys[end - begin];
+    int i = 0;
+    for (auto it = begin; it != end; ++it, i++) {
+      keys[i] = it->EncodeFromRoutine();
+    }
+    return TxnIndexOpContext(index_handle(), static_cast<int>(TableT::kTable),
+                             end - begin, keys);
   }
 
   template <typename TableT>
   std::tuple<TxnIndexOpContext,
              int,
-             Optional<Tuple<VHandle *>> (*)(const TxnIndexOpContext &, DummyValue)>
+             Optional<Tuple<VHandle *, int>> (*)(const TxnIndexOpContext &, DummyValue)>
   TxnLookup(int node, const typename TableT::Key &key) {
     return std::make_tuple(
         IndexContext<TableT>(key),
         node,
-        [](const TxnIndexOpContext &ctx, DummyValue _) -> Optional<Tuple<VHandle*>> {
-          return TxnIndexLookupOpImpl(ctx);
+        [](const TxnIndexOpContext &ctx, DummyValue _) -> Optional<Tuple<VHandle *, int>> {
+          return TxnIndexLookupOpImpl(0, ctx);
+        });
+  }
+
+  template <typename TableT, typename KeyIter>
+  std::tuple<TxnIndexOpContext,
+             int,
+             Optional<Tuple<VHandle *, int>> (*)(const TxnIndexOpContext &, Tuple<int>)>
+  TxnLookupMany(int node, KeyIter begin, KeyIter end) {
+    return std::make_tuple(
+        IndexContext<TableT>(begin, end),
+        node,
+        [](const TxnIndexOpContext &ctx, Tuple<int> selector) -> Optional<Tuple<VHandle *, int>> {
+          return TxnIndexLookupOpImpl(selector._<0>(), ctx);
         });
   }
 
  protected:
-  static Optional<Tuple<VHandle *>> TxnIndexLookupOpImpl(const TxnIndexOpContext &);
+  static Optional<Tuple<VHandle *, int>> TxnIndexLookupOpImpl(int i, const TxnIndexOpContext &);
 };
 
 template <typename TxnState>
@@ -153,25 +202,25 @@ class Txn : public BaseTxn {
   template <typename Func, typename ...Types>
   std::tuple<ContextType<void *, Types...>,
              int,
-             Optional<VoidValue> (*)(const ContextType<void *, Types...>&, Tuple<VHandle *>)>
+             Optional<VoidValue> (*)(const ContextType<void *, Types...>&, Tuple<VHandle *, int>)>
   TxnSetupVersion(int node, Func func, Types... params) {
-    void * p = (void *) (void (*)(const ContextType<void *, Types...> &, VHandle *)) func;
+    void * p = (void *) (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) func;
     return std::make_tuple(
         ContextType<void *, Types...>(state, index_handle(), p, params...),
         node,
-        [](const ContextType<void *, Types...> &ctx, Tuple<VHandle *> args) -> Optional<VoidValue> {
+        [](const ContextType<void *, Types...> &ctx, Tuple<VHandle *, int> args) -> Optional<VoidValue> {
           void *p = ctx.template _<2>();
           auto state = ctx.template _<0>();
           auto index_handle = ctx.template _<1>();
-          auto [handle] = args;
+          auto [handle, selector] = args;
 
           // TODO: insert if not there...
           if (handle) {
             while (!index_handle(handle).AppendNewVersion());
           }
 
-          auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *)) p;
-          fp(ctx, handle);
+          auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) p;
+          fp(ctx, handle, selector);
           return nullopt;
         });
   }
@@ -182,6 +231,20 @@ class Txn : public BaseTxn {
              Func>
   TxnProc(int node, Func func, Types... params) {
     return std::make_tuple(ContextType<Types...>(state, index_handle(), params...),
+                           node,
+                           func);
+  }
+
+
+  template <typename Func, typename ...Types>
+  std::tuple<PipelineClosure<ContextType<Types...>>,
+             int,
+             Func>
+  TxnPipelineProc(int node, Func func, int nr_pipelines, Types... params) {
+    return std::make_tuple(PipelineClosure<ContextType<Types...>>(nr_pipelines,
+                                                                  state,
+                                                                  index_handle(),
+                                                                  params...),
                            node,
                            func);
   }

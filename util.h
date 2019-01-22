@@ -13,8 +13,7 @@
 #include <sched.h>
 #include <pthread.h>
 
-// C++ experimental stuff
-#include <experimental/optional>
+#include <optional>
 
 #include "gopp/gopp.h"
 
@@ -256,7 +255,7 @@ struct GetArg<0, U, Args...> {
   GetArg(const U &value, const Args&... drop) : value(value) {}
 };
 
-template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
+template <typename ValueType> using Optional = std::optional<ValueType>;
 template <typename ValueType> using Ref = std::reference_wrapper<ValueType>;
 template <typename ValueType> using OwnPtr = std::unique_ptr<ValueType>;
 }

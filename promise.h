@@ -14,12 +14,6 @@ namespace felis {
 
 using sql::VarStr;
 
-template <typename... Args>
-auto T(Args&&... args) -> decltype(std::make_tuple(std::forward<Args>(args)...)) {
-  return std::make_tuple(std::forward<Args>(args)...);
-}
-
-
 // Distributed Promise system. We can use promise to define the intra
 // transaction dependencies. The dependencies have to be acyclic.
 
@@ -34,32 +28,42 @@ auto T(Args&&... args) -> decltype(std::make_tuple(std::forward<Args>(args)...))
 
 class BasePromise;
 
-// Performance: It seems critical to keep this struct fits in one cache line!
+// Performance: It seems critical to keep this struct one cache line!
 struct PromiseRoutine {
-  VarStr input;
   uint8_t *capture_data;
   uint32_t capture_len;
-  unsigned short level;
-  unsigned short node_id;
+  uint8_t level;
+  uint8_t node_id;
+  uint16_t pipeline; // Will this promise routine yield? If so, how many times?
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
 
-  void (*callback)(PromiseRoutine *);
+  void (*callback)(PromiseRoutine *, VarStr input);
   void *callback_native_func;
 
   size_t NodeSize() const;
-  size_t TreeSize() const;
-
   uint8_t *EncodeNode(uint8_t *p);
+
   void DecodeNode(go::TcpInputChannel *in);
-  void EncodeTree(uint8_t *p);
+
+  size_t TreeSize(const VarStr &input) const;
+  void EncodeTree(uint8_t *p, const VarStr &input);
+
+  static constexpr long kBubblePointer = 0xdeadbeef;
 
   BasePromise *next;
+  uint8_t __padding__[16];
 
   static PromiseRoutine *CreateFromCapture(size_t capture_len);
-  static PromiseRoutine *CreateFromPacket(go::TcpInputChannel *in, size_t packet_len);
+  static std::tuple<PromiseRoutine *, VarStr> CreateFromPacket(go::TcpInputChannel *in,
+                                                               size_t packet_len);
+
+  static constexpr size_t kUpdateBatchCounter = std::numeric_limits<size_t>::max();
+  static constexpr size_t kBubble = std::numeric_limits<size_t>::max() - 0x00FFFFFF;
 };
 
-static_assert(sizeof(PromiseRoutine) <= CACHE_LINE_SIZE, "PromiseRoutine too large.");
+static_assert(sizeof(PromiseRoutine) == CACHE_LINE_SIZE);
+
+using PromiseRoutineWithInput = std::tuple<PromiseRoutine *, VarStr>;
 
 class EpochClient;
 
@@ -76,27 +80,25 @@ class BasePromise {
   static size_t g_nr_threads;
   static constexpr int kMaxHandlersLimit = 32 + kInlineLimit;
 
-  class ExecutionRoutine : public go::Routine, public PromiseRoutine {
+  class ExecutionRoutine : public go::Routine {
     friend class PromiseRoutineLookupService;
    public:
     ExecutionRoutine() {
       set_reuse(true);
+      set_urgent(true); // We need to start urgently, but after we start, we are cool.
     }
     static void *operator new(std::size_t size) {
       return BasePromise::Alloc(util::Align(size, CACHE_LINE_SIZE));
     }
     static void operator delete(void *ptr) {}
-    uint64_t schedule_key() const { return sched_key; }
     void Run() final override;
-    void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready) final override;
-    void OnRemoveFromReadyQueue() final override;
 
-    void PlainAddToReadyQueue(go::Scheduler::Queue *q) {
-      go::Routine::AddToReadyQueue(q);
-    }
+    void Preempt();
+   private:
+    void RunPromiseRoutine(PromiseRoutine *r, const VarStr &in);
   };
 
-  static_assert(sizeof(ExecutionRoutine) % CACHE_LINE_SIZE == 0);
+  static_assert(sizeof(ExecutionRoutine) <= CACHE_LINE_SIZE);
 
   BasePromise(int limit = kMaxHandlersLimit);
   void Complete(const VarStr &in);
@@ -106,7 +108,7 @@ class BasePromise {
   static void *operator new(std::size_t size);
   static void *Alloc(size_t size);
   static void InitializeSourceCount(int nr_sources, size_t nr_threads);
-  static void QueueRoutine(PromiseRoutine **routines, size_t nr_routines, int source_idx, int thread, bool batch = true);
+  static void QueueRoutine(PromiseRoutineWithInput *routines, size_t nr_routines, int source_idx, int thread, bool batch = true);
   static void FlushScheduler();
 
   size_t nr_routines() const { return nr_handlers; }
@@ -122,16 +124,23 @@ static_assert(sizeof(BasePromise) % CACHE_LINE_SIZE == 0, "BasePromise is not ca
 
 class PromiseRoutineTransportService {
  public:
-  virtual void TransportPromiseRoutine(PromiseRoutine *routine) = 0;
+  virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
   virtual void FlushPromiseRoutine() {};
   virtual long IOPending(int core_id) { return -1; }
 };
 
 class PromiseRoutineDispatchService {
  public:
-  virtual void Dispatch(int core_id, BasePromise::ExecutionRoutine *exec_routine,
-                        go::Scheduler::Queue *q) = 0;
-  virtual void Detach(int core_id, BasePromise::ExecutionRoutine *exec_routine) = 0;
+
+  enum class State : uint8_t {
+    NormalState = 0,
+    PreemptState = 1,
+  };
+
+  virtual void Add(int core_id, PromiseRoutineWithInput *r, size_t nr_routines) = 0;
+  virtual void AddBubble() = 0;
+  virtual void Preempt(int core_id) = 0;
+  virtual std::tuple<PromiseRoutineWithInput, State> Pop(int core_id) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;
 
@@ -165,6 +174,36 @@ struct DummyValue {
 };
 
 template <typename T>
+struct PipelineClosure : public T {
+
+  int nr_pipelines;
+  template <typename ...Args>
+  PipelineClosure(int nr_pipelines, Args... args)
+      : nr_pipelines(nr_pipelines), next(nullptr), T(args...) {}
+
+  PipelineClosure() : nr_pipelines(0), next(nullptr) {}
+
+  T &value() { return *this; }
+  const T &value() const { return *this; }
+
+  BasePromise *next;
+
+  template <typename OutputType>
+  void Yield(const OutputType &output) const {
+    if (!next) return;
+    void *buffer = BasePromise::Alloc(output.EncodeSize() + sizeof(VarStr) + 1);
+    VarStr *output_str = output.EncodeFromAlloca(buffer);
+    next->Complete(*output_str);
+  }
+};
+
+template <typename T>
+struct ExposeNextPromiseTrait { static constexpr bool Value = false; };
+
+template <typename T>
+struct ExposeNextPromiseTrait<PipelineClosure<T>> { static constexpr bool Value = true; };
+
+template <typename T>
 class Promise : public BasePromise {
  public:
   typedef T Type;
@@ -177,25 +216,37 @@ class Promise : public BasePromise {
 
   template <typename Func, typename Closure>
   PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
-    auto static_func = [](PromiseRoutine *routine) {
-      auto native_func = (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) routine->callback_native_func;
+    auto static_func = [](PromiseRoutine *routine, VarStr input) {
+      auto native_func = (typename Next<Func, Closure>::OptType(*)(
+          const Closure &, T))routine->callback_native_func;
       Closure capture;
       T t;
       capture.DecodeFrom(routine->capture_data);
-      t.Decode(&routine->input);
+      t.Decode(&input);
 
-      auto output = native_func(capture, t);
-      if (routine->next && output) {
-        void *buffer = Alloc(util::Align(output->EncodeSize() + sizeof(VarStr) + 1, 8));
+      if constexpr (ExposeNextPromiseTrait<Closure>::Value) {
+        capture.next = routine->next;
+        capture.nr_pipelines = routine->pipeline;
+      }
+
+    auto output = native_func(capture, t);
+    auto next = routine->next;
+    if (next && next->nr_routines() > 0) {
+      if (output) {
+        void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
         VarStr *output_str = output->EncodeFromAlloca(buffer);
-        routine->next->Complete(*output_str);
+        next->Complete(*output_str);
+      } else {
+        VarStr bubble(0, 0, (uint8_t *)PromiseRoutine::kBubblePointer);
+        next->Complete(bubble);
+      }
       }
     };
     auto routine = PromiseRoutine::CreateFromCapture(capture.EncodeSize());
-    routine->input.data = nullptr;
-    routine->callback = (void (*)(PromiseRoutine *)) static_func;
+    routine->callback = (void (*)(PromiseRoutine *, VarStr)) static_func;
     routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
     capture.EncodeTo(routine->capture_data);
+    if constexpr(ExposeNextPromiseTrait<Closure>::Value) routine->pipeline = capture.nr_pipelines;
 
     Add(routine);
     return routine;

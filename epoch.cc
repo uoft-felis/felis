@@ -1,4 +1,5 @@
 #include <sys/mman.h>
+#include <algorithm>
 
 #include "epoch.h"
 #include "txn.h"
@@ -90,8 +91,9 @@ void EpochClient::InitializeEpoch()
   }
   conf.FlushBufferPlan(false);
 
-  RunTxnPromises("Epoch Initialization",
-                 std::bind(&EpochClient::ExecuteEpoch, this));
+  // RunTxnPromises("Epoch Initialization",
+  // std::bind(&EpochClient::ExecuteEpoch, this));
+  RunTxnPromises("Epoch Initialization", []() {});
 }
 
 void EpochClient::ExecuteEpoch()
@@ -112,111 +114,161 @@ void EpochClient::ExecuteEpoch()
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
-  nr_zeros.fill(0);
+  currents.fill(std::make_tuple(nullptr, VarStr()));
+  for (auto &queue: queues) {
+    queue.zq.end = queue.zq.start = 0;
+    queue.zq.q =
+        (PromiseRoutineWithInput *)
+        mmap(nullptr, kMaxItemPerCore * sizeof(PromiseRoutineWithInput),
+             PROT_READ | PROT_WRITE,
+             MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
+             -1, 0);
+    queue.pq.len = 0;
+    queue.pq.q =
+        (QueueItem *)
+        mmap(nullptr, kMaxItemPerCore * sizeof(QueueItem),
+             PROT_READ | PROT_WRITE,
+             MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
+             -1, 0);
+    queue.lock = false;
+  }
+  tot_bubbles = 0;
 }
 
 void EpochExecutionDispatchService::Reset()
 {
-  for (size_t i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-    mappings[i].clear();
+  for (auto &q: queues) {
+    q.zq.end = q.zq.start = 0;
+    q.pq.len = 0;
   }
+  tot_bubbles = 0;
 }
 
-void EpochExecutionDispatchService::Dispatch(int core_id,
-                                             BasePromise::ExecutionRoutine *exe,
-                                             go::Scheduler::Queue *q)
+static bool GreaterOrEqual(const EpochExecutionDispatchService::QueueItem &a,
+                           const EpochExecutionDispatchService::QueueItem &b)
 {
-  auto key = exe->schedule_key();
+  return a.key >= b.key;
+}
 
-  if (key == 0) {
-    exe->PlainAddToReadyQueue(q);
-    nr_zeros[core_id]++;
-    return;
+void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *routines,
+                                        size_t nr_routines)
+{
+  bool locked = false;
+  auto &lock = queues[core_id].lock;
+  while (!lock.compare_exchange_strong(locked, true)) {
+    locked = false;
+    __builtin_ia32_pause();
   }
 
-  auto &mapping = mappings[core_id];
-  auto it = mapping.upper_bound(key);
-  if (it == mapping.begin()) {
-    // Add to the head. However, we need to skip all urgent routines!!!
-    auto head = q;
-    while (q->next != head && ((go::Routine *) q->next)->is_urgent())
-      q = q->next;
+  auto &zq = queues[core_id].zq;
+  auto &q = queues[core_id].pq;
+  size_t zdelta = 0;
+  for (size_t i = 0; i < nr_routines; i++) {
+    auto r = routines[i];
+    auto key = std::get<0>(r)->sched_key;
 
-    exe->Add(q);
-    mapping.insert(std::make_pair(key, Entity{1, exe}));
-    auto &sync = util::Impl<VHandleSyncService>();
-    sync.Notify(1 << core_id);
-  } else {
-    --it;
-    exe->Add(it->second.last);
-    if (it->first != key) {
-      mapping.insert(it, std::make_pair(key, Entity{1, exe}));
+    if (key == 0) {
+      zq.q[zq.end + zdelta++] = r;
     } else {
-      auto &entity = it->second;
-      entity.dupcnt++;
-      entity.last = exe;
+      auto &e = q.q[q.len++];
+      auto [rt, in] = r;
+      e.key = key;
+      e.state = State::NormalState;
+      e.input_len = in.len;
+      e.input_data = in.data;
+      e.routine = rt;
+      std::push_heap(q.q, q.q + q.len, GreaterOrEqual);
     }
+    abort_if(zq.end == kMaxItemPerCore || q.len == kMaxItemPerCore,
+             "Preallocation of DispatchService is too small");
   }
+  zq.end.fetch_add(zdelta, std::memory_order_release);
+  lock.store(false);
 }
 
-void EpochExecutionDispatchService::Detach(int core_id,
-                                           BasePromise::ExecutionRoutine *exe)
+std::tuple<PromiseRoutineWithInput, PromiseRoutineDispatchService::State>
+EpochExecutionDispatchService::Pop(int core_id)
 {
-  auto key = exe->schedule_key();
-
-  if (key == 0) {
-    if (--nr_zeros[core_id] == 0) {
-      completed_counters[core_id].force = true;
-    }
-    return;
+  auto &zq = queues[core_id].zq;
+  auto &q = queues[core_id].pq;
+  if (zq.start < zq.end.load(std::memory_order_acquire)) {
+    auto r = zq.q[zq.start++];
+    currents[core_id] = r;
+    return std::make_tuple(r, State::NormalState);
+  }
+  if (q.len > 0) {
+    std::pop_heap(q.q, q.q + q.len, GreaterOrEqual);
+    auto &item = q.q[--q.len];
+    currents[core_id] = {
+      item.routine, VarStr(item.input_len, 0, item.input_data)
+    };
+    return std::make_tuple(currents[core_id], item.state);
   }
 
-  auto &mapping = mappings[core_id];
+  // We do not need locks to protect completion counters. There can only be MT
+  // access on Pop() and Add(), the counters are per-core anyway.
+  auto &c = completed_counters[core_id];
+  auto n = c.completed;
+  auto comp = EpochClient::g_workload_client->completion_object();
+  c.completed = 0;
 
-  auto it = mapping.find(key);
-#if 0
-  if (!mapping.empty() && mapping.begin()->first != key) {
-    printf("Why not %lu?\n", mapping.begin()->first);
-    std::abort();
+  unsigned long nr_bubbles = tot_bubbles.load();
+  while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
+
+  if (n + nr_bubbles > 0) {
+    comp->Complete(n + nr_bubbles);
+  }
+  return std::make_tuple(
+      std::make_tuple(nullptr, VarStr()),
+      State::NormalState);
+}
+
+void EpochExecutionDispatchService::AddBubble()
+{
+  tot_bubbles.fetch_add(1);
+}
+
+void EpochExecutionDispatchService::Preempt(int core_id)
+{
+  auto &lock = queues[core_id].lock;
+  bool locked = false;
+  while (!lock.compare_exchange_strong(locked, true)) {
+    locked = false;
+    __builtin_ia32_pause();
   }
 
-  abort_if(it == mapping.end(), "Cannot find {} in the scheduler! on core {}", key, core_id);
-#endif
-  if (--it->second.dupcnt == 0) {
-    // printf("Erasing %lu from core %d\n", key, core_id);
-    mapping.erase(it);
-    if (mapping.empty()) {
-      completed_counters[core_id].force = true;
-    }
+  auto r = currents[core_id];
+  currents[core_id] = {nullptr, VarStr()};
+  auto &zq = queues[core_id].zq;
+  auto &q = queues[core_id].pq;
+  if (std::get<0>(r)->sched_key == 0) {
+    zq.q[zq.end] = r;
+    zq.end.fetch_add(1, std::memory_order_release);
+  } else {
+    q.q[q.len] = QueueItem(r, State::PreemptState);
+    std::push_heap(q.q, q.q + q.len, GreaterOrEqual);
   }
+  lock.store(false);
 }
 
 void EpochExecutionDispatchService::Complete(int core_id)
 {
   auto &c = completed_counters[core_id];
   c.completed++;
-  if (c.force) {
-    auto n = c.completed;
-    c.completed = 0;
-    EpochClient::g_workload_client->completion_object()->Complete(n);
-  }
 }
 
 void EpochExecutionDispatchService::PrintInfo()
 {
   puts("===================================");
   for (int core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
-    int i = 0;
-    for (auto it = mappings[core_id].begin();
-         it != mappings[core_id].end() && i < 3; ++it, ++i) {
-      printf("DEBUG: %lu on this core (core %d)\n", it->first, core_id);
-    }
+    printf("DEBUG: %lu on this core (core %d)\n",
+           queues[core_id].pq.q[0].key, core_id);
   }
   puts("===================================");
 }
 
-static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 30;
-static constexpr size_t kEpochPromiseAllocationMainLimit = 6UL << 30;
+static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 512ULL << 20;
+static constexpr size_t kEpochPromiseAllocationMainLimit = 1ULL << 30;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()
 {
