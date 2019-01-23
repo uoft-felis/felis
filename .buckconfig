@@ -16,6 +16,6 @@
   ldflags = -fuse-ld=lld -g -O0 -fstandalone-debug
 
 [cxx#release]
-  cxxflags = -Ofast -flto -std=c++17 -fvisibility=hidden
-  cflags = -Ofast -flto -fvisibility=hidden
-  ldflags = -fuse-ld=lld -Ofast -flto -fwhole-program-vtables -fvisibility=hidden
+  cxxflags = -Ofast -flto=thin -std=c++17 -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers
+  cflags = -Ofast -flto=thin -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers
+  ldflags = -fuse-ld=lld -Ofast -flto=thin
