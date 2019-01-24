@@ -23,7 +23,7 @@ db_headers = [
 db_srcs = [
     'epoch.cc', 'txn.cc', 'log.cc', 'vhandle.cc', 'vhandle_sync.cc', 'gc.cc', 'index.cc', 'mem.cc',
     'promise.cc', 'masstree_index_impl.cc', 'node_config.cc', 'console.cc', 'console_client.cc',
-    'shipping.cc', 'entity.cc',
+    'shipping.cc', 'entity.cc', 'iface.cc',
     'felis_probes.cc',
     'json11/json11.cpp',
     'xxHash/xxhash.c',
@@ -41,7 +41,7 @@ test_srcs = ['test/xnode_measure_test.cc']
 cxx_library(
     name='tpcc',
     srcs=tpcc_srcs,
-    compiler_flags=includes + ['-DDEFAULT_IFACE_CONFIG'],
+    compiler_flags=includes,
     headers=db_headers + tpcc_headers,
     link_whole=True,
 )
@@ -50,7 +50,7 @@ cxx_binary(
     name='db',
     srcs=['main.cc', 'module.cc'] + db_srcs,
     headers=db_headers + tpcc_headers,
-    compiler_flags=includes + ['-DDEFAULT_IFACE_CONFIG'],
+    compiler_flags=includes,
     linker_flags=libs,
     deps=[':tpcc'],
 )
@@ -59,7 +59,7 @@ cxx_test(
     name='dbtest',
     srcs=test_srcs + db_srcs,
     headers=db_headers,
-    compiler_flags=includes + ['-DDEFAULT_IFACE_CONFIG'],
+    compiler_flags=includes,
     linker_flags=libs + ['-lgtest_main', '-lgtest'],
     deps=[':tpcc']
 )

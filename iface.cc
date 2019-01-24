@@ -1,5 +1,3 @@
-#ifdef DEFAULT_IFACE_CONFIG
-
 // I really hope this could be a .cc file. However, Clang has problems with
 // devirtualizing those virtual calls, even with -fvisibility=hidden.
 //
@@ -20,5 +18,3 @@ IMPL(VHandleSyncService, SpinnerSlot);
 IMPL(PromiseAllocationService, EpochPromiseAllocationService);
 
 }
-
-#endif
