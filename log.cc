@@ -1,22 +1,32 @@
 #include <sys/time.h>
+
 #include "log.h"
+#include "spdlog/sinks/file_sinks.h"
 
-#ifdef NDEBUG
-// std::shared_ptr<spdlog::logger> logger = spdlog::rotating_logger_mt("file_logger", "log", 1048576 * 5, 3, true);
-std::shared_ptr<spdlog::logger> logger = spdlog::stdout_logger_mt("console");
-#else
-// std::shared_ptr<spdlog::logger> logger = spdlog::daily_logger_mt("daily_logger", "debug/log", 2, 30);
-std::shared_ptr<spdlog::logger> logger = spdlog::stdout_logger_mt("console");
-#endif
+std::unique_ptr<spdlog::logger> logger(nullptr);
 
-void InitializeLogger()
+void InitializeLogger(const std::string &hostname)
 {
+  auto file_sink = std::make_shared<spdlog::sinks::simple_file_sink_mt>(
+      "dbg-" + hostname + ".log", true);
+  file_sink->set_level(spdlog::level::debug);
+
+  auto console_sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
+  console_sink->set_level(spdlog::level::info);
+
+  logger.reset(new spdlog::logger("global", {file_sink, console_sink}));
+  logger->flush_on(spdlog::level::debug);
+
+  const char *log_level = getenv("LOGGER");
+  if (log_level == nullptr) {
 #ifdef NDEBUG
-  spdlog::set_level(spdlog::level::info);
+    log_level = "info";
 #else
-  spdlog::set_level(spdlog::level::debug);
-  spdlog::set_async_mode(4096);
+    log_level = "debug";
 #endif
+  }
+
+  logger->set_level(spdlog::level::from_str(log_level));
   spdlog::set_pattern("[%H:%M:%S.%e] [thread %t] %v");
 }
 

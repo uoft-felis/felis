@@ -7,9 +7,9 @@
 #include <mutex>
 #include "spdlog/spdlog.h"
 
-extern std::shared_ptr<spdlog::logger> logger;
+extern std::unique_ptr<spdlog::logger> logger;
 
-void InitializeLogger();
+void InitializeLogger(const std::string &hostname);
 
 class PerfLog {
   struct timeval tv;

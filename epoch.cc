@@ -5,7 +5,7 @@
 #include "txn.h"
 #include "log.h"
 #include "vhandle.h"
-#include "iface.h"
+
 namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
@@ -49,17 +49,18 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
   callback.perf.Clear();
   callback.perf.Start();
   auto nr_threads = NodeConfiguration::g_nr_threads;
+
+  conf.IncrementUrgencyCount(nr_threads);
   for (ulong i = 0; i < nr_threads; i++) {
     auto r = go::Make(
         [i, nr_threads, this] {
-          conf.IncrementExtraIOPending(i);
           for (ulong j = i * total_nr_txn / nr_threads;
                j < (i + 1) * total_nr_txn / nr_threads;
                j++) {
             txns[j]->root_promise()->Complete(VarStr());
             txns[j]->ResetRoot();
           }
-          conf.DecrementExtraIOPending(i);
+          conf.DecrementUrgencyCount();
           logger->info("core {} finished issuing promises", i);
         });
     r->set_urgent(true);
@@ -111,9 +112,8 @@ void EpochClient::InitializeEpoch()
   }
   conf.FlushBufferPlan(false);
 
-  // RunTxnPromises("Epoch Initialization",
-  // std::bind(&EpochClient::ExecuteEpoch, this));
-  RunTxnPromises("Epoch Initialization", []() {});
+  RunTxnPromises("Epoch Initialization",
+                 std::bind(&EpochClient::ExecuteEpoch, this));
 }
 
 void EpochClient::ExecuteEpoch()
@@ -134,7 +134,6 @@ void EpochClient::ExecuteEpoch()
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
-  currents.fill(std::make_tuple(nullptr, VarStr()));
   for (auto &queue: queues) {
     queue.zq.end = queue.zq.start = 0;
     queue.zq.q =
@@ -150,6 +149,8 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
              PROT_READ | PROT_WRITE,
              MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
              -1, 0);
+    queue.pq.pool.move(mem::Pool(sizeof(QueueValue), kMaxItemPerCore));
+
     queue.lock = false;
   }
   tot_bubbles = 0;
@@ -164,16 +165,17 @@ void EpochExecutionDispatchService::Reset()
   tot_bubbles = 0;
 }
 
-static bool GreaterOrEqual(const EpochExecutionDispatchService::QueueItem &a,
-                           const EpochExecutionDispatchService::QueueItem &b)
+static bool Greater(const EpochExecutionDispatchService::QueueItem &a,
+                    const EpochExecutionDispatchService::QueueItem &b)
 {
-  return a.key >= b.key;
+  return a.key > b.key;
 }
 
 void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *routines,
                                         size_t nr_routines)
 {
   bool locked = false;
+  bool should_preempt = false;
   auto &lock = queues[core_id].lock;
   while (!lock.compare_exchange_strong(locked, true)) {
     locked = false;
@@ -193,41 +195,82 @@ void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *ro
       auto &e = q.q[q.len++];
       auto [rt, in] = r;
       e.key = key;
-      e.state = State::NormalState;
-      e.input_len = in.len;
-      e.input_data = in.data;
-      e.routine = rt;
-      std::push_heap(q.q, q.q + q.len, GreaterOrEqual);
+      e.value = (QueueValue *) q.pool.Alloc();
+      e.value->promise_routine = r;
+      e.value->state = nullptr;
+      auto old_key = q.q[0].key;
+      std::push_heap(q.q, q.q + q.len, Greater);
+      if (q.q[0].key < old_key)
+        should_preempt = true;
     }
     abort_if(zq.end == kMaxItemPerCore || q.len == kMaxItemPerCore,
              "Preallocation of DispatchService is too small");
   }
   zq.end.fetch_add(zdelta, std::memory_order_release);
   lock.store(false);
+  if (should_preempt)
+    util::Impl<VHandleSyncService>().Notify(1 << core_id);
 }
 
-std::tuple<PromiseRoutineWithInput, PromiseRoutineDispatchService::State>
-EpochExecutionDispatchService::Pop(int core_id)
+bool
+EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_pop)
 {
   auto &zq = queues[core_id].zq;
   auto &q = queues[core_id].pq;
+  auto &lock = queues[core_id].lock;
+
+  // This is the fast path because we do not need to grab the lock. However,
+  // when Add() is called concurrently, we might end up ignoring some of the
+  // latest items they put into the queue. In that case, we grab the lock and
+  // fallback to the slow path. The slow path might release the lock and retry
+  // the fast path.
+retry:
   if (zq.start < zq.end.load(std::memory_order_acquire)) {
-    auto r = zq.q[zq.start++];
-    currents[core_id] = r;
-    return std::make_tuple(r, State::NormalState);
+    states[core_id]->running.store(true, std::memory_order_release);
+    auto r = zq.q[zq.start];
+    if (should_pop(r, nullptr)) {
+      zq.start++;
+      states[core_id]->current = r;
+      return true;
+    }
+    return false;
   }
+
+  bool locked = false;
+  while (!lock.compare_exchange_strong(locked, true)) {
+    locked = false;
+    __builtin_ia32_pause();
+  }
+
+  if (zq.start < zq.end.load(std::memory_order_acquire)) {
+    lock.store(false);
+    goto retry;
+  }
+
   if (q.len > 0) {
-    std::pop_heap(q.q, q.q + q.len, GreaterOrEqual);
-    auto &item = q.q[--q.len];
-    currents[core_id] = {
-      item.routine, VarStr(item.input_len, 0, item.input_data)
-    };
-    return std::make_tuple(currents[core_id], item.state);
+    auto value = q.q[0].value;
+    bool pop = false;
+
+    states[core_id]->running.store(true, std::memory_order_relaxed);
+    if (should_pop(value->promise_routine, value->state)) {
+      std::pop_heap(q.q, q.q + q.len, Greater);
+
+      states[core_id]->current = value->promise_routine;
+      q.pool.Free(value);
+      q.len--;
+      pop = true;
+    }
+
+    lock.store(false);
+    return pop;
   }
+
+  states[core_id]->running.store(false, std::memory_order_relaxed);
+  lock.store(false);
 
   // We do not need locks to protect completion counters. There can only be MT
   // access on Pop() and Add(), the counters are per-core anyway.
-  auto &c = completed_counters[core_id];
+  auto &c = states[core_id]->complete_counter;
   auto n = c.completed;
   auto comp = EpochClient::g_workload_client->completion_object();
   c.completed = 0;
@@ -236,11 +279,11 @@ EpochExecutionDispatchService::Pop(int core_id)
   while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
 
   if (n + nr_bubbles > 0) {
+    logger->info("DispatchService on core {} notifies {} completions",
+                 core_id, n + nr_bubbles);
     comp->Complete(n + nr_bubbles);
   }
-  return std::make_tuple(
-      std::make_tuple(nullptr, VarStr()),
-      State::NormalState);
+  return false;
 }
 
 void EpochExecutionDispatchService::AddBubble()
@@ -248,32 +291,39 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
-void EpochExecutionDispatchService::Preempt(int core_id)
+bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
 {
   auto &lock = queues[core_id].lock;
+  bool new_routine = true;
   bool locked = false;
   while (!lock.compare_exchange_strong(locked, true)) {
     locked = false;
     __builtin_ia32_pause();
   }
 
-  auto r = currents[core_id];
-  currents[core_id] = {nullptr, VarStr()};
+  auto &r = states[core_id]->current;
   auto &zq = queues[core_id].zq;
   auto &q = queues[core_id].pq;
-  if (std::get<0>(r)->sched_key == 0) {
+  auto key = std::get<0>(r)->sched_key;
+  if (key == 0) {
     zq.q[zq.end] = r;
     zq.end.fetch_add(1, std::memory_order_release);
-  } else {
-    q.q[q.len] = QueueItem(r, State::PreemptState);
-    std::push_heap(q.q, q.q + q.len, GreaterOrEqual);
+  } else if (!force && (q.len == 0 || key <= q.q[0].key)) {
+    new_routine = false;
+  } else  {
+    auto value = (QueueValue *) q.pool.Alloc();
+    value->promise_routine = r;
+    value->state = (BasePromise::ExecutionRoutine *) go::Scheduler::Current()->current_routine();
+    q.q[q.len++] = QueueItem{std::get<0>(r)->sched_key, value};
+    std::push_heap(q.q, q.q + q.len, Greater);
   }
   lock.store(false);
+  return new_routine;
 }
 
 void EpochExecutionDispatchService::Complete(int core_id)
 {
-  auto &c = completed_counters[core_id];
+  auto &c = states[core_id]->complete_counter;
   c.completed++;
 }
 
@@ -281,13 +331,14 @@ void EpochExecutionDispatchService::PrintInfo()
 {
   puts("===================================");
   for (int core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
-    printf("DEBUG: %lu on this core (core %d)\n",
-           queues[core_id].pq.q[0].key, core_id);
+    auto &q = queues[core_id].pq.q;
+    printf("DEBUG: %lu and %lu,%lu on core %d\n",
+           q[0].key, q[1].key, q[2].key, core_id);
   }
   puts("===================================");
 }
 
-static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 512ULL << 20;
+static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 30;
 static constexpr size_t kEpochPromiseAllocationMainLimit = 1ULL << 30;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()

@@ -24,6 +24,8 @@ Optional<Tuple<VHandle *, int>> BaseTxn::TxnIndexLookupOpImpl(int i, const TxnIn
   auto &rel = util::Instance<RelationManager>().GetRelationOrCreate(ctx.rel_id);
   VarStr key((unsigned short) ctx.key_len[i], 0, ctx.key_data[i]);
   auto handle = rel.Search(&key);
+  if (handle == nullptr)
+    std::abort();
   return Tuple<VHandle *, int>(handle, i);
 }
 

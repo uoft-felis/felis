@@ -120,9 +120,9 @@ void NewOrderTxn::Prepare()
          >> TxnSetupVersion(
              node,
              [](const auto &ctx, auto *handle, int i) {
-               auto &[state, _1, _2] = ctx;
+               auto &[state, _1, _2, nr_items] = ctx;
                state->rows.stocks[i] = handle;
-             });
+             }, nr_items);
   }
 
   /*
@@ -151,6 +151,7 @@ void NewOrderTxn::Run()
         [](const auto &ctx, auto args) -> Optional<VoidValue> {
           auto &[state, index_handle,
                  i, ol_quantity, ol_supply_warehouse, warehouse_id] = ctx;
+          logger->debug("Txn {} updating its {} row {}", index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
           TxnVHandle vhandle = index_handle(state->rows.stocks[i]);
           auto stock = vhandle.Read<Stock::Value>();
           if (stock.s_quantity - ol_quantity < 10) {
@@ -161,6 +162,7 @@ void NewOrderTxn::Run()
           stock.s_remote_cnt += (ol_supply_warehouse == warehouse_id) ? 0 : 1;
 
           vhandle.Write(stock);
+          logger->debug("Txn {} updated its {} row {}", index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
           return nullopt;
         },
         i, order_quantities[i], supplier_warehouse_id[i], warehouse_id);

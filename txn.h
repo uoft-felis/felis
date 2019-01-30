@@ -111,7 +111,7 @@ class BaseTxn {
 
     size_t EncodeSize() const {
       size_t sum = 0;
-      for (uint32_t i = 0; i < nr_keys; i++) sum += key_len[i];
+      for (uint32_t i = 0; i < nr_keys; i++) sum += 4 + key_len[i];
       return kHeaderSize + sum;
     }
     uint8_t *EncodeTo(uint8_t *buf) const {
@@ -218,6 +218,8 @@ class Txn : public BaseTxn {
           // TODO: insert if not there...
           if (handle) {
             while (!index_handle(handle).AppendNewVersion());
+          } else {
+            TBD();
           }
 
           auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) p;

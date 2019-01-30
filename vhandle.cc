@@ -5,7 +5,6 @@
 #include "log.h"
 #include "vhandle.h"
 #include "node_config.h"
-#include "iface.h"
 
 namespace felis {
 

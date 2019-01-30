@@ -183,7 +183,7 @@ struct InstanceInit {
 template <class IFace> IFace &Impl() noexcept;
 
 #define IMPL(IFace, ImplClass) \
-  template<> inline IFace &Impl() noexcept { return Instance<ImplClass>(); }
+  template<> IFace &Impl() noexcept { return Instance<ImplClass>(); }
 
 template <typename T, typename ...Args>
 class BaseFactory {

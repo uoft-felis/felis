@@ -85,15 +85,15 @@ class BasePromise {
    public:
     ExecutionRoutine() {
       set_reuse(true);
-      set_urgent(true); // We need to start urgently, but after we start, we are cool.
     }
     static void *operator new(std::size_t size) {
       return BasePromise::Alloc(util::Align(size, CACHE_LINE_SIZE));
     }
     static void operator delete(void *ptr) {}
     void Run() final override;
+    void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready = false) final override;
 
-    void Preempt();
+    bool Preempt(bool force);
    private:
     void RunPromiseRoutine(PromiseRoutine *r, const VarStr &in);
   };
@@ -126,23 +126,34 @@ class PromiseRoutineTransportService {
  public:
   virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
   virtual void FlushPromiseRoutine() {};
-  virtual long IOPending(int core_id) { return -1; }
+  virtual long UrgencyCount() { return -1; }
 };
 
 class PromiseRoutineDispatchService {
  public:
 
-  enum class State : uint8_t {
-    NormalState = 0,
-    PreemptState = 1,
+  class DispatchPeekListener {
+   public:
+    virtual bool operator()(PromiseRoutineWithInput, BasePromise::ExecutionRoutine *) = 0;
+  };
+
+  template <typename F>
+  class GenericDispatchPeekListener : public DispatchPeekListener {
+    F func;
+   public:
+    GenericDispatchPeekListener(F f) : func(f) {}
+    bool operator()(PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) final override {
+      return func(r, state);
+    }
   };
 
   virtual void Add(int core_id, PromiseRoutineWithInput *r, size_t nr_routines) = 0;
   virtual void AddBubble() = 0;
-  virtual void Preempt(int core_id) = 0;
-  virtual std::tuple<PromiseRoutineWithInput, State> Pop(int core_id) = 0;
+  virtual bool Preempt(int core_id, bool force) = 0;
+  virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;
+  virtual bool IsRunning(int core_id) = 0;
 
   // For debugging
   virtual void PrintInfo() {};

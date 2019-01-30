@@ -1,6 +1,5 @@
 #include "vhandle.h"
 #include "vhandle_sync.h"
-#include "iface.h"
 
 namespace felis {
 
@@ -27,9 +26,6 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
     }
     if (!IsPendingVal(oldval))
       return;
-    if (notified) {
-      go::Scheduler::Current()->current_routine()->VoluntarilyPreempt(false);
-    }
     oldval = *addr;
   }
 }
@@ -58,7 +54,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
   auto sched = go::Scheduler::Current();
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   auto routine = sched->current_routine();
-  routine->set_busy_poll(true);
+  // routine->set_busy_poll(true);
 
   abort_if(idx < 0, "We should not running on thread pool 0!");
 
@@ -67,16 +63,15 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
     wait_cnt++;
 
     if ((wait_cnt & 0x7FFFFFF) == 0) {
-      printf("Deadlock on core %d? %lu waiting for %lu\n", idx, sid, ver);
-      printf("IOPendings for core %d is %lu\n", idx, transport.IOPending(idx));
+      printf("Deadlock on core %d? %lu (using %p) waiting for %lu\n", idx, sid, routine, ver);
+      printf("UrgencyCnt is %lu\n", transport.UrgencyCount());
       util::Impl<PromiseRoutineDispatchService>().PrintInfo();
     }
 
-    if ((wait_cnt & 0x7FFF) == 0) {
+    if ((wait_cnt & 0x0FFF) == 0) {
       transport.FlushPromiseRoutine();
-      if (transport.IOPending(idx) > 0)
-        ((BasePromise::ExecutionRoutine *) routine)->Preempt();
-      return false;
+      ((BasePromise::ExecutionRoutine *) routine)->Preempt(
+          transport.UrgencyCount() > 0);
     }
   }
 

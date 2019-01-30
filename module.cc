@@ -13,8 +13,6 @@
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 
-#include "iface.h"
-
 namespace felis {
 
 class LoggingModule : public Module<CoreModule> {
@@ -28,7 +26,7 @@ class LoggingModule : public Module<CoreModule> {
   }
   void Init() override {
     auto &console = util::Instance<Console>();
-    InitializeLogger();
+    InitializeLogger(console.server_node_name());
 
     std::stringstream ss;
     ss << "/tmp/";

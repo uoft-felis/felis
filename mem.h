@@ -17,7 +17,7 @@ class Pool {
   size_t len;
   std::atomic<void *> head;
   size_t capacity;
-  unsigned char __pad__[32];
+  // unsigned char __pad__[32];
 
  public:
   Pool() : data(nullptr), len(0) {}
@@ -43,8 +43,6 @@ class Pool {
   static std::atomic_ulong g_total_page_mem;
   static std::atomic_ulong g_total_hugepage_mem;
 };
-
-static_assert(sizeof(Pool) == 64, "Pool object size is not 64 bytes");
 
 class Region {
   static const int kMaxPools = 20;

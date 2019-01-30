@@ -63,9 +63,9 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
   void FlushPromiseRoutine() final override;
-  long IOPending(int core_id) final override;
-  void IncrementExtraIOPending(int core_id) { extra_iopendings[core_id]++; }
-  void DecrementExtraIOPending(int core_id) { extra_iopendings[core_id]--; }
+  long UrgencyCount() final override { return urgency_cnt.load(); }
+  void IncrementUrgencyCount(long delta = 1) { urgency_cnt.fetch_add(delta); }
+  void DecrementUrgencyCount(long delta = 1) { urgency_cnt.fetch_sub(delta); }
 
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root);
@@ -96,7 +96,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   size_t max_node_id;
 
   static constexpr size_t kPromiseMaxLevels = 16;
-  static constexpr size_t kPromiseMaxDebugLevels = 3;
   static constexpr ulong kPromiseBarrierWatermark = 1 << 20;
   // The BufferRootPromise is going to run an analysis on the root promise to
   // keep track of how many handlers needs to be sent.
@@ -109,17 +108,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   std::atomic_ulong *batch_counters[kPromiseMaxLevels];
   ulong *local_batch_counters;
 
-  // Transactions can execute without having to wait for all IOs to
-  // complete. However, this is very likely to introduce deadlocks.
-  //
-  // We introduce IOPendings to tell the transactions to yield to IOs instead of
-  // dedicately spin there.
-  //
-  // IOPendings automatically take account into currently in-flight flushes,
-  // current IO routine running on this core. However, there are some other
-  // types of IOs we need to keep track of: for example, unfinished issuers.
-  //
-  ulong extra_iopendings[kMaxNrThreads];
+  std::atomic_ulong urgency_cnt;
  private:
   void CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src, int nr_extra);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);

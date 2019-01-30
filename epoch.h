@@ -180,27 +180,22 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   };
  public:
 
+  struct QueueValue {
+    PromiseRoutineWithInput promise_routine;
+    BasePromise::ExecutionRoutine *state;
+  };
+
   struct QueueItem {
     uint64_t key;
-    State state;
-    uint16_t input_len;
-    const uint8_t *input_data;
-    PromiseRoutine *routine;
-
-    QueueItem(PromiseRoutine *r, const VarStr &in, State state)
-        : key(r->sched_key), state(state), input_len(in.len),
-          input_data(in.data), routine(r) {}
-
-    QueueItem(PromiseRoutineWithInput r, State state)
-        : QueueItem(std::get<0>(r), std::get<1>(r), state) {}
+    QueueValue *value;
   };
-  static_assert(sizeof(QueueItem) == 32); // Will swap() becomes the bottleneck?
 
  private:
   // We decided to preallocate the entire priority queue. In practice, this
   // should be dynamically allocated on the fly by using a radix tree.
   struct PriorityQueue {
     QueueItem *q;
+    mem::Pool pool;
     size_t len;
   };
 
@@ -214,29 +209,36 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     PriorityQueue pq;
     ZeroQueue zq;
     std::atomic_bool lock;
-
-    uint8_t __padding__[16];
   };
-
-  static_assert(sizeof(Queue) == 64);
 
   static constexpr size_t kMaxItemPerCore = 8 << 20;
   static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
 
   std::array<Queue, kMaxNrThreads> queues;
-  std::array<PromiseRoutineWithInput, kMaxNrThreads> currents;
-  std::array<CompleteCounter, kMaxNrThreads> completed_counters;
+
+  struct State {
+    PromiseRoutineWithInput current;
+    CompleteCounter complete_counter;
+    std::atomic_bool running;
+
+    State() : current({nullptr, VarStr()}), running(false) {}
+  };
+
+  std::array<util::CacheAligned<State>, kMaxNrThreads> states;
 
   std::atomic_ulong tot_bubbles;
 
  public:
   void Add(int core_id, PromiseRoutineWithInput *routines, size_t nr_routines) final override;
   void AddBubble() final override;
-  std::tuple<PromiseRoutineWithInput, State> Pop(int core_id) final override;
-  void Preempt(int core_id) final override;
+  bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
+  bool Preempt(int core_id, bool force) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   void PrintInfo() final override;
+  bool IsRunning(int core_id) final override {
+    return states[core_id]->running.load(std::memory_order_acquire);
+  }
 };
 
 // We use thread-local brks to reduce the memory allocation cost for all

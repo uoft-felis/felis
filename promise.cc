@@ -5,7 +5,6 @@
 #include <queue>
 #include "util.h"
 #include "mem.h"
-#include "iface.h"
 
 using util::Instance;
 using util::Impl;
@@ -159,8 +158,6 @@ void BasePromise::Complete(const VarStr &in)
 {
   auto &transport = util::Impl<PromiseRoutineTransportService>();
 
-  __builtin_prefetch(extra_handlers);
-
   for (size_t i = 0; i < nr_handlers; i++) {
     auto r = routine(i);
     transport.TransportPromiseRoutine(r, in);
@@ -190,29 +187,69 @@ void BasePromise::ExecutionRoutine::RunPromiseRoutine(PromiseRoutine *r, const V
   r->callback((PromiseRoutine *) r, in);
 }
 
+void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready)
+{
+  auto p = q;
+  while (p->next != q) {
+    if (!((Routine *) p->next)->is_urgent())
+      break;
+    p = p->next;
+  }
+  Add(p);
+}
+
 void BasePromise::ExecutionRoutine::Run()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
-  set_urgent(false);
+  int core_id = scheduler()->thread_pool_id() - 1;
+  logger->info("new ExecutionRoutine up and running on {}", core_id);
 
-  while (true) {
-    int core_id = scheduler()->thread_pool_id() - 1;
-    auto [r, r_state] = svc.Pop(core_id);
-    auto [rt, in] = r;
+  PromiseRoutineWithInput next_r;
+  BasePromise::ExecutionRoutine *next_state = nullptr;
+  go::Scheduler *sched = scheduler();
 
-    if (!rt || r_state == PromiseRoutineDispatchService::State::PreemptState) {
-      return;
-    }
+  auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
+      [&next_r, &next_state, sched]
+      (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
+        if (state != nullptr) {
+          if (state->is_detached()) {
+            state->Init();
+            sched->WakeUp(state);
+          }
+          return false;
+        }
+        next_r = r;
+        next_state = state;
+        return true;
+      });
 
+  while (svc.Peek(core_id, should_pop)) {
+    auto [rt, in] = next_r;
     RunPromiseRoutine(rt, in);
     svc.Complete(core_id);
   }
 }
 
-void BasePromise::ExecutionRoutine::Preempt()
+bool BasePromise::ExecutionRoutine::Preempt(bool force)
 {
-  sched->WakeUp(new ExecutionRoutine());
-  sched->RunNext(go::Scheduler::NextReadyState);
+  auto &svc = util::Impl<PromiseRoutineDispatchService>();
+  int core_id = scheduler()->thread_pool_id() - 1;
+
+  if (svc.Preempt(core_id, force)) {
+    sched->WakeUp(new ExecutionRoutine());
+    sched->RunNext(go::Scheduler::SleepState);
+
+    auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
+        [this]
+        (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
+          abort_if(state != this, "WTF??? Then why are you waking me up? {} != {}",
+                   (void *) state, (void *) this);
+          return true;
+        });
+    svc.Peek(core_id, should_pop);
+    return true;
+  }
+  return false;
 }
 
 void BasePromise::QueueRoutine(felis::PromiseRoutineWithInput *routines, size_t nr_routines,
@@ -223,8 +260,10 @@ void BasePromise::QueueRoutine(felis::PromiseRoutineWithInput *routines, size_t 
 
 void BasePromise::FlushScheduler()
 {
+  auto &svc = util::Impl<PromiseRoutineDispatchService>();
   for (int i = 1; i <= g_nr_threads; i++) {
-    go::GetSchedulerFromPool(i)->WakeUp(new ExecutionRoutine());
+    if (!svc.IsRunning(i - 1))
+      go::GetSchedulerFromPool(i)->WakeUp(new ExecutionRoutine());
   }
 }
 
