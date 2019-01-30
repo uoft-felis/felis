@@ -5,7 +5,7 @@
 #include <vector>
 #include <tuple>
 #include <atomic>
-#include <experimental/optional>
+#include <optional>
 #include "sqltypes.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -165,9 +165,9 @@ class PromiseAllocationService {
   virtual void Reset() = 0;
 };
 
-template <typename ValueType> using Optional = std::experimental::optional<ValueType>;
+template <typename ValueType> using Optional = std::optional<ValueType>;
 
-inline constexpr auto nullopt = std::experimental::nullopt;
+inline constexpr auto nullopt = std::nullopt;
 
 struct VoidValue {
  private:

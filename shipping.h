@@ -111,7 +111,7 @@ class SliceScanner {
 
 class BaseShipment {
  public:
-  static constexpr int kSendBatch = 32 * __IOV_MAX;
+  static constexpr int kSendBatch = 32 * IOV_MAX;
  protected:
   sockaddr_in addr;
   int fd;
@@ -155,7 +155,7 @@ class Shipment : public BaseShipment {
   bool RunSend() {
     T *obj[kSendBatch];
     int nr_obj = 0;
-    struct iovec vec[__IOV_MAX];
+    struct iovec vec[IOV_MAX];
     {
       std::lock_guard _(lock);
       while (nr_obj < kSendBatch && !queue.empty()) {
@@ -177,8 +177,8 @@ class Shipment : public BaseShipment {
 
     while (i < nr_obj) {
       int n = 0;
-      if (cur_iov == __IOV_MAX
-          || (n = obj[i]->EncodeIOVec(&vec[cur_iov + 1], __IOV_MAX - cur_iov - 1)) == 0) {
+      if (cur_iov == IOV_MAX
+          || (n = obj[i]->EncodeIOVec(&vec[cur_iov + 1], IOV_MAX - cur_iov - 1)) == 0) {
         SendIOVec(vec, cur_iov);
         cur_iov = 0;
         continue;

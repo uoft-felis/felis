@@ -11,11 +11,11 @@
   cflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
 
 [cxx#debug]
-  cxxflags = -g -O0 -fstandalone-debug -std=c++17 -U_FORTIFY_SOURCE
+  cxxflags = -g -O0 -fstandalone-debug -std=c++17 -stdlib=libc++ -U_FORTIFY_SOURCE
   cflags = -g -O0 -fstandalone-debug -U_FORTIFY_SOURCE
   ldflags = -fuse-ld=lld -g -O0 -fstandalone-debug
 
 [cxx#release]
-  cxxflags = -Ofast -flto=thin -std=c++17 -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers -DNDEBUG
+  cxxflags = -Ofast -flto=thin -std=c++17 -stdlib=libc++ -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers -DNDEBUG
   cflags = -Ofast -flto=thin -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers -DNDEBUG
   ldflags = -fuse-ld=lld -Ofast -flto=thin
