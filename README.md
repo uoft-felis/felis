@@ -19,7 +19,7 @@ nix-shell
 ./buck.pex build db
 ```
 
-This will generate a binary to `buck-out/gen/db`. By default, the build is debug build and if you need optimized build you can run.
+This will generate a binary to `buck-out/gen/db#debug`. By default, the build is debug build and if you need optimized build you can run.
 
 ```
 ./buck.pex build db_release
@@ -37,6 +37,14 @@ Use
 ```
 
 to build the test binary. Then run the `buck-out/gen/dbtest` to run all unit tests. We use google-test. Run run partial test, please look at https://github.com/google/googletest/blob/master/googletest/docs/advanced.md#running-a-subset-of-the-tests .
+
+
+Logs
+----
+
+If you are running the debug version, the logging level is "debug" by default, otherwise, the logging level is "info". You can always tune the debugging level by setting the `LOGGER` environmental variable. Possible values for `LOGGER` are: `trace`, `debug`, `info`, `warning`, `error`, `critical`, `off`.
+
+The debug level will output to a log file named `dbg-hostname.log` where hostname is your node name. This is to prevent debugging log flooding your screen.
 
 Run
 ---

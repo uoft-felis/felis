@@ -2,3 +2,4 @@
 .buckjavaargs
 buck-out
 .ccls-cache/
+*.log
