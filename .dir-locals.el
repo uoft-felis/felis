@@ -1,4 +1,4 @@
-((nil . ((projectile-project-compilation-cmd . "NAILGUN_SERVER=local:.buckd/sock ng com.facebook.buck.cli.Main build :db")
+((nil . ((projectile-project-compilation-cmd . "./buck.pex build db")
 	 (indent-tabs-mode . nil)))
  (c-mode . ((mode . c++)
             (c-basic-offset . 2)))
