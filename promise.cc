@@ -236,17 +236,18 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
   int core_id = scheduler()->thread_pool_id() - 1;
 
   if (svc.Preempt(core_id, force)) {
+ sleep:
     sched->WakeUp(new ExecutionRoutine());
     sched->RunNext(go::Scheduler::SleepState);
 
     auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
         [this]
         (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
-          abort_if(state != this, "WTF??? Then why are you waking me up? {} != {}",
-                   (void *) state, (void *) this);
-          return true;
+          return state == this;
         });
-    svc.Peek(core_id, should_pop);
+    if (!svc.Peek(core_id, should_pop))
+      goto sleep;
+
     return true;
   }
   return false;
