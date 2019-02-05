@@ -128,7 +128,7 @@ void NewOrderTxn::Prepare()
     int node = p.code / nr_nodes + 1;
 
     proc
-        >> TxnPipelineProc(
+        | TxnPipelineProc(
             lookup_node,
             [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
               const auto &[state, handle, p] = ctx.value();
@@ -137,15 +137,15 @@ void NewOrderTxn::Prepare()
               }
               return nullopt;
             }, p.nr, p)
-         >> TxnLookupMany<Stock>(
-             lookup_node,
-             stock_keys, stock_keys + nr_items)
-         >> TxnSetupVersion(
-             node,
-             [](const auto &ctx, auto *handle, int i) {
-               auto &[state, _1, _2, nr_items] = ctx;
-               state->rows.stocks[i] = handle;
-             }, nr_items);
+        | TxnLookupMany<Stock>(
+            lookup_node,
+            stock_keys, stock_keys + nr_items)
+        | TxnSetupVersion(
+            node,
+            [](const auto &ctx, auto *handle, int i) {
+              auto &[state, _1, _2, nr_items] = ctx;
+              state->rows.stocks[i] = handle;
+            }, nr_items);
   }
 }
 
@@ -172,7 +172,7 @@ void NewOrderTxn::Run()
   for (auto &p: agg) {
     int node = p.code + 1;
     proc
-        >> TxnPipelineProc(
+        | TxnPipelineProc(
             node,
             [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
               const auto &[state, handle, p] = ctx.value();
@@ -181,7 +181,7 @@ void NewOrderTxn::Run()
               }
               return nullopt;
             }, p.nr, p)
-        >> TxnProc(
+        | TxnProc(
             node,
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
               auto &[state, index_handle,

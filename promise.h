@@ -316,7 +316,7 @@ class PromiseStream {
   };
 
   template <typename Tuple>
-  typename ChainType<Tuple>::Type operator>>(Tuple t) {
+  typename ChainType<Tuple>::Type operator|(Tuple t) {
     return typename ChainType<Tuple>::Type(p->Then(std::get<0>(t), std::get<1>(t), std::get<2>(t)));
   }
 };
