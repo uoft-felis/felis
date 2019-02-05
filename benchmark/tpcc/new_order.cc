@@ -1,3 +1,4 @@
+#include <numeric>
 #include "new_order.h"
 
 namespace tpcc {
@@ -9,7 +10,7 @@ NewOrderStruct ClientBase::GenerateTransactionInput<NewOrderStruct>()
   s.warehouse_id = PickWarehouse();
   s.district_id = PickDistrict();
   s.customer_id = GetCustomerId();
-  s.nr_items = RandomNumber(5, 15);
+  s.nr_items = RandomNumber(5, NewOrderStruct::kNewOrderMaxItems);
   s.new_order_id = PickNewOrderId(s.warehouse_id, s.district_id);
 
   for (int i = 0; i < s.nr_items; i++) {
@@ -51,48 +52,70 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
       client(client)
 {}
 
+struct NodePathAggregator {
+  struct NodePath {
+    short nr;
+    short index[NewOrderStruct::kNewOrderMaxItems];
+    int code;
+  } *paths;
+  NodePath **htable;
+  int nr_paths;
+  int htable_size;
+
+  struct Path {
+    NodePath paths[NewOrderStruct::kNewOrderMaxItems];
+    NodePath *htable[];
+
+    static size_t StructSize(int htable_size) {
+      return sizeof(Path) + sizeof(NodePath *) * htable_size;
+    }
+  };
+
+  NodePathAggregator(Path *p, int htable_size)
+      : paths(p->paths), htable(p->htable), nr_paths(0), htable_size(htable_size) {
+    memset(htable, 0, htable_size * sizeof(NodePath *));
+  }
+
+  NodePathAggregator& operator+=(const std::tuple<int, int> &rhs) {
+    auto [index, code] = rhs;
+    NodePath *p = htable[code];
+    if (!p) {
+      p = &paths[nr_paths++];
+      p->nr = 0;
+      p->code = code;
+      htable[code] = p;
+    }
+    p->index[p->nr++] = index;
+    return *this;
+  }
+
+  NodePath *begin() {
+    return paths;
+  }
+
+  NodePath *end() {
+    return paths + nr_paths;
+  }
+};
+
 void NewOrderTxn::Prepare()
 {
   INIT_ROUTINE_BRK(4096);
 
   auto district_key = District::Key::New(warehouse_id, district_id);
 
-  // int node = Client::warehouse_to_node_id(warehouse_id);
-  // int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
-
-  // Looks like we only need this when FastIdGen is off? In a distributed
-  // environment, it makes sense to assume FastIdGen is always on.
-  /*
-
-  proc >> TxnLookup<District>(lookup_node, district_key)
-       >> TxnSetupVersion(
-           node,
-           [](const auto &ctx, auto *handle) {
-             ctx.template _<0>()->rows.district = handle;
-           });
-
-  */
-
   int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
-  struct Selector {
-    int nr;
-    int sel[15];
-  };
-  Selector *selectors[nr_nodes][nr_nodes];
 
-  std::vector<std::tuple<int, int>> paths;
-  memset(selectors, 0, sizeof(Selector *) * nr_nodes * nr_nodes);
+  NodePathAggregator agg(
+      new (alloca(NodePathAggregator::Path::StructSize(nr_nodes * nr_nodes))) NodePathAggregator::Path,
+      nr_nodes * nr_nodes);
 
-  for (uint i = 0; i < nr_items; i++) {
-    auto node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
-    auto lookup_node = client->warehouse_to_lookup_node_id(supplier_warehouse_id[i]);
-    auto &p = selectors[lookup_node - 1][node - 1];
-    if (p == nullptr) {
-      paths.push_back(std::make_tuple(lookup_node, node));
-      p = (Selector *) alloca(sizeof(Selector));
-      p->nr = 0;
-    }
-    p->sel[p->nr++] = i;
+  for (int i = 0; i < nr_items; i++) {
+    int s_wh = supplier_warehouse_id[i];
+    int node = Client::warehouse_to_node_id(s_wh);
+    int lookup_node = client->warehouse_to_lookup_node_id(s_wh);
+    int code = node - 1 + (lookup_node - 1) * nr_nodes;
+    agg += { i, code };
   }
 
   Stock::Key stock_keys[15];
@@ -100,20 +123,20 @@ void NewOrderTxn::Prepare()
     stock_keys[i] = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
   }
 
-  for (auto [lookup_node, node]: paths) {
-    auto sel = selectors[lookup_node - 1][node - 1];
-    proc >> TxnPipelineProc(
-        lookup_node,
-        [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
-          const auto &[state, handle, selector] = ctx.value();
+  for (auto &p: agg) {
+    int lookup_node = p.code % nr_nodes + 1;
+    int node = p.code / nr_nodes + 1;
 
-          for (int i = 0; i < selector.nr; i++) {
-            ctx.Yield(Tuple<int>(selector.sel[i]));
-          }
-
-          return nullopt;
-        },
-        sel->nr, *sel)
+    proc
+        >> TxnPipelineProc(
+            lookup_node,
+            [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
+              const auto &[state, handle, p] = ctx.value();
+              for (int i = 0; i < p.nr; i++) {
+                ctx.Yield(Tuple<int>(p.index[i]));
+              }
+              return nullopt;
+            }, p.nr, p)
          >> TxnLookupMany<Stock>(
              lookup_node,
              stock_keys, stock_keys + nr_items)
@@ -124,48 +147,64 @@ void NewOrderTxn::Prepare()
                state->rows.stocks[i] = handle;
              }, nr_items);
   }
-
-  /*
-  for (auto i = 0; i < nr_items; i++) {
-    auto stock_key = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
-    node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
-    lookup_node = client->warehouse_to_lookup_node_id(supplier_warehouse_id[i]);
-
-    proc >> TxnLookup<Stock>(lookup_node, stock_key)
-         >> TxnSetupVersion(
-             node,
-             [](const auto &ctx, auto *handle, int i) {
-               auto &[state, _1, _2, i] = ctx;
-               state->rows.stocks[i] = handle;
-             });
-  }
-  */
 }
 
 void NewOrderTxn::Run()
 {
+  int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
+  NodePathAggregator agg(
+      new (alloca(NodePathAggregator::Path::StructSize(nr_nodes))) NodePathAggregator::Path,
+      nr_nodes);
+
+  struct {
+    uint quantities[NewOrderStruct::kNewOrderMaxItems];
+    uint remote_bitmap;
+  } params;
+
   for (auto i = 0; i < nr_items; i++) {
     int node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
-    proc >> TxnProc(
-        node,
-        [](const auto &ctx, auto args) -> Optional<VoidValue> {
-          auto &[state, index_handle,
-                 i, ol_quantity, ol_supply_warehouse, warehouse_id] = ctx;
-          logger->debug("Txn {} updating its {} row {}", index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
-          TxnVHandle vhandle = index_handle(state->rows.stocks[i]);
-          auto stock = vhandle.Read<Stock::Value>();
-          if (stock.s_quantity - ol_quantity < 10) {
-            stock.s_quantity += 91;
-          }
-          stock.s_quantity -= ol_quantity;
-          stock.s_ytd += ol_quantity;
-          stock.s_remote_cnt += (ol_supply_warehouse == warehouse_id) ? 0 : 1;
+    agg += { i, node - 1 };
+    params.quantities[i] = order_quantities[i];
+    int remote = (supplier_warehouse_id[i] == warehouse_id) ? 0 : 1;
+    params.remote_bitmap |= (remote << i);
+  }
 
-          vhandle.Write(stock);
-          logger->debug("Txn {} updated its {} row {}", index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
-          return nullopt;
-        },
-        i, order_quantities[i], supplier_warehouse_id[i], warehouse_id);
+  for (auto &p: agg) {
+    int node = p.code + 1;
+    proc
+        >> TxnPipelineProc(
+            node,
+            [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
+              const auto &[state, handle, p] = ctx.value();
+              for (int i = 0; i < p.nr; i++) {
+                ctx.Yield(Tuple<int>(p.index[i]));
+              }
+              return nullopt;
+            }, p.nr, p)
+        >> TxnProc(
+            node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle,
+                     params] = ctx;
+              auto i = args.template _<0>();
+
+              logger->debug("Txn {} updating its {} row {}",
+                            index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
+
+              TxnVHandle vhandle = index_handle(state->rows.stocks[i]);
+              auto stock = vhandle.Read<Stock::Value>();
+              if (stock.s_quantity - params.quantities[i] < 10) {
+                stock.s_quantity += 91;
+              }
+              stock.s_quantity -= params.quantities[i];
+              stock.s_ytd += params.quantities[i];
+              stock.s_remote_cnt += (params.remote_bitmap & (1 << i)) ? 1 : 0;
+
+              vhandle.Write(stock);
+              logger->debug("Txn {} updated its {} row {}",
+                            index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
+              return nullopt;
+            }, params);
   }
 }
 

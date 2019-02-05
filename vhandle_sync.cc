@@ -70,8 +70,10 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
 
     if ((wait_cnt & 0x0FFF) == 0) {
       transport.FlushPromiseRoutine();
-      ((BasePromise::ExecutionRoutine *) routine)->Preempt(
-          transport.UrgencyCount() > 0);
+      if (!((BasePromise::ExecutionRoutine *) routine)->Preempt(
+              transport.UrgencyCount() > 0)) {
+        return true;
+      }
     }
   }
 

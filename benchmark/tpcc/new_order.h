@@ -11,6 +11,8 @@ namespace tpcc {
 using namespace felis;
 
 struct NewOrderStruct {
+  static constexpr int kNewOrderMaxItems = 15;
+
   uint warehouse_id;
   uint district_id;
   uint customer_id;
@@ -20,9 +22,9 @@ struct NewOrderStruct {
 
   uint ts_now;
 
-  uint item_id[15];
-  uint supplier_warehouse_id[15];
-  uint order_quantities[15];
+  uint item_id[kNewOrderMaxItems];
+  uint supplier_warehouse_id[kNewOrderMaxItems];
+  uint order_quantities[kNewOrderMaxItems];
 };
 
 

@@ -142,8 +142,10 @@ void BasePromise::AssignSchedulingKey(uint64_t key)
 {
   for (int i = 0; i < nr_handlers; i++) {
     auto *child = routine(i);
-    child->sched_key = key;
-   if (child->next) child->next->AssignSchedulingKey(key);
+    if (child->pipeline == 0)
+      child->sched_key = key;
+    if (child->next)
+      child->next->AssignSchedulingKey(key);
   }
 }
 

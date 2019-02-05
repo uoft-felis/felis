@@ -305,11 +305,17 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
   auto &zq = queues[core_id].zq;
   auto &q = queues[core_id].pq;
   auto key = std::get<0>(r)->sched_key;
+
+  if (!force && zq.end.load(std::memory_order_relaxed) == zq.start) {
+    if (q.len == 0 || key < q.q[0].key) {
+      new_routine = false;
+      goto done;
+    }
+  }
+
   if (key == 0) {
-    zq.q[zq.end] = r;
+    zq.q[zq.end.load(std::memory_order_relaxed)] = r;
     zq.end.fetch_add(1, std::memory_order_release);
-  } else if (!force && (q.len == 0 || key <= q.q[0].key)) {
-    new_routine = false;
   } else  {
     auto value = (QueueValue *) q.pool.Alloc();
     value->promise_routine = r;
@@ -317,6 +323,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
     q.q[q.len++] = QueueItem{std::get<0>(r)->sched_key, value};
     std::push_heap(q.q, q.q + q.len, Greater);
   }
+done:
   lock.store(false);
   return new_routine;
 }
