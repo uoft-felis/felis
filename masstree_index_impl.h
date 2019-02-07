@@ -69,9 +69,6 @@ class MasstreeIndex {
 
  public:
   VHandle *InsertOrDefault(const VarStr *k, std::function<VHandle * ()> default_func);
-  VHandle *InsertOrCreate(const VarStr *k) {
-    return InsertOrDefault(k, []() { return new VHandle(); });
-  }
   VHandle *Search(const VarStr *k);
 
   Iterator IndexSearchIterator(const VarStr *k, int relation_id, bool read_only, uint64_t sid);

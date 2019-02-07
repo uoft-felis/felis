@@ -21,12 +21,28 @@ bool BaseTxn::TxnVHandle::WriteVarStr(VarStr *obj)
 
 Optional<Tuple<VHandle *, int>> BaseTxn::TxnIndexLookupOpImpl(int i, const TxnIndexOpContext &ctx)
 {
-  auto &rel = util::Instance<RelationManager>().GetRelationOrCreate(ctx.rel_id);
-  VarStr key((unsigned short) ctx.key_len[i], 0, ctx.key_data[i]);
+  auto &rel = util::Instance<RelationManager>()[ctx.rel_id];
+  VarStr key(ctx.key_len[i], 0, ctx.key_data[i]);
   auto handle = rel.Search(&key);
   if (handle == nullptr)
     std::abort();
   return Tuple<VHandle *, int>(handle, i);
+}
+
+void BaseTxn::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx)
+{
+  auto &rel = util::Instance<RelationManager>()[ctx.rel_id];
+
+  abort_if(ctx.nr_keys != ctx.nr_values,
+           "InsertOp should have same number of keys and values. {} != {}",
+           ctx.nr_keys, ctx.nr_values);
+
+  for (int i = 0; i < ctx.nr_keys; i++) {
+    VarStr key(ctx.key_len[i], 0, ctx.key_data[i]);
+    auto value = (VHandle *) ctx.value_data[i];
+
+    rel.InsertOrDefault(&key, [value]() { return value; });
+  }
 }
 
 }

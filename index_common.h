@@ -39,6 +39,7 @@ class BaseRelation {
   int id;
   bool read_only;
   size_t key_len;
+  std::atomic_uint64_t auto_increment_cnt;
  public:
   BaseRelation() : id(-1), read_only(false) {}
 
@@ -50,6 +51,8 @@ class BaseRelation {
 
   void set_read_only(bool v) { read_only = v; }
   bool is_read_only() const { return read_only; }
+
+  uint64_t AutoIncrement() { return auto_increment_cnt.fetch_add(1); }
 };
 
 class RelationManagerBase {
@@ -91,7 +94,18 @@ template <class IndexPolicy>
 class RelationPolicy : public BaseRelation,
 		       public IndexPolicy {
  public:
-  // TODO ?
+  // Name hiding!
+  VHandle *InsertOrDefault(const VarStr *k, std::function<VHandle * ()> default_func) {
+    return IndexPolicy::InsertOrDefault(
+        k,
+        [this, default_func]() {
+          AutoIncrement();
+          return default_func();
+        });
+  }
+  VHandle *InsertOrCreate(const VarStr *k) {
+    return InsertOrDefault(k, []() { return new VHandle(); });
+  }
 };
 
 void InitVersion(felis::VHandle *, VarStr *);

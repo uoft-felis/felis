@@ -204,14 +204,14 @@ void BasePromise::ExecutionRoutine::Run()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
-  logger->info("new ExecutionRoutine up and running on {}", core_id);
+  // logger->info("new ExecutionRoutine up and running on {}", core_id);
 
   PromiseRoutineWithInput next_r;
-  BasePromise::ExecutionRoutine *next_state = nullptr;
+  // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-      [&next_r, &next_state, sched]
+      [&next_r, sched]
       (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
@@ -221,7 +221,7 @@ void BasePromise::ExecutionRoutine::Run()
           return false;
         }
         next_r = r;
-        next_state = state;
+        // next_state = state;
         return true;
       });
 

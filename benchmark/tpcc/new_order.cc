@@ -44,6 +44,7 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
   NewOrderTxn(Client *client, uint64_t serial_id);
   void Run() override final;
   void Prepare() override final;
+  void PrepareInsert() override final;
 };
 
 NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
@@ -98,13 +99,46 @@ struct NodePathAggregator {
   }
 };
 
+void NewOrderTxn::PrepareInsert()
+{
+  auto node = Client::warehouse_to_node_id(warehouse_id);
+
+  auto oorder_id = client->relation(OOrder::kTable).AutoIncrement();
+  auto oorder_key = OOrder::Key::New(warehouse_id, district_id, oorder_id);
+  auto oorder_value = new VHandle();
+
+  OrderLine::Key orderline_keys[kNewOrderMaxItems];
+  VHandle *orderline_values[kNewOrderMaxItems];
+  for (int i = 0; i < nr_items; i++) {
+    orderline_keys[i] = OrderLine::Key::New(warehouse_id, district_id, oorder_id, i + 1);
+    orderline_values[i] = new VHandle();
+  }
+
+  INIT_ROUTINE_BRK(4096);
+
+  proc
+      | TxnInsert<OrderLine>(
+          node,
+          orderline_keys,
+          orderline_keys + nr_items,
+          orderline_values);
+
+  proc
+      | TxnInsertOne<OOrder>(
+          node,
+          oorder_key,
+          oorder_value);
+}
+
 void NewOrderTxn::Prepare()
 {
   INIT_ROUTINE_BRK(4096);
 
   auto district_key = District::Key::New(warehouse_id, district_id);
+  auto warehouse_key = Warehouse::Key::New(warehouse_id);
 
   int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
+  int local_node = client->warehouse_to_lookup_node_id(warehouse_id);
 
   NodePathAggregator agg(
       new (alloca(NodePathAggregator::Path::StructSize(nr_nodes * nr_nodes))) NodePathAggregator::Path,
@@ -118,7 +152,7 @@ void NewOrderTxn::Prepare()
     agg += { i, code };
   }
 
-  Stock::Key stock_keys[15];
+  Stock::Key stock_keys[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
     stock_keys[i] = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
   }
@@ -140,13 +174,24 @@ void NewOrderTxn::Prepare()
         | TxnLookupMany<Stock>(
             lookup_node,
             stock_keys, stock_keys + nr_items)
-        | TxnSetupVersion(
+        | TxnAppendVersion(
             node,
             [](const auto &ctx, auto *handle, int i) {
               auto &[state, _1, _2, nr_items] = ctx;
               state->rows.stocks[i] = handle;
             }, nr_items);
   }
+
+  proc
+      | TxnLookup<Warehouse>(
+          local_node,
+          warehouse_key);
+
+  proc
+      | TxnLookup<District>(
+          local_node,
+          district_key);
+
 }
 
 void NewOrderTxn::Run()

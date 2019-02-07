@@ -30,6 +30,7 @@ struct NewOrderStruct {
 
 struct NewOrderState {
   struct {
+    VHandle *warehouse;
     VHandle *district;
     VHandle *stocks[15];
   } rows;
