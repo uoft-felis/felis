@@ -32,6 +32,11 @@ class BaseTxn {
   virtual void PrepareInsert() = 0;
   virtual void Run() = 0;
 
+  void RunAndAssignSchedulingKey() {
+    Run();
+    root_promise()->AssignSchedulingKey(serial_id());
+  }
+
   Promise<DummyValue> *root_promise() {
     return proc.promise();
   }

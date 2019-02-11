@@ -45,6 +45,8 @@ class EpochClient {
   friend class BaseTxn;
   friend class EpochCallback;
 
+  void IssueTransactions(uint64_t epoch_nr, std::function<void (BaseTxn *)> func);
+
   void InitializeEpoch();
   void ExecuteEpoch();
 

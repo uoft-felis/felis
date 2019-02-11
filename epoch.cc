@@ -68,36 +68,21 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
   }
 }
 
-void EpochClient::InitializeEpoch()
+void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseTxn *)> func)
 {
-  // TODO: Add epoch management here? At least right now this is essential.
-  util::Instance<EpochManager>().DoAdvance(this);
-
-  util::Impl<PromiseAllocationService>().Reset();
-
-  conf.ResetBufferPlan();
-  conf.FlushBufferPlanCompletion(0);
   auto nr_threads = NodeConfiguration::g_nr_threads;
+  conf.ResetBufferPlan();
+  conf.FlushBufferPlanCompletion(epoch_nr);
 
-  printf("load percentage %d\n", LoadPercentage());
-  total_nr_txn = kEpochBase * LoadPercentage();
-
-  txns.reset(new BaseTxn*[total_nr_txn]);
-
-  disable_load_balance = true;
-  for (uint64_t i = 0; i < total_nr_txn; i++) {
-    auto sequence = i + 1;
-    txns[i] = RunCreateTxn(GenerateSerialId(i + 1));
-  }
   uint8_t buf[nr_threads];
   go::BufferChannel *comp = new go::BufferChannel(nr_threads);
 
   for (ulong t = 0; t < nr_threads; t++) {
     auto r = go::Make(
-        [t, comp, this, nr_threads]() {
+        [func, t, comp, this, nr_threads]() {
           for (uint64_t i = t * total_nr_txn / nr_threads;
                i < (t + 1) * total_nr_txn / nr_threads; i++) {
-            txns[i]->Prepare();
+            func(txns[i]);
           }
           uint8_t done = 0;
           comp->Write(&done, 1);
@@ -110,25 +95,44 @@ void EpochClient::InitializeEpoch()
   for (uint64_t i = 0; i < total_nr_txn; i++) {
     conf.CollectBufferPlan(txns[i]->root_promise());
   }
-  conf.FlushBufferPlan(false);
+  conf.FlushBufferPlan(true);
+}
 
-  RunTxnPromises("Epoch Initialization",
-                 std::bind(&EpochClient::ExecuteEpoch, this));
+void EpochClient::InitializeEpoch()
+{
+  // TODO: Add epoch management here? At least right now this is essential.
+  util::Instance<EpochManager>().DoAdvance(this);
+
+  util::Impl<PromiseAllocationService>().Reset();
+
+  auto nr_threads = NodeConfiguration::g_nr_threads;
+
+  printf("load percentage %d\n", LoadPercentage());
+  total_nr_txn = kEpochBase * LoadPercentage();
+
+  txns.reset(new BaseTxn*[total_nr_txn]);
+
+  disable_load_balance = true;
+  for (uint64_t i = 0; i < total_nr_txn; i++) {
+    auto sequence = i + 1;
+    txns[i] = RunCreateTxn(GenerateSerialId(i + 1));
+  }
+
+  IssueTransactions(1, std::mem_fn(&BaseTxn::PrepareInsert));
+
+  RunTxnPromises(
+      "Epoch Initialization (Insert)",
+      [this] () {
+        IssueTransactions(1, std::mem_fn(&BaseTxn::Prepare));
+        RunTxnPromises(
+            "Epoch Initialization (Lookup/RangeScan)",
+            std::bind(&EpochClient::ExecuteEpoch, this));
+      });
 }
 
 void EpochClient::ExecuteEpoch()
 {
-  // util::Impl<PromiseAllocationService>().Reset();
-
-  conf.ResetBufferPlan();
-  conf.FlushBufferPlanCompletion(1);
-
-  for (ulong i = 0; i < total_nr_txn; i++) {
-    txns[i]->Run();
-    txns[i]->root_promise()->AssignSchedulingKey(txns[i]->serial_id());
-    conf.CollectBufferPlan(txns[i]->root_promise());
-  }
-  conf.FlushBufferPlan(true);
+  IssueTransactions(1, std::mem_fn(&BaseTxn::RunAndAssignSchedulingKey));
   RunTxnPromises("Epoch Execution", []() {});
 }
 
