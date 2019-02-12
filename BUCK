@@ -12,6 +12,7 @@ tpcc_srcs = [
     'benchmark/tpcc/tpcc.cc',
     'benchmark/tpcc/tpcc_workload.cc',
     'benchmark/tpcc/new_order.cc',
+    'benchmark/tpcc/payment.cc',
 ]
 
 db_headers = [

@@ -41,17 +41,15 @@ NewOrderStruct ClientBase::GenerateTransactionInput<NewOrderStruct>()
 class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
   Client *client;
  public:
-  NewOrderTxn(Client *client, uint64_t serial_id);
+  NewOrderTxn(Client *client, uint64_t serial_id)
+      : Txn<NewOrderState>(serial_id),
+        NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
+        client(client)
+  {}
   void Run() override final;
   void Prepare() override final;
   void PrepareInsert() override final;
 };
-
-NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
-    : Txn<NewOrderState>(serial_id),
-      NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
-      client(client)
-{}
 
 struct NodePathAggregator {
   struct NodePath {
@@ -138,7 +136,7 @@ void NewOrderTxn::Prepare()
   auto warehouse_key = Warehouse::Key::New(warehouse_id);
 
   int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
-  int local_node = client->warehouse_to_lookup_node_id(warehouse_id);
+  int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
 
   NodePathAggregator agg(
       new (alloca(NodePathAggregator::Path::StructSize(nr_nodes * nr_nodes))) NodePathAggregator::Path,
@@ -177,19 +175,19 @@ void NewOrderTxn::Prepare()
         | TxnAppendVersion(
             node,
             [](const auto &ctx, auto *handle, int i) {
-              auto &[state, _1, _2, nr_items] = ctx;
+              auto &[state, _1, _2] = ctx;
               state->rows.stocks[i] = handle;
-            }, nr_items);
+            });
   }
 
   proc
       | TxnLookup<Warehouse>(
-          local_node,
+          lookup_node,
           warehouse_key);
 
   proc
       | TxnLookup<District>(
-          local_node,
+          lookup_node,
           district_key);
 
 }
