@@ -587,7 +587,7 @@ void NodeServerRoutine::Run()
     if (!config) continue;
     if (config->id == conf.node_id()) continue;
     logger->info("Connecting worker peer on node {}\n", config->id);
-    TcpSocket *remote_sock = new TcpSocket(512 << 20, 512 << 20);
+    TcpSocket *remote_sock = new TcpSocket(1024, 512 << 20);
     auto &peer = config->worker_peer;
     bool rs = remote_sock->Connect(peer.host, peer.port);
     abort_if(!rs, "Cannot connect to {}:{}", peer.host, peer.port);

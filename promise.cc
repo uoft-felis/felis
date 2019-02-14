@@ -238,6 +238,7 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
   int core_id = scheduler()->thread_pool_id() - 1;
 
   if (svc.Preempt(core_id, force)) {
+    set_busy_poll(true);
  sleep:
     sched->WakeUp(new ExecutionRoutine());
     sched->RunNext(go::Scheduler::SleepState);
@@ -250,6 +251,7 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
     if (!svc.Peek(core_id, should_pop))
       goto sleep;
 
+    set_busy_poll(false);
     return true;
   }
   return false;

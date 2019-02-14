@@ -1,7 +1,6 @@
 #include <sys/time.h>
 
 #include "log.h"
-#include "spdlog/sinks/file_sinks.h"
 
 std::unique_ptr<spdlog::logger> logger(nullptr);
 
@@ -11,7 +10,7 @@ void InitializeLogger(const std::string &hostname)
       "dbg-" + hostname + ".log", true);
   file_sink->set_level(spdlog::level::debug);
 
-  auto console_sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
+  auto console_sink = std::make_shared<spdlog::sinks::ansicolor_stdout_sink_mt>();
   console_sink->set_level(spdlog::level::info);
 
   logger.reset(new spdlog::logger("global", {file_sink, console_sink}));

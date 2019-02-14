@@ -19,7 +19,7 @@ void EpochCallback::operator()()
   //
   // This is because we might Reset() the PromiseAllocationService, which would free
   // the current go::Routine.
-  go::Scheduler::Current()->WakeUp(go::Make(continuation));
+  go::GetSchedulerFromPool(0)->WakeUp(go::Make(continuation));
 }
 
 EpochClient::EpochClient() noexcept
@@ -50,7 +50,6 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
   callback.perf.Start();
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
-  conf.IncrementUrgencyCount(nr_threads);
   for (ulong i = 0; i < nr_threads; i++) {
     auto r = go::Make(
         [i, nr_threads, this] {
@@ -68,7 +67,7 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
   }
 }
 
-void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseTxn *)> func)
+void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseTxn *)> func, bool sync)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
   conf.ResetBufferPlan();
@@ -77,6 +76,7 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
   uint8_t buf[nr_threads];
   go::BufferChannel *comp = new go::BufferChannel(nr_threads);
 
+  conf.IncrementUrgencyCount(nr_threads);
   for (ulong t = 0; t < nr_threads; t++) {
     auto r = go::Make(
         [func, t, comp, this, nr_threads]() {
@@ -84,6 +84,7 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
                i < (t + 1) * total_nr_txn / nr_threads; i++) {
             func(txns[i]);
           }
+          logger->info("Issuer done on core {}", t);
           uint8_t done = 0;
           comp->Write(&done, 1);
         });
@@ -95,7 +96,7 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
   for (uint64_t i = 0; i < total_nr_txn; i++) {
     conf.CollectBufferPlan(txns[i]->root_promise());
   }
-  conf.FlushBufferPlan(true);
+  conf.FlushBufferPlan(sync);
 }
 
 void EpochClient::InitializeEpoch()
