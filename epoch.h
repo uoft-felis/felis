@@ -213,7 +213,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     std::atomic_bool lock;
   };
 
-  static constexpr size_t kMaxItemPerCore = 8 << 20;
+  static constexpr size_t kMaxItemPerCore = 8 << 18;
   static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
 
   std::array<Queue, kMaxNrThreads> queues;

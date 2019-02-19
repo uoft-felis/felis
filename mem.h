@@ -12,26 +12,55 @@ namespace mem {
 
 const int kNrCorePerNode = 8;
 
+enum MemAllocType {
+  GenericMemory,
+  EpochQueueItem,
+  EpochQueuePromise,
+  Promise,
+  Epoch,
+  EpochQueuePool,
+  RowEntityPool,
+  VhandlePool,
+  RegionPool,
+  NumMemTypes,
+};
+
+const std::string kMemAllocTypeLabel[] = {
+  "generic",
+  "epoch queue item",
+  "epoch queue promise",
+  "promise",
+  "epoch",
+  "^pool:epoch queue",
+  "^pool:row entity",
+  "^pool:vhandle",
+  "^pool:region",
+};
+
 class Pool {
   void *data;
   size_t len;
   std::atomic<void *> head;
   size_t capacity;
+  MemAllocType alloc_type;
   // unsigned char __pad__[32];
 
  public:
   Pool() : data(nullptr), len(0) {}
 
-  Pool(size_t chunk_size, size_t cap, int numa_node = -1);
+  Pool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
   Pool(const Pool &rhs) = delete;
   ~Pool();
 
   void move(Pool &&rhs) {
     data = rhs.data;
+    capacity = rhs.capacity;
     len = rhs.len;
+    alloc_type = rhs.alloc_type;
     head.store(rhs.head.load());
     rhs.data = nullptr;
     rhs.head.store(nullptr);
+    rhs.capacity = 0;
     rhs.len = 0;
   }
 
@@ -52,7 +81,7 @@ class Region {
  public:
   Region() {
     for (int i = 0; i < kMaxPools; i++) {
-      proposed_caps[i] = 1 << (27 - 5 - i);
+      proposed_caps[i] = 1 << (25 - 5 - i);
     }
   }
 
@@ -61,6 +90,7 @@ class Region {
   static int SizeToClass(size_t sz) {
     int idx = 64 - __builtin_clzl(sz - 1) - 5;
     if (__builtin_expect(idx >= kMaxPools, 0)) {
+      fprintf(stderr, "Requested invalid size class %d\n", idx);
       std::abort();
     }
     return idx < 0 ? 0 : idx;
@@ -77,7 +107,7 @@ class Region {
 
   void InitPools(int node = -1) {
     for (int i = 0; i < kMaxPools; i++) {
-      new (&pools[i]) Pool(1 << (i + 5), proposed_caps[i], node);
+      new (&pools[i]) Pool(mem::RegionPool, 1 << (i + 5), proposed_caps[i], node);
     }
   }
 
@@ -105,11 +135,12 @@ class Brk {
   uint8_t *data;
   Deleter *deleters;
 
-  std::memory_order ord = std::memory_order_relaxed;;
+  std::memory_order ord = std::memory_order_relaxed;
 
  public:
   Brk() : offset(0), limit(0), data(nullptr), deleters(nullptr) {}
-  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), deleters(nullptr) {}
+  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p),
+                               deleters(nullptr) {}
   ~Brk();
 
   void move(Brk &&rhs) {
@@ -149,6 +180,10 @@ class Brk {
 void *AllocFromRoutine(size_t sz);
 void *AllocFromRoutine(size_t sz, std::function<void (void *)> deleter);
 
+void PrintMemStats();
+void *MemMap(mem::MemAllocType alloc_type, void *addr, size_t length, int prot,
+             int flags, int fd, off_t offset);
 }
+std::string MemTypeToString(mem::MemAllocType alloc_type);
 
 #endif /* MEM_H */

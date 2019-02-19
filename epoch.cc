@@ -5,6 +5,7 @@
 #include "txn.h"
 #include "log.h"
 #include "vhandle.h"
+#include "mem.h"
 
 namespace felis {
 
@@ -14,6 +15,7 @@ void EpochCallback::operator()()
 {
   perf.End();
   perf.Show(label + std::string(" finishes"));
+  mem::PrintMemStats();
 
   // Don't call the continuation directly.
   //
@@ -143,18 +145,19 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     queue.zq.end = queue.zq.start = 0;
     queue.zq.q =
         (PromiseRoutineWithInput *)
-        mmap(nullptr, kMaxItemPerCore * sizeof(PromiseRoutineWithInput),
-             PROT_READ | PROT_WRITE,
-             MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
-             -1, 0);
+        mem::MemMap(mem::EpochQueuePromise, nullptr,
+                    kMaxItemPerCore * sizeof(PromiseRoutineWithInput),
+                    PROT_READ | PROT_WRITE,
+                    MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
+                    -1, 0);
     queue.pq.len = 0;
     queue.pq.q =
         (QueueItem *)
-        mmap(nullptr, kMaxItemPerCore * sizeof(QueueItem),
-             PROT_READ | PROT_WRITE,
-             MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
-             -1, 0);
-    queue.pq.pool.move(mem::Pool(sizeof(QueueValue), kMaxItemPerCore));
+        mem::MemMap(mem::EpochQueueItem, nullptr, kMaxItemPerCore * sizeof(QueueItem),
+                    PROT_READ | PROT_WRITE,
+                    MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
+                    -1, 0);
+    queue.pq.pool.move(mem::Pool(mem::EpochQueuePool, sizeof(QueueValue), kMaxItemPerCore));
 
     queue.lock = false;
   }
@@ -350,8 +353,8 @@ void EpochExecutionDispatchService::PrintInfo()
   puts("===================================");
 }
 
-static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 30;
-static constexpr size_t kEpochPromiseAllocationMainLimit = 1ULL << 30;
+static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 28;
+static constexpr size_t kEpochPromiseAllocationMainLimit = 1ULL << 28;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()
 {
@@ -363,10 +366,10 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
     auto s = kEpochPromiseAllocationPerThreadLimit;
     if (i == 0) s = kEpochPromiseAllocationMainLimit;
     brks[i].move(mem::Brk(
-        mmap(NULL, s,
-             PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE,
-             -1, 0),
+        mem::MemMap(mem::Promise, NULL, s,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE,
+                    -1, 0),
         s));
     acc += s;
     minibrks[i].move(mem::Brk(
@@ -444,7 +447,7 @@ void EpochManager::DoAdvance(EpochClient *client)
 }
 
 EpochManager::EpochManager()
-    : pool(new mem::Pool(kEpochMemoryLimit,
+    : pool(new mem::Pool(mem::Epoch, kEpochMemoryLimit,
                          util::Instance<NodeConfiguration>().nr_nodes() * kMaxConcurrentEpochs)),
       cur_epoch_nr(0)
 {

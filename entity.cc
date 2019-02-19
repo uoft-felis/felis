@@ -67,7 +67,7 @@ mem::Pool RowEntity::pool;
 
 void RowEntity::InitPools()
 {
-  pool.move(mem::Pool(sizeof(RowEntity), 64 << 20));
+  pool.move(mem::Pool(mem::RowEntityPool, sizeof(RowEntity), 64 << 20));
 }
 
 void RowShipmentReceiver::Run()
