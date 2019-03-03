@@ -236,18 +236,34 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
+  bool spawn = !force;
 
   if (svc.Preempt(core_id, force)) {
     set_busy_poll(true);
+    // logger->info("Initial sleep. Spawning a new coroutine. force = {}", force);
  sleep:
-    sched->WakeUp(new ExecutionRoutine());
+    if (spawn)
+      sched->WakeUp(new ExecutionRoutine());
     sched->RunNext(go::Scheduler::SleepState);
 
     auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-        [this]
+        [this, &spawn]
         (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
-          return state == this;
+          if (state == this)
+            return true;
+          if (state != nullptr) {
+            if (state->is_detached()) {
+              state->Init();
+              sched->WakeUp(state);
+            }
+            spawn = false;
+          } else {
+            logger->info("Spawning because I saw a new piece");
+          }
+          return false;
         });
+
+    spawn = true;
     if (!svc.Peek(core_id, should_pop))
       goto sleep;
 

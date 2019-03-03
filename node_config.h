@@ -16,12 +16,8 @@ class NodeServerRoutine;
 class NodeServerThreadRoutine;
 struct PromiseRoutine;
 
-template <typename T> class FlushImpl;
-class PromiseRoundRobinImpl;
-class SendChannelImpl;
-
-using PromiseRoundRobin = FlushImpl<PromiseRoundRobinImpl>;
-using SendChannel = FlushImpl<SendChannelImpl>;
+class PromiseRoundRobin;
+class SendChannel;
 
 class NodeConfiguration : public PromiseRoutineTransportService {
   NodeConfiguration();
@@ -63,9 +59,13 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
   void FlushPromiseRoutine() final override;
-  long UrgencyCount() final override { return urgency_cnt.load(); }
-  void IncrementUrgencyCount(long delta = 1) { urgency_cnt.fetch_add(delta); }
-  void DecrementUrgencyCount(long delta = 1) { urgency_cnt.fetch_sub(delta); }
+  long UrgencyCount(int core_id) final override { return urgency_cnt[core_id]; }
+  void IncrementUrgencyCount(int core_id, long delta = 1) {
+    urgency_cnt[core_id] += delta;
+  }
+  void DecrementUrgencyCount(int core_id, long delta = 1) {
+    urgency_cnt[core_id] -= delta;
+  }
 
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root);
@@ -108,7 +108,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   std::atomic_ulong *batch_counters[kPromiseMaxLevels];
   ulong *local_batch_counters;
 
-  std::atomic_ulong urgency_cnt;
+  unsigned long urgency_cnt[kMaxNrThreads];
  private:
   void CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src, int nr_extra);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);

@@ -109,7 +109,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   value_mark = size = 0;
   this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
 
-  versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(3 * capacity * sizeof(uint64_t));
+  versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * capacity * sizeof(uint64_t));
 }
 
 static void EnlargePair64Array(uint64_t *old_p, size_t old_cap, int old_coreid,
@@ -254,7 +254,7 @@ static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
   auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * NodeConfiguration::g_nr_threads);
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto node = (i + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
-    pools[i].move(mem::Pool(mem::VhandlePool, ele_size, nr_ele, node));
+    pools[i].move(mem::BasicPool(mem::VhandlePool, ele_size, nr_ele, node));
   }
   return pools;
 }

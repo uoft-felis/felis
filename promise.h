@@ -126,7 +126,7 @@ class PromiseRoutineTransportService {
  public:
   virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
   virtual void FlushPromiseRoutine() {};
-  virtual long UrgencyCount() { return -1; }
+  virtual long UrgencyCount(int core_id) { return -1; }
 };
 
 class PromiseRoutineDispatchService {

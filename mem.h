@@ -6,7 +6,10 @@
 #include <atomic>
 #include <cstdio>
 #include <functional>
+#include <sys/mman.h>
+
 #include "json11/json11.hpp"
+#include "util.h"
 
 namespace mem {
 
@@ -22,6 +25,7 @@ enum MemAllocType {
   RowEntityPool,
   VhandlePool,
   RegionPool,
+  Coroutine,
   NumMemTypes,
 };
 
@@ -35,31 +39,31 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:row entity",
   "^pool:vhandle",
   "^pool:region",
+  "coroutine",
 };
 
-class Pool {
+class BasicPool {
   void *data;
   size_t len;
-  std::atomic<void *> head;
+  void * head;
   size_t capacity;
   MemAllocType alloc_type;
-  // unsigned char __pad__[32];
 
  public:
-  Pool() : data(nullptr), len(0) {}
+  BasicPool() : data(nullptr), len(0) {}
 
-  Pool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
-  Pool(const Pool &rhs) = delete;
-  ~Pool();
+  BasicPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
+  BasicPool(const BasicPool &rhs) = delete;
+  ~BasicPool();
 
-  void move(Pool &&rhs) {
+  void move(BasicPool &&rhs) {
     data = rhs.data;
     capacity = rhs.capacity;
     len = rhs.len;
     alloc_type = rhs.alloc_type;
-    head.store(rhs.head.load());
+    head = rhs.head;
     rhs.data = nullptr;
-    rhs.head.store(nullptr);
+    rhs.head = nullptr;
     rhs.capacity = 0;
     rhs.len = 0;
   }
@@ -71,6 +75,21 @@ class Pool {
 
   static std::atomic_ulong g_total_page_mem;
   static std::atomic_ulong g_total_hugepage_mem;
+};
+
+// Thread-Safe version
+class Pool : public BasicPool {
+  util::SpinLock lock;
+ public:
+  using BasicPool::BasicPool;
+  void *Alloc() {
+    auto _ = util::Guard(lock);
+    return BasicPool::Alloc();
+  }
+  void Free(void *ptr) {
+    auto _ = util::Guard(lock);
+    BasicPool::Free(ptr);
+  }
 };
 
 class Region {
@@ -107,7 +126,7 @@ class Region {
 
   void InitPools(int node = -1) {
     for (int i = 0; i < kMaxPools; i++) {
-      new (&pools[i]) Pool(mem::RegionPool, 1 << (i + 5), proposed_caps[i], node);
+      new (&pools[i]) BasicPool(mem::RegionPool, 1 << (i + 5), proposed_caps[i], node);
     }
   }
 
@@ -183,6 +202,22 @@ void *AllocFromRoutine(size_t sz, std::function<void (void *)> deleter);
 void PrintMemStats();
 void *MemMap(mem::MemAllocType alloc_type, void *addr, size_t length, int prot,
              int flags, int fd, off_t offset);
+
+static inline void *
+MemMapAlloc(mem::MemAllocType alloc_type, size_t length)
+{
+  int flags = MAP_ANONYMOUS | MAP_PRIVATE;
+  if (length >= 2 >> 20)
+    flags |= MAP_HUGETLB;
+  void *data = MemMap(alloc_type, nullptr, length,
+                      PROT_READ | PROT_WRITE, flags, -1, 0);
+  if (mlock(data, length) < 0) {
+    fprintf(stderr, "WARNING: mlock() failed\n");
+    perror("mlock");
+  }
+  return data;
+}
+
 }
 std::string MemTypeToString(mem::MemAllocType alloc_type);
 

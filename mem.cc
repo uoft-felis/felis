@@ -1,7 +1,6 @@
 #include "mem.h"
 
 #include <sys/types.h>
-#include <sys/mman.h>
 #include <cassert>
 #include <cstring>
 
@@ -55,28 +54,22 @@ int CurrentAllocAffinity()
   else return go::Scheduler::CurrentThreadPoolId() - 1;
 }
 
-std::atomic_ulong Pool::g_total_page_mem = 0;
-std::atomic_ulong Pool::g_total_hugepage_mem = 0;
+std::atomic_ulong BasicPool::g_total_page_mem = 0;
+std::atomic_ulong BasicPool::g_total_hugepage_mem = 0;
 
-Pool::Pool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node)
+BasicPool::BasicPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node)
     : len(cap * chunk_size), capacity(cap), alloc_type(alloc_type)
 {
   if (cap == 0) return;
 
-  int flags = MAP_ANONYMOUS | MAP_PRIVATE;
   if (len > (2 << 20)) {
-    flags |= MAP_HUGETLB;
-    len = util::Align(len, 2 << 20);
-  } else {
-    len = util::Align(len, 4 << 10);
-  }
-  if (flags & MAP_HUGETLB) {
     g_total_hugepage_mem.fetch_add(len);
   } else {
     g_total_page_mem.fetch_add(len);
   }
 
-  data = MemMap(alloc_type, nullptr, len, PROT_READ | PROT_WRITE, flags, -1, 0);
+  data = MemMapAlloc(alloc_type, len);
+
 #ifndef DISABLE_NUMA
   if (numa_node >= 0) {
     unsigned long nodemask = 1 << numa_node;
@@ -89,50 +82,47 @@ Pool::Pool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node
   }
 #endif
 
-  // manually prefault
-  size_t pgsz = 4096;
-  if (flags & MAP_HUGETLB) {
-    pgsz = (2 << 20);
-  }
-  for (volatile uint8_t *p = (uint8_t *) data; p < (uint8_t *) data + len; p += pgsz) {
-    /*
-    fprintf(stderr, "prefaulting %s %lu%%\r",
-            (flags & MAP_HUGETLB) ? "hugepage" : "        ",
-            (p - (uint8_t *) data) * 100 / len);
-    */
-    (*p) = 0;
-  }
-
   head = data;
+
+#if 0
+  fprintf(stderr, "Initializing memory pool %s, %lu objs, each %lu bytes\n",
+          kMemAllocTypeLabel[alloc_type].c_str(),
+          cap, chunk_size);
+#endif
+
   for (size_t i = 0; i < cap; i++) {
-    uintptr_t p = (uintptr_t) head.load() + i * chunk_size;
+    uintptr_t p = (uintptr_t) head + i * chunk_size;
     uintptr_t next = p + chunk_size;
     if (i == cap - 1) next = 0;
     *(uintptr_t *) p = next;
   }
 }
 
-Pool::~Pool()
+BasicPool::~BasicPool()
 {
   if (__builtin_expect(data != nullptr, true))
     munmap(data, len);
 }
 
-void *Pool::Alloc()
+void *BasicPool::Alloc()
 {
   void *r = nullptr, *next = nullptr;
-again:
-  r = head.load();
-  if (r == nullptr) return nullptr;
 
-  if (r < (uint8_t *) data || r >= (uint8_t *) data + len) {
-    fprintf(stderr, "memory pool not large enough!");
+  r = head;
+  if (r == nullptr) {
+    fprintf(stderr, "%s memory pool is full, returning nullptr\n",
+            kMemAllocTypeLabel[alloc_type].c_str());
+    return r;
+  }
+
+  if (r < data || r >= (uint8_t *) data + len) {
+    fprintf(stderr, "0x%p is out of bounds 0x%p - 0x%p\n",
+            r, data, (uint8_t *) data + len);
     std::abort();
   }
 
-  next = (void *) *(uintptr_t *) head.load();
-
-  if (!head.compare_exchange_strong(r, next)) goto again;
+  next = (void *) *(uintptr_t *) r;
+  head = next;
 
   // Statistics tracking is not done atomically for speed.
   g_pool_tracker[alloc_type].used += len / capacity;
@@ -143,14 +133,15 @@ again:
   return r;
 }
 
-void Pool::Free(void *ptr)
+void BasicPool::Free(void *ptr)
 {
-  void *r = nullptr;
-again:
-  r = head;
-  *(uintptr_t *) ptr = (uintptr_t) r;
+  if (ptr < data || ptr >= (uint8_t *) data + len) {
+    fprintf(stderr, "Cannot free out of bounds pointer! 0x%p\n", ptr);
+    std::abort();
+  }
 
-  if (!head.compare_exchange_strong(r, ptr)) goto again;
+  *(uintptr_t *) ptr = (uintptr_t) head;
+  head = ptr;
 
   g_pool_tracker[alloc_type].used -= len / capacity;
 }

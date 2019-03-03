@@ -50,28 +50,28 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
 
 bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
 {
-  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto sched = go::Scheduler::Current();
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   auto routine = sched->current_routine();
   // routine->set_busy_poll(true);
 
-  abort_if(idx < 0, "We should not running on thread pool 0!");
+  abort_if(core_id < 0, "We should not run on thread pool 0!");
 
-  while (!slots[idx].done) {
+  while (!slots[core_id].done) {
     asm("pause" : : :"memory");
     wait_cnt++;
 
     if ((wait_cnt & 0x7FFFFFF) == 0) {
-      printf("Deadlock on core %d? %lu (using %p) waiting for %lu\n", idx, sid, routine, ver);
-      printf("UrgencyCnt is %lu\n", transport.UrgencyCount());
+      printf("Deadlock on core %d? %lu (using %p) waiting for %lu\n", core_id, sid, routine, ver);
+      printf("UrgencyCnt is %lu\n", transport.UrgencyCount(core_id));
       util::Impl<PromiseRoutineDispatchService>().PrintInfo();
     }
 
     if ((wait_cnt & 0x0FFF) == 0) {
       transport.FlushPromiseRoutine();
       if (!((BasePromise::ExecutionRoutine *) routine)->Preempt(
-              transport.UrgencyCount() > 0)) {
+              transport.UrgencyCount(core_id) > 0)) {
         return true;
       }
     }
@@ -80,7 +80,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
   asm volatile("" : : :"memory");
 
   DTRACE_PROBE3(felis, wait_jiffies, wait_cnt, sid, ver);
-  slots[idx].done = 0;
+  slots[core_id].done = 0;
   return true;
 }
 

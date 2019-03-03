@@ -77,14 +77,37 @@ class AllocatorModule : public Module<CoreModule> {
     for (auto &t: tasks) t.join();
 
     logger->info("Memory used: {}MB in regular pages, {}MB in huge pages.",
-                 mem::Pool::g_total_page_mem.load() / (1 << 20),
-                 mem::Pool::g_total_hugepage_mem.load() / (1 << 20));
+                 mem::BasicPool::g_total_page_mem.load() / (1 << 20),
+                 mem::BasicPool::g_total_hugepage_mem.load() / (1 << 20));
   }
 };
 
 static AllocatorModule allocator_module;
 
 class CoroutineModule : public Module<CoreModule> {
+  class CoroutineStackAllocator : public go::RoutineStackAllocator {
+    mem::Pool stack_pool;
+    mem::Pool context_pool;
+    static constexpr int kMaxRoutines = 512;
+    static constexpr int kStackSize = 512 << 10;
+   public:
+    CoroutineStackAllocator() {
+      stack_pool.move(mem::BasicPool(mem::Coroutine, kStackSize, kMaxRoutines));
+      context_pool.move(mem::BasicPool(mem::Coroutine, kContextSize, kMaxRoutines));
+    }
+    void AllocateStackAndContext(
+        size_t &stack_size, ucontext * &ctx_ptr, void * &stack_ptr) override final {
+      stack_size = kStackSize;
+      ctx_ptr = (ucontext *) context_pool.Alloc();
+      stack_ptr = stack_pool.Alloc();
+      memset(ctx_ptr, 0, kContextSize);
+    }
+    void FreeStackAndContext(ucontext *ctx_ptr, void *stack_ptr) override final {
+      context_pool.Free(ctx_ptr);
+      stack_pool.Free(stack_ptr);
+    }
+  };
+
  public:
   CoroutineModule() {
     info = {
@@ -103,7 +126,7 @@ class CoroutineModule : public Module<CoreModule> {
     // In addition to that, we also need one extra shipper thread.
     //
     // In the future, we might need another GC thread?
-    go::InitThreadPool(NodeConfiguration::g_nr_threads + 1);
+    go::InitThreadPool(NodeConfiguration::g_nr_threads + 1, new CoroutineStackAllocator());
 
     for (int i = 1; i <= NodeConfiguration::g_nr_threads; i++) {
       // We need to change core affinity by kCoreShifting

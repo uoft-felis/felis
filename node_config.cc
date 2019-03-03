@@ -18,8 +18,8 @@
 namespace felis {
 
 template <typename T>
-class FlushImpl : public T {
- public:
+class Flushable {
+ protected:
 
   static constexpr auto kThreadBitmapSize =
       NodeConfiguration::kMaxNrThreads / 64 + 1;
@@ -38,6 +38,11 @@ class FlushImpl : public T {
     return (bitmap[idx / 64] & mask) != 0;
   }
 
+ private:
+  T *self() { return (T *) this; }
+
+ public:
+
   void Flush() {
     uint64_t flushed[kThreadBitmapSize];
     bool need_do_flush = false;
@@ -49,11 +54,11 @@ class FlushImpl : public T {
     while (nr_flushed < nr_threads) {
       for (int i = 0; i < nr_threads; i++) {
         if (!ThreadBitmapIsMarked(flushed, i)
-            && this->TryLock(i)) {
-          auto [start, end] = this->GetFlushRange(i);
-          this->UpdateFlushStart(i, end);
+            && self()->TryLock(i)) {
+          auto [start, end] = self()->GetFlushRange(i);
+          self()->UpdateFlushStart(i, end);
 
-          if (this->PushRelease(i, start, end)) {
+          if (self()->PushRelease(i, start, end)) {
             need_do_flush = true;
           }
           ThreadBitmapMark(flushed, i);
@@ -62,13 +67,11 @@ class FlushImpl : public T {
       }
     }
     if (need_do_flush)
-      this->DoFlush();
+      self()->DoFlush();
   }
-
-  using T::T;
 };
 
-class PromiseRoundRobinImpl {
+class PromiseRoundRobin : public Flushable<PromiseRoundRobin> {
   struct Queue {
     PromiseRoutineWithInput *routines;
     std::atomic_bool lock;
@@ -81,10 +84,10 @@ class PromiseRoundRobinImpl {
   std::atomic_ulong round;
   static constexpr size_t kBufferSize = 16384;
  public:
-  PromiseRoundRobinImpl(int idx);
+  PromiseRoundRobin(int idx);
   void QueueRoutine(PromiseRoutine *routine, const VarStr &in);
   void QueueBubble();
- protected:
+
   std::tuple<uint, uint> GetFlushRange(int tid);
   void UpdateFlushStart(int tid, unsigned int flusher_start);
   bool PushRelease(int thr, unsigned int start, unsigned int end);
@@ -100,7 +103,7 @@ class PromiseRoundRobinImpl {
   }
 };
 
-class SendChannelImpl {
+class SendChannel : public Flushable<SendChannel> {
   go::TcpOutputChannel *out;
   go::BufferChannel *flusher_channel;
 
@@ -128,12 +131,11 @@ class SendChannelImpl {
 
  public:
   static constexpr size_t kPerThreadBuffer = 16 << 10;
-  SendChannelImpl(go::TcpSocket *sock);
+  SendChannel(go::TcpSocket *sock);
   void *Alloc(size_t sz);
   void Finish(size_t sz);
   long PendingFlush(int core_id);
 
- protected:
   std::tuple<uint, uint> GetFlushRange(int thr);
   void UpdateFlushStart(int thr, uint flush_start);
   bool PushRelease(int thr, unsigned int start, unsigned int end);
@@ -147,7 +149,7 @@ class SendChannelImpl {
   }
 };
 
-PromiseRoundRobinImpl::PromiseRoundRobinImpl(int idx)
+PromiseRoundRobin::PromiseRoundRobin(int idx)
     : idx(idx), round(0)
 {
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
@@ -159,7 +161,7 @@ PromiseRoundRobinImpl::PromiseRoundRobinImpl(int idx)
   }
 }
 
-std::tuple<uint, uint> PromiseRoundRobinImpl::GetFlushRange(int tid)
+std::tuple<uint, uint> PromiseRoundRobin::GetFlushRange(int tid)
 {
   auto &q = queues[tid];
   return {
@@ -167,18 +169,18 @@ std::tuple<uint, uint> PromiseRoundRobinImpl::GetFlushRange(int tid)
   };
 }
 
-void PromiseRoundRobinImpl::UpdateFlushStart(int tid, unsigned int flusher_start)
+void PromiseRoundRobin::UpdateFlushStart(int tid, unsigned int flusher_start)
 {
   queues[tid]->flusher_start = flusher_start;
 }
 
-void PromiseRoundRobinImpl::QueueBubble()
+void PromiseRoundRobin::QueueBubble()
 {
   // Currently we don't batch the bubbles, and we consider bubbles are rare.
   util::Impl<PromiseRoutineDispatchService>().AddBubble();
 }
 
-void PromiseRoundRobinImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
+void PromiseRoundRobin::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
 {
   int tid = go::Scheduler::CurrentThreadPoolId();
   auto &q = queues[tid];
@@ -186,6 +188,7 @@ retry:
   auto end = q->append_start.load(std::memory_order_relaxed);
   if (end == kBufferSize) {
     while (!TryLock(tid)) __builtin_ia32_pause();
+
     auto start = q->flusher_start;
     q->append_start.store(0, std::memory_order_release);
     q->flusher_start = 0;
@@ -196,7 +199,7 @@ retry:
   q->append_start.store(end + 1, std::memory_order_release);
 }
 
-bool PromiseRoundRobinImpl::PushRelease(int thr, unsigned int start, unsigned int end)
+bool PromiseRoundRobin::PushRelease(int thr, unsigned int start, unsigned int end)
 {
   auto nr_routines = end - start;
   if (nr_routines == 0) {
@@ -242,7 +245,7 @@ bool PromiseRoundRobinImpl::PushRelease(int thr, unsigned int start, unsigned in
   return true;
 }
 
-SendChannelImpl::SendChannelImpl(go::TcpSocket *sock)
+SendChannel::SendChannel(go::TcpSocket *sock)
     : out(sock->output_channel())
 {
   auto buffer =
@@ -259,7 +262,7 @@ SendChannelImpl::SendChannelImpl(go::TcpSocket *sock)
   go::GetSchedulerFromPool(0)->WakeUp(new FlusherRoutine(flusher_channel, out));
 }
 
-std::tuple<uint, uint> SendChannelImpl::GetFlushRange(int tid)
+std::tuple<uint, uint> SendChannel::GetFlushRange(int tid)
 {
   auto &chn = channels[tid];
   return {
@@ -267,12 +270,12 @@ std::tuple<uint, uint> SendChannelImpl::GetFlushRange(int tid)
   };
 }
 
-void SendChannelImpl::UpdateFlushStart(int tid, uint flush_start)
+void SendChannel::UpdateFlushStart(int tid, uint flush_start)
 {
   channels[tid]->flusher_start = flush_start;
 }
 
-void *SendChannelImpl::Alloc(size_t sz)
+void *SendChannel::Alloc(size_t sz)
 {
   int tid = go::Scheduler::CurrentThreadPoolId();
   abort_if(tid < 0, "Have to call this within a go-routine");
@@ -292,7 +295,7 @@ retry:
   return ptr;
 }
 
-void SendChannelImpl::Finish(size_t sz)
+void SendChannel::Finish(size_t sz)
 {
   int tid = go::Scheduler::CurrentThreadPoolId();
   auto &chn = channels[tid];
@@ -300,7 +303,7 @@ void SendChannelImpl::Finish(size_t sz)
                           std::memory_order_release);
 }
 
-bool SendChannelImpl::PushRelease(int tid, unsigned int start, unsigned int end)
+bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
 {
   auto mem = channels[tid]->mem;
   if (end - start > 0) {
@@ -316,7 +319,7 @@ bool SendChannelImpl::PushRelease(int tid, unsigned int start, unsigned int end)
   }
 }
 
-void SendChannelImpl::DoFlush()
+void SendChannel::DoFlush()
 {
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto &chn = channels[core_id];
@@ -330,7 +333,7 @@ void SendChannelImpl::DoFlush()
   }
 }
 
-void SendChannelImpl::FlusherRoutine::Run()
+void SendChannel::FlusherRoutine::Run()
 {
   while (true) {
     uint8_t signal = 0;
@@ -339,7 +342,7 @@ void SendChannelImpl::FlusherRoutine::Run()
   }
 }
 
-long SendChannelImpl::PendingFlush(int core_id)
+long SendChannel::PendingFlush(int core_id)
 {
   // return channels[core_id]->flusher_cnt;
   return 0;
@@ -402,7 +405,7 @@ NodeConfiguration::NodeConfiguration()
   }
   ResetBufferPlan();
 
-  urgency_cnt = 0;
+  memset(urgency_cnt, 0, kMaxNrThreads * sizeof(long));
 }
 
 using go::TcpSocket;
