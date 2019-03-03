@@ -9,6 +9,7 @@
 
 [cxx]
   cflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
+  cxxflags = -pthread -Wstrict-aliasing -DCACHE_LINE_SIZE=64 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
 
 [cxx#debug]
   cxxflags = -g -O0 -fstandalone-debug -std=c++17 -stdlib=libc++ -U_FORTIFY_SOURCE

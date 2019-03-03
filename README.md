@@ -1,17 +1,21 @@
 Build
 -----
 
-1. Enter a nix environment. Under current source directory
+If you are using nix, we have a nix `default.nix` for felis. You can simply 
 
 ```
 nix-shell
 ```
 
-2. If you have not runned before, you can run the configure script
+To use the nix environment. Otherwise, if you installed all dependencies from other sources you can skip this step.
+
+1. If you have not runned before, you can run the configure script
 
 ```
 ./configure
 ```
+
+This script will download `buck` build tool, look for clang compiler, and generate configurations for `buck`.
 
 3. Now you can build
 
@@ -54,7 +58,7 @@ Setting Things Up
 
 First, you need to run the `felis-controller`. It's a scala project, so `sbt "run config.json"` will start the service.
 
-Second, Felis need to use HugePages for memory allocation (to reduce the TLB misses). The following is what I did on c153 to pre-allocate 400GB memory of HugePages memory. You can adjust the amount depending on your memory size. (Each HuagePage is 2MB by default in Linux.)
+Second, Felis need to use HugePages for memory allocation (to reduce the TLB misses). Common CSL cluster machines should have these already setup, so you can skip this step. The following is what I did on c153 to pre-allocate 400GB memory of HugePages memory. You can adjust the amount depending on your memory size. (Each HuagePage is 2MB by default in Linux.) 
 
 ```
 echo 204800 > /proc/sys/vm/nr_hugepages

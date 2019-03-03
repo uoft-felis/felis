@@ -170,12 +170,14 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
   assert(size > 0);
+
+  // TODO: Optimizations? Right now ReadWithVersion can take up to 40% of the
+  // execution time! Mostly it's because of cache misses during binary search.
+
   auto it = std::lower_bound(versions, versions + size, sid);
   if (it == versions) {
-    // it's likely a read-your-own-insert happened here.
-    // it should be served from the CommitBuffer.
-    // if not in the CommitBuffer (Get() shouldn't lead you here, but Scan() could),
-    // we should return as if this record is deleted
+    // Get() shouldn't lead you here, but Scan() could.  We should return as if
+    // this record is deleted.
     return nullptr;
   }
   pos = --it - versions;

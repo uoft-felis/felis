@@ -10,7 +10,7 @@ import subprocess
 
 if not os.path.exists('./buck.pex') and platform.system() != 'Darwin':
     print("Getting Buck...")
-    os.system('curl -o buck.pex -L https://jitpack.io/com/github/facebook/buck/8f1fc9e71badf47d298622e4c5ca8533ed6e5cef/buck-8f1fc9e71badf47d298622e4c5ca8533ed6e5cef.pex')
+    os.system('curl -o buck.pex -L https://jitpack.io/com/github/facebook/buck/2019.01.10.01/buck-2019.01.10.01.pex')
     os.system('chmod +x buck.pex')
 
 with open('.buckconfig.local', 'w') as f:
