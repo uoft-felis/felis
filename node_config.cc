@@ -861,3 +861,9 @@ void NodeConfiguration::BroadcastBarrier()
 }
 
 }
+
+namespace util {
+
+felis::NodeConfiguration *InstanceInit<felis::NodeConfiguration>::instance;
+
+}

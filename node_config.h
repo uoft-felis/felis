@@ -22,7 +22,7 @@ class SendChannel;
 class NodeConfiguration : public PromiseRoutineTransportService {
   NodeConfiguration();
 
-  template <typename T> friend T &util::Instance() noexcept;
+  template <typename T> friend struct util::InstanceInit;
 
   int id;
   // Round Robin for local transport
@@ -112,6 +112,20 @@ class NodeConfiguration : public PromiseRoutineTransportService {
  private:
   void CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src, int nr_extra);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);
+};
+
+}
+
+namespace util {
+
+template <>
+struct InstanceInit<felis::NodeConfiguration> {
+  static constexpr bool kHasInstance = true;
+  static felis::NodeConfiguration *instance;
+
+  InstanceInit() {
+    instance = new felis::NodeConfiguration();
+  }
 };
 
 }

@@ -5,6 +5,7 @@
 #include "module.h"
 
 #include "node_config.h"
+#include "epoch.h"
 #include "console.h"
 #include "index.h"
 #include "log.h"
@@ -74,6 +75,10 @@ class AllocatorModule : public Module<CoreModule> {
     tasks.emplace_back(util::Impl<PromiseAllocationService>);
     tasks.emplace_back(util::Impl<PromiseRoutineDispatchService>);
     tasks.emplace_back(RowEntity::InitPools);
+    tasks.emplace_back(
+        []() {
+          util::InstanceInit<EpochManager>();
+        });
     for (auto &t: tasks) t.join();
 
     logger->info("Memory used: {}MB in regular pages, {}MB in huge pages.",

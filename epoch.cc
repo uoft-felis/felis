@@ -415,12 +415,7 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     auto s = kEpochPromiseAllocationPerThreadLimit;
     if (i == 0) s = kEpochPromiseAllocationMainLimit;
-    brks[i].move(mem::Brk(
-        mem::MemMap(mem::Promise, NULL, s,
-                    PROT_READ | PROT_WRITE,
-                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE,
-                    -1, 0),
-        s));
+    brks[i].move(mem::Brk(mem::MemMapAlloc(mem::Promise, s), s));
     acc += s;
     minibrks[i].move(mem::Brk(
         brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
@@ -473,15 +468,11 @@ EpochMemory::~EpochMemory()
   }
 }
 
-EpochManager *EpochManager::instance = nullptr;
-
 Epoch *EpochManager::epoch(uint64_t epoch_nr) const
 {
-  Epoch *e = concurrent_epochs[epoch_nr % kMaxConcurrentEpochs];
-  abort_if(e == nullptr, "current epoch is null");
-  abort_if(e->epoch_nr != epoch_nr, "epoch number mismatch {} != {}",
-           e->epoch_nr, epoch_nr);
-  return e;
+  abort_if(epoch_nr != cur_epoch_nr, "Confused by epoch_nr {} since current epoch is {}",
+           epoch_nr, cur_epoch_nr)
+  return cur_epoch;
 }
 
 uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const
@@ -492,15 +483,27 @@ uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) cons
 void EpochManager::DoAdvance(EpochClient *client)
 {
   cur_epoch_nr++;
-  delete concurrent_epochs[cur_epoch_nr % kMaxConcurrentEpochs];
-  concurrent_epochs[cur_epoch_nr % kMaxConcurrentEpochs] = new Epoch(cur_epoch_nr, client,pool);
+  cur_epoch = new Epoch(cur_epoch_nr, client, pool);
 }
 
-EpochManager::EpochManager()
-    : pool(new mem::Pool(mem::Epoch, kEpochMemoryLimit,
-                         util::Instance<NodeConfiguration>().nr_nodes() * kMaxConcurrentEpochs)),
+EpochManager::EpochManager(mem::Pool *pool)
+    : pool(pool),
       cur_epoch_nr(0)
 {
+}
+
+}
+
+namespace util {
+
+using namespace felis;
+
+EpochManager *InstanceInit<EpochManager>::instance = nullptr;
+
+InstanceInit<EpochManager>::InstanceInit()
+{
+  instance = new EpochManager(new mem::Pool(mem::Epoch, kEpochMemoryLimit,
+                                            util::Instance<NodeConfiguration>().nr_nodes()));
 }
 
 }

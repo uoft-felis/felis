@@ -71,14 +71,12 @@ class EpochClient {
 class EpochManager {
   mem::Pool *pool;
 
-  static EpochManager *instance;
-  template <class T> friend T& util::Instance() noexcept;
-
-  static constexpr int kMaxConcurrentEpochs = 2;
-  std::array<Epoch *, kMaxConcurrentEpochs> concurrent_epochs;
+  template <typename T> friend struct util::InstanceInit;
+  // std::array<Epoch *, kMaxConcurrentEpochs> concurrent_epochs;
+  Epoch *cur_epoch;
   uint64_t cur_epoch_nr;
 
-  EpochManager();
+  EpochManager(mem::Pool *pool);
  public:
   Epoch *epoch(uint64_t epoch_nr) const;
   uint8_t *ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const;
@@ -286,5 +284,15 @@ class EpochPromiseAllocationService : public PromiseAllocationService {
 };
 
 }
+
+namespace util {
+
+template <> struct InstanceInit<felis::EpochManager> {
+  static constexpr bool kHasInstance = true;
+  static felis::EpochManager *instance;
+  InstanceInit();
+};
+
+} // namespace util
 
 #endif /* EPOCH_H */
