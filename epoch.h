@@ -40,7 +40,7 @@ class EpochClient {
   virtual unsigned int LoadPercentage() = 0;
 
   // This x100 will be total number of txns.
-  static constexpr size_t kEpochBase = 3000;
+  static constexpr size_t kEpochBase = 1000;
  protected:
   friend class BaseTxn;
   friend class EpochCallback;
@@ -182,22 +182,46 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   };
  public:
 
-  struct QueueValue {
+  enum PriorityQueueLinkListEnum {
+    kHashList,
+    kValueList,
+  };
+
+  struct PriorityQueueValue : public util::GenericListNode<PriorityQueueValue> {
     PromiseRoutineWithInput promise_routine;
     BasePromise::ExecutionRoutine *state;
   };
 
-  struct QueueItem {
+  struct PriorityQueueHashEntry : public util::GenericListNode<PriorityQueueHashEntry> {
+    util::GenericListNode<PriorityQueueValue> values;
     uint64_t key;
-    QueueValue *value;
   };
 
+  static constexpr size_t kPriorityQueuePoolElementSize =
+      std::max(sizeof(PriorityQueueValue), sizeof(PriorityQueueHashEntry));
+
+  static_assert(kPriorityQueuePoolElementSize < 64);
+
+  using PriorityQueueHashHeader = util::GenericListNode<PriorityQueueHashEntry>;
+  struct PriorityQueueHeapEntry {
+    uint64_t key;
+    PriorityQueueHashEntry *ent;
+  };
+
+  static unsigned int Hash(uint64_t key) { return key >> 8; }
+
  private:
-  // We decided to preallocate the entire priority queue. In practice, this
-  // should be dynamically allocated on the fly by using a radix tree.
+  // This is not a normal priority queue because lots of priorities are
+  // duplicates! Therefore, we use a hashtable to deduplicate them.
   struct PriorityQueue {
-    QueueItem *q;
-    mem::Pool pool;
+    PriorityQueueHeapEntry *q; // Heap
+    PriorityQueueHashHeader *ht; // Hashtable. First item is a sentinel
+    struct {
+      PromiseRoutineWithInput *q;
+      std::atomic_ulong start;
+      std::atomic_ulong end;
+    } pending; // Pending inserts into the heap and the hashtable
+    mem::BasicPool pool;
     size_t len;
   };
 
@@ -210,10 +234,11 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   struct Queue {
     PriorityQueue pq;
     ZeroQueue zq;
-    std::atomic_bool lock;
+    util::SpinLock lock;
   };
 
-  static constexpr size_t kMaxItemPerCore = 8 << 18;
+  static const size_t kMaxItemPerCore;
+  static const size_t kHashTableSize;
   static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
 
   std::array<Queue, kMaxNrThreads> queues;
@@ -229,6 +254,10 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   std::array<util::CacheAligned<State>, kMaxNrThreads> states;
 
   std::atomic_ulong tot_bubbles;
+
+ private:
+  bool AddToPriorityQueue(PriorityQueue &q, PromiseRoutineWithInput &r);
+  void ProcessPending(PriorityQueue &q);
 
  public:
   void Add(int core_id, PromiseRoutineWithInput *routines, size_t nr_routines) final override;

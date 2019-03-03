@@ -61,7 +61,7 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
             txns[j]->root_promise()->Complete(VarStr());
             txns[j]->ResetRoot();
           }
-          conf.DecrementUrgencyCount();
+          conf.DecrementUrgencyCount(i);
           logger->info("core {} finished issuing promises", i);
         });
     r->set_urgent(true);
@@ -78,10 +78,10 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
   uint8_t buf[nr_threads];
   go::BufferChannel *comp = new go::BufferChannel(nr_threads);
 
-  conf.IncrementUrgencyCount(nr_threads);
   for (ulong t = 0; t < nr_threads; t++) {
     auto r = go::Make(
         [func, t, comp, this, nr_threads]() {
+          conf.IncrementUrgencyCount(t);
           for (uint64_t i = t * total_nr_txn / nr_threads;
                i < (t + 1) * total_nr_txn / nr_threads; i++) {
             func(txns[i]);
@@ -139,42 +139,53 @@ void EpochClient::ExecuteEpoch()
   RunTxnPromises("Epoch Execution", []() {});
 }
 
+const size_t EpochExecutionDispatchService::kMaxItemPerCore = 2 << 20;
+const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
+
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
-  for (auto &queue: queues) {
+  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+    auto &queue = queues[i];
     queue.zq.end = queue.zq.start = 0;
-    queue.zq.q =
-        (PromiseRoutineWithInput *)
-        mem::MemMap(mem::EpochQueuePromise, nullptr,
-                    kMaxItemPerCore * sizeof(PromiseRoutineWithInput),
-                    PROT_READ | PROT_WRITE,
-                    MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
-                    -1, 0);
+    queue.zq.q = (PromiseRoutineWithInput *)
+                 mem::MemMapAlloc(mem::EpochQueuePromise,
+                                  kMaxItemPerCore * sizeof(PromiseRoutineWithInput));
     queue.pq.len = 0;
-    queue.pq.q =
-        (QueueItem *)
-        mem::MemMap(mem::EpochQueueItem, nullptr, kMaxItemPerCore * sizeof(QueueItem),
-                    PROT_READ | PROT_WRITE,
-                    MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE,
-                    -1, 0);
-    queue.pq.pool.move(mem::Pool(mem::EpochQueuePool, sizeof(QueueValue), kMaxItemPerCore));
+    queue.pq.q = (PriorityQueueHeapEntry *)
+                 mem::MemMapAlloc(mem::EpochQueueItem,
+                                  kMaxItemPerCore * sizeof(PriorityQueueHeapEntry));
+    queue.pq.ht = (PriorityQueueHashHeader *)
+                  mem::MemMapAlloc(mem::EpochQueueItem,
+                                   kHashTableSize * sizeof(PriorityQueueHashHeader));
+    queue.pq.pending.q = (PromiseRoutineWithInput *)
+                         mem::MemMapAlloc(mem::EpochQueuePromise,
+                                          kMaxItemPerCore * sizeof(PromiseRoutineWithInput));
+    queue.pq.pending.start = 0;
+    queue.pq.pending.end = 0;
 
-    queue.lock = false;
+    for (size_t t = 0; t < kHashTableSize; t++) {
+      queue.pq.ht[t].Initialize();
+    }
+
+    queue.pq.pool.move(mem::BasicPool(mem::EpochQueuePool, kPriorityQueuePoolElementSize, kMaxItemPerCore));
+
+    new (&queue.lock) util::SpinLock();
   }
   tot_bubbles = 0;
 }
 
 void EpochExecutionDispatchService::Reset()
 {
-  for (auto &q: queues) {
+  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+    auto &q = queues[i];
     q.zq.end = q.zq.start = 0;
     q.pq.len = 0;
   }
   tot_bubbles = 0;
 }
 
-static bool Greater(const EpochExecutionDispatchService::QueueItem &a,
-                    const EpochExecutionDispatchService::QueueItem &b)
+static bool Greater(const EpochExecutionDispatchService::PriorityQueueHeapEntry &a,
+                    const EpochExecutionDispatchService::PriorityQueueHeapEntry &b)
 {
   return a.key > b.key;
 }
@@ -185,39 +196,89 @@ void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *ro
   bool locked = false;
   bool should_preempt = false;
   auto &lock = queues[core_id].lock;
-  while (!lock.compare_exchange_strong(locked, true)) {
-    locked = false;
-    __builtin_ia32_pause();
-  }
+  lock.Lock();
 
   auto &zq = queues[core_id].zq;
-  auto &q = queues[core_id].pq;
-  size_t zdelta = 0;
-  for (size_t i = 0; i < nr_routines; i++) {
+  auto &pq = queues[core_id].pq.pending;
+  size_t i = 0;
+
+again:
+  size_t zdelta = 0,
+           zend = zq.end.load(std::memory_order_acquire),
+         zlimit = kMaxItemPerCore;
+
+  size_t pdelta = 0,
+           pend = pq.end.load(std::memory_order_acquire),
+         plimit = kMaxItemPerCore
+                  - (pend - pq.start.load(std::memory_order_acquire));
+
+  for (; i < nr_routines; i++) {
     auto r = routines[i];
     auto key = std::get<0>(r)->sched_key;
 
     if (key == 0) {
-      zq.q[zq.end + zdelta++] = r;
+      auto pos = zend + zdelta++;
+      abort_if(pos >= zlimit, "Preallocation of DispatchService is too small");
+      zq.q[pos] = r;
     } else {
-      auto &e = q.q[q.len++];
-      auto [rt, in] = r;
-      e.key = key;
-      e.value = (QueueValue *) q.pool.Alloc();
-      e.value->promise_routine = r;
-      e.value->state = nullptr;
-      auto old_key = q.q[0].key;
-      std::push_heap(q.q, q.q + q.len, Greater);
-      if (q.q[0].key < old_key)
-        should_preempt = true;
+      auto pos = pend + pdelta++;
+      if (pdelta >= plimit) goto again;
+      pq.q[pos % kMaxItemPerCore] = r;
     }
-    abort_if(zq.end == kMaxItemPerCore || q.len == kMaxItemPerCore,
-             "Preallocation of DispatchService is too small");
   }
-  zq.end.fetch_add(zdelta, std::memory_order_release);
-  lock.store(false);
-  if (should_preempt)
-    util::Impl<VHandleSyncService>().Notify(1 << core_id);
+  if (zdelta)
+    zq.end.fetch_add(zdelta, std::memory_order_release);
+  if (pdelta)
+    pq.end.fetch_add(pdelta, std::memory_order_release);
+  lock.Unlock();
+  util::Impl<VHandleSyncService>().Notify(1 << core_id);
+}
+
+bool
+EpochExecutionDispatchService::AddToPriorityQueue(PriorityQueue &q, PromiseRoutineWithInput &r)
+{
+  bool smaller = false;
+  auto [rt, in] = r;
+  auto node = (PriorityQueueValue *) q.pool.Alloc();
+  node->promise_routine = r;
+  node->state = nullptr;
+  auto key = rt->sched_key;
+
+  auto &hl = q.ht[Hash(key) % kHashTableSize];
+  auto *ent = hl.next;
+  while (ent != &hl) {
+    if (ent->object()->key == key)
+      goto found;
+    ent = ent->next;
+  }
+  ent = (PriorityQueueHashEntry *) q.pool.Alloc();
+  ent->object()->key = key;
+  ent->object()->values.Initialize();
+  ent->InsertAfter(hl.prev);
+
+  if (q.len > 0 && q.q[0].key > key) {
+    smaller = true;
+  }
+  q.q[q.len++] = {key, ent->object()};
+  std::push_heap(q.q, q.q + q.len, Greater);
+
+found:
+  node->InsertAfter(ent->object()->values.prev);
+  return smaller;
+}
+
+void
+EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
+{
+  size_t pstart = q.pending.start.load(std::memory_order_acquire),
+           plen = q.pending.end.load(std::memory_order_acquire) - pstart;
+
+  for (size_t i = 0; i < plen; i++) {
+    auto pos = pstart + i;
+    AddToPriorityQueue(q, q.pending.q[pos % kMaxItemPerCore]);
+  }
+  if (plen)
+    q.pending.start.fetch_add(plen);
 }
 
 bool
@@ -227,12 +288,6 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto &q = queues[core_id].pq;
   auto &lock = queues[core_id].lock;
 
-  // This is the fast path because we do not need to grab the lock. However,
-  // when Add() is called concurrently, we might end up ignoring some of the
-  // latest items they put into the queue. In that case, we grab the lock and
-  // fallback to the slow path. The slow path might release the lock and retry
-  // the fast path.
-retry:
   if (zq.start < zq.end.load(std::memory_order_acquire)) {
     states[core_id]->running.store(true, std::memory_order_release);
     auto r = zq.q[zq.start];
@@ -244,37 +299,35 @@ retry:
     return false;
   }
 
-  bool locked = false;
-  while (!lock.compare_exchange_strong(locked, true)) {
-    locked = false;
-    __builtin_ia32_pause();
-  }
-
-  if (zq.start < zq.end.load(std::memory_order_acquire)) {
-    lock.store(false);
-    goto retry;
-  }
+  ProcessPending(q);
 
   if (q.len > 0) {
-    auto value = q.q[0].value;
-    bool pop = false;
+    auto node = q.q[0].ent->values.next;
+
+    auto promise_routine = node->object()->promise_routine;
 
     states[core_id]->running.store(true, std::memory_order_relaxed);
-    if (should_pop(value->promise_routine, value->state)) {
-      std::pop_heap(q.q, q.q + q.len, Greater);
+    if (should_pop(promise_routine, node->object()->state)) {
+      node->Remove();
+      q.pool.Free(node);
 
-      states[core_id]->current = value->promise_routine;
-      q.pool.Free(value);
-      q.len--;
-      pop = true;
+      auto top = q.q[0];
+      if (top.ent->values.empty()) {
+        std::pop_heap(q.q, q.q + q.len, Greater);
+        q.q[q.len - 1].ent = nullptr;
+        q.len--;
+
+        top.ent->Remove();
+        q.pool.Free(top.ent);
+      }
+
+      states[core_id]->current = promise_routine;
+      return true;
     }
-
-    lock.store(false);
-    return pop;
+    return false;
   }
 
   states[core_id]->running.store(false, std::memory_order_relaxed);
-  lock.store(false);
 
   // We do not need locks to protect completion counters. There can only be MT
   // access on Pop() and Add(), the counters are per-core anyway.
@@ -303,15 +356,14 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
 {
   auto &lock = queues[core_id].lock;
   bool new_routine = true;
-  bool locked = false;
-  while (!lock.compare_exchange_strong(locked, true)) {
-    locked = false;
-    __builtin_ia32_pause();
-  }
-
-  auto &r = states[core_id]->current;
   auto &zq = queues[core_id].zq;
   auto &q = queues[core_id].pq;
+
+  ProcessPending(q);
+
+  lock.Lock();
+
+  auto &r = states[core_id]->current;
   auto key = std::get<0>(r)->sched_key;
 
   if (!force && zq.end.load(std::memory_order_relaxed) == zq.start) {
@@ -325,14 +377,12 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
     zq.q[zq.end.load(std::memory_order_relaxed)] = r;
     zq.end.fetch_add(1, std::memory_order_release);
   } else  {
-    auto value = (QueueValue *) q.pool.Alloc();
-    value->promise_routine = r;
-    value->state = (BasePromise::ExecutionRoutine *) go::Scheduler::Current()->current_routine();
-    q.q[q.len++] = QueueItem{std::get<0>(r)->sched_key, value};
-    std::push_heap(q.q, q.q + q.len, Greater);
+    AddToPriorityQueue(q, r);
   }
+  states[core_id]->running.store(false, std::memory_order_relaxed);
+
 done:
-  lock.store(false);
+  lock.Unlock();
   return new_routine;
 }
 
