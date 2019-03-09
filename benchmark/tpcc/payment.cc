@@ -18,13 +18,8 @@ PaymentStruct ClientBase::GenerateTransactionInput<PaymentStruct>()
   }
   s.payment_amount = RandomNumber(100, 500000);
   s.ts = GetCurrentTime();
-  s.is_by_name = (RandomNumber(1, 100) <= int(kPaymentByName * 100));
-  if (s.is_by_name) {
-    memset(s.by.lastname_buf, 0, 16);
-    GetNonUniformCustomerLastNameRun(s.by.lastname_buf);
-  } else {
-    s.by.customer_id = GetCustomerId();
-  }
+
+  s.customer_id = GetCustomerId();
   return s;
 }
 
@@ -44,6 +39,8 @@ class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
 
 void PaymentTxn::Prepare()
 {
+  INIT_ROUTINE_BRK(4096);
+
   int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
   int customer_lookup_node = client->warehouse_to_lookup_node_id(customer_warehouse_id);
   int node = Client::warehouse_to_node_id(warehouse_id);
@@ -70,12 +67,8 @@ void PaymentTxn::Prepare()
           });
 
   Customer::Key customer_key;
-  if (!is_by_name) {
-    customer_key = Customer::Key::New(
-        customer_warehouse_id, customer_district_id, by.customer_id);
-  } else {
-    // TODO: We need RangeScan API to construct customer_key
-  }
+  customer_key = Customer::Key::New(
+      customer_warehouse_id, customer_district_id, customer_id);
 
   proc
       | TxnLookup<Customer>(customer_lookup_node, customer_key)
@@ -132,6 +125,20 @@ void PaymentTxn::Run()
             return nullopt;
           },
           payment_amount);
+}
+
+}
+
+
+namespace util {
+
+using namespace felis;
+using namespace tpcc;
+
+template <>
+BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::Payment), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
+{
+  return new PaymentTxn(client, serial_id);
 }
 
 }

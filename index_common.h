@@ -35,11 +35,14 @@ class Checkpoint {
 // Second layer is the versioning layer. The versioning layers could be simply
 // kept as a sorted array
 class BaseRelation {
+ public:
+  static constexpr size_t kAutoIncrementZones = 1024;
+
  protected:
   int id;
   bool read_only;
   size_t key_len;
-  std::atomic_uint64_t auto_increment_cnt;
+  std::atomic_uint64_t auto_increment_cnt[kAutoIncrementZones];
  public:
   BaseRelation() : id(-1), read_only(false) {}
 
@@ -52,7 +55,7 @@ class BaseRelation {
   void set_read_only(bool v) { read_only = v; }
   bool is_read_only() const { return read_only; }
 
-  uint64_t AutoIncrement() { return auto_increment_cnt.fetch_add(1); }
+  uint64_t AutoIncrement(int zone = 0) { return auto_increment_cnt[zone].fetch_add(1); }
 };
 
 class RelationManagerBase {
@@ -85,6 +88,8 @@ class RelationManagerPolicy : public RelationManagerBase {
 #endif
     return relations[fid];
   }
+
+  template <typename TableT> T &Get() { return (*this)[static_cast<int>(TableT::kTable)]; }
 
  protected:
   std::array<T, kMaxNrRelations> relations;

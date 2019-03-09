@@ -81,6 +81,7 @@ VALUES(ItemValue);
 FIELD(uint32_t , no_w_id);
 FIELD(uint32_t , no_d_id);
 FIELD(uint32_t , no_o_id);
+FIELD(uint32_t , no_c_id);
 KEYS(NewOrderKey);
 
 FIELD(sql::Char<12> , no_dummy);

@@ -153,7 +153,11 @@ class ClientBase {
   static constexpr double kNewOrderRemoteItem = 0.01;
   static constexpr double kCreditCheckRemoteCustomer = 0.15;
   static constexpr double kPaymentRemoteCustomer = 0.15;
-  static constexpr double kPaymentByName = 0.60;
+
+  // We simply disabled this payment by name. Our programming model does not
+  // support this, and it sounds ridiculous in practice.
+
+  // static constexpr double kPaymentByName = 0.60;
 
   size_t nr_warehouses() const;
   uint PickWarehouse();
@@ -252,8 +256,18 @@ class Loader : public go::Routine, public tpcc::ClientBase {
 
 }
 
+enum class TxnType : int {
+  NewOrder,
+  Payment,
+  Delivery,
+  // CreditCheck,
+
+  AllTxn,
+};
+
 class Client : public felis::EpochClient, public ClientBase {
   unsigned long dice;
+
  public:
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
 
@@ -261,7 +275,7 @@ class Client : public felis::EpochClient, public ClientBase {
       : felis::EpochClient(), dice(0), ClientBase(
         kClientSeed,
         util::Instance<felis::NodeConfiguration>().node_id(),
-        util::Instance<felis::NodeConfiguration>().nr_nodes()){}
+        util::Instance<felis::NodeConfiguration>().nr_nodes()) {}
 
   unsigned int LoadPercentage() final override {
     return LoadPercentageByWarehouse();
@@ -272,16 +286,7 @@ class Client : public felis::EpochClient, public ClientBase {
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];
  protected:
-  felis::BaseTxn *RunCreateTxn(uint64_t serial_id) final override;
-};
-
-enum class TxnType : int {
-  NewOrder,
-  // Delivery,
-  // CreditCheck,
-  // Payment,
-
-  AllTxn,
+  felis::BaseTxn *CreateTxn(uint64_t serial_id) final override;
 };
 
 using TxnFactory = util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *, uint64_t>;

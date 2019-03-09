@@ -52,7 +52,7 @@ class EpochClient {
 
   uint64_t GenerateSerialId(uint64_t sequence);
 
-  virtual BaseTxn *RunCreateTxn(uint64_t serial_id) = 0;
+  virtual BaseTxn *CreateTxn(uint64_t serial_id) = 0;
 
  private:
   void RunTxnPromises(std::string label, std::function<void ()> continuation);

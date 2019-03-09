@@ -41,7 +41,9 @@ void EpochClient::Start()
 
 uint64_t EpochClient::GenerateSerialId(uint64_t sequence)
 {
-  return (sequence << 8) | (conf.node_id() & 0x00FF);
+  return (util::Instance<EpochManager>().current_epoch_nr() << 32)
+      | (sequence << 8)
+      | (conf.node_id() & 0x00FF);
 }
 
 void EpochClient::RunTxnPromises(std::string label, std::function<void ()> continuation)
@@ -118,7 +120,7 @@ void EpochClient::InitializeEpoch()
   disable_load_balance = true;
   for (uint64_t i = 0; i < total_nr_txn; i++) {
     auto sequence = i + 1;
-    txns[i] = RunCreateTxn(GenerateSerialId(i + 1));
+    txns[i] = CreateTxn(GenerateSerialId(i + 1));
   }
 
   IssueTransactions(1, std::mem_fn(&BaseTxn::PrepareInsert));

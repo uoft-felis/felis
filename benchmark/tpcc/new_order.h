@@ -33,6 +33,10 @@ struct NewOrderState {
     VHandle *warehouse;
     VHandle *district;
     VHandle *stocks[15];
+    VHandle *oorder;
+    VHandle *neworder;
+    VHandle *orderlines[15];
+    VHandle *items[15];
   } rows;
 };
 

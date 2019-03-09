@@ -22,41 +22,26 @@ class MasstreeIndex {
   MasstreeMap *map;
   static threadinfo *GetThreadInfo();
  public:
+
   struct Iterator {
-    const VarStr *end_key; // null key means never active terminates
-    MasstreeMapForwardScanIteratorImpl *it; // TODO: fix memory leaks!
+    const VarStr *end_key;
+    MasstreeMapForwardScanIteratorImpl *it;
     threadinfo *ti;
-    int relation_id;
-    bool relation_read_only;
-    uint64_t sid;
-
     VarStr cur_key;
+    VHandle *vhandle;
 
     Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
-             const VarStr *terminate_key,
-             int relation_id, bool read_only,
-             uint64_t sid);
-
-    Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
-             int relation_id, bool read_only, uint64_t sid)
-        : Iterator(scan_it, nullptr, relation_id, read_only, sid) {}
-
-    void AdaptKey();
+             const VarStr *terminate_key);
 
     void Next();
-
     bool IsValid() const;
 
-    const VarStr &key() const {
-      return cur_key;
-    }
+    const VarStr &key() const { return cur_key; }
+    const VHandle *row() const { return vhandle; }
+    VHandle *row() { return vhandle; }
 
-    const VarStr *object() const {
-      return obj;
-    }
    private:
-    bool ShouldSkip();
-    const VarStr *obj;
+    void AdaptKey();
   };
   void Initialize(threadinfo *ti);
  protected:
@@ -71,9 +56,7 @@ class MasstreeIndex {
   VHandle *InsertOrDefault(const VarStr *k, std::function<VHandle * ()> default_func);
   VHandle *Search(const VarStr *k);
 
-  Iterator IndexSearchIterator(const VarStr *k, int relation_id, bool read_only, uint64_t sid);
-  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end, int relation_id, bool read_only,
-                               uint64_t sid);
+  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr);
 
   size_t nr_unique_keys() const {
     size_t rs = 0;

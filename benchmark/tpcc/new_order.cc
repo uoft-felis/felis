@@ -100,16 +100,27 @@ struct NodePathAggregator {
 void NewOrderTxn::PrepareInsert()
 {
   auto node = Client::warehouse_to_node_id(warehouse_id);
+  auto auto_inc_zone = warehouse_id * 10 + district_id;
 
-  auto oorder_id = client->relation(OOrder::kTable).AutoIncrement();
+  auto oorder_id = client->relation(OOrder::kTable).AutoIncrement(auto_inc_zone);
   auto oorder_key = OOrder::Key::New(warehouse_id, district_id, oorder_id);
   auto oorder_value = new VHandle();
+  auto neworder_key = NewOrder::Key::New(warehouse_id, district_id, oorder_id, customer_id);
+  auto neworder_value = new VHandle();
+
+  state->rows.oorder = oorder_value;
+  state->rows.neworder = neworder_value;
+
+  oorder_value->AppendNewVersion(serial_id(), epoch_nr());
 
   OrderLine::Key orderline_keys[kNewOrderMaxItems];
   VHandle *orderline_values[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
     orderline_keys[i] = OrderLine::Key::New(warehouse_id, district_id, oorder_id, i + 1);
-    orderline_values[i] = new VHandle();
+    auto row = new VHandle();
+    orderline_values[i] = row;
+    row->AppendNewVersion(serial_id(), epoch_nr());
+    state->rows.orderlines[i] = row;
   }
 
   INIT_ROUTINE_BRK(4096);
@@ -126,6 +137,13 @@ void NewOrderTxn::PrepareInsert()
           node,
           oorder_key,
           oorder_value);
+
+  proc
+      | TxnInsertOne<NewOrder>(
+          node,
+          neworder_key,
+          neworder_value);
+
 }
 
 void NewOrderTxn::Prepare()
@@ -137,6 +155,7 @@ void NewOrderTxn::Prepare()
 
   int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
   int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
+  int node = Client::warehouse_to_node_id(warehouse_id);
 
   NodePathAggregator agg(
       new (alloca(NodePathAggregator::Path::StructSize(nr_nodes * nr_nodes))) NodePathAggregator::Path,
@@ -151,8 +170,10 @@ void NewOrderTxn::Prepare()
   }
 
   Stock::Key stock_keys[kNewOrderMaxItems];
+  Item::Key item_keys[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
     stock_keys[i] = Stock::Key::New(supplier_warehouse_id[i], item_id[i]);
+    item_keys[i] = Item::Key::New(item_id[i]);
   }
 
   for (auto &p: agg) {
@@ -190,6 +211,27 @@ void NewOrderTxn::Prepare()
           lookup_node,
           district_key);
 
+  proc
+      | TxnPipelineProc(
+          lookup_node,
+          [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
+            for (int i = 0; i < ctx.nr_pipelines; i++) {
+              ctx.Yield(Tuple<int>(i));
+            }
+            return nullopt;
+          },
+          nr_items)
+      | TxnLookupMany<Item>(
+          lookup_node,
+          item_keys, item_keys + nr_items)
+      | TxnProc(
+          node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle] = ctx;
+            auto [handle, i] = args;
+            state->rows.items[i] = handle;
+            return nullopt;
+          });
 }
 
 void NewOrderTxn::Run()
@@ -204,12 +246,15 @@ void NewOrderTxn::Run()
     uint remote_bitmap;
   } params;
 
+  bool all_local = true;
+
   for (auto i = 0; i < nr_items; i++) {
     int node = Client::warehouse_to_node_id(supplier_warehouse_id[i]);
     agg += { i, node - 1 };
     params.quantities[i] = order_quantities[i];
     int remote = (supplier_warehouse_id[i] == warehouse_id) ? 0 : 1;
     params.remote_bitmap |= (remote << i);
+    if (remote) all_local = false;
   }
 
   for (auto &p: agg) {
@@ -249,6 +294,51 @@ void NewOrderTxn::Run()
               return nullopt;
             }, params);
   }
+
+  auto node = Client::warehouse_to_node_id(warehouse_id);
+
+  proc
+      | TxnProc(
+          node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle, customer_id, nr_items, ts_now, all_local] = ctx;
+            index_handle(state->rows.neworder)
+                .Write(NewOrder::Value());
+
+            index_handle(state->rows.oorder)
+                .Write(OOrder::Value::New(
+                    customer_id, 0, nr_items, all_local, ts_now));
+            return nullopt;
+          },
+          customer_id, nr_items, ts_now, all_local);
+
+  proc
+      | TxnPipelineProc(
+          node,
+          [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
+            for (int i = 0; i < ctx.nr_pipelines; i++) {
+              ctx.Yield(Tuple<int>(i));
+            }
+            return nullopt;
+          },
+          nr_items)
+      | TxnProc(
+          node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle, supplier_warehouses, quantities, items] = ctx;
+            auto i = args.template _<0>();
+
+            auto item_value = index_handle(state->rows.items[i])
+                              .template Read<Item::Value>();
+            auto amount = item_value.i_price * quantities[i];
+
+            index_handle(state->rows.orderlines[i])
+                .Write(OrderLine::Value::New(
+                    items[i], 0, amount,
+                    supplier_warehouses[i], quantities[i]));
+            return nullopt;
+          },
+          supplier_warehouse_id, order_quantities, item_id);
 }
 
 }

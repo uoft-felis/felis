@@ -304,6 +304,26 @@ struct Serializer<inline_str_base<SizeType, N>> {
   }
 };
 
+/* T cannot be recusively serialized, due to performance costs */
+template <typename T>
+struct Serializer<std::vector<T>> {
+  typedef std::vector<T> ObjectType;
+  static size_t EncodeSize(const ObjectType *p) {
+    return sizeof(size_t) + p->size() * sizeof(T);
+  }
+  static void EncodeTo(uint8_t *buf, const ObjectType *p) {
+    size_t len = p->size();
+    Serializer<size_t>::EncodeTo(buf, &len);
+    memcpy(buf + sizeof(size_t), p->data(), len * sizeof(T));
+  }
+  static void DecodeFrom(ObjectType *p, const uint8_t *buf) {
+    size_t len;
+    memcpy(&len, buf, sizeof(size_t));
+    p->reserve(len);
+    memcpy(p->data(), buf + sizeof(size_t), len * sizeof(T));
+  }
+};
+
 template <typename T>
 struct KeySerializer : public Serializer<T> {};
 

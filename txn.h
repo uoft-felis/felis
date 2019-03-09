@@ -46,6 +46,7 @@ class BaseTxn {
   }
 
   uint64_t serial_id() const { return sid; }
+  uint64_t epoch_nr() const { return sid >> 32; }
 
   template <typename Api>
   class TxnApi {
@@ -71,6 +72,9 @@ class BaseTxn {
     bool WriteVarStr(VarStr *obj);
     template <typename T> bool Write(const T &o) {
       return WriteVarStr(o.Encode());
+    }
+    bool Delete() {
+      return WriteVarStr(nullptr);
     }
   };
 
@@ -274,11 +278,8 @@ class Txn : public BaseTxn {
           auto index_handle = ctx.template _<1>();
           auto [handle, selector] = args;
 
-          // TODO: insert if not there...
           if (handle) {
             while (!index_handle(handle).AppendNewVersion());
-          } else {
-            TBD();
           }
 
           auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) p;

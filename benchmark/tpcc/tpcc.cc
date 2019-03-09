@@ -653,8 +653,12 @@ void Loader<LoaderType::Order>::DoLoad()
         c_ids.emplace_back(x);
       }
 
+      auto auto_inc_zone = w * 10 + d;
+
       for (uint c = 1; c <= kTPCCConfig.customers_per_district; c++) {
-        const auto k_oo = OOrder::Key::New(w, d, c);
+        const auto k_oo = OOrder::Key::New(
+            w, d, relation(TableType::OOrder).AutoIncrement(auto_inc_zone));
+
         OOrder::Value v_oo;
 
         v_oo.o_c_id = c_ids[c - 1];
@@ -680,7 +684,7 @@ void Loader<LoaderType::Order>::DoLoad()
         felis::InitVersion(handle, v_oo_idx.Encode());
 
         if (c >= 2101) {
-          auto k_no = NewOrder::Key::New(w, d, c);
+          auto k_no = NewOrder::Key::New(w, d, k_oo.o_id, v_oo.o_c_id);
           NewOrder::Value v_no;
 
           Checker::SanityCheckNewOrder(&k_no, &v_no);
@@ -691,7 +695,7 @@ void Loader<LoaderType::Order>::DoLoad()
         }
 
         for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
-          auto k_ol = OrderLine::Key::New(w, d, c, l);
+          auto k_ol = OrderLine::Key::New(w, d, k_oo.o_id, l);
           OrderLine::Value v_ol;
 
           v_ol.ol_i_id = RandomNumber(1, 100000);
@@ -738,11 +742,24 @@ uint Client::warehouse_to_lookup_node_id(uint warehouse_id)
     return (dice++) % conf.nr_nodes() + 1;
 }
 
-felis::BaseTxn *Client::RunCreateTxn(uint64_t serial_id)
+static constexpr int kTPCCTxnMix[] = {
+  45, 43, 4,
+};
+
+felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
   // TODO: generate standard TPC-C txn mix here
   // currently, only NewOrder is available
-  return TxnFactory::Create(static_cast<int>(TxnType::NewOrder), this, serial_id);
+  int rd = r.next_u32() % 92;
+  int txn_type_id = 0;
+  while (true) {
+    int threshold = kTPCCTxnMix[txn_type_id];
+    if (rd < threshold)
+      break;
+    rd -= threshold;
+    txn_type_id++;
+  }
+  return TxnFactory::Create(txn_type_id, this, serial_id);
 }
 
 }

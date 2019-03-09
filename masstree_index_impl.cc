@@ -42,17 +42,10 @@ class MasstreeMapForwardScanIteratorImpl : public MasstreeMap::forward_scan_iter
 };
 
 MasstreeIndex::Iterator::Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
-                                  const VarStr *terminate_key,
-                                  int relation_id, bool read_only,
-                                  uint64_t sid)
-    : end_key(terminate_key), it(scan_it), relation_id(relation_id),
-      relation_read_only(read_only), sid(sid)
+                                  const VarStr *terminate_key)
+    : end_key(terminate_key), it(scan_it), ti(GetThreadInfo()), vhandle(nullptr)
 {
   AdaptKey();
-  ti = GetThreadInfo();
-  if (IsValid()) {
-    if (ShouldSkip()) Next();
-  }
 }
 
 void MasstreeIndex::Iterator::AdaptKey()
@@ -70,7 +63,7 @@ void MasstreeIndex::Iterator::Next()
   do {
     it->next(*ti);
     AdaptKey();
-  } while (IsValid() && ShouldSkip());
+  } while (IsValid());
 }
 
 bool MasstreeIndex::Iterator::IsValid() const
@@ -80,29 +73,6 @@ bool MasstreeIndex::Iterator::IsValid() const
     return !it->terminated;
   else
     return !it->terminated && !(*end_key < cur_key);
-}
-
-bool MasstreeIndex::Iterator::ShouldSkip()
-{
-  VarStr *obj = nullptr;
-  auto handle = it->entry.value();
-  if (!handle) return true;
-  if (__builtin_expect(sid == std::numeric_limits<int64_t>::max(), 0)) {
-    DTRACE_PROBE2(felis, chkpt_scan,
-                  handle->nr_versions(),
-                  handle->last_update_epoch());
-  }
-#ifdef CALVIN_REPLAY
-  if (relation_read_only) {
-    obj = handle->DirectRead();
-  } else {
-    obj = handle->ReadWithVersion(sid);
-  }
-#else
-  obj = handle->ReadWithVersion(sid);
-#endif
-
-  return obj == nullptr;
 }
 
 void MasstreeIndex::Initialize(threadinfo *ti)
@@ -149,22 +119,11 @@ threadinfo *MasstreeIndex::GetThreadInfo()
   return TLSThreadInfo;
 }
 
-MasstreeIndex::Iterator MasstreeIndex::IndexSearchIterator(const VarStr *k, int relation_id,
-                                                           bool read_only,
-                                                           uint64_t sid)
-{
-  auto p = map->find_iterator<MasstreeMapForwardScanIteratorImpl>(
-      lcdf::Str(k->data, k->len), *GetThreadInfo());
-  return Iterator(p, relation_id, read_only, sid);
-}
-
-MasstreeIndex::Iterator MasstreeIndex::IndexSearchIterator(const VarStr *start, const VarStr *end,
-                                                           int relation_id, bool read_only,
-                                                           uint64_t sid)
+MasstreeIndex::Iterator MasstreeIndex::IndexSearchIterator(const VarStr *start, const VarStr *end)
 {
   auto p = map->find_iterator<MasstreeMapForwardScanIteratorImpl>(
       lcdf::Str(start->data, start->len), *GetThreadInfo());
-  return Iterator(p, end, relation_id, read_only, sid);
+  return Iterator(p, end);
 }
 
 void MasstreeIndex::ImmediateDelete(const VarStr *k)
