@@ -295,7 +295,7 @@ static inline void PinToCPU(std::vector<int> cpus)
 
 static inline void PinToCPU(int cpu) { PinToCPU(std::vector<int>{cpu}); }
 
-static inline size_t Align(size_t x, size_t a)
+static inline size_t Align(size_t x, size_t a = 16)
 {
   return a * ((x - 1) / a + 1);
 }

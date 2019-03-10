@@ -112,6 +112,7 @@ void NewOrderTxn::PrepareInsert()
   state->rows.neworder = neworder_value;
 
   oorder_value->AppendNewVersion(serial_id(), epoch_nr());
+  neworder_value->AppendNewVersion(serial_id(), epoch_nr());
 
   OrderLine::Key orderline_keys[kNewOrderMaxItems];
   VHandle *orderline_values[kNewOrderMaxItems];

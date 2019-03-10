@@ -36,8 +36,9 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
 
 void DeliveryTxn::Prepare()
 {
-  INIT_ROUTINE_BRK(4096);
   auto node = Client::warehouse_to_node_id(warehouse_id);
+
+  memset(state->rows.new_orders, 0, sizeof(VHandle *) * 10);
 
   proc
       | TxnPipelineProc(
@@ -53,6 +54,8 @@ void DeliveryTxn::Prepare()
       | TxnProc(
           node,
           [](const auto &ctx, auto args) -> Optional<Tuple<int, VHandle *, std::array<VHandle *, 15>, VHandle *, VHandle *>> {
+            INIT_ROUTINE_BRK(4096);
+
             auto &[state, index_handle, warehouse_id, oids] = ctx;
             auto &[i] = args;
             auto district_id = i + 1;
@@ -72,7 +75,6 @@ void DeliveryTxn::Prepare()
                 neworder_start.EncodeFromRoutine(), neworder_end.EncodeFromRoutine());
 
             if (!no_it.IsValid()) {
-              puts("OOOps");
               return nullopt;
             }
 
@@ -119,16 +121,26 @@ void DeliveryTxn::Prepare()
 void DeliveryTxn::Run()
 {
   auto node = Client::warehouse_to_node_id(warehouse_id);
+  uint32_t bitmap = 0;
+  int nr_districts = 0;
+  for (int i = 0; i < 10; i++) {
+    if (state->rows.new_orders[i] != nullptr) {
+      bitmap |= (1 << i);
+      nr_districts++;
+    }
+  }
   proc
       | TxnPipelineProc(
           node,
           [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
-            for (int i = 0; i < ctx.nr_pipelines; i++) {
-              ctx.Yield(Tuple<int>(i));
+            uint32_t bitmap = ctx.template _<2>();
+            for (int i = 0; i < 10; i++) {
+              if (bitmap & (1 << i))
+                ctx.Yield(Tuple<int>(i));
             }
             return nullopt;
           },
-          kTPCCConfig.districts_per_warehouse)
+          nr_districts, bitmap)
       | TxnProc(
           node,
           [](const auto &ctx, auto args) -> Optional<VoidValue> {

@@ -181,7 +181,8 @@ class Brk {
   // This is a special New() function. It avoids memory allocation.
   static Brk *New(void *buf, size_t sz) {
     auto *p = (uint8_t *) buf;
-    return new (p) Brk(p + sizeof(Brk), sz - sizeof(Brk));
+    auto hdr_size = util::Align(sizeof(Brk), 16);
+    return new (p) Brk(p + hdr_size, sz - hdr_size);
   }
 
   bool Check(size_t s) { return offset + s <= limit; }

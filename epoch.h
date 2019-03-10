@@ -152,7 +152,7 @@ class Epoch : public EpochMemory {
   template <typename T>
   EpochObject<T> AllocateEpochObject(int node_id) {
     auto off = brks[node_id - 1].off;
-    brks[node_id - 1].off += util::Align(sizeof(T), 8);
+    brks[node_id - 1].off += util::Align(sizeof(T));
     return EpochObject<T>(epoch_nr, node_id, off);
   }
 

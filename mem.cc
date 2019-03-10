@@ -172,7 +172,7 @@ void Region::ApplyFromConf(json11::Json conf_doc)
 
 void *Brk::Alloc(size_t s)
 {
-  s = util::Align(s, 8);
+  s = util::Align(s, 16);
   size_t off = 0;
   if (ord == std::memory_order_relaxed) {
     off = offset.load(ord);
@@ -192,7 +192,7 @@ void *Brk::Alloc(size_t s)
 void *Brk::Alloc(size_t s, std::function<void (void *)> deleter)
 {
   auto d = (Deleter *) Alloc(sizeof(Deleter));
-  new (d) Deleter ();
+  new (d) Deleter();
   d->next = deleters;
   d->del_f = deleter;
   d->p = Alloc(s);
