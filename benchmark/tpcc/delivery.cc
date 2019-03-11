@@ -153,6 +153,7 @@ void DeliveryTxn::Run()
             auto oorder = index_handle(state->rows.oorders[i]).template Read<OOrder::Value>();
             oorder.o_carrier_id = carrier_id;
             index_handle(state->rows.oorders[i]).Write(oorder);
+            ClientBase::OnUpdateRow(state->rows.oorders[i]);
 
             int sum = 0;
             for (int j = 0; j < 15; j++) {
@@ -162,11 +163,13 @@ void DeliveryTxn::Run()
               sum += ol.ol_amount;
               ol.ol_delivery_d = ts;
               handle.Write(ol);
+              ClientBase::OnUpdateRow(state->rows.order_lines[i][j]);
             }
 
             auto customer = index_handle(state->rows.customers[i]).template Read<Customer::Value>();
             customer.c_balance = sum;
             index_handle(state->rows.customers[i]).Write(customer);
+            ClientBase::OnUpdateRow(state->rows.customers[i]);
 
             return nullopt;
           }, o_carrier_id, ts);

@@ -107,6 +107,8 @@ void NewOrderTxn::PrepareInsert()
   auto oorder_value = new VHandle();
   auto neworder_key = NewOrder::Key::New(warehouse_id, district_id, oorder_id, customer_id);
   auto neworder_value = new VHandle();
+  ClientBase::OnNewRow(warehouse_id - 1, TableType::OOrder, oorder_key, oorder_value);
+  ClientBase::OnNewRow(warehouse_id - 1, TableType::NewOrder, neworder_key, neworder_value);
 
   state->rows.oorder = oorder_value;
   state->rows.neworder = neworder_value;
@@ -120,6 +122,7 @@ void NewOrderTxn::PrepareInsert()
     orderline_keys[i] = OrderLine::Key::New(warehouse_id, district_id, oorder_id, i + 1);
     auto row = new VHandle();
     orderline_values[i] = row;
+    ClientBase::OnNewRow(warehouse_id - 1, TableType::OrderLine, orderline_keys[i], orderline_values[i]);
     row->AppendNewVersion(serial_id(), epoch_nr());
     state->rows.orderlines[i] = row;
   }
@@ -290,6 +293,7 @@ void NewOrderTxn::Run()
               stock.s_remote_cnt += (params.remote_bitmap & (1 << i)) ? 1 : 0;
 
               vhandle.Write(stock);
+              ClientBase::OnUpdateRow(state->rows.stocks[i]);
               logger->debug("Txn {} updated its {} row {}",
                             index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
               return nullopt;
@@ -305,10 +309,12 @@ void NewOrderTxn::Run()
             auto &[state, index_handle, customer_id, nr_items, ts_now, all_local] = ctx;
             index_handle(state->rows.neworder)
                 .Write(NewOrder::Value());
+            ClientBase::OnUpdateRow(state->rows.neworder);
 
             index_handle(state->rows.oorder)
                 .Write(OOrder::Value::New(
                     customer_id, 0, nr_items, all_local, ts_now));
+            ClientBase::OnUpdateRow(state->rows.oorder);
             return nullopt;
           },
           customer_id, nr_items, ts_now, all_local);
@@ -337,6 +343,8 @@ void NewOrderTxn::Run()
                 .Write(OrderLine::Value::New(
                     items[i], 0, amount,
                     supplier_warehouses[i], quantities[i]));
+            ClientBase::OnUpdateRow(state->rows.orderlines[i]);
+
             return nullopt;
           },
           supplier_warehouse_id, order_quantities, item_id);

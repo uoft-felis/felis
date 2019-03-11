@@ -94,6 +94,7 @@ void PaymentTxn::Run()
             auto warehouse = vhandle.Read<Warehouse::Value>();
             warehouse.w_ytd += payment_amount;
             vhandle.Write(warehouse);
+            ClientBase::OnUpdateRow(state->rows.warehouse);
             return nullopt;
           },
           payment_amount);
@@ -107,13 +108,14 @@ void PaymentTxn::Run()
             auto district = vhandle.Read<District::Value>();
             district.d_ytd += payment_amount;
             vhandle.Write(district);
+            ClientBase::OnUpdateRow(state->rows.district);
             return nullopt;
           },
           payment_amount);
 
   proc
       | TxnProc(
-          node,
+          customer_node,
           [](const auto &ctx, auto args) -> Optional<VoidValue> {
             auto &[state, index_handle, payment_amount] = ctx;
             TxnVHandle vhandle = index_handle(state->rows.customer);
@@ -122,6 +124,7 @@ void PaymentTxn::Run()
             customer.c_ytd_payment += payment_amount;
             customer.c_payment_cnt++;
             vhandle.Write(customer);
+            ClientBase::OnUpdateRow(state->rows.customer);
             return nullopt;
           },
           payment_amount);

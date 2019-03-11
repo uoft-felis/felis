@@ -43,14 +43,23 @@ static void InitializeDataSlicer()
       continue;
     }
 
-    felis::IndexShipment *shipment = nullptr;
+    felis::RowShipment *row_shipment = nullptr;
+    felis::IndexShipment *index_shipment = nullptr;
     if (ClientBase::is_warehouse_hotspot(wh)) {
-      auto &peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer;
-      shipment = new felis::IndexShipment(peer.host, peer.port, true);
+      if (NodeConfiguration::g_data_migration) {
+        auto &row_peer = conf.config(kTPCCConfig.offload_nodes[0]).row_shipper_peer;
+        row_shipment = new felis::RowShipment(row_peer.host, row_peer.port, true);
+      } else {
+        auto &index_peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer;
+        index_shipment = new felis::IndexShipment(index_peer.host, index_peer.port, true);
+      }
     }
-
-    slicer.InstallIndexSlice(i, shipment);
-    slicer.InstallRowSlice(i, nullptr); // TODO
+    slicer.InstallRowSlice(i, row_shipment);
+    slicer.InstallIndexSlice(i, index_shipment);
+    if (row_shipment)
+      logger->info("Installed row shipment, slice id {}", i);
+    if (index_shipment)
+      logger->info("Installed index shipment, slice id {}", i);
   }
 }
 
@@ -78,6 +87,8 @@ void InitializeTPCC()
     }
   }
 
+  logger->info("data migration mode {}", NodeConfiguration::g_data_migration);
+
   auto &mgr = Instance<RelationManager>();
   for (int table = 0; table < int(TableType::NRTable); table++) {
     std::string name = kTPCCTableNames[static_cast<int>(table)];
@@ -91,10 +102,10 @@ void InitializeTPCC()
 
 void RunShipment()
 {
-  logger->info("Scanning...");
+  logger->info("Scanning index...");
   auto &slicer = Instance<felis::DataSlicer>();
   slicer.ScanAllIndex();
-  logger->info("Scanning done");
+  logger->info("Scanning index done");
   auto all_shipments = slicer.all_index_shipments();
   for (auto shipment: all_shipments) {
     logger->info("Shipping index");
@@ -440,8 +451,8 @@ void Loader<LoaderType::Item>::DoLoad()
 
     Checker::SanityCheckItem(&k, &v);
     auto handle = relation(TableType::Item).InsertOrCreate(k.EncodeFromAlloca(large_buf));
-    // TODO: Item currently ships with slice_id min_warehouse, should be reconsidered
-    OnNewRow(min_warehouse, TableType::Item, k, handle);
+    // temporarily we put Item table at max_warehouse slice, because we don't want to ship it during migration test
+    OnNewRow(max_warehouse - 1, TableType::Item, k, handle);
     felis::InitVersion(handle, v.Encode());
   }
   relation(TableType::Item).set_key_length(sizeof(Item::Key));

@@ -37,6 +37,11 @@ IndexEntity::~IndexEntity()
   delete k;
 }
 
+void RowEntity::DecodeIOVec(struct iovec *vec)
+{
+  // TODO
+}
+
 int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
 {
   if (max_nr_vec < 3)
@@ -46,21 +51,28 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
   vec[0].iov_base = &rel_id;
   vec[1].iov_len = k->len;
   vec[1].iov_base = (void *) k->data;
-  ulong n_ver = this->newest_version.load();
-  vec[2].iov_len = handle_ptr->ReadWithVersion(n_ver)->len;
-  vec[2].iov_base = (void *) handle_ptr->ReadWithVersion(n_ver)->data;
 
-  encoded_len = 4 + k->len + handle_ptr->ReadWithVersion(n_ver)->len;
+  auto v = handle_ptr->ReadExactVersion(this->newest_version.load());
+  vec[2].iov_len = v->len;
+  vec[2].iov_base = (void *) v->data;
+  encoded_len = 4 + k->len + v->len;
 
   shipping_handle()->PrepareSend();
 
   return 3;
 }
 
+bool RowEntity::ShouldSkip()
+{
+  return (handle_ptr->size == 0) || (handle_ptr->versions[handle_ptr->capacity + this->newest_version.load()] == kPendingValue);
+}
+
 RowEntity::RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id)
     : rel_id(rel_id), k(k), handle_ptr(handle), shandle(this), slice(slice_id)
 {
-  handle_ptr->row_entity.reset(this);
+  // TODO: in data replay, after row_entity exists, reset(this) somewhere else
+  if (handle_ptr)
+    handle_ptr->row_entity.reset(this);
 }
 
 mem::Pool RowEntity::pool;
@@ -72,7 +84,25 @@ void RowEntity::InitPools()
 
 void RowShipmentReceiver::Run()
 {
-  TBD();
+// clear the affinity
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
+  RowEntity ent;
+
+  logger->info("New Row Shipment has arrived!");
+  PerfLog perf;
+  int count = 0;
+  while (Receive(&ent)) {
+    // TODO: really do something about the shipment
+    count++;
+  }
+  logger->info("Row Shipment processing finished, received {} RowEntities", count);
+  perf.End();
+  perf.Show("Processing takes");
+  sock->Close();
+
 }
 
 }

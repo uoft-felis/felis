@@ -41,8 +41,8 @@ ShippingHandle::ShippingHandle()
 
 bool ShippingHandle::MarkDirty()
 {
-  if (generation == sent_generation.load(std::memory_order_acquire)) {
-    generation++;
+  if (generation.load(std::memory_order_acquire) == sent_generation.load(std::memory_order_acquire)) {
+    generation.fetch_add(1, std::memory_order_seq_cst);
 
     auto session = g_scanning_session.load();
 

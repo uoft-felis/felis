@@ -159,6 +159,7 @@ class DataSlicer {
   }
 
   std::vector<IndexShipment*> all_index_shipments();
+  std::vector<RowShipment*> all_row_shipments();
 
   void ScanAllIndex() { ScanAll(index_slice_scanners); }
   void ScanAllRow() { ScanAll(row_slice_scanners); }
@@ -187,6 +188,26 @@ class DataSlicer {
       scanners[i]->Scan();
     }
     SliceScanner::ScannerEnd();
+  }
+};
+
+class RowScannerRoutine : public go::Routine {
+public:
+  void Run() final override{
+    logger->info("Scanning row...");
+    auto &slicer = util::Instance<DataSlicer>();
+    slicer.ScanAllRow();
+    logger->info("Scanning row done");
+    auto all_shipments = slicer.all_row_shipments();
+    for (auto shipment: all_shipments) {
+      logger->info("Shipping row");
+      int iter = 0;
+      while (!shipment->RunSend()) {
+        logger->info("Shipping row iter {}...", iter);
+        iter++;
+      }
+      logger->info("Done shipping row, shipped {}/skipped {}/total {}, iter {}", g_objects_shipped, g_objects_skipped, g_objects_shipped + g_objects_skipped, iter);
+    }
   }
 };
 

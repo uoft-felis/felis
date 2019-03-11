@@ -27,7 +27,7 @@ class ShippingHandle : public util::ListNode {
    * shipment.
    */
   uint64_t born;
-  uint64_t generation;
+  std::atomic_ullong generation;
   std::atomic_ullong sent_generation;
  public:
   ShippingHandle();
@@ -131,6 +131,10 @@ class BaseShipment {
   void Connect();
 };
 
+// g_objects_added includes shipped and skipped
+static std::atomic_ulong g_objects_shipped = 0;
+static std::atomic_ulong g_objects_skipped = 0;
+
 /**
  * T is a concept:
  *
@@ -176,6 +180,11 @@ class Shipment : public BaseShipment {
     setsockopt(fd, IPPROTO_TCP, TCP_CORK, &enabled, 4);
 
     while (i < nr_obj) {
+      if (obj[i]->ShouldSkip()) {
+        g_objects_skipped.fetch_add(1);
+        i++;
+        continue;
+      }
       int n = 0;
       if (cur_iov == IOV_MAX
           || (n = obj[i]->EncodeIOVec(&vec[cur_iov + 1], IOV_MAX - cur_iov - 1)) == 0) {
@@ -187,6 +196,7 @@ class Shipment : public BaseShipment {
       vec [cur_iov].iov_base = &obj[i]->encoded_len;
 
       cur_iov += n + 1;
+      g_objects_shipped.fetch_add(1);
       i++;
     }
     SendIOVec(vec, cur_iov);

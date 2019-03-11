@@ -72,14 +72,26 @@ std::vector<IndexShipment *> DataSlicer::all_index_shipments()
   return all;
 }
 
+std::vector<RowShipment *> DataSlicer::all_row_shipments()
+{
+  std::vector<RowShipment *> all;
+  for (int i = 0; i < nr_slices; i++) {
+    if (row_slice_scanners[i] == nullptr)
+      continue;
+    auto shipment = row_slice_scanners[i]->shipment();
+    if (shipment) all.push_back(shipment);
+  }
+  return all;
+}
+
 void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue) {
   while (!handle->AppendNewVersion(0, 0)) {
       asm("pause" : : :"memory");
     }
-    if (obj != (void *) kPendingValue) {
-      abort_if(!handle->WriteWithVersion(0, obj, 0),
-               "Diverging outcomes during setup setup");
-    }
+  if (obj != (void *) kPendingValue) {
+    abort_if(!handle->WriteWithVersion(0, obj, 0),
+              "Diverging outcomes during setup setup");
+  }
 }
 
 }

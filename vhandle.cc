@@ -197,6 +197,19 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   return (VarStr *) *addr;
 }
 
+VarStr *SortedArrayVHandle::ReadExactVersion(uint64_t version_idx)
+{
+  assert(size > 0);
+  assert(size < capacity);
+  assert(version_idx < size);
+
+  auto objects = versions + capacity;
+  volatile uintptr_t *addr = &objects[version_idx];
+  assert(addr);
+
+  return (VarStr *) *addr;
+}
+
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run)
 {
   assert(this);
@@ -212,18 +225,19 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     return false;
   }
 
-  ulong nversion = row_entity->newest_version.load();
-  while (it - versions > nversion) {
-    if (row_entity->newest_version.compare_exchange_strong(nversion, it - versions))
-      break;
-  }
-
   if (dry_run) return true;
 
   auto objects = versions + capacity;
   volatile uintptr_t *addr = &objects[it - versions];
 
   sync().OfferData(addr, (uintptr_t) obj);
+
+  ulong nversion = row_entity->newest_version.load();
+  while (it - versions > nversion) {
+    if (row_entity->newest_version.compare_exchange_strong(nversion, it - versions))
+      break;
+  }
+
   return true;
 }
 

@@ -9,10 +9,13 @@
 
 void show_usage(const char *progname)
 {
-  printf("Usage: %s -w workload -n node_name -c controller_ip\n\n", progname);
+  printf("Usage: %s -w workload -n node_name -c controller_ip -p cpu_count -s cpu_core_shift -m\n\n", progname);
   puts("\t-w\tworkload name");
   puts("\t-n\tnode name");
   puts("\t-c\tcontroller IP address");
+  puts("\t-p\tCPU count");
+  puts("\t-s\tCPU core shift offset");
+  puts("\t-m\tturn on data migration mode");
 
   std::exit(-1);
 }
@@ -46,7 +49,7 @@ int main(int argc, char *argv[])
   std::string workload_name;
   std::string node_name;
 
-  while ((opt = getopt(argc, argv, "w:n:c:p:s:")) != -1) {
+  while ((opt = getopt(argc, argv, "w:n:c:p:s:m")) != -1) {
     switch (opt) {
       case 'w':
         workload_name = std::string(optarg);
@@ -62,6 +65,9 @@ int main(int argc, char *argv[])
         break;
       case 's':
         NodeConfiguration::g_core_shifting = atoi(optarg);
+        break;
+      case 'm':
+        NodeConfiguration::g_data_migration = true;
         break;
       default:
         show_usage(argv[0]);

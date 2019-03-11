@@ -117,6 +117,7 @@ void EpochClient::InitializeEpoch()
 
   txns.reset(new BaseTxn*[total_nr_txn]);
 
+  //if (NodeConfiguration::g_data_migration)
   disable_load_balance = true;
   for (uint64_t i = 0; i < total_nr_txn; i++) {
     auto sequence = i + 1;
@@ -137,6 +138,12 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::ExecuteEpoch()
 {
+  if (NodeConfiguration::g_data_migration) {
+    logger->info("Starting data scanner thread");
+    auto &peer = util::Instance<felis::NodeConfiguration>().config().row_shipper_peer;
+    go::GetSchedulerFromPool(NodeConfiguration::g_nr_threads + 1)->WakeUp(
+      new felis::RowScannerRoutine());
+  }
   IssueTransactions(1, std::mem_fn(&BaseTxn::RunAndAssignSchedulingKey));
   RunTxnPromises("Epoch Execution", []() {});
 }

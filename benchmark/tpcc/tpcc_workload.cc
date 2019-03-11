@@ -51,7 +51,8 @@ static void LoadTPCCDataSet()
   SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::Order>(2343352));
 
   m.lock(); // waits
-  tpcc::RunShipment();
+  if (!NodeConfiguration::g_data_migration)
+    tpcc::RunShipment();
 }
 
 class TPCCModule : public Module<WorkloadModule> {

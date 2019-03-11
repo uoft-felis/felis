@@ -8,6 +8,7 @@
 #include "util.h"
 #include "mem.h"
 #include "completion.h"
+#include "index_common.h"
 
 namespace felis {
 

@@ -23,6 +23,7 @@ class IndexEntity {
   IndexEntity(const IndexEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
+  bool ShouldSkip() { return false; }
   int EncodeIOVec(struct iovec *vec, int max_nr_vec);
   uint64_t encoded_len;
 
@@ -58,6 +59,7 @@ class RowEntity {
   RowEntity(const RowEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
+  bool ShouldSkip();
   int EncodeIOVec(struct iovec *vec, int max_nr_vec);
   uint64_t encoded_len;
 

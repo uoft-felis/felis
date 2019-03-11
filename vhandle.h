@@ -132,6 +132,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
   VarStr *ReadWithVersion(uint64_t sid);
+  VarStr *ReadExactVersion(uint64_t version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
   void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }

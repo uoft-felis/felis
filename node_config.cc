@@ -350,6 +350,7 @@ long SendChannel::PendingFlush(int core_id)
 
 size_t NodeConfiguration::g_nr_threads = 8;
 int NodeConfiguration::g_core_shifting = 0;
+bool NodeConfiguration::g_data_migration = false;
 
 static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, std::string name)
 {
@@ -363,7 +364,11 @@ static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, 
 static void ParseNodeConfig(util::Optional<NodeConfiguration::NodeConfig> &config, json11::Json json)
 {
   config->worker_peer = ParseNodePeerConfig(json, "worker");
-  config->index_shipper_peer = ParseNodePeerConfig(json, "index_shipper");
+  if (NodeConfiguration::g_data_migration) {
+    config->row_shipper_peer = ParseNodePeerConfig(json, "row_shipper");
+  } else {
+    config->index_shipper_peer = ParseNodePeerConfig(json, "index_shipper");
+  }
   config->name = json.object_items().find("name")->second.string_value();
 }
 
@@ -651,12 +656,42 @@ void NodeIndexShipmentReceiverRoutine::Run()
   }
 }
 
+class NodeRowShipmentReceiverRoutine : public go::Routine {
+  std::string host;
+  unsigned short port;
+ public:
+  NodeRowShipmentReceiverRoutine(std::string host, unsigned short port) : host(host), port(port) {}
+
+  void Run() final override;
+};
+
+void NodeRowShipmentReceiverRoutine::Run()
+{
+  go::TcpSocket *server = new go::TcpSocket(8192, 1024);
+  logger->info("Row Shipment listening on {} {}", host, port);
+  server->Bind(host, port);
+  server->Listen();
+
+  while (true) {
+    auto *client_sock = server->Accept();
+    auto receiver = new RowShipmentReceiver(client_sock);
+    go::Scheduler::Current()->WakeUp(receiver);
+  }
+}
+
 void NodeConfiguration::RunAllServers()
 {
-  logger->info("Starting system thread for index shipment");
-  auto &peer = config().index_shipper_peer;
-  go::GetSchedulerFromPool(g_nr_threads + 1)->WakeUp(
-      new NodeIndexShipmentReceiverRoutine(peer.host, peer.port));
+  if (NodeConfiguration::g_data_migration) {
+    logger->info("Starting system thread for row shipment receiving");
+    auto &peer = config().row_shipper_peer;
+    go::GetSchedulerFromPool(g_nr_threads + 1)->WakeUp(
+        new NodeRowShipmentReceiverRoutine(peer.host, peer.port));
+  } else {
+    logger->info("Starting system thread for index shipment receiving");
+    auto &peer = config().index_shipper_peer;
+    go::GetSchedulerFromPool(g_nr_threads + 1)->WakeUp(
+        new NodeIndexShipmentReceiverRoutine(peer.host, peer.port));
+  }
 
   logger->info("Starting node server with id {}", node_id());
   go::GetSchedulerFromPool(0)->WakeUp(new NodeServerRoutine());
