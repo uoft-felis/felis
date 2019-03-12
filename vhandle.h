@@ -3,6 +3,7 @@
 #ifndef VHANDLE_H
 #define VHANDLE_H
 
+#include <atomic>
 #include "felis_probes.h"
 #include "mem.h"
 #include "sqltypes.h"
@@ -111,9 +112,10 @@ class SortedArrayVHandle : public BaseVHandle {
   std::atomic_bool lock;
   short alloc_by_coreid;
   short this_coreid;
-  size_t capacity;
-  size_t size;
-  size_t value_mark;
+  unsigned int capacity;
+  unsigned int size;
+  unsigned int value_mark;
+  std::atomic_uint latest_version;
   uint64_t *versions;
   util::OwnPtr<RowEntity> row_entity;
 

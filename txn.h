@@ -8,6 +8,7 @@
 #include "util.h"
 #include "sqltypes.h"
 #include "promise.h"
+#include "slice.h"
 
 namespace felis {
 
@@ -35,6 +36,15 @@ class BaseTxn {
   void RunAndAssignSchedulingKey() {
     Run();
     root_promise()->AssignSchedulingKey(serial_id());
+  }
+
+  template <typename TableType>
+  VHandle *CreateNewRow(const typename TableType::Key &key) {
+    auto slice_id = util::Instance<SliceLocator<TableType>>().Locate(key);
+    auto row = new VHandle();
+    // TODO: Maybe add this row to the slice?
+    util::Instance<felis::DataSlicer>().OnNewRow(slice_id, TableType::kTable, key, row);
+    return row;
   }
 
   Promise<DummyValue> *root_promise() {

@@ -52,7 +52,7 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
   vec[1].iov_len = k->len;
   vec[1].iov_base = (void *) k->data;
 
-  auto v = handle_ptr->ReadExactVersion(this->newest_version.load());
+  auto v = handle_ptr->ReadExactVersion(handle_ptr->latest_version.load());
   vec[2].iov_len = v->len;
   vec[2].iov_base = (void *) v->data;
   encoded_len = 4 + k->len + v->len;
@@ -64,7 +64,7 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
 
 bool RowEntity::ShouldSkip()
 {
-  return (handle_ptr->size == 0) || (handle_ptr->versions[handle_ptr->capacity + this->newest_version.load()] == kPendingValue);
+  return (handle_ptr->size == 0) || (handle_ptr->versions[handle_ptr->capacity + handle_ptr->latest_version.load()] == kPendingValue);
 }
 
 RowEntity::RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id)

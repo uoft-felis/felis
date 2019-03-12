@@ -13,6 +13,7 @@
 #include "util.h"
 #include "log.h"
 #include "node_config.h"
+#include "slice.h"
 
 namespace felis {
 
@@ -59,38 +60,6 @@ struct ObjectShippingHandle : public ShippingHandle {
   ObjectShippingHandle(T *object) : ShippingHandle(), object(object) {}
 };
 
-class SliceScanner;
-/**
- * Slice is the granularity we handle the skew. Either by shipping data (which
- * is our baseline) or shipping index.
- *
- * Take TPC-C for example, a Slice will be a warehouse. Then the handles inside
- * of this slice will come from many different tables.
- *
- * To help the shipment scanner, we would like to sort the handles by their born
- * timestamp.
- */
-class Slice {
-  friend class SliceScanner;
-  struct SliceQueue {
-    std::mutex lock;
-    util::ListNode queue;
-    bool need_lock;
-    size_t size;
-
-    SliceQueue() : size(0), need_lock(false) {
-      queue.Initialize();
-    }
-
-    void Append(ShippingHandle *handle);
-  };
-
-  util::CacheAligned<SliceQueue> shared_q;
-  std::array<util::CacheAligned<SliceQueue>, NodeConfiguration::kMaxNrThreads> per_core_q;
- public:
-  Slice();
-  void Append(ShippingHandle *handle);
-};
 
 class SliceScanner {
  protected:

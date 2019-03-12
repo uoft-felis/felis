@@ -51,7 +51,6 @@ class RowEntity {
   VarStr *k;
   VHandle *handle_ptr;
   ObjectShippingHandle<RowEntity> shandle;
-  std::atomic_ulong newest_version;
  public:
   RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id);
   RowEntity() : RowEntity(-1, nullptr, nullptr, -1) {}

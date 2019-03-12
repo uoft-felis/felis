@@ -110,10 +110,11 @@ SortedArrayVHandle::SortedArrayVHandle()
   this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
 
   versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * capacity * sizeof(uint64_t));
+  latest_version.store(0);
 }
 
-static void EnlargePair64Array(uint64_t *old_p, size_t old_cap, int old_coreid,
-			       uint64_t *&new_p, size_t &new_cap, int new_coreid)
+static void EnlargePair64Array(uint64_t *old_p, uint old_cap, int old_coreid,
+			       uint64_t *&new_p, uint &new_cap, int new_coreid)
 {
   new_cap = 2 * old_cap;
   const size_t old_len = old_cap * sizeof(uint64_t);
@@ -232,9 +233,10 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 
   sync().OfferData(addr, (uintptr_t) obj);
 
-  ulong nversion = row_entity->newest_version.load();
-  while (it - versions > nversion) {
-    if (row_entity->newest_version.compare_exchange_strong(nversion, it - versions))
+  unsigned int ver = latest_version.load();
+  unsigned int latest = it - versions;
+  while (latest > ver) {
+    if (latest_version.compare_exchange_strong(ver, latest))
       break;
   }
 
