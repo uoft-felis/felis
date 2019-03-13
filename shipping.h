@@ -17,6 +17,9 @@
 
 namespace felis {
 
+class Slice;
+class SliceQueue;
+
 class ShippingHandle : public util::ListNode {
   /**
    * Which scanning session was this handle born?
@@ -65,7 +68,7 @@ class SliceScanner {
  protected:
   Slice * slice;
 
-  Slice::SliceQueue * current_q;
+  SliceQueue * current_q;
   util::ListNode * current_node;
 
   SliceScanner(Slice * slice);

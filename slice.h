@@ -3,15 +3,33 @@
 #ifndef _SLICE_H
 #define _SLICE_H
 
+#include <bitset>
 #include <mutex>
 #include <vector>
+
 #include "util.h"
 #include "node_config.h"
+#include "shipping.h"
 
 namespace felis {
 
+static constexpr int kNrMaxSlices = 100000000;
+
 class SliceScanner;
 class ShippingHandle;
+
+struct SliceQueue {
+  std::mutex lock;
+  util::ListNode queue;
+  bool need_lock;
+  size_t size;
+
+  SliceQueue() : size(0), need_lock(false) {
+    queue.Initialize();
+  }
+
+  void Append(ShippingHandle *handle);
+};
 
 /**
  * Slice is the granularity we handle the skew. Either by shipping data (which
@@ -25,18 +43,6 @@ class ShippingHandle;
  */
 class Slice {
   friend class SliceScanner;
-  struct SliceQueue {
-    std::mutex lock;
-    util::ListNode queue;
-    bool need_lock;
-    size_t size;
-
-    SliceQueue() : size(0), need_lock(false) {
-      queue.Initialize();
-    }
-
-    void Append(ShippingHandle *handle);
-  };
 
   util::CacheAligned<SliceQueue> shared_q;
   std::array<util::CacheAligned<SliceQueue>, NodeConfiguration::kMaxNrThreads> per_core_q;
@@ -46,13 +52,38 @@ class Slice {
   void Append(ShippingHandle *handle);
 };
 
+enum SliceOwnerType {
+  PrimaryOwner, IndexOwner, DataOwner, NumOwnerTypes
+};
+
 class SliceMappingTable {
+  struct {
+    int id;
+    std::bitset<kNrMaxSlices> owned[NumOwnerTypes];
+  } slice_owners[NodeConfiguration::kMaxNrNode];
+  // Mapping of real node id into an index for |slice_owners|.
+  int node_compress[NodeConfiguration::kMaxNrNode] = { -1 };
+  int nr_nodes;
+  std::atomic<int> next_node;
+
+ protected:
+  void SetEntry(int slice_id, bool owned, SliceOwnerType type = IndexOwner,
+                int node = -1, bool broadcast = true);
  public:
   // TODO:
-  int LocateNodeLookup(int slice_id);
-  std::vector<int> LocateNodeInsert(int slice_id);
-  void AddEntry();
-  void RemoveEntry();
+  void InitNode(int node_id);
+  int LocateNodeLookup(int slice_id, SliceOwnerType = IndexOwner);
+  std::vector<int> LocateNodeInsert(int slice_id, SliceOwnerType type = IndexOwner);
+
+  void AddEntry(int slice_id, SliceOwnerType type = IndexOwner, int node = -1,
+                bool broadcast = true) {
+    SetEntry(slice_id, true, type, node, broadcast);
+  }
+
+  void RemoveEntry(int slice_id, SliceOwnerType type = IndexOwner,
+                   int node = -1, bool broadcast = true) {
+    SetEntry(slice_id, false, type, node, broadcast);
+  }
 };
 
 
@@ -69,7 +100,7 @@ namespace util {
 
 template <typename TableType>
 struct InstanceInit<felis::SliceLocator<TableType>> {
-  static constexpr bool kHashInstance = true;
+  static constexpr bool kHasInstance = true;
 };
 
 }

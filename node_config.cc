@@ -851,6 +851,7 @@ void NodeConfiguration::FlushBufferPlan(bool sync)
         [in, out, buffer, buffer_size]() {
           uint64_t remote_epoch_finished;
           in->Read(&remote_epoch_finished, 8);
+          // TODO: read in and apply slice mapping table changes
           out->Write(buffer, buffer_size);
           out->Flush();
         });
@@ -870,6 +871,7 @@ void NodeConfiguration::FlushBufferPlanCompletion(uint64_t epoch_nr)
 {
   for (auto *sock: clients) {
     auto out = sock->output_channel();
+    // TODO: write out slice mapping table changes
     out->Write(&epoch_nr, 8);
     out->Flush();
   }
