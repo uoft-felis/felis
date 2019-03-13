@@ -13,7 +13,7 @@
 
 namespace felis {
 
-static constexpr int kNrMaxSlices = 100000000;
+static constexpr int kNrMaxSlices = 10000000;
 
 class SliceScanner;
 class ShippingHandle;
@@ -62,7 +62,7 @@ class SliceMappingTable {
     std::bitset<kNrMaxSlices> owned[NumOwnerTypes];
   } slice_owners[NodeConfiguration::kMaxNrNode];
   // Mapping of real node id into an index for |slice_owners|.
-  int node_compress[NodeConfiguration::kMaxNrNode] = { -1 };
+  int node_compress[NodeConfiguration::kMaxNrNode];
   int nr_nodes;
   std::atomic<int> next_node;
 
@@ -70,11 +70,16 @@ class SliceMappingTable {
   void SetEntry(int slice_id, bool owned, SliceOwnerType type = IndexOwner,
                 int node = -1, bool broadcast = true);
  public:
+  // TODO: does this need to be locked?
+  std::vector<int> broadcast_buffer;
+
+  SliceMappingTable();
   // TODO:
   void InitNode(int node_id);
   int LocateNodeLookup(int slice_id, SliceOwnerType = IndexOwner);
   std::vector<int> LocateNodeInsert(int slice_id, SliceOwnerType type = IndexOwner);
 
+  void ReplayUpdate(int op);
   void AddEntry(int slice_id, SliceOwnerType type = IndexOwner, int node = -1,
                 bool broadcast = true) {
     SetEntry(slice_id, true, type, node, broadcast);
@@ -101,6 +106,16 @@ namespace util {
 template <typename TableType>
 struct InstanceInit<felis::SliceLocator<TableType>> {
   static constexpr bool kHasInstance = true;
+};
+
+template <>
+struct InstanceInit<felis::SliceMappingTable> {
+  static constexpr bool kHasInstance = true;
+  static felis::SliceMappingTable *instance;
+
+  InstanceInit() {
+    instance = new felis::SliceMappingTable();
+  }
 };
 
 }

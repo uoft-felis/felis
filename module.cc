@@ -10,6 +10,7 @@
 #include "index.h"
 #include "log.h"
 #include "promise.h"
+#include "slice.h"
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -78,6 +79,7 @@ class AllocatorModule : public Module<CoreModule> {
     tasks.emplace_back(
         []() {
           util::InstanceInit<EpochManager>();
+          util::InstanceInit<SliceMappingTable>();
         });
     for (auto &t: tasks) t.join();
 

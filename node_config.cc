@@ -14,6 +14,7 @@
 #include "index_common.h"
 
 #include "promise.h"
+#include "slice.h"
 
 namespace felis {
 
@@ -593,7 +594,12 @@ void NodeServerRoutine::Run()
   // deadlock.
   for (auto &config: conf.all_config) {
     if (!config) continue;
-    if (config->id == conf.node_id()) continue;
+    util::Instance<SliceMappingTable>().InitNode(config->id);
+    if (config->id == conf.node_id()) {
+      util::Instance<SliceMappingTable>().AddEntry(100 + config->id, IndexOwner, config->id);
+      continue;
+    }
+
     logger->info("Connecting worker peer on node {}\n", config->id);
     TcpSocket *remote_sock = new TcpSocket(1024, 512 << 20);
     auto &peer = config->worker_peer;
@@ -851,7 +857,16 @@ void NodeConfiguration::FlushBufferPlan(bool sync)
         [in, out, buffer, buffer_size]() {
           uint64_t remote_epoch_finished;
           in->Read(&remote_epoch_finished, 8);
-          // TODO: read in and apply slice mapping table changes
+
+          // Read and replay slice mapping table updates.
+          uint32_t num_slice_table_updates;
+          in->Read(&num_slice_table_updates, 4);
+          for (int i = 0; i < num_slice_table_updates; i++) {
+            uint32_t op;
+            in->Read(&op, 4);
+            util::Instance<SliceMappingTable>().ReplayUpdate(op);
+          }
+
           out->Write(buffer, buffer_size);
           out->Flush();
         });
@@ -871,8 +886,17 @@ void NodeConfiguration::FlushBufferPlanCompletion(uint64_t epoch_nr)
 {
   for (auto *sock: clients) {
     auto out = sock->output_channel();
-    // TODO: write out slice mapping table changes
     out->Write(&epoch_nr, 8);
+
+    // Write out all the slice mapping table update commands.
+    auto &broadcast_buffer = util::Instance<SliceMappingTable>().broadcast_buffer;
+    auto int_buf = broadcast_buffer.size();
+    out->Write(&int_buf, 4);
+    for (const auto &it : broadcast_buffer) {
+      out->Write(&it, 4);
+    }
+    broadcast_buffer.clear();
+
     out->Flush();
   }
 }
