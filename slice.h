@@ -13,7 +13,7 @@
 
 namespace felis {
 
-static constexpr int kNrMaxSlices = 10000000;
+static constexpr int kNrMaxSlices = 1 << 23;
 
 class SliceScanner;
 class ShippingHandle;
@@ -74,7 +74,6 @@ class SliceMappingTable {
   std::vector<int> broadcast_buffer;
 
   SliceMappingTable();
-  // TODO:
   void InitNode(int node_id);
   int LocateNodeLookup(int slice_id, SliceOwnerType = IndexOwner);
   std::vector<int> LocateNodeInsert(int slice_id, SliceOwnerType type = IndexOwner);
