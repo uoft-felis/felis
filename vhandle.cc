@@ -172,16 +172,22 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
   assert(size > 0);
 
-  // TODO: Optimizations? Right now ReadWithVersion can take up to 40% of the
-  // execution time! Mostly it's because of cache misses during binary search.
+  uint64_t *p = versions;
+  uint64_t *start = versions;
+  uint64_t *end = versions + size;
+  unsigned int latest = latest_version.load();
 
-  auto it = std::lower_bound(versions, versions + size, sid);
-  if (it == versions) {
-    // Get() shouldn't lead you here, but Scan() could.  We should return as if
-    // this record is deleted.
+  if (sid > versions[latest]) {
+    start = versions + latest;
+  } else {
+    end = versions + latest + 1;
+  }
+
+  p = std::lower_bound(start, end, sid);
+  if (p == versions) {
     return nullptr;
   }
-  pos = --it - versions;
+  pos = --p - versions;
   auto objects = versions + capacity;
   return &objects[pos];
 }

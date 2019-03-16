@@ -1,5 +1,6 @@
 #include "slice.h"
 #include "log.h"
+#include "shipping.h"
 
 namespace felis {
 
@@ -11,7 +12,8 @@ void SliceQueue::Append(ShippingHandle *handle)
   handle->InsertAfter(queue.prev);
 }
 
-Slice::Slice(int slice_id) : slice_id(slice_id)
+Slice::Slice(int slice_id)
+    : slice_id(slice_id)
 {
   shared_q->need_lock = true;
 }
