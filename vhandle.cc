@@ -285,7 +285,7 @@ static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
 
 void BaseVHandle::InitPools()
 {
-  pools = InitPerCorePool(64, 16 << 20);
+  pools = InitPerCorePool(64, 16 << 18);
 }
 
 #ifdef LL_REPLAY

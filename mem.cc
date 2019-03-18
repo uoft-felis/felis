@@ -264,6 +264,7 @@ void *MemMap(MemAllocType alloc_type, void *addr, size_t length, int prot, int f
 
   if (mem == MAP_FAILED) {
     perror(MemTypeToString(alloc_type).c_str());
+    PrintMemStats();
     std::abort();
   }
 
