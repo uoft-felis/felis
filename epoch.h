@@ -42,6 +42,7 @@ class EpochClient {
 
   // This x100 will be total number of txns.
   static constexpr size_t kEpochBase = 1000;
+  static constexpr size_t kMaxEpoch = 10;
  protected:
   friend class BaseTxn;
   friend class EpochCallback;
@@ -74,7 +75,7 @@ class EpochManager {
 
   template <typename T> friend struct util::InstanceInit;
   // std::array<Epoch *, kMaxConcurrentEpochs> concurrent_epochs;
-  Epoch *cur_epoch;
+  util::OwnPtr<Epoch> cur_epoch;
   uint64_t cur_epoch_nr;
 
   EpochManager(mem::Pool *pool);

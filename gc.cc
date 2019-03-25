@@ -85,4 +85,13 @@ void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
 #endif
 }
 
+void EpochGCRule::operator()(VHandle *handle, uint64_t sid, uint64_t ep)
+{
+  if (ep > last_gc_epoch) {
+    // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
+    handle->GarbageCollect();
+    last_gc_epoch = ep;
+  }
+}
+
 }

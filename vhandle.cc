@@ -13,100 +13,12 @@ VHandleSyncService &BaseVHandle::sync()
   return util::Impl<VHandleSyncService>();
 }
 
-#if 0
-mem::Pool *SkipListVHandle::Block::pool;
-
-void SkipListVHandle::Block::InitPool()
-{
-  pool = new mem::Pool(sizeof(Block), 1 << 30);
-}
-
-SkipListVHandle::Block::Block()
-{
-  min = 0;
-  size = 0;
-  memset(versions, 0xff, kLimit * sizeof(uint64_t));
-  for (int i = 0; i < kLimit; i++) objects[i] = kPendingValue;
-  for (int i = 0; i < kLevels; i++) levels[i] = nullptr;
-}
-
-bool SkipListVHandle::Block::Add(uint64_t view, uint64_t version)
-{
-  auto tot_size = size.load();
-  do {
-    if ((tot_size >> kLimitBits) != (view >> kLimitBits)) {
-      // The block must have been splitted after I viewed it. We cannot simply
-      // append this version in this block, as it might be larger than the
-      // maximum of this block can hold.
-      return false;
-    }
-    if ((tot_size & kSizeMask) == kLimitBits + 1) {
-      // Somebody is splitting this block right now.
-      return false;
-    }
-  } while (!size.compare_exchange_strong(tot_size, tot_size + 1));
-  int idx = tot_size & kSizeMask;
-
-  if (idx < kLimit) {
-    versions[idx] = version;
-    return true;
-  }
-
-  assert(idx == kLimit);
-  // Split this block
-  Block *next_block = new Block();
-  uint64_t half_size = kLimit / 2;
-  std::sort(versions, versions + kLimit);
-  memcpy(next_block->versions, versions + half_size, sizeof(uint64_t) * (kLimit - half_size));
-  next_block->min = next_block->versions[0];
-  next_block->size = kLimit - half_size;
-  next_block->levels[0].store(levels[0].load(), std::memory_order_relaxed);
-
-  if (version > next_block->min) {
-    next_block->versions[next_block->size] = version;
-    next_block->size.fetch_add(1, std::memory_order_relaxed);
-  } else {
-    versions[half_size] = version;
-    half_size++;
-  }
-
-  tot_size &= ~kSizeMask;
-  tot_size += (1UL << kLimitBits) + half_size;
-
-  levels[0].store(next_block);
-  size.store(tot_size);
-
-  return true;
-}
-
-SkipListVHandle::Block *SkipListVHandle::Block::Find(uint64_t version, bool inclusive, ulong &iterations)
-{
-  if (min > version)
-    return nullptr;
-  if (!inclusive && min == version)
-    return nullptr;
-  for (int i = kLevels - 1; i >= 0; i--) {
-    if (levels[i].load() == nullptr) continue;
-    auto next = levels[i].load()->Find(version, inclusive, iterations);
-    if (next)
-      return next;
-  }
-  return this;
-}
-
-SkipListVHandle::SkipListVHandle()
-    : lock(false), alloc_by_coreid(mem::CurrentAllocAffinity()),
-      flush_tid(0), size(0), shared_blocks(nullptr)
-{
-}
-
-#endif
-
 SortedArrayVHandle::SortedArrayVHandle()
     : lock(false)
 {
   capacity = 4;
-  value_mark = size = 0;
+  // value_mark = 0;
+  size = 0;
   this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
 
   versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * capacity * sizeof(uint64_t));
@@ -144,7 +56,7 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   if (!lock.compare_exchange_strong(expected, true)) {
     return false;
   }
-  gc_rule(*this, sid, epoch_nr);
+  gc_rule((VHandle *) this, sid, epoch_nr);
 
   size++;
   EnsureSpace();
@@ -158,11 +70,10 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
   versions[i] = last;
 
-  if (i < value_mark) {
-    value_mark++;
-    memmove(&objects[i + 1], &objects[i], sizeof(uintptr_t) * (value_mark - i - 1));
-    objects[i] = kPendingValue;
-  }
+  // We don't need to move the values, because they are all kPendingValue in
+  // this epoch anyway. Of course, this is assuming sid will never smaller than
+  // the minimum sid of this epoch. In felis, we can assume this. However if we
+  // were to replay Ermia, we couldn't.
 
   lock.store(false);
   return true;
@@ -179,7 +90,7 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 
   if (sid > versions[latest]) {
     start = versions + latest + 1;
-    if (sid <= *start) {
+    if (start >= versions + size || sid <= *start) {
       p = start;
       goto found;
     }
@@ -199,7 +110,6 @@ found:
 
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
-  // if (versions.size() > 0) assert(versions[0] == 0);
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
@@ -257,23 +167,17 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 void SortedArrayVHandle::GarbageCollect()
 {
   auto objects = versions + capacity;
-  if (size < 2) goto done;
+  if (size < 2) return;
 
-  for (int i = 0; i < size; i++) {
-    if (versions[i] < gc_rule.min_of_epoch) {
-      VarStr *o = (VarStr *) objects[i];
-      delete o;
-    } else {
-      assert(versions[i] == gc_rule.min_of_epoch);
-      memmove(&versions[0], &versions[i], sizeof(int64_t) * (size - i));
-      memmove(&objects[0], &objects[i], sizeof(uintptr_t) * (size - i));
-      size -= i;
-      goto done;
-    }
+  for (int i = 0; i < size - 1; i++) {
+    VarStr *o = (VarStr *) objects[i];
+    delete o;
   }
-done:
-  value_mark = size;
-  return;
+
+  versions[0] = versions[size - 1];
+  objects[0] = objects[size - 1];
+  latest_version.fetch_sub(size - 1);
+  size = 1;
 }
 
 mem::Pool *BaseVHandle::pools;

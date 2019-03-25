@@ -36,72 +36,6 @@ class BaseVHandle {
   VHandleSyncService &sync();
 };
 
-#if 0
-class SkipListVHandle : public BaseVHandle {
- public:
-  struct Block {
-    static constexpr int kLevels = 4;
-    static constexpr int kLimit = 61;
-    static constexpr int kLimitBits = 8;
-    static constexpr uint64_t kSizeMask = (1UL << kLimitBits) - 1UL;
-    static mem::Pool *pool;
-
-    static void InitPool();
-
-    Block();
-
-    static void *operator new(size_t) {
-      return pool->Alloc();
-    }
-
-    static void operator delete(void *p) {
-      pool->Free(p);
-    }
-
-    std::atomic<Block *> levels[kLevels];
-
-    uint64_t min;
-    std::atomic_uint64_t size;
-    uint64_t versions[kLimit];
-    uint64_t objects[kLimit];
-
-    bool Add(uint64_t view, uint64_t version);
-    Block *Find(uint64_t version, bool inclusive);
-   private:
-    Block *Find(uint64_t version, bool inclusive, ulong &iterations);
-  };
- private:
-  std::atomic_bool lock;
-  short alloc_by_coreid;
-  std::atomic_short flush_tid;
-  size_t size;
-  // The skiplist
-  Block *shared_blocks;
- public:
-  static void *operator new(size_t) {
-    return pools[mem::CurrentAllocAffinity()].Alloc();
-  }
-  static void operator delete(void *ptr) {
-    auto *self = (SkipListVHandle *) ptr;
-    pools[self->alloc_by_coreid].Free(ptr);
-  }
-
-  SkipListVHandle();
-  SkipListVHandle(const SkipListVHandle &rhs) = delete;
-
-  bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
-  VarStr *ReadWithVersion(uint64_t sid);
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
-  void GarbageCollect();
-  void Prefetch() const {}
-  void FinalizeVersions();
-
-  const size_t nr_versions() const { return size; }
-};
-
-static_assert(sizeof(SkipListVHandle) <= 64, "SortedBlockVHandle is larger than a cache line");
-#endif
-
 class RowEntity;
 class DataSlicer;
 
@@ -114,7 +48,7 @@ class SortedArrayVHandle : public BaseVHandle {
   short this_coreid;
   unsigned int capacity;
   unsigned int size;
-  unsigned int value_mark;
+  // unsigned int value_mark;
   std::atomic_uint latest_version;
   uint64_t *versions;
   util::OwnPtr<RowEntity> row_entity;

@@ -105,7 +105,6 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
 
 void EpochClient::InitializeEpoch()
 {
-  // TODO: Add epoch management here? At least right now this is essential.
   util::Instance<EpochManager>().DoAdvance(this);
 
   util::Impl<PromiseAllocationService>().Reset();
@@ -145,10 +144,16 @@ void EpochClient::ExecuteEpoch()
       new felis::RowScannerRoutine());
   }
   IssueTransactions(1, std::mem_fn(&BaseTxn::RunAndAssignSchedulingKey));
-  RunTxnPromises("Epoch Execution", []() {});
+  RunTxnPromises(
+      "Epoch Execution",
+      [this]() {
+        if (util::Instance<EpochManager>().current_epoch_nr() + 1 < kMaxEpoch) {
+          InitializeEpoch();
+        }
+      });
 }
 
-const size_t EpochExecutionDispatchService::kMaxItemPerCore = 2 << 20;
+const size_t EpochExecutionDispatchService::kMaxItemPerCore = 4 << 20;
 const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
@@ -461,7 +466,7 @@ static constexpr size_t kEpochMemoryLimit = 256 << 20;
 EpochMemory::EpochMemory(mem::Pool *pool)
     : pool(pool)
 {
-  logger->info("Setting up epoch memory pool and brks");
+  logger->info("Allocating EpochMemory");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
     brks[i].mem = (uint8_t *) pool->Alloc();
@@ -471,6 +476,7 @@ EpochMemory::EpochMemory(mem::Pool *pool)
 
 EpochMemory::~EpochMemory()
 {
+  logger->info("Freeing EpochMemory");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
     pool->Free(brks[i].mem);
@@ -481,7 +487,7 @@ Epoch *EpochManager::epoch(uint64_t epoch_nr) const
 {
   abort_if(epoch_nr != cur_epoch_nr, "Confused by epoch_nr {} since current epoch is {}",
            epoch_nr, cur_epoch_nr)
-  return cur_epoch;
+  return cur_epoch.get();
 }
 
 uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const
@@ -491,8 +497,10 @@ uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) cons
 
 void EpochManager::DoAdvance(EpochClient *client)
 {
+  cur_epoch.reset();
   cur_epoch_nr++;
-  cur_epoch = new Epoch(cur_epoch_nr, client, pool);
+  cur_epoch.reset(new Epoch(cur_epoch_nr, client, pool));
+  logger->info("We are going into epoch {}", cur_epoch_nr);
 }
 
 EpochManager::EpochManager(mem::Pool *pool)
