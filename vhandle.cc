@@ -178,7 +178,11 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   unsigned int latest = latest_version.load();
 
   if (sid > versions[latest]) {
-    start = versions + latest;
+    start = versions + latest + 1;
+    if (sid <= *start) {
+      p = start;
+      goto found;
+    }
   } else {
     end = versions + latest + 1;
   }
@@ -187,6 +191,7 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   if (p == versions) {
     return nullptr;
   }
+found:
   pos = --p - versions;
   auto objects = versions + capacity;
   return &objects[pos];

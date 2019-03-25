@@ -33,7 +33,7 @@ class MasstreeIndex {
     Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
              const VarStr *terminate_key);
 
-    void Next();
+    void Next() __attribute__((noinline));
     bool IsValid() const;
 
     const VarStr &key() const { return cur_key; }
@@ -56,7 +56,7 @@ class MasstreeIndex {
   VHandle *InsertOrDefault(const VarStr *k, std::function<VHandle * ()> default_func);
   VHandle *Search(const VarStr *k);
 
-  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr);
+  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) __attribute__((noinline));
 
   size_t nr_unique_keys() const {
     size_t rs = 0;

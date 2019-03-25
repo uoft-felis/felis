@@ -236,6 +236,20 @@ template <class O> O &Instance() noexcept
   }
 }
 
+// Prefetch a lot of pointers
+template <typename Iterator>
+static inline void Prefetch(Iterator begin, Iterator end)
+{
+  for (auto p = begin; p != end; ++p) {
+    __builtin_prefetch(*p);
+  }
+}
+
+static inline void Prefetch(std::initializer_list<void *> arg)
+{
+  Prefetch(arg.begin(), arg.end());
+}
+
 // Interface implementation. The real implementation usually is in iface.cc
 template <class IFace> IFace &Impl() noexcept;
 

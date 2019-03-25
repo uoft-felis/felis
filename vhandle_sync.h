@@ -36,4 +36,14 @@ class SpinnerSlot : public VHandleSyncService {
 
 }
 
+namespace util {
+
+template <>
+struct InstanceInit<felis::SpinnerSlot> {
+  static constexpr bool kHasInstance = true;
+  static inline felis::SpinnerSlot *instance = new felis::SpinnerSlot();
+};
+
+}
+
 #endif

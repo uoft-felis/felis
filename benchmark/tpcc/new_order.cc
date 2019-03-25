@@ -183,20 +183,17 @@ void NewOrderTxn::Prepare()
   for (auto &p: agg) {
     int lookup_node = p.code % nr_nodes + 1;
     int node = p.code / nr_nodes + 1;
+    uint16_t bitmap = 0;
+
+    for (auto i = 0; i < p.nr; i++) {
+      bitmap |= (1 << p.index[i]);
+    }
 
     proc
-        | TxnPipelineProc(
-            lookup_node,
-            [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
-              const auto &[state, handle, p] = ctx.value();
-              for (int i = 0; i < p.nr; i++) {
-                ctx.Yield(Tuple<int>(p.index[i]));
-              }
-              return nullopt;
-            }, p.nr, p)
         | TxnLookupMany<Stock>(
             lookup_node,
-            stock_keys, stock_keys + nr_items)
+            stock_keys, stock_keys + nr_items,
+            bitmap)
         | TxnAppendVersion(
             node,
             [](const auto &ctx, auto *handle, int i) {
@@ -216,15 +213,6 @@ void NewOrderTxn::Prepare()
           district_key);
 
   proc
-      | TxnPipelineProc(
-          lookup_node,
-          [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
-            for (int i = 0; i < ctx.nr_pipelines; i++) {
-              ctx.Yield(Tuple<int>(i));
-            }
-            return nullopt;
-          },
-          nr_items)
       | TxnLookupMany<Item>(
           lookup_node,
           item_keys, item_keys + nr_items)
@@ -232,8 +220,11 @@ void NewOrderTxn::Prepare()
           node,
           [](const auto &ctx, auto args) -> Optional<VoidValue> {
             auto &[state, index_handle] = ctx;
-            auto [handle, i] = args;
-            state->rows.items[i] = handle;
+            auto [handles, bitmap] = args;
+            for (auto i = 0; i < TxnIndexOpContext::kMaxPackedKeys; i++) {
+              if ((bitmap & (1 << i)) == 0) continue;
+              state->rows.items[i] = handles[i];
+            }
             return nullopt;
           });
 }
@@ -264,40 +255,38 @@ void NewOrderTxn::Run()
   for (auto &p: agg) {
     int node = p.code + 1;
     proc
-        | TxnPipelineProc(
-            node,
-            [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
-              const auto &[state, handle, p] = ctx.value();
-              for (int i = 0; i < p.nr; i++) {
-                ctx.Yield(Tuple<int>(p.index[i]));
-              }
-              return nullopt;
-            }, p.nr, p)
         | TxnProc(
             node,
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
               auto &[state, index_handle,
-                     params] = ctx;
-              auto i = args.template _<0>();
+                     p, params] = ctx;
 
-              logger->debug("Txn {} updating its {} row {}",
-                            index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
-
-              TxnVHandle vhandle = index_handle(state->rows.stocks[i]);
-              auto stock = vhandle.Read<Stock::Value>();
-              if (stock.s_quantity - params.quantities[i] < 10) {
-                stock.s_quantity += 91;
+              for (int t = 0; t < p.nr; t++) {
+                util::Prefetch({state->rows.stocks[p.index[t]]});
               }
-              stock.s_quantity -= params.quantities[i];
-              stock.s_ytd += params.quantities[i];
-              stock.s_remote_cnt += (params.remote_bitmap & (1 << i)) ? 1 : 0;
+              for (int t = 0; t < p.nr; t++) {
+                int i = p.index[t];
 
-              vhandle.Write(stock);
-              ClientBase::OnUpdateRow(state->rows.stocks[i]);
-              logger->debug("Txn {} updated its {} row {}",
-                            index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
+                logger->debug("Txn {} updating its {} row {}",
+                              index_handle.serial_id(), i, (void *) state->rows.stocks[i]);
+
+                TxnVHandle vhandle = index_handle(state->rows.stocks[i]);
+                auto stock = vhandle.Read<Stock::Value>();
+                if (stock.s_quantity - params.quantities[i] < 10) {
+                  stock.s_quantity += 91;
+                }
+                stock.s_quantity -= params.quantities[i];
+                stock.s_ytd += params.quantities[i];
+                stock.s_remote_cnt += (params.remote_bitmap & (1 << i)) ? 1 : 0;
+
+                vhandle.Write(stock);
+                ClientBase::OnUpdateRow(state->rows.stocks[i]);
+                logger->debug("Txn {} updated its {} row {}",
+                              index_handle.serial_id(), i,
+                              (void *)state->rows.stocks[i]);
+              }
               return nullopt;
-            }, params);
+            }, p, params);
   }
 
   auto node = Client::warehouse_to_node_id(warehouse_id);
@@ -320,34 +309,27 @@ void NewOrderTxn::Run()
           customer_id, nr_items, ts_now, all_local);
 
   proc
-      | TxnPipelineProc(
-          node,
-          [](const auto &ctx, auto _) -> Optional<Tuple<int>> {
-            for (int i = 0; i < ctx.nr_pipelines; i++) {
-              ctx.Yield(Tuple<int>(i));
-            }
-            return nullopt;
-          },
-          nr_items)
       | TxnProc(
           node,
           [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, supplier_warehouses, quantities, items] = ctx;
-            auto i = args.template _<0>();
+            auto &[state, index_handle, nr_items, supplier_warehouses, quantities, items] = ctx;
+            util::Prefetch(state->rows.items, state->rows.items + nr_items);
 
-            auto item_value = index_handle(state->rows.items[i])
-                              .template Read<Item::Value>();
-            auto amount = item_value.i_price * quantities[i];
+            for (int i = 0; i < nr_items; i++) {
+              auto item_value = index_handle(state->rows.items[i])
+                                    .template Read<Item::Value>();
+              auto amount = item_value.i_price * quantities[i];
 
-            index_handle(state->rows.orderlines[i])
-                .Write(OrderLine::Value::New(
-                    items[i], 0, amount,
-                    supplier_warehouses[i], quantities[i]));
-            ClientBase::OnUpdateRow(state->rows.orderlines[i]);
+              index_handle(state->rows.orderlines[i])
+                  .Write(OrderLine::Value::New(items[i], 0, amount,
+                                               supplier_warehouses[i],
+                                               quantities[i]));
+              ClientBase::OnUpdateRow(state->rows.orderlines[i]);
+            }
 
             return nullopt;
           },
-          supplier_warehouse_id, order_quantities, item_id);
+          nr_items, supplier_warehouse_id, order_quantities, item_id);
 }
 
 }

@@ -19,25 +19,24 @@ bool BaseTxn::TxnVHandle::WriteVarStr(VarStr *obj)
   return api->WriteWithVersion(sid, obj, epoch_nr);
 }
 
-Optional<Tuple<VHandle *, int>> BaseTxn::TxnIndexLookupOpImpl(int i, const TxnIndexOpContext &ctx)
+VHandle *BaseTxn::TxnIndexLookupOpImpl(int i, const TxnIndexOpContext &ctx)
 {
   auto &rel = util::Instance<RelationManager>()[ctx.rel_id];
   VarStr key(ctx.key_len[i], 0, ctx.key_data[i]);
   auto handle = rel.Search(&key);
-  if (handle == nullptr)
-    std::abort();
-  return Tuple<VHandle *, int>(handle, i);
+  return handle;
 }
 
 void BaseTxn::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx)
 {
   auto &rel = util::Instance<RelationManager>()[ctx.rel_id];
 
-  abort_if(ctx.nr_keys != ctx.nr_values,
-           "InsertOp should have same number of keys and values. {} != {}",
-           ctx.nr_keys, ctx.nr_values);
+  abort_if(ctx.keys_bitmap != ctx.values_bitmap,
+           "InsertOp should have same number of keys and values. bitmap {} != {}",
+           ctx.keys_bitmap, ctx.values_bitmap);
 
-  for (int i = 0; i < ctx.nr_keys; i++) {
+  for (auto i = 0; i < ctx.kMaxPackedKeys; i++) {
+    if ((ctx.keys_bitmap & (1 << i)) == 0) continue;
     VarStr key(ctx.key_len[i], 0, ctx.key_data[i]);
     auto value = (VHandle *) ctx.value_data[i];
 

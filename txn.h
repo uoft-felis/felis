@@ -104,26 +104,38 @@ class BaseTxn {
     static constexpr size_t kMaxPackedKeys = 15;
     TxnHandle handle;
     int32_t rel_id;
-    uint16_t nr_keys; // we can batch a lot of keys in the same context.
-    uint16_t nr_values;
+    // We can batch a lot of keys in the same context. We also should mark if
+    // some keys are not used at all. Therefore, we need a bitmap.
+    uint16_t keys_bitmap;
+    uint16_t values_bitmap;
 
     uint16_t key_len[kMaxPackedKeys];
     const uint8_t *key_data[kMaxPackedKeys];
-    uint64_t value_data[kMaxPackedKeys];
+    void *value_data[kMaxPackedKeys];
 
     // We don't need to worry about padding because TxnHandle is perfectly padded.
+    // One Relation ID and two bitmaps.
     static constexpr size_t kHeaderSize =
         sizeof(TxnHandle) + sizeof(int32_t) + sizeof(uint16_t) + sizeof(uint16_t);
 
     TxnIndexOpContext(TxnHandle handle, int32_t rel_id,
                       uint16_t nr_keys, VarStr **keys,
-                      uint16_t nr_values, uint64_t *values)
-        : handle(handle), rel_id(rel_id), nr_keys(nr_keys), nr_values(nr_values) {
-      for (uint32_t i = 0; i < nr_keys; i++) {
-        key_len[i] = keys[i]->len;
-        key_data[i] = keys[i]->data;
+                      uint16_t nr_values, void **values)
+        : handle(handle), rel_id(rel_id), keys_bitmap(0), values_bitmap(0) {
+      int j = 0;
+      for (int i = 0; i < nr_keys && i < kMaxPackedKeys; i++) {
+        if (keys[i] == nullptr) continue;
+        keys_bitmap |= 1 << i;
+        key_len[j] = keys[i]->len;
+        key_data[j] = keys[i]->data;
+        j++;
       }
-      memcpy(value_data, values, nr_values * sizeof(uint64_t));
+      j = 0;
+      for (int i = 0; i < nr_values && i < kMaxPackedKeys; i++) {
+        if (values[i] == nullptr) continue;
+        values_bitmap |= 1 << i;
+        value_data[j++] = values[i];
+      }
     }
 
     TxnIndexOpContext(TxnHandle handle, int32_t rel_id, VarStr *key)
@@ -137,15 +149,20 @@ class BaseTxn {
 
     size_t EncodeSize() const {
       size_t sum = 0;
-      for (uint32_t i = 0; i < nr_keys; i++) sum += 2 + key_len[i];
-      sum += nr_values * sizeof(uint64_t);
+      int nr_keys = __builtin_popcount(keys_bitmap);
+      for (auto i = 0; i < nr_keys; i++) {
+        sum += 2 + key_len[i];
+      }
+      sum += __builtin_popcount(values_bitmap) * sizeof(uint64_t);
       return kHeaderSize + sum;
     }
     uint8_t *EncodeTo(uint8_t *buf) const {
       memcpy(buf, this, kHeaderSize);
       uint8_t *p = buf + kHeaderSize;
+      int nr_keys = __builtin_popcount(keys_bitmap);
+      int nr_values = __builtin_popcount(values_bitmap);
 
-      for (uint16_t i = 0; i < nr_keys; i++) {
+      for (auto i = 0; i < nr_keys; i++) {
         memcpy(p, &key_len[i], 2);
         memcpy(p + 2, key_data[i], key_len[i]);
         p += 2 + key_len[i];
@@ -160,7 +177,10 @@ class BaseTxn {
       memcpy(this, buf, kHeaderSize);
 
       const uint8_t *p = buf + kHeaderSize;
-      for (uint16_t i = 0; i < nr_keys; i++) {
+      int nr_keys = __builtin_popcount(keys_bitmap);
+      int nr_values = __builtin_popcount(values_bitmap);
+
+      for (auto i = 0; i < nr_keys; i++) {
         memcpy(&key_len[i], p, 2);
         key_data[i] = (uint8_t *) p + 2;
         p += 2 + key_len[i];
@@ -182,11 +202,16 @@ class BaseTxn {
   }
 
   template <typename TableT, typename KeyIter>
-  TxnIndexOpContext IndexContext(const KeyIter &begin, const KeyIter &end) {
+  TxnIndexOpContext IndexContext(const KeyIter &begin, const KeyIter &end,
+                                 uint16_t keys_bitmap = 0xFFFF) {
     VarStr *keys[end - begin];
     int i = 0;
     for (auto it = begin; it != end; ++it, i++) {
-      keys[i] = it->EncodeFromRoutine();
+      if ((keys_bitmap & (1 << i)) == 0) {
+        keys[i] = nullptr;
+      } else {
+        keys[i] = it->EncodeFromRoutine();
+      }
     }
     return TxnIndexOpContext(index_handle(), static_cast<int>(TableT::kTable),
                              end - begin, keys);
@@ -194,39 +219,56 @@ class BaseTxn {
 
   template <typename TableT, typename KeyIter>
   TxnIndexOpContext IndexContext(const KeyIter &begin, const KeyIter &end,
-                                 VHandle **values) {
+                                 VHandle **values, uint16_t keys_bitmap = 0xFFFF) {
     VarStr *keys[end - begin];
     int i = 0;
     for (auto it = begin; it != end; ++it, i++) {
-      keys[i] = it->EncodeFromRoutine();
+      if ((keys_bitmap & (1 << i)) == 0) {
+        keys[i] = nullptr;
+      } else {
+        keys[i] = it->EncodeFromRoutine();
+      }
     }
     return TxnIndexOpContext(index_handle(), static_cast<int>(TableT::kTable),
-                             end - begin, keys, end - begin, (uint64_t *) values);
+                             end - begin, keys, end - begin, (void **) values);
   }
 
   template <typename TableT>
   std::tuple<TxnIndexOpContext,
              int,
-             Optional<Tuple<VHandle *, int>> (*)(const TxnIndexOpContext &, DummyValue)>
+             Optional<Tuple<std::vector<VHandle *>, uint16_t>> (*)(const TxnIndexOpContext &, DummyValue)>
   TxnLookup(int node, const typename TableT::Key &key) {
     return std::make_tuple(
-        IndexContext<TableT>(key),
-        node,
-        [](const TxnIndexOpContext &ctx, DummyValue _) -> Optional<Tuple<VHandle *, int>> {
-          return TxnIndexLookupOpImpl(0, ctx);
+        IndexContext<TableT>(key), node,
+        [](const TxnIndexOpContext &ctx,
+           DummyValue _) -> Optional<Tuple<std::vector<VHandle *>, uint16_t>> {
+          abort_if(ctx.keys_bitmap != 0x01, "ctx.keys_bitmap != 0x01 {}",
+                   ctx.keys_bitmap);
+          VHandle *handle = TxnIndexLookupOpImpl(0, ctx);
+          std::vector<VHandle *> res;
+          res.push_back(handle);
+          return Tuple<std::vector<VHandle *>, uint16_t>(res, 0x01);
         });
   }
 
   template <typename TableT, typename KeyIter>
   std::tuple<TxnIndexOpContext,
              int,
-             Optional<Tuple<VHandle *, int>> (*)(const TxnIndexOpContext &, Tuple<int>)>
-  TxnLookupMany(int node, KeyIter begin, KeyIter end) {
+             Optional<Tuple<std::vector<VHandle *>, uint16_t>> (*)(const TxnIndexOpContext &, DummyValue)>
+  TxnLookupMany(int node, KeyIter begin, KeyIter end, uint16_t keys_bitmap = 0xFFFF) {
     return std::make_tuple(
-        IndexContext<TableT>(begin, end),
+        IndexContext<TableT>(begin, end, keys_bitmap),
         node,
-        [](const TxnIndexOpContext &ctx, Tuple<int> selector) -> Optional<Tuple<VHandle *, int>> {
-          return TxnIndexLookupOpImpl(selector._<0>(), ctx);
+        [](const TxnIndexOpContext &ctx, DummyValue _)
+        -> Optional<Tuple<std::vector<VHandle *>, uint16_t>> {
+          std::vector<VHandle *> rows;
+          int j = 0;
+          for (auto i = 0; i < ctx.kMaxPackedKeys; i++) {
+            if ((ctx.keys_bitmap & (1 << i)) == 0) continue;
+            rows.push_back(TxnIndexLookupOpImpl(j, ctx));
+            j++;
+          }
+          return Tuple<std::vector<VHandle *>, uint16_t>(rows, ctx.keys_bitmap);
         });
   }
 
@@ -234,9 +276,9 @@ class BaseTxn {
   std::tuple<TxnIndexOpContext,
              int,
              Optional<VoidValue> (*)(const TxnIndexOpContext &, DummyValue)>
-  TxnInsert(int node, KeyIter begin, KeyIter end, VHandle **values) {
+  TxnInsert(int node, KeyIter begin, KeyIter end, VHandle **values, uint16_t bitmap = 0xFFFF) {
     return std::make_tuple(
-        IndexContext<TableT>(begin, end, values),
+        IndexContext<TableT>(begin, end, values, bitmap),
         node,
         [](const TxnIndexOpContext &ctx, DummyValue _) -> Optional<VoidValue> {
           TxnIndexInsertOpImpl(ctx);
@@ -255,7 +297,7 @@ class BaseTxn {
   }
 
  protected:
-  static Optional<Tuple<VHandle *, int>> TxnIndexLookupOpImpl(int i, const TxnIndexOpContext &);
+  static VHandle *TxnIndexLookupOpImpl(int i, const TxnIndexOpContext &) __attribute__((noinline));
   static void TxnIndexInsertOpImpl(const TxnIndexOpContext &);
 };
 
@@ -276,24 +318,30 @@ class Txn : public BaseTxn {
   template <typename Func, typename ...Types>
   std::tuple<ContextType<void *, Types...>,
              int,
-             Optional<VoidValue> (*)(const ContextType<void *, Types...>&, Tuple<VHandle *, int>)>
+             Optional<VoidValue> (*)(const ContextType<void *, Types...>&, Tuple<std::vector<VHandle *>, uint16_t>)>
   TxnAppendVersion(int node, Func func, Types... params) {
     void * p = (void *) (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) func;
     return std::make_tuple(
         ContextType<void *, Types...>(state, index_handle(), p, params...),
         node,
-        [](const ContextType<void *, Types...> &ctx, Tuple<VHandle *, int> args) -> Optional<VoidValue> {
+        [](const ContextType<void *, Types...> &ctx, Tuple<std::vector<VHandle *>, uint16_t> args) -> Optional<VoidValue> {
           void *p = ctx.template _<2>();
           auto state = ctx.template _<0>();
           auto index_handle = ctx.template _<1>();
-          auto [handle, selector] = args;
+          auto [handles, bitmap] = args;
+          auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) p;
 
-          if (handle) {
+          int j = 0;
+          for (auto i = 0; i < TxnIndexOpContext::kMaxPackedKeys; i++) {
+            if ((bitmap & (1 << i)) == 0) continue;
+            __builtin_prefetch(handles[j]);
+            fp(ctx, handles[j++], i);
+          }
+
+          for (auto &handle: handles) {
             while (!index_handle(handle).AppendNewVersion());
           }
 
-          auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) p;
-          fp(ctx, handle, selector);
           return nullopt;
         });
   }

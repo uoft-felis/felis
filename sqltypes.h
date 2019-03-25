@@ -319,7 +319,7 @@ struct Serializer<std::vector<T>> {
   static void DecodeFrom(ObjectType *p, const uint8_t *buf) {
     size_t len;
     memcpy(&len, buf, sizeof(size_t));
-    p->reserve(len);
+    p->resize(len);
     memcpy(p->data(), buf + sizeof(size_t), len * sizeof(T));
   }
 };
