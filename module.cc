@@ -83,9 +83,7 @@ class AllocatorModule : public Module<CoreModule> {
         });
     for (auto &t: tasks) t.join();
 
-    logger->info("Memory used: {}MB in regular pages, {}MB in huge pages.",
-                 mem::BasicPool::g_total_page_mem.load() / (1 << 20),
-                 mem::BasicPool::g_total_hugepage_mem.load() / (1 << 20));
+    logger->info("Memory allocated: {}MB in total", mem::TotalMemoryAllocated() >> 20);
   }
 };
 

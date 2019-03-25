@@ -28,7 +28,7 @@ struct Config {
   bool uniform_item_distribution = false;
 
   size_t nr_items = 100000;
-  size_t nr_warehouses = 8;
+  size_t nr_warehouses = 16;
   size_t districts_per_warehouse = 10;
   size_t customers_per_district = 3000;
 
@@ -240,16 +240,27 @@ enum LoaderType {
   Warehouse, Item, Stock, District, Customer, Order
 };
 
+class BaseLoader : public tpcc::ClientBase {
+ public:
+  void SetAllocAffinity(int w);
+  static void RestoreAllocAffinity() {
+    mem::SetThreadLocalAllocAffinity(-1);
+  }
+  using tpcc::ClientBase::ClientBase;
+};
+
 template <enum LoaderType TLN>
-class Loader : public go::Routine, public tpcc::ClientBase {
+class Loader : public go::Routine, public BaseLoader {
   std::mutex *m;
   std::atomic_int *count_down;
  public:
   Loader(unsigned long seed, std::mutex *w, std::atomic_int *c)
-      : m(w), count_down(c), ClientBase(
+      : m(w), count_down(c), BaseLoader(
           util::FastRandom(seed),
           util::Instance<felis::NodeConfiguration>().node_id(),
-          util::Instance<felis::NodeConfiguration>().nr_nodes()){}  void DoLoad();
+          util::Instance<felis::NodeConfiguration>().nr_nodes()){}
+
+  void DoLoad();
   virtual void Run() {
     DoLoad();
     if (count_down->fetch_sub(1) == 1)

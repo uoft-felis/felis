@@ -26,7 +26,7 @@ void InitializeLogger(const std::string &hostname)
   }
 
   logger->set_level(spdlog::level::from_str(log_level));
-  logger->set_pattern("[%H:%M:%S.%e] [thread %t] %v");
+  logger->set_pattern("[%H:%M:%S.%e thr-%t] %v");
 }
 
 PerfLog::PerfLog()

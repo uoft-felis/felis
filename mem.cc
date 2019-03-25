@@ -23,7 +23,7 @@ struct PoolStatistics {
   long long watermark;
 };
 
-static long long g_mem_tracker[NumMemTypes];
+static std::atomic_long g_mem_tracker[NumMemTypes];
 static PoolStatistics g_pool_tracker[NumMemTypes];
 
 static ThreadLocalRegion *regions;
@@ -54,19 +54,10 @@ int CurrentAllocAffinity()
   else return go::Scheduler::CurrentThreadPoolId() - 1;
 }
 
-std::atomic_ulong BasicPool::g_total_page_mem = 0;
-std::atomic_ulong BasicPool::g_total_hugepage_mem = 0;
-
 BasicPool::BasicPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node)
     : len(cap * chunk_size), capacity(cap), alloc_type(alloc_type)
 {
   if (cap == 0) return;
-
-  if (len > (2 << 20)) {
-    g_total_hugepage_mem.fetch_add(len);
-  } else {
-    g_total_page_mem.fetch_add(len);
-  }
 
   data = MemMapAlloc(alloc_type, len);
 
@@ -241,7 +232,7 @@ void PrintMemStats() {
   logger->info("General memory statistics:");
   for (int i = 0; i < EpochQueuePool; i++) {
     auto bucket = static_cast<MemAllocType>(i);
-    auto size = g_mem_tracker[i];
+    auto size = g_mem_tracker[i].load();
     logger->info("   {}: {} MB", MemTypeToString(bucket), size / 1024 / 1024);
   }
 
@@ -251,7 +242,7 @@ void PrintMemStats() {
     auto const &stats = g_pool_tracker[bucket];
     auto used = stats.used < 0 ? 0 : stats.used;
     logger->info("    {}: {}/{} MB used (max {} MB)", MemTypeToString(bucket),
-                 used / 1024 / 1024, g_mem_tracker[bucket] / 1024 / 1024,
+                 used / 1024 / 1024, g_mem_tracker[bucket].load() / 1024 / 1024,
                  stats.watermark / 1024 / 1024);
   }
 }
@@ -260,7 +251,7 @@ void *MemMap(MemAllocType alloc_type, void *addr, size_t length, int prot, int f
              int fd, off_t offset) {
   void *mem = mmap(addr, length, prot, flags, fd, offset);
 
-  g_mem_tracker[alloc_type] += length;
+  g_mem_tracker[alloc_type].fetch_add(length);
 
   if (mem == MAP_FAILED) {
     perror(MemTypeToString(alloc_type).c_str());
@@ -269,6 +260,15 @@ void *MemMap(MemAllocType alloc_type, void *addr, size_t length, int prot, int f
   }
 
   return mem;
+}
+
+long TotalMemoryAllocated()
+{
+  long s = 0;
+  for (auto i = 0; i < NumMemTypes; i++) {
+    s += g_mem_tracker[i].load();
+  }
+  return s;
 }
 
 }

@@ -72,9 +72,6 @@ class BasicPool {
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
-
-  static std::atomic_ulong g_total_page_mem;
-  static std::atomic_ulong g_total_hugepage_mem;
 };
 
 // Thread-Safe version
@@ -219,7 +216,10 @@ MemMapAlloc(mem::MemAllocType alloc_type, size_t length)
   return data;
 }
 
+long TotalMemoryAllocated();
+
 }
+
 std::string MemTypeToString(mem::MemAllocType alloc_type);
 
 #endif /* MEM_H */

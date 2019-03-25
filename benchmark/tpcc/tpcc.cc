@@ -379,6 +379,11 @@ bool ClientBase::is_warehouse_hotspot(uint wid)
 
 namespace loaders {
 
+void BaseLoader::SetAllocAffinity(int w)
+{
+  mem::SetThreadLocalAllocAffinity((w - min_warehouse) % NodeConfiguration::g_nr_threads);
+}
+
 template <>
 void Loader<LoaderType::Warehouse>::DoLoad()
 {
@@ -389,7 +394,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
     // still make some sense, except it's not well balanced.
 
     util::PinToCPU(i - min_warehouse + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(i - min_warehouse);
+    SetAllocAffinity(i);
 
     auto k = Warehouse::Key::New(i);
     auto v = Warehouse::Value();
@@ -418,7 +423,8 @@ void Loader<LoaderType::Warehouse>::DoLoad()
   }
 
   util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
-  mem::SetThreadLocalAllocAffinity(-1);
+  RestoreAllocAffinity();
+
   relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
   logger->info("Warehouse Table loading done.");
 }
@@ -466,7 +472,7 @@ void Loader<LoaderType::Stock>::DoLoad()
   VHandle *handle = nullptr;
   for (uint w = min_warehouse; w <= max_warehouse; w++) {
     util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
+    SetAllocAffinity(w);
 
     for(size_t i = 1; i <= kTPCCConfig.nr_items; i++) {
       const auto k = Stock::Key::New(w, i);
@@ -515,7 +521,8 @@ void Loader<LoaderType::Stock>::DoLoad()
   relation(TableType::StockData).set_key_length(sizeof(StockData::Key));
 
   util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
-  mem::SetThreadLocalAllocAffinity(-1);
+  RestoreAllocAffinity();
+
   logger->info("Stock Table loading done.");
 }
 
@@ -525,7 +532,7 @@ void Loader<LoaderType::District>::DoLoad()
   void *large_buf = alloca(1024);
   for (uint w = min_warehouse; w <= max_warehouse; w++) {
     util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
+    SetAllocAffinity(w);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       const auto k = District::Key::New(w, d);
@@ -549,7 +556,8 @@ void Loader<LoaderType::District>::DoLoad()
   }
   relation(TableType::District).set_key_length(sizeof(District::Key));
   util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
-  mem::SetThreadLocalAllocAffinity(-1);
+  RestoreAllocAffinity();
+
   logger->info("District Table loading done.");
 }
 
@@ -561,7 +569,7 @@ void Loader<LoaderType::Customer>::DoLoad()
 
   for (uint w = min_warehouse; w <= max_warehouse; w++) {
     util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
+    SetAllocAffinity(w);
 
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       for (uint cidx0 = 0; cidx0 < kTPCCConfig.customers_per_district; cidx0++) {
@@ -640,7 +648,7 @@ void Loader<LoaderType::Customer>::DoLoad()
   relation(TableType::History).set_key_length(sizeof(History::Key));
   logger->info("Customer Table loading done.");
   util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
-  mem::SetThreadLocalAllocAffinity(-1);
+  RestoreAllocAffinity();
 }
 
 template <>
@@ -651,7 +659,8 @@ void Loader<LoaderType::Order>::DoLoad()
 
   for (uint w = min_warehouse; w <= max_warehouse; w++) {
     util::PinToCPU(w - min_warehouse + NodeConfiguration::g_core_shifting);
-    mem::SetThreadLocalAllocAffinity(w - min_warehouse);
+    SetAllocAffinity(w);
+
     for (uint d = 1; d <= kTPCCConfig.districts_per_warehouse; d++) {
       std::set<uint> c_ids_s;
       std::vector<uint> c_ids;
@@ -738,7 +747,8 @@ void Loader<LoaderType::Order>::DoLoad()
   relation(TableType::NewOrder).set_key_length(sizeof(NewOrder::Key));
   relation(TableType::OrderLine).set_key_length(sizeof(OrderLine::Key));
   util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
-  mem::SetThreadLocalAllocAffinity(-1);
+  RestoreAllocAffinity();
+
   logger->info("Order Table loading done.");
 }
 

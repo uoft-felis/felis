@@ -153,7 +153,7 @@ void EpochClient::ExecuteEpoch()
       });
 }
 
-const size_t EpochExecutionDispatchService::kMaxItemPerCore = 512 << 10;
+const size_t EpochExecutionDispatchService::kMaxItemPerCore = 4 << 20;
 const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
@@ -232,7 +232,8 @@ again:
 
     if (key == 0) {
       auto pos = zend + zdelta++;
-      abort_if(pos >= zlimit, "Preallocation of DispatchService is too small");
+      abort_if(pos >= zlimit,
+               "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
       zq.q[pos] = r;
     } else {
       auto pos = pend + pdelta++;
@@ -417,8 +418,8 @@ void EpochExecutionDispatchService::PrintInfo()
   puts("===================================");
 }
 
-static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 128ULL << 20;
-static constexpr size_t kEpochPromiseAllocationMainLimit = 64ULL << 20;
+static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 256ULL << 20;
+static constexpr size_t kEpochPromiseAllocationMainLimit = 128ULL << 20;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()
 {
