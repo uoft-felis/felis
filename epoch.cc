@@ -153,7 +153,7 @@ void EpochClient::ExecuteEpoch()
       });
 }
 
-const size_t EpochExecutionDispatchService::kMaxItemPerCore = 4 << 20;
+const size_t EpochExecutionDispatchService::kMaxItemPerCore = 512 << 10;
 const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
@@ -417,8 +417,8 @@ void EpochExecutionDispatchService::PrintInfo()
   puts("===================================");
 }
 
-static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 2ULL << 28;
-static constexpr size_t kEpochPromiseAllocationMainLimit = 1ULL << 28;
+static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 128ULL << 20;
+static constexpr size_t kEpochPromiseAllocationMainLimit = 64ULL << 20;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()
 {
@@ -434,7 +434,7 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
     minibrks[i].move(mem::Brk(
         brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
   }
-  logger->info("Memory used: PromiseAllocator {}GB", acc >> 30);
+  logger->info("Memory allocated: PromiseAllocator {}GB", acc >> 30);
 }
 
 void *EpochPromiseAllocationService::Alloc(size_t size)
@@ -455,6 +455,7 @@ void *EpochPromiseAllocationService::Alloc(size_t size)
 void EpochPromiseAllocationService::Reset()
 {
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
+    logger->info("  PromiseAllocator {} used {}MB. Resetting now.", i, brks[i].current_size() >> 20);
     brks[i].Reset();
     minibrks[i].move(
         mem::Brk(brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
