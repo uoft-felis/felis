@@ -26,7 +26,6 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
     }
     if (!IsPendingVal(oldval))
       return;
-    oldval = *addr;
   }
 }
 
