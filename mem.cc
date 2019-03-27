@@ -28,11 +28,13 @@ static PoolStatistics g_pool_tracker[NumMemTypes];
 
 static ThreadLocalRegion *regions;
 static size_t nr_regions;
+static size_t g_cluster = 0;
 
-void InitThreadLocalRegions(int tot)
+void InitThreadLocalRegions(int tot, int cluster)
 {
   nr_regions = tot;
   regions = new ThreadLocalRegion[tot];
+  g_cluster = cluster;
 }
 
 ThreadLocalRegion &GetThreadLocalRegion(int idx)
@@ -41,17 +43,17 @@ ThreadLocalRegion &GetThreadLocalRegion(int idx)
   return regions[idx];
 }
 
-static __thread int gAffinity = -1;
+static __thread int g_affinity = -1;
 
 void SetThreadLocalAllocAffinity(int h)
 {
-  gAffinity = h;
+  g_affinity = h / g_cluster;
 }
 
 int CurrentAllocAffinity()
 {
-  if (gAffinity != -1) return gAffinity;
-  else return go::Scheduler::CurrentThreadPoolId() - 1;
+  if (g_affinity != -1) return g_affinity;
+  else return (go::Scheduler::CurrentThreadPoolId() - 1) / g_cluster;
 }
 
 BasicPool::BasicPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node)
@@ -95,6 +97,22 @@ BasicPool::~BasicPool()
     munmap(data, len);
 }
 
+long BasicPool::CheckPointer(void *ptr)
+{
+  if (ptr < data || ptr >= (uint8_t *) data + len) {
+    fprintf(stderr, "%p is out of bounds %p - %p\n",
+            ptr, data, (uint8_t *) data + len);
+    std::abort();
+  }
+  auto r = std::div((uint8_t *) ptr - (uint8_t *) data, (long long) len / capacity);
+  if (r.rem != 0) {
+    fprintf(stderr, "%p is not aligned. %p with chunk_size %lu\n",
+            ptr, data, len / capacity);
+    std::abort();
+  }
+  return r.quot;
+}
+
 void *BasicPool::Alloc()
 {
   void *r = nullptr, *next = nullptr;
@@ -106,11 +124,7 @@ void *BasicPool::Alloc()
     return r;
   }
 
-  if (r < data || r >= (uint8_t *) data + len) {
-    fprintf(stderr, "0x%p is out of bounds 0x%p - 0x%p\n",
-            r, data, (uint8_t *) data + len);
-    std::abort();
-  }
+  CheckPointer(r);
 
   next = (void *) *(uintptr_t *) r;
   head = next;
@@ -126,10 +140,7 @@ void *BasicPool::Alloc()
 
 void BasicPool::Free(void *ptr)
 {
-  if (ptr < data || ptr >= (uint8_t *) data + len) {
-    fprintf(stderr, "Cannot free out of bounds pointer! 0x%p\n", ptr);
-    std::abort();
-  }
+  CheckPointer(ptr);
 
   *(uintptr_t *) ptr = (uintptr_t) head;
   head = ptr;

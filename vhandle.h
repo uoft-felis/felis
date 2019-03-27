@@ -4,6 +4,7 @@
 #define VHANDLE_H
 
 #include <atomic>
+#include "gopp/gopp.h"
 #include "felis_probes.h"
 #include "mem.h"
 #include "sqltypes.h"
@@ -44,7 +45,7 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class DataSlicer;
 
   std::atomic_bool lock;
-  short alloc_by_coreid;
+  short alloc_by_regionid;
   short this_coreid;
   unsigned int capacity;
   unsigned int size;
@@ -55,7 +56,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
  public:
   static void *operator new(size_t nr_bytes) {
-    return pools[mem::CurrentAllocAffinity()].Alloc();
+    return pools[go::Scheduler::CurrentThreadPoolId() - 1].Alloc();
   }
 
   static void operator delete(void *ptr) {

@@ -72,6 +72,8 @@ class BasicPool {
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
+
+  long CheckPointer(void *ptr);
 };
 
 // Thread-Safe version
@@ -97,7 +99,7 @@ class Region {
  public:
   Region() {
     for (int i = 0; i < kMaxPools; i++) {
-      proposed_caps[i] = 1 << (25 - 5 - i);
+      proposed_caps[i] = 2 << (20 - 5 - i);
     }
   }
 
@@ -116,14 +118,16 @@ class Region {
 
   void set_pool_capacity(size_t sz, size_t cap) {
     proposed_caps[SizeToClass(sz)] = cap;
+    /*
     fprintf(stderr, "%lu, bin %d, cap %lu, estimate size %.1lfMB\n", sz,
 	    SizeToClass(sz), cap,
 	    (1 << (SizeToClass(sz) + 5)) * cap * 1. / 1024 / 1024);
+    */
   }
 
   void InitPools(int node = -1) {
     for (int i = 0; i < kMaxPools; i++) {
-      new (&pools[i]) BasicPool(mem::RegionPool, 1 << (i + 5), proposed_caps[i], node);
+      new (&pools[i]) Pool(mem::RegionPool, 1 << (i + 5), proposed_caps[i], node);
     }
   }
 
@@ -133,7 +137,7 @@ class Region {
 
 using ThreadLocalRegion = Region;
 
-void InitThreadLocalRegions(int tot);
+void InitThreadLocalRegions(int tot, int cluster);
 ThreadLocalRegion &GetThreadLocalRegion(int idx);
 
 int CurrentAllocAffinity();

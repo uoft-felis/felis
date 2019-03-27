@@ -130,10 +130,7 @@ class EpochObject {
 // node_id and the offset.
 class EpochMemory {
  protected:
-  struct {
-    uint8_t *mem;
-    uint64_t off;
-  } brks[NodeConfiguration::kMaxNrNode];
+  mem::Brk brks[NodeConfiguration::kMaxNrNode];
   mem::Pool *pool;
 
   friend class EpochManager;
@@ -153,8 +150,8 @@ class Epoch : public EpochMemory {
   Epoch(uint64_t epoch_nr, EpochClient *client, mem::Pool *pool) : epoch_nr(epoch_nr), client(client), EpochMemory(pool) {}
   template <typename T>
   EpochObject<T> AllocateEpochObject(int node_id) {
-    auto off = brks[node_id - 1].off;
-    brks[node_id - 1].off += util::Align(sizeof(T));
+    auto off = brks[node_id - 1].current_size();
+    brks[node_id - 1].Alloc(util::Align(sizeof(T)));
     return EpochObject<T>(epoch_nr, node_id, off);
   }
 

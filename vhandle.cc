@@ -19,20 +19,21 @@ SortedArrayVHandle::SortedArrayVHandle()
   capacity = 4;
   // value_mark = 0;
   size = 0;
-  this_coreid = alloc_by_coreid = mem::CurrentAllocAffinity();
+  this_coreid = go::Scheduler::CurrentThreadPoolId() - 1;
+  alloc_by_regionid = mem::CurrentAllocAffinity();
 
-  versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_coreid).Alloc(2 * capacity * sizeof(uint64_t));
+  versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_regionid).Alloc(2 * capacity * sizeof(uint64_t));
   latest_version.store(0);
 }
 
-static void EnlargePair64Array(uint64_t *old_p, uint old_cap, int old_coreid,
-			       uint64_t *&new_p, uint &new_cap, int new_coreid)
+static void EnlargePair64Array(uint64_t *old_p, uint old_cap, int old_regionid,
+			       uint64_t *&new_p, uint &new_cap, int new_regionid)
 {
   new_cap = 2 * old_cap;
   const size_t old_len = old_cap * sizeof(uint64_t);
   const size_t new_len = new_cap * sizeof(uint64_t);
-  auto &reg = mem::GetThreadLocalRegion(new_coreid);
-  auto &old_reg = mem::GetThreadLocalRegion(old_coreid);
+  auto &reg = mem::GetThreadLocalRegion(new_regionid);
+  auto &old_reg = mem::GetThreadLocalRegion(old_regionid);
 
   new_p = (uint64_t *) reg.Alloc(2 * new_len);
   memcpy(new_p, old_p, old_cap * sizeof(uint64_t));
@@ -43,10 +44,10 @@ static void EnlargePair64Array(uint64_t *old_p, uint old_cap, int old_coreid,
 void SortedArrayVHandle::EnsureSpace()
 {
   if (unlikely(size == capacity)) {
-    auto current_coreid = mem::CurrentAllocAffinity();
-    EnlargePair64Array(versions, capacity, alloc_by_coreid,
-		       versions, capacity, current_coreid);
-    alloc_by_coreid = current_coreid;
+    auto current_regionid = mem::CurrentAllocAffinity();
+    EnlargePair64Array(versions, capacity, alloc_by_regionid,
+		       versions, capacity, current_regionid);
+    alloc_by_regionid = current_regionid;
   }
 }
 

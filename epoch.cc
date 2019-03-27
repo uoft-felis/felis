@@ -418,7 +418,7 @@ void EpochExecutionDispatchService::PrintInfo()
   puts("===================================");
 }
 
-static constexpr size_t kEpochPromiseAllocationPerThreadLimit = 256ULL << 20;
+static constexpr size_t kEpochPromiseAllocationWorkerLimit = 1ULL << 30;
 static constexpr size_t kEpochPromiseAllocationMainLimit = 128ULL << 20;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()
@@ -428,7 +428,7 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
 
   size_t acc = 0;
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
-    auto s = kEpochPromiseAllocationPerThreadLimit;
+    auto s = kEpochPromiseAllocationWorkerLimit / NodeConfiguration::g_nr_threads;
     if (i == 0) s = kEpochPromiseAllocationMainLimit;
     brks[i].move(mem::Brk(mem::MemMapAlloc(mem::Promise, s), s));
     acc += s;
@@ -471,8 +471,8 @@ EpochMemory::EpochMemory(mem::Pool *pool)
   logger->info("Allocating EpochMemory");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
-    brks[i].mem = (uint8_t *) pool->Alloc();
-    brks[i].off = 0;
+    brks[i].move(mem::Brk((uint8_t *) pool->Alloc(), kEpochMemoryLimit));
+    brks[i].set_thread_safe(false);
   }
 }
 
@@ -481,7 +481,9 @@ EpochMemory::~EpochMemory()
   logger->info("Freeing EpochMemory");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
-    pool->Free(brks[i].mem);
+    auto ptr = brks[i].ptr();
+    pool->Free(ptr);
+    brks[i].Reset();
   }
 }
 
@@ -494,7 +496,7 @@ Epoch *EpochManager::epoch(uint64_t epoch_nr) const
 
 uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const
 {
-  return epoch(epoch_nr)->brks[node_id - 1].mem + offset;
+  return epoch(epoch_nr)->brks[node_id - 1].ptr() + offset;
 }
 
 void EpochManager::DoAdvance(EpochClient *client)
