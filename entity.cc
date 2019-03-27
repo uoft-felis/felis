@@ -79,7 +79,7 @@ mem::Pool RowEntity::pool;
 
 void RowEntity::InitPools()
 {
-  pool.move(mem::BasicPool(mem::RowEntityPool, sizeof(RowEntity), 64 << 18));
+  pool.move(mem::Pool(mem::RowEntityPool, sizeof(RowEntity), 24 << 20));
 }
 
 void RowShipmentReceiver::Run()

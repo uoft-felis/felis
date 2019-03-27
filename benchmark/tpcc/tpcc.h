@@ -28,7 +28,7 @@ struct Config {
   bool uniform_item_distribution = false;
 
   size_t nr_items = 100000;
-  size_t nr_warehouses = 16;
+  size_t nr_warehouses = 32;
   size_t districts_per_warehouse = 10;
   size_t customers_per_district = 3000;
 
@@ -245,6 +245,7 @@ class BaseLoader : public tpcc::ClientBase {
   void SetAllocAffinity(int w);
   static void RestoreAllocAffinity() {
     mem::SetThreadLocalAllocAffinity(-1);
+    felis::BaseVHandle::SetAllocAffinity(-1);
   }
   using tpcc::ClientBase::ClientBase;
 };

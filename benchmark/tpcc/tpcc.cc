@@ -381,7 +381,9 @@ namespace loaders {
 
 void BaseLoader::SetAllocAffinity(int w)
 {
-  mem::SetThreadLocalAllocAffinity((w - min_warehouse) % NodeConfiguration::g_nr_threads);
+  auto aff = (w - min_warehouse) % NodeConfiguration::g_nr_threads;
+  mem::SetThreadLocalAllocAffinity(aff);
+  felis::BaseVHandle::SetAllocAffinity(aff);
 }
 
 template <>

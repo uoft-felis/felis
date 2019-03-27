@@ -28,6 +28,8 @@ class BaseVHandle {
  public:
   static mem::Pool *pools;
   static void InitPools();
+
+  static void SetAllocAffinity(int aff);
  protected:
   EpochGCRule gc_rule;
  public:
@@ -55,9 +57,7 @@ class SortedArrayVHandle : public BaseVHandle {
   util::OwnPtr<RowEntity> row_entity;
 
  public:
-  static void *operator new(size_t nr_bytes) {
-    return pools[go::Scheduler::CurrentThreadPoolId() - 1].Alloc();
-  }
+  static void *operator new(size_t nr_bytes);
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;

@@ -181,6 +181,16 @@ void SortedArrayVHandle::GarbageCollect()
   size = 1;
 }
 
+static thread_local int g_vhandle_alloc_aff = -1;
+
+void *SortedArrayVHandle::operator new(size_t nr_bytes)
+{
+  auto aff = g_vhandle_alloc_aff;
+  if (aff == -1)
+    aff = go::Scheduler::CurrentThreadPoolId() - 1;
+  return pools[aff].Alloc();
+}
+
 mem::Pool *BaseVHandle::pools;
 
 static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
@@ -195,7 +205,12 @@ static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
 
 void BaseVHandle::InitPools()
 {
-  pools = InitPerCorePool(64, 16 << 18);
+  pools = InitPerCorePool(64, 2 << 20);
+}
+
+void BaseVHandle::SetAllocAffinity(int aff)
+{
+  g_vhandle_alloc_aff = aff;
 }
 
 #ifdef LL_REPLAY
