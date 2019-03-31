@@ -26,6 +26,20 @@ using util::Instance;
 
 namespace tpcc {
 
+Config::Config()
+{
+  uniform_item_distribution = false;
+  nr_items = 1000000;
+  nr_warehouses = 32;
+  districts_per_warehouse = 10;
+  customers_per_district = 300000;
+
+  hotspot_warehouse_bitmap = 0;
+
+  hotspot_load_percentage = 500;
+  max_supported_warehouse = 64;
+}
+
 Config kTPCCConfig;
 
 // install the TPC-C slices into the global SliceManager
@@ -74,7 +88,7 @@ void InitializeTPCC()
   if (it != conf.end()) {
     for (auto v: it->second.array_items()) {
       int hotspot_warehouse = v.int_value();
-      if (hotspot_warehouse > Config::kMaxSupportedWarehouse)
+      if (hotspot_warehouse > kTPCCConfig.max_supported_warehouse)
         continue;
       kTPCCConfig.hotspot_warehouse_bitmap |= (1 << (hotspot_warehouse - 1));
     }
@@ -257,12 +271,12 @@ uint ClientBase::PickWarehouse()
     // number generation.
     ulong rand_max = 0;
     for (auto w = min_warehouse; w <= max_warehouse; w++) {
-      if (ClientBase::is_warehouse_hotspot(w)) rand_max += Config::kHotspoLoadPercentage;
+      if (ClientBase::is_warehouse_hotspot(w)) rand_max += kTPCCConfig.hotspot_load_percentage;
       else rand_max += 100;
     }
     auto rand = long(r.next_uniform() * rand_max);
     for (auto w = min_warehouse; w <= max_warehouse; w++) {
-      if (ClientBase::is_warehouse_hotspot(w)) rand -= Config::kHotspoLoadPercentage;
+      if (ClientBase::is_warehouse_hotspot(w)) rand -= kTPCCConfig.hotspot_load_percentage;
       else rand -= 100;
       if (rand < 0)
         return w;
@@ -276,7 +290,7 @@ uint ClientBase::LoadPercentageByWarehouse()
 {
   uint load = 0;
   for (int w = min_warehouse; w <= max_warehouse; w++) {
-    if (ClientBase::is_warehouse_hotspot(w)) load += Config::kHotspoLoadPercentage;
+    if (ClientBase::is_warehouse_hotspot(w)) load += kTPCCConfig.hotspot_load_percentage;
     else load += 100;
   }
   return load / (max_warehouse - min_warehouse + 1);
@@ -785,8 +799,8 @@ static constexpr int kTPCCTxnMix[] = {
 
 felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
-  // TODO: generate standard TPC-C txn mix here
-  // currently, only NewOrder is available
+  // TODO: generate standard TPC-C txn mix here. Currently, only NewOrder,
+  // Delivery and Payment are available.
   int rd = r.next_u32() % 92;
   int txn_type_id = 0;
   while (true) {

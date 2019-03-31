@@ -15,25 +15,28 @@
 #include "util.h"
 #include "sqltypes.h"
 #include "epoch.h"
+
 #include "slice.h"
 
 namespace tpcc {
 
 struct Config {
-  bool uniform_item_distribution = false;
+  bool uniform_item_distribution;
 
-  size_t nr_items = 100000;
-  size_t nr_warehouses = 32;
-  size_t districts_per_warehouse = 10;
-  size_t customers_per_district = 3000;
+  size_t nr_items;
+  size_t nr_warehouses;
+  size_t districts_per_warehouse;
+  size_t customers_per_district;
 
-  uint64_t hotspot_warehouse_bitmap = 0; // If a warehouse is hot, the bit is 1
+  uint64_t hotspot_warehouse_bitmap; // If a warehouse is hot, the bit is 1
   std::vector<int> offload_nodes;
 
-  static constexpr uint kHotspoLoadPercentage = 500;
-  static constexpr size_t kMaxSupportedWarehouse = 64;
+  uint hotspot_load_percentage;
+  size_t max_supported_warehouse;
 
+  Config();
 };
+
 extern Config kTPCCConfig;
 
 enum class TableType : int {
