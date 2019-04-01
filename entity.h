@@ -4,6 +4,11 @@
 #define ENTITY_H
 
 #include "vhandle.h"
+#include "util.h"
+
+// Entity is the minimum item we would like to send.
+// An IndexEntity is the index of a row, and a RowEntity is a row.
+// Each Entity needs to have a ShippingHandle, in order for us to send it.
 
 namespace felis {
 
@@ -20,7 +25,7 @@ class IndexEntity {
   IndexEntity(int rel_id, VarStr *k, VHandle *handle)
       : rel_id(rel_id), k(k), handle_ptr(handle), shandle(this) {}
   ~IndexEntity();
-  IndexEntity(const IndexEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
+  IndexEntity(const IndexEntity &rhs) = delete; // C++17 has guaranteed copy-ellision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
   bool ShouldSkip() { return false; }
@@ -29,18 +34,6 @@ class IndexEntity {
 
   void DecodeIOVec(struct iovec *vec);
 };
-
-using IndexSliceScanner = ObjectSliceScanner<IndexEntity>;
-using IndexShipment = felis::Shipment<felis::IndexEntity>;
-
-class IndexShipmentReceiver : public ShipmentReceiver<IndexEntity> {
- public:
-  IndexShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<IndexEntity>(sock) {}
-  ~IndexShipmentReceiver();
-
-  void Run() override final;
-};
-
 
 class RowEntity {
   friend class RowShipmentReceiver;
@@ -55,7 +48,7 @@ class RowEntity {
   RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id);
   RowEntity() : RowEntity(-1, nullptr, nullptr, -1) {}
   ~RowEntity() { delete k; }
-  RowEntity(const RowEntity &rhs) = delete; // C++17 has gauranteed copy-ellision! :)
+  RowEntity(const RowEntity &rhs) = delete; // C++17 has guaranteed copy-ellision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
   bool ShouldSkip();
@@ -77,18 +70,6 @@ class RowEntity {
   static void InitPools();
   static mem::Pool pool;
 };
-
-using RowSliceScanner = ObjectSliceScanner<RowEntity>;
-using RowShipment = felis::Shipment<RowEntity>;
-
-class RowShipmentReceiver : public ShipmentReceiver<RowEntity> {
- public:
-  RowShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<RowEntity>(sock) {}
-  ~RowShipmentReceiver() {delete sock;}
-
-  void Run() override final;
-};
-
 
 }
 #endif /* ENTITY_H */

@@ -104,12 +104,9 @@ void NewOrderTxn::PrepareInsert()
 
   auto oorder_id = client->relation(OOrder::kTable).AutoIncrement(auto_inc_zone);
   auto oorder_key = OOrder::Key::New(warehouse_id, district_id, oorder_id);
-  auto oorder_value = new VHandle();
+  auto oorder_value = CreateNewRow<OOrder>(oorder_key);
   auto neworder_key = NewOrder::Key::New(warehouse_id, district_id, oorder_id, customer_id);
-  auto neworder_value = new VHandle();
-  ClientBase::OnNewRow(warehouse_id - 1, TableType::OOrder, oorder_key, oorder_value);
-  ClientBase::OnNewRow(warehouse_id - 1, TableType::NewOrder, neworder_key, neworder_value);
-
+  auto neworder_value = CreateNewRow<NewOrder>(neworder_key);
   state->rows.oorder = oorder_value;
   state->rows.neworder = neworder_value;
 
@@ -120,11 +117,9 @@ void NewOrderTxn::PrepareInsert()
   VHandle *orderline_values[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
     orderline_keys[i] = OrderLine::Key::New(warehouse_id, district_id, oorder_id, i + 1);
-    auto row = new VHandle();
-    orderline_values[i] = row;
-    ClientBase::OnNewRow(warehouse_id - 1, TableType::OrderLine, orderline_keys[i], orderline_values[i]);
-    row->AppendNewVersion(serial_id(), epoch_nr());
-    state->rows.orderlines[i] = row;
+    orderline_values[i] = CreateNewRow<OrderLine>(orderline_keys[i]);
+    orderline_values[i]->AppendNewVersion(serial_id(), epoch_nr());
+    state->rows.orderlines[i] = orderline_values[i];
   }
 
   INIT_ROUTINE_BRK(4096);

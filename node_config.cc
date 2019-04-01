@@ -600,7 +600,7 @@ void NodeServerRoutine::Run()
       continue;
     }
 
-    logger->info("Connecting worker peer on node {}\n", config->id);
+    logger->info("Connecting worker peer on node {}", config->id);
     TcpSocket *remote_sock = new TcpSocket(1024, 512 << 20);
     auto &peer = config->worker_peer;
     bool rs = remote_sock->Connect(peer.host, peer.port);

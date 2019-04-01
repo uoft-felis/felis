@@ -10,10 +10,8 @@
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
 
-#include "util.h"
 #include "log.h"
 #include "node_config.h"
-#include "slice.h"
 
 namespace felis {
 
@@ -64,6 +62,8 @@ struct ObjectShippingHandle : public ShippingHandle {
 };
 
 
+// SliceScanner is per slice, responsible for getting Entities from SliceQueues
+// then ObjectSliceScanner can add them into its Shipment
 class SliceScanner {
  protected:
   Slice * slice;
@@ -81,6 +81,7 @@ class SliceScanner {
   static void StatAddObject();
 };
 
+// Class for sending IOVec.
 class BaseShipment {
  public:
   static constexpr int kSendBatch = 32 * IOV_MAX;
@@ -115,6 +116,9 @@ static std::atomic_ulong g_objects_skipped = 0;
  * void DecodeIOVec(struct iovec *vec);
  *
  * uint64_t encoded_len; // Stored the total data length of EncodeIOVec();
+ *
+ * Shipment is a queue of Entity, waiting to be sent.
+ * Calling it "Shipment Queue" would be easier to understand.
  */
 template <typename T>
 class Shipment : public BaseShipment {
@@ -227,6 +231,28 @@ class ShipmentReceiver : public go::Routine {
   }
 };
 
+class IndexEntity;
+class RowEntity;
+
+class IndexShipmentReceiver : public ShipmentReceiver<IndexEntity> {
+ public:
+  IndexShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<IndexEntity>(sock) {}
+  ~IndexShipmentReceiver();
+
+  void Run() override final;
+};
+
+class RowShipmentReceiver : public ShipmentReceiver<RowEntity> {
+ public:
+  RowShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<RowEntity>(sock) {}
+  ~RowShipmentReceiver() { delete sock; }
+
+  void Run() override final;
+};
+
+// ObjectSliceScanner is per Slice, it contains one Shipment (which is a queue for entities)
+// it will scan Entities from the SliceQueues (via SliceScanner) and add them to the Shipment
+// then the SliceManager can grab all the Shipments, and Shipment::RunSend()
 template <typename T>
 class ObjectSliceScanner : public SliceScanner {
   Shipment<T> *ship;
@@ -243,6 +269,7 @@ class ObjectSliceScanner : public SliceScanner {
     }
   }
 
+  // only the slices which (shipment != nullptr) will be scanned
   void Scan() {
     if (!ship) return;
     ShippingHandle *handle = nullptr;
@@ -253,6 +280,16 @@ class ObjectSliceScanner : public SliceScanner {
     }
     logger->info("ObjectSliceScanner found {} objects", cnt);
   }
+};
+
+using IndexSliceScanner = ObjectSliceScanner<IndexEntity>;
+using IndexShipment = felis::Shipment<felis::IndexEntity>;
+using RowSliceScanner = ObjectSliceScanner<RowEntity>;
+using RowShipment = felis::Shipment<RowEntity>;
+
+class RowScannerRoutine : public go::Routine {
+public:
+  void Run() final override;
 };
 
 }

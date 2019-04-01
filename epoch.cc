@@ -16,6 +16,7 @@ void EpochCallback::operator()()
   perf.End();
   perf.Show(label + std::string(" finishes"));
   mem::PrintMemStats();
+  printf("\n");
 
   // Don't call the continuation directly.
   //
@@ -111,8 +112,9 @@ void EpochClient::InitializeEpoch()
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
-  printf("load percentage %d\n", LoadPercentage());
-  total_nr_txn = kEpochBase * LoadPercentage();
+  auto load_pct = LoadPercentage();
+  logger->info("load percentage {}%", load_pct);
+  total_nr_txn = kEpochBase * load_pct;
 
   txns.reset(new BaseTxn*[total_nr_txn]);
 

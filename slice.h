@@ -1,7 +1,7 @@
 // -*- mode: c++ -*-
 
-#ifndef _SLICE_H
-#define _SLICE_H
+#ifndef SLICE_H
+#define SLICE_H
 
 #include <bitset>
 #include <mutex>
@@ -10,6 +10,8 @@
 #include "util.h"
 #include "node_config.h"
 #include "shipping.h"
+#include "log.h"
+#include "entity.h"
 
 namespace felis {
 
@@ -18,6 +20,9 @@ static constexpr int kNrMaxSlices = 1 << 23;
 class SliceScanner;
 class ShippingHandle;
 
+// SliceQueue is a queue of ShippingHandles, with /born/ in ascending order.
+// It is in fact a queue for Entities.
+// In a index slice, the queue are all IndexEntities; likewise in a row slice.
 struct SliceQueue {
   std::mutex lock;
   util::ListNode queue;
@@ -40,6 +45,12 @@ struct SliceQueue {
  *
  * To help the shipment scanner, we would like to sort the handles by their born
  * timestamp.
+ *
+ * As for implementation, Slice contains multiple SliceQueues: one for each core,
+ * and one shared queue.
+ *
+ * All the Entities will be stored in the Slice right after the row has been
+ * created, for the sake of quick scanning through when shipping is needed.
  */
 class Slice {
   friend class SliceScanner;
@@ -50,6 +61,89 @@ class Slice {
  public:
   Slice(int slice_id = 0);
   void Append(ShippingHandle *handle);
+};
+
+class VHandle;
+
+// Global Instance, manages all the Slices and ObjectSliceScanners.
+// Each Slice has several SliceQueues, and one Shipment (in ObjectSliceScanner).
+class SliceManager {
+ protected:
+  Slice **index_slices;
+  IndexSliceScanner **index_slice_scanners;
+  Slice **row_slices;
+  RowSliceScanner **row_slice_scanners;
+  size_t nr_slices;
+ private:
+  template <typename T> friend T &util::Instance() noexcept;
+  SliceManager() {}
+ public:
+  void Initialize(int nr_slices);
+  void InstallIndexSlice(int i, IndexShipment *shipment) {
+    index_slices[i] = new Slice();
+    index_slice_scanners[i] = new IndexSliceScanner(index_slices[i], shipment);
+  }
+  void InstallRowSlice(int i, RowShipment *shipment) {
+    row_slices[i] = new Slice();
+    row_slice_scanners[i] = new RowSliceScanner(row_slices[i], shipment);
+  }
+
+  template <typename TableType, typename KeyType>
+  void OnNewRow(int slice_id, TableType table, const KeyType &k, VHandle *handle) {
+    auto *kstr = k.Encode();
+    OnNewRow(slice_id, new felis::IndexEntity(int(table), kstr, handle));
+    OnNewRow(slice_id, new felis::RowEntity(int(table), kstr, handle, slice_id));
+  }
+
+  void OnUpdateRow(VHandle *handle) {
+    auto *ent = handle->row_entity.get();
+    // only RowEntity has OnUpdateRow, IndexEntity is immutable and inserts is handled elsewhere
+    OnUpdateRow(ent->slice_id(), ent);
+  }
+
+  std::vector<IndexShipment*> all_index_shipments();
+  std::vector<RowShipment*> all_row_shipments();
+
+  // only the slices which (shipment != nullptr) will be scanned
+  void ScanAllIndex() { ScanAll(index_slice_scanners); }
+  void ScanAllRow() { ScanAll(row_slice_scanners); }
+
+ private:
+  IndexEntity *OnNewRow(int slice_id, IndexEntity *ent) {
+    return OnNewRow(index_slices, index_slice_scanners, slice_id, ent);
+  }
+  RowEntity *OnNewRow(int slice_id, RowEntity *ent) {
+    return OnNewRow(row_slices, row_slice_scanners, slice_id, ent);
+  }
+  RowEntity *OnUpdateRow(int slice_id, RowEntity *ent) {
+    return OnUpdateRow(row_slice_scanners, slice_id, ent);
+  }
+
+  template <typename T, typename ScannerType>
+  T *OnNewRow(Slice ** slices, ScannerType ** scanners, int slice_idx, T *ent) {
+    slices[slice_idx]->Append(ent->shipping_handle());
+    // We still need to call MarkDirty() just in case the scanner is running in
+    // progress.
+    return OnUpdateRow(scanners, slice_idx, ent);
+  }
+
+  template <typename T, typename ScannerType>
+  T *OnUpdateRow(ScannerType **scanners, int slice_idx, T* ent) {
+    if (ent->shipping_handle()->MarkDirty()) {
+      scanners[slice_idx]->AddObject(ent);
+    }
+    return ent;
+  }
+
+  template <typename ScannerType> void ScanAll(ScannerType ** scanners) {
+    SliceScanner::ScannerBegin();
+    for (int i = 0; i < nr_slices; i++) {
+      if (scanners[i] == nullptr)
+        continue;
+      scanners[i]->Scan();
+    }
+    SliceScanner::ScannerEnd();
+  }
 };
 
 enum SliceOwnerType {
@@ -95,7 +189,6 @@ template <typename TableType>
 class SliceLocator {
  public:
   int Locate(const typename TableType::Key &key);
-  static SliceLocator<TableType> *instance;
 };
 
 }
@@ -105,6 +198,11 @@ namespace util {
 template <typename TableType>
 struct InstanceInit<felis::SliceLocator<TableType>> {
   static constexpr bool kHasInstance = true;
+  static inline felis::SliceLocator<TableType> *instance;
+
+  InstanceInit() {
+    instance = new felis::SliceLocator<TableType>();
+  }
 };
 
 template <>
@@ -119,4 +217,4 @@ struct InstanceInit<felis::SliceMappingTable> {
 
 }
 
-#endif
+#endif /* SLICE_H */

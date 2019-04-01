@@ -51,6 +51,7 @@ void SortedArrayVHandle::EnsureSpace()
   }
 }
 
+// Insert a new version into the version array, with value pending.
 bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
   bool expected = false;
@@ -59,15 +60,18 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   }
   gc_rule((VHandle *) this, sid, epoch_nr);
 
+  // append this version at the end of version array
   size++;
   EnsureSpace();
   versions[size - 1] = sid;
   auto objects = versions + capacity;
   objects[size - 1] = kPendingValue;
 
+  // find the location this version is supposed to be
   uint64_t last = versions[size - 1];
   int i = std::lower_bound(versions, versions + size - 1, last) - versions;
 
+  // move versions by 1 to make room, and put this version back
   memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
   versions[i] = last;
 
@@ -109,6 +113,10 @@ found:
   return &objects[pos];
 }
 
+// Heart of multi-versioning: reading from its preceding version.
+//   for instance, in versions we have 5, 10, 18, and sid = 13
+//   then we would like it to read version 10 (so pos = 1)
+//   but if sid = 4, then we don't have the value for it to read, then returns nullptr
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   int pos;
@@ -120,6 +128,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   return (VarStr *) *addr;
 }
 
+// Read the exact version. version_idx is the version offset in the array, not serial id
 VarStr *SortedArrayVHandle::ReadExactVersion(uint64_t version_idx)
 {
   assert(size > 0);
@@ -136,9 +145,10 @@ VarStr *SortedArrayVHandle::ReadExactVersion(uint64_t version_idx)
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run)
 {
   assert(this);
-  // Writing to exact location
+  // Finding the exact location
   auto it = std::lower_bound(versions, versions + size, sid);
   if (it == versions + size || *it != sid) {
+    // sid is greater than all the versions, or the located lower_bound isn't sid version
     logger->critical("Diverging outcomes! sid {} pos {}/{}", sid, it - versions, size);
     std::stringstream ss;
     for (int i = 0; i < size; i++) {
@@ -153,6 +163,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   auto objects = versions + capacity;
   volatile uintptr_t *addr = &objects[it - versions];
 
+  // Writing to exact location
   sync().OfferData(addr, (uintptr_t) obj);
 
   unsigned int ver = latest_version.load();
@@ -163,6 +174,16 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   }
 
   return true;
+}
+
+// just append a version, with sid = last sid + 1, and with value.
+// therefore this sid makes no sense when it comes to transaction serial id.
+void SortedArrayVHandle::WriteNewVersion(uint64_t epoch_nr, VarStr *obj) {
+  uint64_t sid;
+  while (AppendNewVersion( sid = versions[size - 1] + 1, epoch_nr)) {
+    asm("pause" : : :"memory");
+  }
+  WriteWithVersion(sid, obj, epoch_nr);
 }
 
 void SortedArrayVHandle::GarbageCollect()

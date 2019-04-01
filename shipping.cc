@@ -5,7 +5,9 @@
 
 #include "gopp/gopp.h"
 #include "shipping.h"
-#include "log.h"
+#include "slice.h"
+#include "masstree_index_impl.h"
+#include "epoch.h"
 
 namespace felis {
 
@@ -203,5 +205,85 @@ error:
   abort_if(res == 0, "EOF from the receiver side?");
   abort_if(res < 0, "Error receiving ack from the reciver side... errno={}", errno);
 }
+
+void IndexShipmentReceiver::Run()
+{
+  // clear the affinity
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
+  IndexEntity ent;
+  auto &mgr = util::Instance<RelationManager>();
+
+  logger->info("New Shipment has arrived!");
+  PerfLog perf;
+  while (Receive(&ent)) {
+    // TODO: multi-thread this?
+    auto &rel = mgr[ent.rel_id];
+    auto handle = rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
+  }
+  logger->info("Shipment processing finished");
+  perf.End();
+  perf.Show("Processing takes");
+  sock->Close();
+}
+
+IndexShipmentReceiver::~IndexShipmentReceiver()
+{
+  delete sock;
+}
+
+void RowShipmentReceiver::Run()
+{
+// clear the affinity
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
+  RowEntity ent;
+  auto &mgr = util::Instance<RelationManager>();
+
+  logger->info("New Row Shipment has arrived!");
+  PerfLog perf;
+  int count = 0;
+  while (Receive(&ent)) {
+    auto &rel = mgr[ent.rel_id];
+    auto handle = rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
+    if (handle != ent.handle_ptr) {
+      // the row existed before, so we just write a new version
+      auto var = ent.handle_ptr->ReadExactVersion(0);
+      handle->WriteNewVersion(util::Instance<EpochManager>().current_epoch_nr(), var);
+
+    }
+    // TODO: add row to its slice
+    // ent.slice_id = locate
+    count++;
+  }
+  logger->info("Row Shipment processing finished, received {} RowEntities", count);
+  perf.End();
+  perf.Show("Processing takes");
+  sock->Close();
+
+}
+
+void RowScannerRoutine::Run()
+{
+  logger->info("Scanning row...");
+  auto &slicer = util::Instance<SliceManager>();
+  slicer.ScanAllRow();
+  logger->info("Scanning row done");
+
+  auto all_shipments = slicer.all_row_shipments();
+  for (auto shipment: all_shipments) {
+    logger->info("Shipping row");
+    int iter = 0;
+    while (!shipment->RunSend())
+      iter++;
+    logger->info("Done shipping row, shipped {}/skipped {}/total {}, iter {}",
+      g_objects_shipped, g_objects_skipped, g_objects_shipped + g_objects_skipped, iter);
+  }
+}
+
 
 }

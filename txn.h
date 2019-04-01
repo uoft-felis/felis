@@ -42,8 +42,7 @@ class BaseTxn {
   VHandle *CreateNewRow(const typename TableType::Key &key) {
     auto slice_id = util::Instance<SliceLocator<TableType>>().Locate(key);
     auto row = new VHandle();
-    // TODO: Maybe add this row to the slice?
-    util::Instance<felis::DataSlicer>().OnNewRow(slice_id, TableType::kTable, key, row);
+    util::Instance<felis::SliceManager>().OnNewRow(slice_id, TableType::kTable, key, row);
     return row;
   }
 

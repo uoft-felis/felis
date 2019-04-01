@@ -15,12 +15,7 @@
 #include "util.h"
 #include "sqltypes.h"
 #include "epoch.h"
-
-namespace felis {
-
-class BaseTxn;
-
-}
+#include "slice.h"
 
 namespace tpcc {
 
@@ -136,7 +131,8 @@ struct Warehouse {
 };
 
 void InitializeTPCC();
-void RunShipment();
+void InitializeSliceManager();
+void SendIndexSnapshot();
 
 class ClientBase {
  protected:
@@ -218,11 +214,11 @@ class ClientBase {
  public:
   template <typename TableType, typename KeyType>
   static void OnNewRow(int slice_id, TableType table, const KeyType &k, felis::VHandle *handle) {
-    util::Instance<felis::DataSlicer>().OnNewRow(slice_id, table, k, handle);
+    util::Instance<felis::SliceManager>().OnNewRow(slice_id, table, k, handle);
   }
 
   static void OnUpdateRow(felis::VHandle *handle) {
-    util::Instance<felis::DataSlicer>().OnUpdateRow(handle);
+    util::Instance<felis::SliceManager>().OnUpdateRow(handle);
   }
   ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes);
   static felis::Relation &relation(TableType table);
@@ -305,6 +301,78 @@ class Client : public felis::EpochClient, public ClientBase {
 };
 
 using TxnFactory = util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *, uint64_t>;
+
+}
+
+namespace felis {
+
+class BaseTxn;
+
+template <>
+class SliceLocator<tpcc::Customer> {
+ public:
+  int Locate(const typename tpcc::Customer::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::CustomerNameIdx> {
+ public:
+  int Locate(const typename tpcc::CustomerNameIdx::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::District> {
+ public:
+  int Locate(const typename tpcc::District::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::History> {
+ public:
+  int Locate(const typename tpcc::History::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::NewOrder> {
+ public:
+  int Locate(const typename tpcc::NewOrder::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::OOrder> {
+ public:
+  int Locate(const typename tpcc::OOrder::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::OOrderCIdIdx> {
+ public:
+  int Locate(const typename tpcc::OOrderCIdIdx::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::OrderLine> {
+ public:
+  int Locate(const typename tpcc::OrderLine::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::Stock> {
+ public:
+  int Locate(const typename tpcc::Stock::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::StockData> {
+ public:
+  int Locate(const typename tpcc::StockData::Key &key);
+};
+
+template <>
+class SliceLocator<tpcc::Warehouse> {
+ public:
+  int Locate(const typename tpcc::Warehouse::Key &key);
+};
 
 }
 

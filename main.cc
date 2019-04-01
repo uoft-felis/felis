@@ -107,6 +107,7 @@ int main(int argc, char *argv[])
   abort_if(EpochClient::g_workload_client == nullptr,
            "Workload Module did not setup the EpochClient properly");
 
+  printf("\n");
   logger->info("Starting workload");
   EpochClient::g_workload_client->Start();
 

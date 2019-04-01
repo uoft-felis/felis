@@ -28,12 +28,13 @@ namespace tpcc {
 
 Config kTPCCConfig;
 
-static void InitializeDataSlicer()
+// install the TPC-C slices into the global SliceManager
+void InitializeSliceManager()
 {
-  auto &slicer = Instance<felis::DataSlicer>();
+  auto &manager = Instance<felis::SliceManager>();
   auto &conf = Instance<NodeConfiguration>();
 
-  slicer.Initialize(kTPCCConfig.nr_warehouses);
+  manager.Initialize(kTPCCConfig.nr_warehouses);
 
   for (int i = 0; i < kTPCCConfig.nr_warehouses; i++) {
     int wh = i + 1;
@@ -54,8 +55,10 @@ static void InitializeDataSlicer()
         index_shipment = new felis::IndexShipment(index_peer.host, index_peer.port, true);
       }
     }
-    slicer.InstallRowSlice(i, row_shipment);
-    slicer.InstallIndexSlice(i, index_shipment);
+
+    // if shipment is nullptr, the scanner won't scan when called ObjectSliceScanner::Scan()
+    manager.InstallRowSlice(i, row_shipment);
+    manager.InstallIndexSlice(i, index_shipment);
     if (row_shipment)
       logger->info("Installed row shipment, slice id {}", i);
     if (index_shipment)
@@ -63,6 +66,7 @@ static void InitializeDataSlicer()
   }
 }
 
+// load TPC-C related configs from module "console" to kTPCCConfig
 void InitializeTPCC()
 {
   auto conf = Instance<Console>().FindConfigSection("tpcc").object_items();
@@ -92,21 +96,21 @@ void InitializeTPCC()
   auto &mgr = Instance<RelationManager>();
   for (int table = 0; table < int(TableType::NRTable); table++) {
     std::string name = kTPCCTableNames[static_cast<int>(table)];
-
-    logger->info("Initialize TPCC Table {} id {}", name, (int)table);
     mgr.GetRelationOrCreate(int(table));
   }
+  logger->info("TPCC Table schemas created");
 
-  InitializeDataSlicer();
 }
 
-void RunShipment()
+// Scan all index slices, and ship the index shipments
+void SendIndexSnapshot()
 {
   logger->info("Scanning index...");
-  auto &slicer = Instance<felis::DataSlicer>();
-  slicer.ScanAllIndex();
+  auto &manager = Instance<felis::SliceManager>();
+  manager.ScanAllIndex();
   logger->info("Scanning index done");
-  auto all_shipments = slicer.all_index_shipments();
+
+  auto all_shipments = manager.all_index_shipments();
   for (auto shipment: all_shipments) {
     logger->info("Shipping index");
     int iter = 0;
@@ -420,7 +424,8 @@ void Loader<LoaderType::Warehouse>::DoLoad()
     Checker::SanityCheckWarehouse(&k, &v);
 
     auto handle = relation(TableType::Warehouse).InsertOrCreate(k.EncodeFromAlloca(large_buf));
-    OnNewRow(i - 1, TableType::Warehouse, k, handle);
+    auto slice_id = util::Instance<felis::SliceLocator<tpcc::Warehouse>>().Locate(k);
+    OnNewRow(slice_id, TableType::Warehouse, k, handle);
     felis::InitVersion(handle, v.Encode());
   }
 
@@ -459,8 +464,7 @@ void Loader<LoaderType::Item>::DoLoad()
 
     Checker::SanityCheckItem(&k, &v);
     auto handle = relation(TableType::Item).InsertOrCreate(k.EncodeFromAlloca(large_buf));
-    // temporarily we put Item table at max_warehouse slice, because we don't want to ship it during migration test
-    OnNewRow(max_warehouse - 1, TableType::Item, k, handle);
+    // no OnNewRow() here, we don't ship Item table
     felis::InitVersion(handle, v.Encode());
   }
   relation(TableType::Item).set_key_length(sizeof(Item::Key));
@@ -511,11 +515,13 @@ void Loader<LoaderType::Stock>::DoLoad()
       Checker::SanityCheckStock(&k, &v);
 
       handle = relation(TableType::Stock).InsertOrCreate(k.EncodeFromAlloca(large_buf));
-      OnNewRow(w - 1, TableType::Stock, k, handle);
+      auto slice_id = util::Instance<felis::SliceLocator<tpcc::Stock>>().Locate(k);
+      OnNewRow(slice_id, TableType::Stock, k, handle);
       felis::InitVersion(handle, v.Encode());
 
       handle = relation(TableType::StockData).InsertOrCreate(k_data.EncodeFromAlloca(large_buf));
-      OnNewRow(w - 1, TableType::StockData, k_data, handle);
+      slice_id = util::Instance<felis::SliceLocator<tpcc::StockData>>().Locate(k_data);
+      OnNewRow(slice_id, TableType::StockData, k_data, handle);
       felis::InitVersion(handle, v_data.Encode());
     }
   }
@@ -552,7 +558,8 @@ void Loader<LoaderType::District>::DoLoad()
       Checker::SanityCheckDistrict(&k, &v);
 
       auto handle = relation(TableType::District).InsertOrCreate(k.EncodeFromAlloca(large_buf));
-      OnNewRow(w - 1, TableType::District, k, handle);
+      auto slice_id = util::Instance<felis::SliceLocator<tpcc::District>>().Locate(k);
+      OnNewRow(slice_id, TableType::District, k, handle);
       felis::InitVersion(handle, v.Encode());
     }
   }
@@ -610,7 +617,8 @@ void Loader<LoaderType::Customer>::DoLoad()
 
         Checker::SanityCheckCustomer(&k, &v);
         handle = relation(TableType::Customer).InsertOrCreate(k.EncodeFromAlloca(large_buf));
-        OnNewRow(w - 1, TableType::Customer, k, handle);
+        auto slice_id = util::Instance<felis::SliceLocator<tpcc::Customer>>().Locate(k);
+        OnNewRow(slice_id, TableType::Customer, k, handle);
         felis::InitVersion(handle, v.Encode());
 
         // customer name index
@@ -621,7 +629,8 @@ void Loader<LoaderType::Customer>::DoLoad()
         // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
         handle = relation(TableType::CustomerNameIdx).InsertOrCreate(k_idx.EncodeFromAlloca(large_buf));
-        OnNewRow(w - 1, TableType::CustomerNameIdx, k_idx, handle);
+        slice_id = util::Instance<felis::SliceLocator<tpcc::CustomerNameIdx>>().Locate(k_idx);
+        OnNewRow(slice_id, TableType::CustomerNameIdx, k_idx, handle);
         felis::InitVersion(handle, v_idx.Encode());
 
         History::Key k_hist;
@@ -638,7 +647,8 @@ void Loader<LoaderType::Customer>::DoLoad()
         v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
         handle = relation(TableType::History).InsertOrCreate(k_hist.EncodeFromAlloca(large_buf));
-        OnNewRow(w - 1, TableType::History, k_hist, handle);
+        slice_id = util::Instance<felis::SliceLocator<tpcc::History>>().Locate(k_hist);
+        OnNewRow(slice_id, TableType::History, k_hist, handle);
         felis::InitVersion(handle, v_hist.Encode());
 
       }
@@ -695,14 +705,16 @@ void Loader<LoaderType::Order>::DoLoad()
         Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
         handle = relation(TableType::OOrder).InsertOrCreate(k_oo.EncodeFromAlloca(large_buf));
-        OnNewRow(w - 1, TableType::OOrder, k_oo, handle);
+        auto slice_id = util::Instance<felis::SliceLocator<tpcc::OOrder>>().Locate(k_oo);
+        OnNewRow(slice_id, TableType::OOrder, k_oo, handle);
         felis::InitVersion(handle, v_oo.Encode());
 
         const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
         const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
 
         handle = relation(TableType::OOrderCIdIdx).InsertOrCreate(k_oo_idx.EncodeFromAlloca(large_buf));
-        OnNewRow(w - 1, TableType::OOrderCIdIdx, k_oo_idx, handle);
+        slice_id = util::Instance<felis::SliceLocator<tpcc::OOrderCIdIdx>>().Locate(k_oo_idx);
+        OnNewRow(slice_id, TableType::OOrderCIdIdx, k_oo_idx, handle);
         felis::InitVersion(handle, v_oo_idx.Encode());
 
         if (c >= 2101) {
@@ -712,7 +724,8 @@ void Loader<LoaderType::Order>::DoLoad()
           Checker::SanityCheckNewOrder(&k_no, &v_no);
 
           handle = relation(TableType::NewOrder).InsertOrCreate(k_no.EncodeFromAlloca(large_buf));
-          OnNewRow(w - 1, TableType::NewOrder, k_no, handle);
+          slice_id = util::Instance<felis::SliceLocator<tpcc::NewOrder>>().Locate(k_no);
+          OnNewRow(slice_id, TableType::NewOrder, k_no, handle);
           felis::InitVersion(handle, v_no.Encode());
         }
 
@@ -737,7 +750,8 @@ void Loader<LoaderType::Order>::DoLoad()
 
           Checker::SanityCheckOrderLine(&k_ol, &v_ol);
           handle = relation(TableType::OrderLine).InsertOrCreate(k_ol.EncodeFromAlloca(large_buf));
-          OnNewRow(w - 1, TableType::OrderLine, k_ol, handle);
+          auto slice_id = util::Instance<felis::SliceLocator<tpcc::OrderLine>>().Locate(k_ol);
+          OnNewRow(slice_id, TableType::OrderLine, k_ol, handle);
           felis::InitVersion(handle, v_ol.Encode());
         }
       }
@@ -784,5 +798,86 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
   }
   return TxnFactory::Create(txn_type_id, this, serial_id);
 }
+
+}
+
+#define ROW_SLICE_MAPPING_DIRECT
+
+namespace felis {
+
+using namespace tpcc;
+
+#ifdef ROW_SLICE_MAPPING_DIRECT
+int SliceLocator<Customer>::Locate(const typename Customer::Key &key) {
+  return key.c_w_id - 1;
+}
+int SliceLocator<CustomerNameIdx>::Locate(const typename CustomerNameIdx::Key &key) {
+  return key.c_w_id - 1;
+}
+int SliceLocator<District>::Locate(const typename District::Key &key) {
+  return key.d_w_id - 1;
+}
+int SliceLocator<History>::Locate(const typename History::Key &key) {
+  // History currently follows order warehouse_id
+  return key.h_w_id - 1;
+}
+int SliceLocator<NewOrder>::Locate(const typename NewOrder::Key &key) {
+  return key.no_w_id - 1;
+}
+int SliceLocator<OOrder>::Locate(const typename OOrder::Key &key) {
+  return key.o_w_id - 1;
+}
+int SliceLocator<OOrderCIdIdx>::Locate(const typename OOrderCIdIdx::Key &key) {
+  return key.o_w_id - 1;
+}
+int SliceLocator<OrderLine>::Locate(const typename OrderLine::Key &key) {
+  return key.ol_w_id - 1;
+}
+int SliceLocator<Stock>::Locate(const typename Stock::Key &key) {
+  return key.s_w_id - 1;
+}
+int SliceLocator<StockData>::Locate(const typename StockData::Key &key) {
+  return key.s_w_id - 1;
+}
+int SliceLocator<Warehouse>::Locate(const typename Warehouse::Key &key) {
+  return key.w_id - 1;
+}
+
+
+#elif ROW_SLICE_MAPPING_2
+int SliceLocator<Customer>::Locate(const typename Customer::Key &key) {
+
+}
+int SliceLocator<CustomerNameIdx>::Locate(const typename CustomerNameIdx::Key &key) {
+
+}
+int SliceLocator<District>::Locate(const typename District::Key &key) {
+
+}
+int SliceLocator<History>::Locate(const typename History::Key &key) {
+
+}
+int SliceLocator<NewOrder>::Locate(const typename NewOrder::Key &key) {
+
+}
+int SliceLocator<OOrder>::Locate(const typename OOrder::Key &key) {
+
+}
+int SliceLocator<OOrderCIdIdx>::Locate(const typename OOrderCIdIdx::Key &key) {
+
+}
+int SliceLocator<OrderLine>::Locate(const typename OrderLine::Key &key) {
+
+}
+int SliceLocator<Stock>::Locate(const typename Stock::Key &key) {
+
+}
+int SliceLocator<StockData>::Locate(const typename StockData::Key &key) {
+
+}
+int SliceLocator<Warehouse>::Locate(const typename Warehouse::Key &key) {
+
+}
+#endif
 
 }

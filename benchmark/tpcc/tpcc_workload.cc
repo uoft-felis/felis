@@ -33,12 +33,14 @@ static go::Scheduler *SelectThreadPool(int idx)
   return go::GetSchedulerFromPool(pool_id);
 }
 
+// use Loader to generate initial data into the tables
 static void LoadTPCCDataSet()
 {
   std::mutex m;
   std::atomic_int count_down(6);
 
   m.lock(); // use as a semaphore
+  logger->info("Loading initial data...");
 
   LoaderBuilder builder(&m, &count_down);
 
@@ -51,8 +53,6 @@ static void LoadTPCCDataSet()
   SelectThreadPool(i++)->WakeUp(builder.CreateLoader<tpcc::loaders::Order>(2343352));
 
   m.lock(); // waits
-  if (!NodeConfiguration::g_data_migration)
-    tpcc::RunShipment();
 }
 
 class TPCCModule : public Module<WorkloadModule> {
@@ -68,7 +68,12 @@ class TPCCModule : public Module<WorkloadModule> {
     Module<CoreModule>::InitModule("allocator");
 
     tpcc::InitializeTPCC();
+    tpcc::InitializeSliceManager();
     LoadTPCCDataSet();
+
+    // send the initial index snapshot before epoch 0
+    if (!NodeConfiguration::g_data_migration)
+      tpcc::SendIndexSnapshot();
 
     tpcc::TxnFactory::Initialize();
 

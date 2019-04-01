@@ -40,11 +40,11 @@ class BaseVHandle {
 };
 
 class RowEntity;
-class DataSlicer;
+class SliceManager;
 
 class SortedArrayVHandle : public BaseVHandle {
   friend class RowEntity;
-  friend class DataSlicer;
+  friend class SliceManager;
 
   std::atomic_bool lock;
   short alloc_by_regionid;
@@ -52,7 +52,9 @@ class SortedArrayVHandle : public BaseVHandle {
   unsigned int capacity;
   unsigned int size;
   // unsigned int value_mark;
-  std::atomic_uint latest_version;
+  std::atomic_uint latest_version; // the latest written version's offset in *versions
+  // versions: ptr to the version array.
+  // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
   util::OwnPtr<RowEntity> row_entity;
 
@@ -71,6 +73,7 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(uint64_t version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
+  void WriteNewVersion(uint64_t epoch_nr, VarStr *obj);
   void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
 
