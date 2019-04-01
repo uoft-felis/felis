@@ -214,6 +214,8 @@ void IndexShipmentReceiver::Run()
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
   IndexEntity ent;
+  ent.PrepareKey(VarStr::FromAlloca(alloca(4096), 4096));
+
   auto &mgr = util::Instance<RelationManager>();
 
   logger->info("New Shipment has arrived!");

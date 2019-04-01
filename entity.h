@@ -33,12 +33,14 @@ class IndexEntity {
   uint64_t encoded_len;
 
   void DecodeIOVec(struct iovec *vec);
+  void PrepareKey(VarStr *k) { this->k = k; }
 };
 
 class RowEntity {
   friend class RowShipmentReceiver;
   friend class SortedArrayVHandle;
 
+  int alloc_coreid;
   int rel_id;
   int slice;
   VarStr *k;
@@ -64,11 +66,13 @@ class RowEntity {
   }
 
   static void operator delete(void *p) {
-    pool.Free(p);
+    auto ent = (RowEntity *) p;
+    pool.Free(p, ent->alloc_coreid);
   }
 
-  static void InitPools();
-  static mem::Pool pool;
+  static void InitPool();
+  static mem::ParallelPool pool;
+  static void Quiescence() { pool.Quiescence(); };
 };
 
 }

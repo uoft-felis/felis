@@ -42,21 +42,24 @@ const std::string kMemAllocTypeLabel[] = {
   "coroutine",
 };
 
-class BasicPool {
+class WeakPool {
+ protected:
   void *data;
   size_t len;
   void * head;
   size_t capacity;
   MemAllocType alloc_type;
+  bool need_unmap;
 
  public:
-  BasicPool() : data(nullptr), len(0) {}
+  WeakPool() : data(nullptr), len(0) {}
 
-  BasicPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
-  BasicPool(const BasicPool &rhs) = delete;
-  ~BasicPool();
+  WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
+  WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void *data);
+  WeakPool(const WeakPool &rhs) = delete;
+  ~WeakPool();
 
-  void move(BasicPool &&rhs) {
+  void move(WeakPool &&rhs) {
     data = rhs.data;
     capacity = rhs.capacity;
     len = rhs.len;
@@ -72,8 +75,16 @@ class BasicPool {
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
+};
+
+// This checks ownership of the pointer
+class BasicPool : public WeakPool {
+ public:
+  using WeakPool::WeakPool;
 
   long CheckPointer(void *ptr);
+  void *Alloc();
+  void Free(void *ptr);
 };
 
 // Thread-Safe version
@@ -91,19 +102,46 @@ class Pool : public BasicPool {
   }
 };
 
-class Region {
+// Fast Parallel Pool, but need a quiescence
+class ParallelPool {
+  BasicPool *pools;
+  uintptr_t *free_nodes;
+
+  static thread_local int g_affinity;
+  static int g_nr_cores;
+  static int g_cores_per_node;
+  static int g_core_shifting;
+ public:
+  ParallelPool() : pools(nullptr), free_nodes(nullptr) {}
+  ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
+  ~ParallelPool();
+
+  void *Alloc();
+  void Free(void *ptr, int alloc_core);
+  void Quiescence();
+
+  // Affinity can override the current thread id. However, this has to be
+  // exclusive among different cores. That's why we need the maximum number of
+  // cores upfront.
+  //
+  // SetCurrentAffinity() will acquire a lock before setting the affinity for
+  // the current thread. This is essential to keep the ParallelPool safe.
+  static void SetCurrentAffinity(int aff);
+  static void InitTotalNumberOfCores(int nr_cores, int core_shifting = 0);
+  static int CurrentAffinity();
+};
+
+// In the future, we might also need a Plain Region that makes up of Pools
+// instead of ParallelPools?
+class ParallelRegion {
   static const int kMaxPools = 20;
   // static const int kMaxPools = 12;
-  Pool pools[32];
+  ParallelPool pools[32];
   size_t proposed_caps[32];
  public:
-  Region() {
-    for (int i = 0; i < kMaxPools; i++) {
-      proposed_caps[i] = 2 << (20 - 5 - i);
-    }
-  }
+  ParallelRegion();
 
-  Region(const Region &) = delete;
+  ParallelRegion(const ParallelRegion &) = delete;
 
   static int SizeToClass(size_t sz) {
     int idx = 64 - __builtin_clzl(sz - 1) - 5;
@@ -118,30 +156,16 @@ class Region {
 
   void set_pool_capacity(size_t sz, size_t cap) {
     proposed_caps[SizeToClass(sz)] = cap;
-    /*
-    fprintf(stderr, "%lu, bin %d, cap %lu, estimate size %.1lfMB\n", sz,
-	    SizeToClass(sz), cap,
-	    (1 << (SizeToClass(sz) + 5)) * cap * 1. / 1024 / 1024);
-    */
   }
 
-  void InitPools(int node = -1) {
-    for (int i = 0; i < kMaxPools; i++) {
-      new (&pools[i]) Pool(mem::RegionPool, 1 << (i + 5), proposed_caps[i], node);
-    }
-  }
+  void InitPools();
 
   void *Alloc(size_t sz);
-  void Free(void *ptr, size_t sz);
+  void Free(void *ptr, int alloc_core, size_t sz);
+  void Quiescence();
 };
 
-using ThreadLocalRegion = Region;
-
-void InitThreadLocalRegions(int tot, int cluster);
-ThreadLocalRegion &GetThreadLocalRegion(int idx);
-
-int CurrentAllocAffinity();
-void SetThreadLocalAllocAffinity(int h);
+ParallelRegion &GetDataRegion();
 
 class Brk {
   struct Deleter {
@@ -204,21 +228,7 @@ void *AllocFromRoutine(size_t sz, std::function<void (void *)> deleter);
 void PrintMemStats();
 void *MemMap(mem::MemAllocType alloc_type, void *addr, size_t length, int prot,
              int flags, int fd, off_t offset);
-
-static inline void *
-MemMapAlloc(mem::MemAllocType alloc_type, size_t length)
-{
-  int flags = MAP_ANONYMOUS | MAP_PRIVATE;
-  if (length >= 2 >> 20)
-    flags |= MAP_HUGETLB;
-  void *data = MemMap(alloc_type, nullptr, length,
-                      PROT_READ | PROT_WRITE, flags, -1, 0);
-  if (mlock(data, length) < 0) {
-    fprintf(stderr, "WARNING: mlock() failed\n");
-    perror("mlock");
-  }
-  return data;
-}
+void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node = -1);
 
 long TotalMemoryAllocated();
 

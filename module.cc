@@ -53,7 +53,6 @@ class AllocatorModule : public Module<CoreModule> {
       .description = "Memory Allocator"
     };
   }
-  static constexpr int kNrRegions = 5;
   void Init() override {
     Module<CoreModule>::InitModule("config");
 
@@ -62,32 +61,23 @@ class AllocatorModule : public Module<CoreModule> {
     // An extra one region for the ShipmentReceivers
     std::vector<std::thread> tasks;
 
-    auto cluster = 1 + (NodeConfiguration::g_nr_threads - 1) /  kNrRegions;
-    mem::InitThreadLocalRegions(kNrRegions, cluster);
-    for (int i = 0; i < kNrRegions; i++) {
-      auto &r = mem::GetThreadLocalRegion(i);
-      r.ApplyFromConf(console.FindConfigSection("mem"));
-      // logger->info("setting up regions {}", i);
-      tasks.emplace_back(
-          [cluster, &r, i]() {
-            int node =
-                (i == kNrRegions - 1) ?
-                -1 :
-                (i * cluster + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+    mem::ParallelPool::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads,
+                                              NodeConfiguration::g_core_shifting);
+    mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
+    // logger->info("setting up regions {}", i);
+    tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
+    tasks.emplace_back(VHandle::InitPool);
+    tasks.emplace_back(RowEntity::InitPool);
 
-            r.InitPools(node);
-          });
-    }
-    tasks.emplace_back(VHandle::InitPools);
     tasks.emplace_back(util::Impl<PromiseAllocationService>);
     tasks.emplace_back(util::Impl<PromiseRoutineDispatchService>);
-    tasks.emplace_back(RowEntity::InitPools);
     tasks.emplace_back(
         []() {
           util::InstanceInit<EpochManager>();
           util::InstanceInit<SliceMappingTable>();
         });
     for (auto &t: tasks) t.join();
+    mem::PrintMemStats();
 
     logger->info("Memory allocated: {}MB in total", mem::TotalMemoryAllocated() >> 20);
   }

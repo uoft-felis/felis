@@ -8,6 +8,6 @@ llvmPackages_7.libcxxStdenv.mkDerivation rec {
    '';
 
   buildInputs = [
-    llvmPackages_7.libcxx llvmPackages_7.lld llvmPackages_7.lldb gtest gperftools python36 watchman nailgun 
+    llvmPackages_7.libcxx llvmPackages_7.lld llvmPackages_7.lldb gtest gperftools python36 watchman
   ];
 }

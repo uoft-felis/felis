@@ -6,6 +6,8 @@
 #include "vhandle.h"
 #include "node_config.h"
 
+#include "literals.h"
+
 namespace felis {
 
 VHandleSyncService &BaseVHandle::sync()
@@ -19,34 +21,31 @@ SortedArrayVHandle::SortedArrayVHandle()
   capacity = 4;
   // value_mark = 0;
   size = 0;
-  this_coreid = go::Scheduler::CurrentThreadPoolId() - 1;
-  alloc_by_regionid = mem::CurrentAllocAffinity();
+  this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
 
-  versions = (uint64_t *) mem::GetThreadLocalRegion(alloc_by_regionid).Alloc(2 * capacity * sizeof(uint64_t));
+  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
   latest_version.store(0);
 }
 
 static void EnlargePair64Array(uint64_t *old_p, uint old_cap, int old_regionid,
-			       uint64_t *&new_p, uint &new_cap, int new_regionid)
+			       uint64_t *&new_p, uint &new_cap)
 {
   new_cap = 2 * old_cap;
   const size_t old_len = old_cap * sizeof(uint64_t);
   const size_t new_len = new_cap * sizeof(uint64_t);
-  auto &reg = mem::GetThreadLocalRegion(new_regionid);
-  auto &old_reg = mem::GetThreadLocalRegion(old_regionid);
 
-  new_p = (uint64_t *) reg.Alloc(2 * new_len);
+  new_p = (uint64_t *) mem::GetDataRegion().Alloc(2 * new_len);
   memcpy(new_p, old_p, old_cap * sizeof(uint64_t));
   memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
-  old_reg.Free(old_p, 2 * old_len);
+  mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
 }
 
 void SortedArrayVHandle::EnsureSpace()
 {
   if (unlikely(size == capacity)) {
-    auto current_regionid = mem::CurrentAllocAffinity();
+    auto current_regionid = mem::ParallelPool::CurrentAffinity();
     EnlargePair64Array(versions, capacity, alloc_by_regionid,
-		       versions, capacity, current_regionid);
+		       versions, capacity);
     alloc_by_regionid = current_regionid;
   }
 }
@@ -202,36 +201,16 @@ void SortedArrayVHandle::GarbageCollect()
   size = 1;
 }
 
-static thread_local int g_vhandle_alloc_aff = -1;
-
 void *SortedArrayVHandle::operator new(size_t nr_bytes)
 {
-  auto aff = g_vhandle_alloc_aff;
-  if (aff == -1)
-    aff = go::Scheduler::CurrentThreadPoolId() - 1;
-  return pools[aff].Alloc();
+  return pool.Alloc();
 }
 
-mem::Pool *BaseVHandle::pools;
+mem::ParallelPool BaseVHandle::pool;
 
-static mem::Pool *InitPerCorePool(size_t ele_size, size_t nr_ele)
+void BaseVHandle::InitPool()
 {
-  auto pools = (mem::Pool *) malloc(sizeof(mem::Pool) * NodeConfiguration::g_nr_threads);
-  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-    auto node = (i + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
-    pools[i].move(mem::BasicPool(mem::VhandlePool, ele_size, nr_ele, node));
-  }
-  return pools;
-}
-
-void BaseVHandle::InitPools()
-{
-  pools = InitPerCorePool(64, 2 << 20);
-}
-
-void BaseVHandle::SetAllocAffinity(int aff)
-{
-  g_vhandle_alloc_aff = aff;
+  new (&pool) mem::ParallelPool(mem::VhandlePool, 64, 32_M);
 }
 
 #ifdef LL_REPLAY

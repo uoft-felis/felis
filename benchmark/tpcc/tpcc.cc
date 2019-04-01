@@ -29,10 +29,10 @@ namespace tpcc {
 Config::Config()
 {
   uniform_item_distribution = false;
-  nr_items = 1000000;
+  nr_items = 100000;
   nr_warehouses = 32;
   districts_per_warehouse = 10;
-  customers_per_district = 300000;
+  customers_per_district = 3000;
 
   hotspot_warehouse_bitmap = 0;
 
@@ -400,8 +400,7 @@ namespace loaders {
 void BaseLoader::SetAllocAffinity(int w)
 {
   auto aff = (w - min_warehouse) % NodeConfiguration::g_nr_threads;
-  mem::SetThreadLocalAllocAffinity(aff);
-  felis::BaseVHandle::SetAllocAffinity(aff);
+  mem::ParallelPool::SetCurrentAffinity(aff);
 }
 
 template <>

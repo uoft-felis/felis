@@ -17,4 +17,5 @@ void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
   }
 }
 
+
 }

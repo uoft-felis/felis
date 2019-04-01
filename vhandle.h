@@ -26,10 +26,9 @@ class VHandleSyncService {
 
 class BaseVHandle {
  public:
-  static mem::Pool *pools;
-  static void InitPools();
-
-  static void SetAllocAffinity(int aff);
+  static mem::ParallelPool pool;
+  static void InitPool();
+  static void Quiescence() { pool.Quiescence(); }
  protected:
   EpochGCRule gc_rule;
  public:
@@ -63,7 +62,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
-    pools[phandle->this_coreid].Free(ptr);
+    pool.Free(ptr, phandle->this_coreid);
   }
 
   SortedArrayVHandle();

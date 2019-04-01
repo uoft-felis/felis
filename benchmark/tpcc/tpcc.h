@@ -243,8 +243,7 @@ class BaseLoader : public tpcc::ClientBase {
  public:
   void SetAllocAffinity(int w);
   static void RestoreAllocAffinity() {
-    mem::SetThreadLocalAllocAffinity(-1);
-    felis::BaseVHandle::SetAllocAffinity(-1);
+    mem::ParallelPool::SetCurrentAffinity(-1);
   }
   using tpcc::ClientBase::ClientBase;
 };
