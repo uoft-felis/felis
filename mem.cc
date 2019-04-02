@@ -129,7 +129,7 @@ int ParallelPool::g_cores_per_node = 8;
 int ParallelPool::g_core_shifting = 0;
 
 ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap)
-    : pools(new BasicPool[g_nr_cores]),
+    : pools(new BasicPool[kMaxNrPools]),
       free_nodes(new uintptr_t[g_nr_cores * g_nr_cores])
 {
   std::vector<std::thread> tasks;
@@ -159,6 +159,12 @@ void ParallelPool::Prefetch()
   __builtin_prefetch(pools[CurrentAffinity()].head);
 }
 
+void ParallelPool::AddExtraBasicPool(int core, size_t cap, int node)
+{
+  if (cap == 0) cap = total_cap / g_nr_cores;
+  pools[core] = BasicPool(alloc_type, chunk_size, cap, node);
+}
+
 void *ParallelPool::Alloc()
 {
   auto cur = CurrentAffinity();
@@ -168,7 +174,12 @@ void *ParallelPool::Alloc()
 void ParallelPool::Free(void *ptr, int alloc_core)
 {
   auto cur = CurrentAffinity();
-  if (alloc_core < 0 || alloc_core >= g_nr_cores) {
+  if (alloc_core < 0 || alloc_core >= kMaxNrPools) {
+    std::abort();
+  }
+  // Trying to free to an extra pool. Then you must be on that core to free to
+  // this pool!
+  if (alloc_core >= g_nr_cores && cur != alloc_core) {
     std::abort();
   }
   if (cur == alloc_core) {
@@ -220,7 +231,7 @@ void ParallelPool::SetCurrentAffinity(int aff)
 int ParallelPool::CurrentAffinity()
 {
   auto aff = g_affinity == -1 ? go::Scheduler::CurrentThreadPoolId() - 1 : g_affinity;
-  if (aff < 0 || aff >= g_nr_cores) {
+  if (aff < 0 || aff >= kMaxNrPools) {
     std::abort();
   }
   return aff;

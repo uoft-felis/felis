@@ -122,8 +122,12 @@ class Pool : public BasicPool {
 
 // Fast Parallel Pool, but need a quiescence
 class ParallelPool {
+  static constexpr int kMaxNrPools = 64;
   BasicPool *pools;
   uintptr_t *free_nodes;
+  size_t chunk_size;
+  size_t total_cap;
+  MemAllocType alloc_type;
 
   static thread_local int g_affinity;
   static int g_nr_cores;
@@ -139,12 +143,18 @@ class ParallelPool {
   ParallelPool &operator=(ParallelPool &&rhs) {
     std::swap(pools, rhs.pools);
     std::swap(free_nodes, rhs.free_nodes);
+    std::swap(chunk_size, rhs.chunk_size);
+    std::swap(total_cap, rhs.total_cap);
+    std::swap(alloc_type, rhs.alloc_type);
     return *this;
   }
 
   void Register() {
     for (auto i = 0; i < g_nr_cores; i++) pools[i].Register();
   }
+
+  // You can add a dedicate pool.
+  void AddExtraBasicPool(int core, size_t cap = 0, int node = -1);
 
   void Prefetch();
   void *Alloc();
