@@ -18,13 +18,9 @@
 
 namespace mem {
 
-struct PoolStatistics {
-  long long used;
-  long long watermark;
-};
-
 static std::atomic_long g_mem_tracker[NumMemTypes];
-static PoolStatistics g_pool_tracker[NumMemTypes];
+static std::mutex g_all_pools_lock;
+static std::vector<WeakPool *> g_all_pools;
 
 WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap,
                    int numa_node)
@@ -50,12 +46,20 @@ WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void 
     if (i == cap - 1) next = 0;
     *(uintptr_t *) p = next;
   }
+
+  memset(&stats, 0, sizeof(PoolStatistics));
 }
 
 WeakPool::~WeakPool()
 {
   if (need_unmap)
     munmap(data, len);
+}
+
+void WeakPool::Register()
+{
+  std::lock_guard _(g_all_pools_lock);
+  g_all_pools.push_back(this);
 }
 
 void *WeakPool::Alloc()
@@ -72,11 +76,8 @@ void *WeakPool::Alloc()
   next = (void *) *(uintptr_t *) r;
   head = next;
 
-  // Statistics tracking is not done atomically for speed.
-  g_pool_tracker[alloc_type].used += len / capacity;
-  if (g_pool_tracker[alloc_type].watermark < g_pool_tracker[alloc_type].used) {
-    g_pool_tracker[alloc_type].watermark = g_pool_tracker[alloc_type].used;
-  }
+  stats.used += len / capacity;
+  stats.watermark = std::max(stats.used, stats.watermark);
 
   return r;
 }
@@ -86,7 +87,7 @@ void WeakPool::Free(void *ptr)
   *(uintptr_t *) ptr = (uintptr_t) head;
   head = ptr;
 
-  g_pool_tracker[alloc_type].used -= len / capacity;
+  stats.used -= len / capacity;
 }
 
 long BasicPool::CheckPointer(void *ptr)
@@ -98,7 +99,7 @@ long BasicPool::CheckPointer(void *ptr)
   if (ptr < data || ptr >= (uint8_t *) data + len) {
     fprintf(stderr, "%p is out of bounds %p - %p\n",
             ptr, data, (uint8_t *) data + len);
-    std::abort();
+   std::abort();
   }
   auto r = std::div((uint8_t *) ptr - (uint8_t *) data, (long long) len / capacity);
   if (r.rem != 0) {
@@ -134,12 +135,11 @@ ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t to
   std::vector<std::thread> tasks;
   auto cap = 1 + (total_cap - 1) / g_nr_cores;
   for (int i = 0; i < g_nr_cores; i++) {
-    auto &pool = pools[i];
     auto node = (i + g_core_shifting) / g_cores_per_node;
     tasks.emplace_back(
-        [&pool, alloc_type, chunk_size, cap, node]() {
-          pool.move(WeakPool(alloc_type, chunk_size,
-                             cap, node));
+        [this, i, alloc_type, chunk_size, cap, node]() {
+          pools[i] = BasicPool(alloc_type, chunk_size,
+                               cap, node);
         });
   }
   memset(free_nodes, 0, g_nr_cores * g_nr_cores * sizeof(uintptr_t));
@@ -152,6 +152,11 @@ ParallelPool::~ParallelPool()
 {
   delete [] pools;
   delete [] free_nodes;
+}
+
+void ParallelPool::Prefetch()
+{
+  __builtin_prefetch(pools[CurrentAffinity()].head);
 }
 
 void *ParallelPool::Alloc()
@@ -356,13 +361,25 @@ void PrintMemStats() {
   }
 
   logger->info("Pool usage statistics:");
+
+  auto N = static_cast<int>(NumMemTypes);
+  WeakPool::PoolStatistics stats[N];
+  memset(stats, 0, sizeof(WeakPool::PoolStatistics) * N);
+
+  {
+    std::lock_guard _(g_all_pools_lock);
+    for (auto p: g_all_pools) {
+      auto i = static_cast<int>(p->alloc_type);
+      stats[i].used += p->stats.used;
+      stats[i].watermark += p->stats.watermark;
+    }
+  }
+
   for (int i = EpochQueuePool; i < NumMemTypes; i++) {
     auto bucket = static_cast<MemAllocType>(i);
-    auto const &stats = g_pool_tracker[bucket];
-    auto used = stats.used < 0 ? 0 : stats.used;
     logger->info("    {}: {}/{} MB used (max {} MB)", MemTypeToString(bucket),
-                 used / 1024 / 1024, g_mem_tracker[bucket].load() / 1024 / 1024,
-                 stats.watermark / 1024 / 1024);
+                 stats[i].used / 1024 / 1024, g_mem_tracker[bucket].load() / 1024 / 1024,
+                 stats[i].watermark / 1024 / 1024);
   }
 }
 

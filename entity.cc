@@ -95,7 +95,8 @@ mem::ParallelPool RowEntity::pool;
 
 void RowEntity::InitPool()
 {
-  new (&pool) mem::ParallelPool(mem::RowEntityPool, sizeof(RowEntity), 32_M);
+  pool = mem::ParallelPool(mem::RowEntityPool, sizeof(RowEntity), 32_M);
+  pool.Register();
 }
 
 }

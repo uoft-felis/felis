@@ -105,12 +105,12 @@ void NewOrderTxn::PrepareInsert()
   auto oorder_id = client->relation(OOrder::kTable).AutoIncrement(auto_inc_zone);
   auto oorder_key = OOrder::Key::New(warehouse_id, district_id, oorder_id);
   auto oorder_value = CreateNewRow<OOrder>(oorder_key);
+  oorder_value->AppendNewVersion(serial_id(), epoch_nr());
+  state->rows.oorder = oorder_value;
+
   auto neworder_key = NewOrder::Key::New(warehouse_id, district_id, oorder_id, customer_id);
   auto neworder_value = CreateNewRow<NewOrder>(neworder_key);
-  state->rows.oorder = oorder_value;
   state->rows.neworder = neworder_value;
-
-  oorder_value->AppendNewVersion(serial_id(), epoch_nr());
   neworder_value->AppendNewVersion(serial_id(), epoch_nr());
 
   OrderLine::Key orderline_keys[kNewOrderMaxItems];

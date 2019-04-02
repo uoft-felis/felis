@@ -44,6 +44,8 @@ const std::string kMemAllocTypeLabel[] = {
 
 class WeakPool {
  protected:
+  friend class ParallelPool;
+  friend void PrintMemStats();
   void *data;
   size_t len;
   void * head;
@@ -51,30 +53,38 @@ class WeakPool {
   MemAllocType alloc_type;
   bool need_unmap;
 
+  struct PoolStatistics {
+    long long used;
+    long long watermark;
+  } stats;
+
  public:
-  WeakPool() : data(nullptr), len(0) {}
+  WeakPool() : data(nullptr), len(0), head(nullptr), capacity(0), need_unmap(false) {}
 
   WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
   WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void *data);
   WeakPool(const WeakPool &rhs) = delete;
+  WeakPool(WeakPool &&rhs) { *this = std::move(rhs); }
   ~WeakPool();
 
-  void move(WeakPool &&rhs) {
-    data = rhs.data;
-    capacity = rhs.capacity;
-    len = rhs.len;
-    alloc_type = rhs.alloc_type;
-    head = rhs.head;
-    rhs.data = nullptr;
-    rhs.head = nullptr;
-    rhs.capacity = 0;
-    rhs.len = 0;
+  WeakPool &operator=(WeakPool &&rhs) {
+    std::swap(data, rhs.data);
+    std::swap(capacity, rhs.capacity);
+    std::swap(len, rhs.len);
+    std::swap(alloc_type, rhs.alloc_type);
+    std::swap(head, rhs.head);
+    std::swap(stats, rhs.stats);
+    std::swap(need_unmap, rhs.need_unmap);
+
+    return *this;
   }
 
   void *Alloc();
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
+
+  void Register();
 };
 
 // This checks ownership of the pointer
@@ -92,6 +102,14 @@ class Pool : public BasicPool {
   util::SpinLock lock;
  public:
   using BasicPool::BasicPool;
+
+  Pool &operator=(Pool &&rhs) {
+    auto &o = (WeakPool &)(*this);
+    o = (WeakPool &&) rhs;
+
+    return (*this);
+  }
+
   void *Alloc() {
     auto _ = util::Guard(lock);
     return BasicPool::Alloc();
@@ -114,8 +132,20 @@ class ParallelPool {
  public:
   ParallelPool() : pools(nullptr), free_nodes(nullptr) {}
   ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
+  ParallelPool(const ParallelPool& rhs) = delete;
   ~ParallelPool();
 
+  ParallelPool &operator=(ParallelPool &&rhs) {
+    std::swap(pools, rhs.pools);
+    std::swap(free_nodes, rhs.free_nodes);
+    return *this;
+  }
+
+  void Register() {
+    for (auto i = 0; i < g_nr_cores; i++) pools[i].Register();
+  }
+
+  void Prefetch();
   void *Alloc();
   void Free(void *ptr, int alloc_core);
   void Quiescence();
@@ -163,6 +193,10 @@ class ParallelRegion {
   void *Alloc(size_t sz);
   void Free(void *ptr, int alloc_core, size_t sz);
   void Quiescence();
+
+  void Register() {
+    for (auto i = 0; i < kMaxPools; i++) pools[i].Register();
+  }
 };
 
 ParallelRegion &GetDataRegion();

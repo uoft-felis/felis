@@ -43,6 +43,10 @@ class BaseTxn {
     auto slice_id = util::Instance<SliceLocator<TableType>>().Locate(key);
     auto row = new VHandle();
     util::Instance<felis::SliceManager>().OnNewRow(slice_id, TableType::kTable, key, row);
+
+    VHandle::pool.Prefetch();
+    RowEntity::pool.Prefetch();
+
     return row;
   }
 

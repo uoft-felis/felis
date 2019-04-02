@@ -77,6 +77,9 @@ class AllocatorModule : public Module<CoreModule> {
           util::InstanceInit<SliceMappingTable>();
         });
     for (auto &t: tasks) t.join();
+
+    mem::GetDataRegion().Register();
+
     mem::PrintMemStats();
 
     logger->info("Memory allocated: {}MB in total", mem::TotalMemoryAllocated() >> 20);
@@ -93,8 +96,10 @@ class CoroutineModule : public Module<CoreModule> {
     static constexpr int kStackSize = 512 << 10;
    public:
     CoroutineStackAllocator() {
-      stack_pool.move(mem::BasicPool(mem::Coroutine, kStackSize, kMaxRoutines));
-      context_pool.move(mem::BasicPool(mem::Coroutine, kContextSize, kMaxRoutines));
+      stack_pool = mem::Pool(mem::Coroutine, kStackSize, kMaxRoutines);
+      context_pool = mem::Pool(mem::Coroutine, kContextSize, kMaxRoutines);
+      stack_pool.Register();
+      context_pool.Register();
     }
     void AllocateStackAndContext(
         size_t &stack_size, ucontext * &ctx_ptr, void * &stack_ptr) override final {

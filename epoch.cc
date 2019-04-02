@@ -203,7 +203,8 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
       queue.pq.ht[t].Initialize();
     }
 
-    queue.pq.pool.move(mem::BasicPool(mem::EpochQueuePool, kPriorityQueuePoolElementSize, kMaxItemPerCore));
+    queue.pq.pool = mem::BasicPool(mem::EpochQueuePool, kPriorityQueuePoolElementSize, kMaxItemPerCore);
+    queue.pq.pool.Register();
 
     new (&queue.lock) util::SpinLock();
   }
