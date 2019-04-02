@@ -133,6 +133,7 @@ class ParallelPool {
   ParallelPool() : pools(nullptr), free_nodes(nullptr) {}
   ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
   ParallelPool(const ParallelPool& rhs) = delete;
+  ParallelPool(ParallelPool &&rhs) { *this = std::move(rhs); }
   ~ParallelPool();
 
   ParallelPool &operator=(ParallelPool &&rhs) {
@@ -193,10 +194,6 @@ class ParallelRegion {
   void *Alloc(size_t sz);
   void Free(void *ptr, int alloc_core, size_t sz);
   void Quiescence();
-
-  void Register() {
-    for (auto i = 0; i < kMaxPools; i++) pools[i].Register();
-  }
 };
 
 ParallelRegion &GetDataRegion();

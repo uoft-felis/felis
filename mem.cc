@@ -266,12 +266,15 @@ void ParallelRegion::InitPools()
   std::vector<std::thread> tasks;
   for (int i = 0; i < kMaxPools; i++) {
     tasks.emplace_back(
-        [this, i]{
-          new (&pools[i]) ParallelPool(mem::RegionPool, 1 << (i + 5), proposed_caps[i]);
+        [this, i] {
+          pools[i] = ParallelPool(mem::RegionPool, 1 << (i + 5), proposed_caps[i]);
         });
   }
   for (auto &th: tasks) {
     th.join();
+  }
+  for (int i = 0; i < kMaxPools; i++) {
+    pools[i].Register();
   }
 }
 
@@ -370,6 +373,10 @@ void PrintMemStats() {
     std::lock_guard _(g_all_pools_lock);
     for (auto p: g_all_pools) {
       auto i = static_cast<int>(p->alloc_type);
+      if (i >= N || i < 0) {
+        fprintf(stderr, "Invalid alloc type %d\n", i);
+        std::abort();
+      }
       stats[i].used += p->stats.used;
       stats[i].watermark += p->stats.watermark;
     }

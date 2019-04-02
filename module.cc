@@ -78,8 +78,6 @@ class AllocatorModule : public Module<CoreModule> {
         });
     for (auto &t: tasks) t.join();
 
-    mem::GetDataRegion().Register();
-
     mem::PrintMemStats();
 
     logger->info("Memory allocated: {}MB in total", mem::TotalMemoryAllocated() >> 20);
