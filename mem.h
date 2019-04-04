@@ -64,18 +64,27 @@ class WeakPool {
   WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
   WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void *data);
   WeakPool(const WeakPool &rhs) = delete;
-  WeakPool(WeakPool &&rhs) { *this = std::move(rhs); }
+  WeakPool(WeakPool &&rhs) {
+    data = rhs.data;
+    capacity = rhs.capacity;
+    len = rhs.len;
+    alloc_type = rhs.alloc_type;
+    head = rhs.head;
+    stats = rhs.stats;
+    need_unmap = rhs.need_unmap;
+
+    rhs.data = nullptr;
+    rhs.capacity = 0;
+    rhs.head = nullptr;
+    rhs.need_unmap = false;
+  }
   ~WeakPool();
 
   WeakPool &operator=(WeakPool &&rhs) {
-    std::swap(data, rhs.data);
-    std::swap(capacity, rhs.capacity);
-    std::swap(len, rhs.len);
-    std::swap(alloc_type, rhs.alloc_type);
-    std::swap(head, rhs.head);
-    std::swap(stats, rhs.stats);
-    std::swap(need_unmap, rhs.need_unmap);
-
+    if (this != &rhs) {
+      this->~WeakPool();
+      new (this) WeakPool(std::move(rhs));
+    }
     return *this;
   }
 
@@ -137,15 +146,23 @@ class ParallelPool {
   ParallelPool() : pools(nullptr), free_nodes(nullptr) {}
   ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
   ParallelPool(const ParallelPool& rhs) = delete;
-  ParallelPool(ParallelPool &&rhs) { *this = std::move(rhs); }
+  ParallelPool(ParallelPool &&rhs) {
+    pools = rhs.pools;
+    free_nodes = rhs.free_nodes;
+    chunk_size = rhs.chunk_size;
+    total_cap = rhs.total_cap;
+    alloc_type = rhs.alloc_type;
+
+    rhs.pools = nullptr;
+    rhs.free_nodes = nullptr;
+  }
   ~ParallelPool();
 
   ParallelPool &operator=(ParallelPool &&rhs) {
-    std::swap(pools, rhs.pools);
-    std::swap(free_nodes, rhs.free_nodes);
-    std::swap(chunk_size, rhs.chunk_size);
-    std::swap(total_cap, rhs.total_cap);
-    std::swap(alloc_type, rhs.alloc_type);
+    if (&rhs != this) {
+      this->~ParallelPool();
+      new (this) ParallelPool(std::move(rhs));
+    }
     return *this;
   }
 
