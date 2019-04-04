@@ -176,27 +176,28 @@ void EpochClient::ExecuteEpoch()
       });
 }
 
-const size_t EpochExecutionDispatchService::kMaxItemPerCore = 4_M;
+const size_t EpochExecutionDispatchService::kMaxItem = 8_M;
 const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
+  auto max_item_percore = kMaxItem / NodeConfiguration::g_nr_threads;
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &queue = queues[i];
     queue.zq.end = queue.zq.start = 0;
     queue.zq.q = (PromiseRoutineWithInput *)
                  mem::MemMapAlloc(mem::EpochQueuePromise,
-                                  kMaxItemPerCore * sizeof(PromiseRoutineWithInput));
+                                  max_item_percore * sizeof(PromiseRoutineWithInput));
     queue.pq.len = 0;
     queue.pq.q = (PriorityQueueHeapEntry *)
                  mem::MemMapAlloc(mem::EpochQueueItem,
-                                  kMaxItemPerCore * sizeof(PriorityQueueHeapEntry));
+                                  max_item_percore * sizeof(PriorityQueueHeapEntry));
     queue.pq.ht = (PriorityQueueHashHeader *)
                   mem::MemMapAlloc(mem::EpochQueueItem,
                                    kHashTableSize * sizeof(PriorityQueueHashHeader));
     queue.pq.pending.q = (PromiseRoutineWithInput *)
                          mem::MemMapAlloc(mem::EpochQueuePromise,
-                                          kMaxItemPerCore * sizeof(PromiseRoutineWithInput));
+                                          max_item_percore * sizeof(PromiseRoutineWithInput));
     queue.pq.pending.start = 0;
     queue.pq.pending.end = 0;
 
@@ -204,7 +205,7 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
       queue.pq.ht[t].Initialize();
     }
 
-    queue.pq.pool = mem::BasicPool(mem::EpochQueuePool, kPriorityQueuePoolElementSize, kMaxItemPerCore);
+    queue.pq.pool = mem::BasicPool(mem::EpochQueuePool, kPriorityQueuePoolElementSize, max_item_percore);
     queue.pq.pool.Register();
 
     new (&queue.lock) util::SpinLock();
@@ -240,14 +241,16 @@ void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *ro
   auto &pq = queues[core_id].pq.pending;
   size_t i = 0;
 
+  auto max_item_percore = kMaxItem / NodeConfiguration::g_nr_threads;
+
 again:
   size_t zdelta = 0,
            zend = zq.end.load(std::memory_order_acquire),
-         zlimit = kMaxItemPerCore;
+         zlimit = max_item_percore;
 
   size_t pdelta = 0,
            pend = pq.end.load(std::memory_order_acquire),
-         plimit = kMaxItemPerCore
+         plimit = max_item_percore
                   - (pend - pq.start.load(std::memory_order_acquire));
 
   for (; i < nr_routines; i++) {
@@ -262,7 +265,7 @@ again:
     } else {
       auto pos = pend + pdelta++;
       if (pdelta >= plimit) goto again;
-      pq.q[pos % kMaxItemPerCore] = r;
+      pq.q[pos % max_item_percore] = r;
     }
   }
   if (zdelta)
@@ -314,7 +317,7 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
 
   for (size_t i = 0; i < plen; i++) {
     auto pos = pstart + i;
-    AddToPriorityQueue(q, q.pending.q[pos % kMaxItemPerCore]);
+    AddToPriorityQueue(q, q.pending.q[pos % (kMaxItem / NodeConfiguration::g_nr_threads)]);
   }
   if (plen)
     q.pending.start.fetch_add(plen);
