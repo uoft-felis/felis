@@ -31,8 +31,12 @@ int IndexEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
   return 3;
 }
 
-IndexEntity::~IndexEntity()
+mem::ParallelPool IndexEntity::pool;
+
+void IndexEntity::InitPool()
 {
+  pool = mem::ParallelPool(mem::EntityPool, sizeof(IndexEntity), 16_M);
+  pool.Register();
 }
 
 void RowEntity::DecodeIOVec(struct iovec *vec)
@@ -95,7 +99,7 @@ mem::ParallelPool RowEntity::pool;
 
 void RowEntity::InitPool()
 {
-  pool = mem::ParallelPool(mem::RowEntityPool, sizeof(RowEntity), 32_M);
+  pool = mem::ParallelPool(mem::EntityPool, sizeof(RowEntity), 32_M);
   pool.Register();
 }
 

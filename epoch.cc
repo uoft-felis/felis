@@ -139,6 +139,7 @@ void EpochClient::InitializeEpoch()
             []() {
               VHandle::Quiescence();
               RowEntity::Quiescence();
+              IndexEntity::Quiescence();
 
               mem::GetDataRegion().Quiescence();
     }));
