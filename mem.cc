@@ -318,24 +318,8 @@ void *Brk::Alloc(size_t s)
   return p;
 }
 
-void *Brk::Alloc(size_t s, std::function<void (void *)> deleter)
-{
-  auto d = (Deleter *) Alloc(sizeof(Deleter));
-  new (d) Deleter();
-  d->next = deleters;
-  d->del_f = deleter;
-  d->p = Alloc(s);
-  deleters = d;
-  return d->p;
-}
-
 Brk::~Brk()
 {
-  while (deleters) {
-    deleters->del_f(deleters->p);
-    deleters->~Deleter();
-    deleters = deleters->next;
-  }
 }
 
 static Brk *BrkFromRoutine()
@@ -356,10 +340,6 @@ static Brk *BrkFromRoutine()
 void *AllocFromRoutine(size_t sz)
 {
   return BrkFromRoutine()->Alloc(sz);
-}
-void *AllocFromRoutine(size_t sz, std::function<void (void *)> deleter)
-{
-  return BrkFromRoutine()->Alloc(sz, deleter);
 }
 
 std::string MemTypeToString(MemAllocType alloc_type) {

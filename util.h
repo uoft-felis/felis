@@ -8,7 +8,6 @@
 #include <cassert>
 #include <atomic>
 #include <memory>
-#include <functional>
 #include <unistd.h>
 #include <sched.h>
 #include <pthread.h>
@@ -259,15 +258,25 @@ template <class IFace> IFace &Impl() noexcept;
 template <typename T, typename ...Args>
 class BaseFactory {
  public:
-  typedef std::vector<std::function<T *(Args...)>> Table;
+  // Don't use std::function. Complation speed is very slow.
+  struct Callable { virtual T *operator()(Args...) = 0; };
+  template <typename F> struct GenericCallable : public Callable {
+    F f;
+    GenericCallable(F f) : f(f) {}
+    T *operator()(Args... args) override final {
+      return f(args...);
+    }
+  };
+  typedef std::vector<Callable *> Table;
  protected:
   static Table table;
-  static void AddToTable(std::function<T *(Args...)> f) {
-    table.push_back(f);
+  template <typename F>
+  static void AddToTable(F f) {
+    table.push_back(new GenericCallable<F>(f));
   }
  public:
   static T *Create(int n, Args... args) {
-    return table[n](args...);
+    return (*table[n])(args...);
   }
 };
 

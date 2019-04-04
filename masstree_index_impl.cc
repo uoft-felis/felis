@@ -30,10 +30,7 @@ class MasstreeMapForwardScanIteratorImpl : public MasstreeMap::forward_scan_iter
   using MasstreeMap::forward_scan_iterator_impl::forward_scan_iterator_impl;
 
   static void *operator new(size_t sz) {
-    return mem::AllocFromRoutine(sizeof(MasstreeMapForwardScanIteratorImpl), [](void *p) {
-        auto i = (MasstreeMapForwardScanIteratorImpl *) p;
-        delete i;
-      });
+    return mem::AllocFromRoutine(sizeof(MasstreeMapForwardScanIteratorImpl));
   }
 
   static void operator delete(void *p) {

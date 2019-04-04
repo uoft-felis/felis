@@ -6,7 +6,6 @@
 #include <condition_variable>
 #include <string>
 #include <map>
-#include <functional>
 #include "util.h"
 #include "json11/json11.hpp"
 
@@ -22,8 +21,6 @@ class Console {
   std::condition_variable cond;
   ServerStatus server_status = ServerStatus::Booting;
   std::string node_name;
-  std::map<std::string, std::function<json11::Json (Console *, json11::Json)>> handlers;
-
   json11::Json conf;
 
   template <typename T> friend T &util::Instance() noexcept;

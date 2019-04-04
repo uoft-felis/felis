@@ -1,11 +1,14 @@
 #include "console.h"
+#include <functional>
 
 namespace felis {
 
+std::map<std::string, std::function<json11::Json (Console *, json11::Json)>> g_handlers;
+
 Console::Console()
 {
-  handlers["status_change"] = &Console::HandleStatusChange;
-  handlers["get_status"] = &Console::HandleGetStatus;
+  g_handlers["status_change"] = &Console::HandleStatusChange;
+  g_handlers["get_status"] = &Console::HandleGetStatus;
 }
 
 static const auto kJsonResponseError = json11::Json::object({
@@ -15,8 +18,8 @@ static const auto kJsonResponseError = json11::Json::object({
 json11::Json Console::HandleJsonAPI(json11::Json j)
 {
   auto req_type = j.object_items().find("type")->second.string_value();
-  auto it = handlers.find(req_type);
-  if (it != handlers.end()) {
+  auto it = g_handlers.find(req_type);
+  if (it != g_handlers.end()) {
     return it->second(this, j);
   } else {
     return kJsonResponseError;

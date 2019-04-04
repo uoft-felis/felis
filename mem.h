@@ -5,7 +5,6 @@
 #include <string>
 #include <atomic>
 #include <cstdio>
-#include <functional>
 #include <sys/mman.h>
 
 #include "json11/json11.hpp"
@@ -226,31 +225,21 @@ class ParallelRegion {
 ParallelRegion &GetDataRegion();
 
 class Brk {
-  struct Deleter {
-    std::function<void (void *)> del_f;
-    void *p;
-    Deleter *next;
-  };
-
   std::atomic_size_t offset;
   size_t limit;
   uint8_t *data;
-  Deleter *deleters;
 
   std::memory_order ord = std::memory_order_relaxed;
 
  public:
-  Brk() : offset(0), limit(0), data(nullptr), deleters(nullptr) {}
-  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p),
-                               deleters(nullptr) {}
+  Brk() : offset(0), limit(0), data(nullptr) {}
+  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p) {}
   ~Brk();
 
   void move(Brk &&rhs) {
     data = rhs.data;
     limit = rhs.limit;
     offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    deleters = rhs.deleters;
-    rhs.deleters = nullptr;
     ord = rhs.ord;
   }
 
@@ -272,7 +261,6 @@ class Brk {
   void Reset() { offset = 0; }
 
   void *Alloc(size_t s);
-  void *Alloc(size_t s, std::function<void (void *)> deleter);
   uint8_t *ptr() const { return data; }
   size_t current_size() const { return offset; }
 };
@@ -281,7 +269,6 @@ class Brk {
 #define INIT_ROUTINE_BRK(sz) go::RoutineScopedData _______(NewStackBrk(sz));
 
 void *AllocFromRoutine(size_t sz);
-void *AllocFromRoutine(size_t sz, std::function<void (void *)> deleter);
 
 void PrintMemStats();
 void *MemMap(mem::MemAllocType alloc_type, void *addr, size_t length, int prot,

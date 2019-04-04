@@ -2,7 +2,6 @@
 #define _COMPLETION_H
 
 #include <atomic>
-#include <functional>
 
 namespace felis {
 
