@@ -130,7 +130,8 @@ int ParallelPool::g_core_shifting = 0;
 
 ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap)
     : pools(new BasicPool[kMaxNrPools]),
-      free_nodes(new uintptr_t[g_nr_cores * g_nr_cores])
+      free_nodes(new uintptr_t[g_nr_cores * g_nr_cores]),
+      chunk_size(chunk_size), total_cap(total_cap), alloc_type(alloc_type)
 {
   std::vector<std::thread> tasks;
   auto cap = 1 + (total_cap - 1) / g_nr_cores;
@@ -167,6 +168,7 @@ void ParallelPool::AddExtraBasicPool(int core, size_t cap, int node)
 
 void *ParallelPool::Alloc()
 {
+  if (pools == nullptr) return nullptr;
   auto cur = CurrentAffinity();
   return pools[cur].Alloc();
 }
@@ -192,6 +194,8 @@ void ParallelPool::Free(void *ptr, int alloc_core)
 
 void ParallelPool::Quiescence()
 {
+  if (pools == 0) return;
+
   auto cur = CurrentAffinity();
   auto &pool = pools[cur];
   for (int i = 0; i < g_nr_cores; i++) {
@@ -239,6 +243,8 @@ int ParallelPool::CurrentAffinity()
 
 ParallelRegion::ParallelRegion()
 {
+#if 0
+  // default?
   for (int i = 0; i < kMaxPools; i++) {
     if (i < 16) {
       proposed_caps[i] = 32 << (20 - 5 - i);
@@ -246,6 +252,8 @@ ParallelRegion::ParallelRegion()
       proposed_caps[i] = 32;
     }
   }
+#endif
+  memset(proposed_caps, 0, sizeof(size_t) * kMaxPools);
 }
 
 void *ParallelRegion::Alloc(size_t sz)
@@ -268,7 +276,7 @@ void ParallelRegion::ApplyFromConf(json11::Json conf_doc)
 {
   auto json_map = conf_doc.object_items();
   for (auto it = json_map.begin(); it != json_map.end(); ++it) {
-    set_pool_capacity(atoi(it->first.c_str()), it->second.int_value() << 10);
+    set_pool_capacity(atoi(it->first.c_str()), size_t(it->second.number_value() * 1024));
   }
 }
 
@@ -276,6 +284,8 @@ void ParallelRegion::InitPools()
 {
   std::vector<std::thread> tasks;
   for (int i = 0; i < kMaxPools; i++) {
+    if (proposed_caps[i] == 0) continue;
+
     tasks.emplace_back(
         [this, i] {
           pools[i] = ParallelPool(mem::RegionPool, 1 << (i + 5), proposed_caps[i]);
@@ -285,6 +295,7 @@ void ParallelRegion::InitPools()
     th.join();
   }
   for (int i = 0; i < kMaxPools; i++) {
+    if (proposed_caps[i] == 0) continue;
     pools[i].Register();
   }
 }
@@ -293,6 +304,21 @@ void ParallelRegion::Quiescence()
 {
   for (int i = 0; i < kMaxPools; i++) {
     pools[i].Quiescence();
+  }
+}
+
+void ParallelRegion::PrintUsageEachClass()
+{
+  for (int i = 0; i < kMaxPools; i++) {
+    if (proposed_caps[i] == 0) continue;
+    auto &pool = pools[i];
+    size_t used = 0;
+    for (int j = 0; j < ParallelPool::g_nr_cores; j++) {
+      used += pool.pools[j].stats.used;
+    }
+    auto chk_size = 32UL << i;
+    printf("RegionInfo: class %d size %lu mem %lu/%lu\n", i, chk_size, used,
+           chk_size * pool.total_cap);
   }
 }
 

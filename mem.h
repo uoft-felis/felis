@@ -44,6 +44,7 @@ const std::string kMemAllocTypeLabel[] = {
 class WeakPool {
  protected:
   friend class ParallelPool;
+  friend class ParallelRegion;
   friend void PrintMemStats();
   void *data;
   size_t len;
@@ -131,6 +132,7 @@ class Pool : public BasicPool {
 // Fast Parallel Pool, but need a quiescence
 class ParallelPool {
   static constexpr int kMaxNrPools = 64;
+  friend class ParallelRegion;
   BasicPool *pools;
   uintptr_t *free_nodes;
   size_t chunk_size;
@@ -142,7 +144,7 @@ class ParallelPool {
   static int g_cores_per_node;
   static int g_core_shifting;
  public:
-  ParallelPool() : pools(nullptr), free_nodes(nullptr) {}
+  ParallelPool() : pools(nullptr), free_nodes(nullptr), total_cap(0) {}
   ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
   ParallelPool(const ParallelPool& rhs) = delete;
   ParallelPool(ParallelPool &&rhs) {
@@ -220,6 +222,8 @@ class ParallelRegion {
   void *Alloc(size_t sz);
   void Free(void *ptr, int alloc_core, size_t sz);
   void Quiescence();
+
+  void PrintUsageEachClass();
 };
 
 ParallelRegion &GetDataRegion();

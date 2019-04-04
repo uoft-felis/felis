@@ -173,6 +173,7 @@ void EpochClient::ExecuteEpoch()
           InitializeEpoch();
         } else {
           mem::PrintMemStats();
+          mem::GetDataRegion().PrintUsageEachClass();
         }
       });
 }
