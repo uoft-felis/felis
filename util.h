@@ -4,11 +4,11 @@
 #define UTIL_H
 
 #include <sys/types.h>
-#include <functional>
 #include <string>
 #include <cassert>
 #include <atomic>
 #include <memory>
+#include <functional>
 #include <unistd.h>
 #include <sched.h>
 #include <pthread.h>

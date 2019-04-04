@@ -19,6 +19,76 @@ struct PromiseRoutine;
 class PromiseRoundRobin;
 class SendChannel;
 
+class TransportBatchMetadata {
+ public:
+  // Thread local information
+  class LocalMetadata {
+    friend class TransportBatchMetadata;
+    // How many pieces should we expect on this core?
+    std::atomic_ulong expect;
+    unsigned long finish;
+    // For each level, we had been accumulating increment to global counters.
+    unsigned long *delta; // for each destinations
+
+    LocalMetadata() {}
+
+    void Init(int nr_nodes) {
+      delta = new unsigned long[nr_nodes];
+      Reset(nr_nodes);
+    }
+
+    void Reset(int nr_nodes) {
+      expect = 0;
+      finish = 0;
+      memset(delta, 0, sizeof(unsigned long) * nr_nodes);
+    }
+   public:
+    void IncrementExpected(unsigned long d = 1) { expect.fetch_add(d); }
+    bool Finish() { return (++finish) == expect.load(); }
+    void AddRoute(int dst) { delta[dst - 1]++; }
+    // unsigned long RouteCount(int dst) { return delta[dst - 1]; }
+  };
+ private:
+  static constexpr auto kMaxLevels = PromiseRoutineTransportService::kPromiseMaxLevels;
+
+  // Given a level, how many pieces we should see for each destination node?
+  std::array<std::atomic_ulong *, kMaxLevels> counters;
+  std::array<LocalMetadata *, kMaxLevels> thread_local_data;
+  friend class NodeConfiguration;
+ public:
+  TransportBatchMetadata() {
+    counters.fill(nullptr);
+    thread_local_data.fill(nullptr);
+  }
+
+  void Init(int nr_nodes, int nr_cores) {
+    for (auto &p: thread_local_data) {
+      p = new LocalMetadata[nr_cores];
+      for (auto i = 0; i < nr_cores; i++) p[i].Init(nr_nodes);
+    }
+    for (auto &p: counters) {
+      p = new std::atomic_ulong[nr_nodes];
+    }
+  }
+
+  void Reset(int nr_nodes, int nr_cores) {
+    for (auto p: thread_local_data) {
+      for (auto i = 0; i < nr_cores; i++) p[i].Reset(nr_nodes);
+    }
+    for (auto p: counters) {
+      for (auto i = 0; i < nr_nodes; i++) p[i] = 0;
+    }
+  }
+
+  LocalMetadata &GetLocalData(int level, int core) { return thread_local_data[level][core]; }
+
+  unsigned long Merge(int level, LocalMetadata &local, int node) {
+    auto v = local.delta[node - 1];
+    local.delta[node - 1] = 0;
+    return counters[level][node - 1].fetch_add(v) + v;
+  }
+};
+
 class NodeConfiguration : public PromiseRoutineTransportService {
   NodeConfiguration();
 
@@ -60,7 +130,9 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   void RunAllServers();
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
-  void FlushPromiseRoutine() final override;
+  void PreparePromisesToQueue(int core, int level, unsigned long nr) final override;
+  void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
+  void ForceFlushPromiseRoutine() final override;
   long UrgencyCount(int core_id) final override { return urgency_cnt[core_id]; }
   void IncrementUrgencyCount(int core_id, long delta = 1) {
     urgency_cnt[core_id] += delta;
@@ -97,7 +169,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   std::array<SendChannel *, kMaxNrNode> all_out_channels;
   size_t max_node_id;
 
-  static constexpr size_t kPromiseMaxLevels = 16;
   static constexpr ulong kPromiseBarrierWatermark = 1 << 20;
   // The BufferRootPromise is going to run an analysis on the root promise to
   // keep track of how many handlers needs to be sent.
@@ -106,9 +177,9 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   // channel_batch_counters[level][src][dst], where src and dst are the node
   // number - 1.
   std::atomic_ulong *total_batch_counters;
-  // How many we have issued at this level? If we are catching up, then flush.
-  std::atomic_ulong *batch_counters[kPromiseMaxLevels];
   ulong *local_batch_counters;
+
+  TransportBatchMetadata transport_meta;
 
   unsigned long urgency_cnt[kMaxNrThreads];
  private:

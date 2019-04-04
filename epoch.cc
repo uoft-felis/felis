@@ -67,6 +67,7 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
             }
           }
           conf.DecrementUrgencyCount(t);
+          util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
           // logger->info("core {} finished issuing promises", i);
         });
     r->set_urgent(true);

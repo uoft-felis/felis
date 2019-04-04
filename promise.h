@@ -122,10 +122,14 @@ class BasePromise {
 
 static_assert(sizeof(BasePromise) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");
 
-class PromiseRoutineTransportService {
+class PromiseRoutineTransportService {;
  public:
+  static constexpr size_t kPromiseMaxLevels = 16;
+
   virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
-  virtual void FlushPromiseRoutine() {};
+  virtual void ForceFlushPromiseRoutine() {}
+  virtual void PreparePromisesToQueue(int core, int level, unsigned long nr) {}
+  virtual void FinishPromiseFromQueue(PromiseRoutine *routine) {}
   virtual long UrgencyCount(int core_id) { return -1; }
 };
 
@@ -227,32 +231,34 @@ class Promise : public BasePromise {
 
   template <typename Func, typename Closure>
   PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
-    auto static_func = [](PromiseRoutine *routine, VarStr input) {
-      auto native_func = (typename Next<Func, Closure>::OptType(*)(
-          const Closure &, T))routine->callback_native_func;
-      Closure capture;
-      T t;
-      capture.DecodeFrom(routine->capture_data);
-      t.Decode(&input);
+    auto static_func =
+        [](PromiseRoutine *routine, VarStr input) {
+          auto native_func = (typename Next<Func, Closure>::OptType(*)(
+              const Closure &, T))routine->callback_native_func;
+          Closure capture;
+          T t;
+          capture.DecodeFrom(routine->capture_data);
+          t.Decode(&input);
 
-      if constexpr (ExposeNextPromiseTrait<Closure>::Value) {
-        capture.next = routine->next;
-        capture.nr_pipelines = routine->pipeline;
-      }
+          if constexpr (ExposeNextPromiseTrait<Closure>::Value) {
+              capture.next = routine->next;
+              capture.nr_pipelines = routine->pipeline;
+            }
 
-    auto output = native_func(capture, t);
-    auto next = routine->next;
-    if (next && next->nr_routines() > 0) {
-      if (output) {
-        void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
-        VarStr *output_str = output->EncodeFromAlloca(buffer);
-        next->Complete(*output_str);
-      } else {
-        VarStr bubble(0, 0, (uint8_t *)PromiseRoutine::kBubblePointer);
-        next->Complete(bubble);
-      }
-      }
-    };
+          auto output = native_func(capture, t);
+          auto next = routine->next;
+          if (next && next->nr_routines() > 0) {
+            if (output) {
+              void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
+              VarStr *output_str = output->EncodeFromAlloca(buffer);
+              next->Complete(*output_str);
+            } else {
+              VarStr bubble(0, 0, (uint8_t *)PromiseRoutine::kBubblePointer);
+              next->Complete(bubble);
+            }
+          }
+          util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(routine);
+        };
     auto routine = PromiseRoutine::CreateFromCapture(capture.EncodeSize());
     routine->callback = (void (*)(PromiseRoutine *, VarStr)) static_func;
     routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;

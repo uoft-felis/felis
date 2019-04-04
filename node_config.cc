@@ -232,15 +232,23 @@ bool PromiseRoundRobin::PushRelease(int thr, unsigned int start, unsigned int en
 
   // True roundrobin
   PromiseRoutineWithInput rounds[kBufferSize / nr_threads + 1];
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
   for (int i = 0; i < nr_threads; i++) {
     int sz = 0;
+    int core = (i + rnd) % nr_threads;
+    std::array<unsigned long, NodeConfiguration::kPromiseMaxLevels> cnts;
+    cnts.fill(0);
     for (int j = i; j < nr_routines; j += nr_threads) {
+      auto [r, _] = routines[j];
       rounds[sz++] = routines[j];
+      cnts[r->level]++;
+    }
+    for (auto i = 0; i < NodeConfiguration::kPromiseMaxLevels; i++) {
+      if (cnts[i] == 0) continue;
+      transport.PreparePromisesToQueue(core, i, cnts[i]);
     }
     if (sz == 0) continue;
-    BasePromise::QueueRoutine(rounds, sz, idx,
-                              (i + rnd) % nr_threads + 1,
-                              false);
+    BasePromise::QueueRoutine(rounds, sz, idx, core + 1, false);
   }
 
   return true;
@@ -401,14 +409,15 @@ NodeConfiguration::NodeConfiguration()
   local_batch_counters = new ulong[2 + kPromiseMaxLevels * nr_nodes() * nr_nodes()];
 
   for (int i = 0; i < kPromiseMaxLevels; i++) {
-    batch_counters[i] = new std::atomic_ulong[nr_nodes()];
     for (int j = 0; j < nr_nodes(); j++) {
       for (int k = 0; k < nr_nodes(); k++) {
         total_batch_counters[BatchBufferIndex(i, j + 1, k + 1)] = 0;
       }
-      batch_counters[i][j] = 0;
     }
   }
+
+  transport_meta.Init(nr_nodes(), g_nr_threads);
+
   ResetBufferPlan();
 
   memset(urgency_cnt, 0, kMaxNrThreads * sizeof(long));
@@ -715,9 +724,7 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine, const V
   auto src_node = node_id();
   auto dst_node = routine->node_id == 0 ? id : routine->node_id;
   int level = routine->level;
-  auto idx = BatchBufferIndex(level, src_node, dst_node);
-  auto target_cnt = total_batch_counters[idx].load();
-  auto &current_cnt = batch_counters[level][dst_node - 1];
+  auto &meta = transport_meta.GetLocalData(level, go::Scheduler::CurrentThreadPoolId() - 1);
   bool bubble = (in.data == (uint8_t *) PromiseRoutine::kBubblePointer);
 
   if (src_node != dst_node) {
@@ -734,25 +741,52 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine, const V
       *flag = PromiseRoutine::kBubble | routine->level;
       out->Finish(8);
     }
-
-    if (current_cnt.fetch_add(1) + 1 == target_cnt) {
-      logger->info("Flush to {} level {}", dst_node, level);
-      out->Flush();
-    }
   } else {
     if (!bubble) {
       lb->QueueRoutine(routine, in);
     } else {
       lb->QueueBubble();
     }
-    if (current_cnt.fetch_add(1) + 1 == target_cnt) {
-      logger->info("Flush from myself. level = {}, cnt = {}", level, target_cnt);
-      lb->Flush();
+  }
+  meta.AddRoute(dst_node);
+}
+
+void NodeConfiguration::PreparePromisesToQueue(int core, int level, unsigned long nr)
+{
+  auto &meta = transport_meta.GetLocalData(level, core);
+  meta.IncrementExpected(nr);
+}
+
+void NodeConfiguration::FinishPromiseFromQueue(PromiseRoutine *routine)
+{
+  auto src_node = node_id();
+  auto core = go::Scheduler::CurrentThreadPoolId() - 1;
+  int level = routine ? routine->level : -1;
+  if (level >= 0) {
+    auto &meta = transport_meta.GetLocalData(level, core);
+    if (!meta.Finish())
+      return;
+  }
+
+  level++;
+  auto &meta = transport_meta.GetLocalData(level, core);
+  for (auto dst_node = 1; dst_node <= nr_nodes(); dst_node++) {
+    auto idx = BatchBufferIndex(level, src_node, dst_node);
+    auto target_cnt = total_batch_counters[idx].load();
+    auto cnt = transport_meta.Merge(level, meta, dst_node);
+    // printf("cnt %lu, target %lu\n", cnt, target_cnt);
+    if (cnt == target_cnt) {
+      // Flush channels to this route
+      if (dst_node != src_node) {
+        GetOutputChannel(dst_node)->Flush();
+      } else {
+        lb->Flush();
+      }
     }
   }
 }
 
-void NodeConfiguration::FlushPromiseRoutine()
+void NodeConfiguration::ForceFlushPromiseRoutine()
 {
   for (int i = 1; i < nr_nodes(); i++) {
     all_in_routines[i - 1]->Flush();
@@ -771,10 +805,7 @@ void NodeConfiguration::ResetBufferPlan()
          kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(ulong));
   for (ulong i = 0; i < kPromiseMaxLevels * nr_nodes() * nr_nodes(); i++)
     total_batch_counters[i].store(0);
-  for (ulong l = 0; l < kPromiseMaxLevels; l++) {
-    for (ulong i = 0; i < nr_nodes(); i++)
-      batch_counters[l][i] = 0;
-  }
+  transport_meta.Reset(nr_nodes(), g_nr_threads);
 }
 
 void NodeConfiguration::CollectBufferPlan(BasePromise *root)
