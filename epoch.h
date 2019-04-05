@@ -28,6 +28,7 @@ class EpochCallback {
 };
 
 class EpochClient {
+  PerfLog perf;
  public:
   static EpochClient *g_workload_client;
 

@@ -37,6 +37,7 @@ EpochClient::EpochClient() noexcept
 void EpochClient::Start()
 {
   auto worker = go::Make(std::bind(&EpochClient::InitializeEpoch, this));
+  perf = PerfLog();
   go::GetSchedulerFromPool(0)->WakeUp(worker);
 }
 
@@ -60,15 +61,21 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
   for (auto t = 0; t < nr_threads; t++) {
     auto r = go::Make(
         [t, nr_threads, this] {
+          long root = 0;
+          long l1 = 0;
           for (auto i = t * kBlock; i < total_nr_txn; i += kBlock * nr_threads) {
             for (auto j = 0; j < kBlock && i + j < total_nr_txn; j++) {
-              txns[i + j]->root_promise()->Complete(VarStr());
-              txns[i + j]->ResetRoot();
+              auto t = txns[i + j];
+              t->root_promise()->Complete(VarStr());
+              l1 += t->root_promise()->nr_routines();
+              root++;
+              t->ResetRoot();
             }
           }
           conf.DecrementUrgencyCount(t);
           util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
-          // logger->info("core {} finished issuing promises", i);
+          logger->info("core {} finished issusing {} root pieces and {} L1 pieces",
+                       t, root, l1);
         });
     r->set_urgent(true);
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
@@ -172,6 +179,7 @@ void EpochClient::ExecuteEpoch()
         if (util::Instance<EpochManager>().current_epoch_nr() + 1 < kMaxEpoch) {
           InitializeEpoch();
         } else {
+          perf.Show("All epochs done in");
           mem::PrintMemStats();
           mem::GetDataRegion().PrintUsageEachClass();
         }

@@ -245,8 +245,8 @@ class Promise : public BasePromise {
               capture.nr_pipelines = routine->pipeline;
             }
 
-          auto output = native_func(capture, t);
           auto next = routine->next;
+          auto output = native_func(capture, t);
           if (next && next->nr_routines() > 0) {
             if (output) {
               void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
