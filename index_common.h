@@ -104,7 +104,7 @@ class RelationPolicy : public BaseRelation,
     return IndexPolicy::InsertOrDefault(
         k,
         [this, default_func]() {
-          AutoIncrement();
+          // AutoIncrement();
           return default_func();
         });
   }
