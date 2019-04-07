@@ -808,16 +808,17 @@ void NodeConfiguration::ResetBufferPlan()
   transport_meta.Reset(nr_nodes(), g_nr_threads);
 }
 
-void NodeConfiguration::CollectBufferPlan(BasePromise *root)
+void NodeConfiguration::CollectBufferPlan(BasePromise *root, unsigned long *cnts)
 {
   auto src_node = node_id();
   for (size_t i = 0; i < root->nr_routines(); i++) {
     auto *routine = root->routine(i);
-    CollectBufferPlanImpl(routine, 0, src_node, 0);
+    CollectBufferPlanImpl(routine, cnts, 0, src_node, 0);
   }
 }
 
-void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src_node, int nr_extra)
+void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts,
+                                              int level, int src_node, int nr_extra)
 {
   abort_if(level >= kPromiseMaxLevels, "promise level {} too deep", level);
   routine->level = level;
@@ -825,7 +826,7 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, int level
   auto dst_node = routine->node_id;
   if (dst_node == 0)
     dst_node = src_node;
-  local_batch_counters[2 + BatchBufferIndex(level, src_node, dst_node)] += 1 + nr_extra;
+  cnts[BatchBufferIndex(level, src_node, dst_node)] += 1 + nr_extra;
 
   if (routine->next == nullptr)
     return;
@@ -835,7 +836,7 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, int level
 
   for (size_t i = 0; i < routine->next->nr_routines(); i++) {
     auto *subroutine = routine->next->routine(i);
-    CollectBufferPlanImpl(subroutine, level + 1, dst_node, nr_extra);
+    CollectBufferPlanImpl(subroutine, cnts, level + 1, dst_node, nr_extra);
   }
 }
 

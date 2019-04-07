@@ -142,7 +142,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   }
 
   void ResetBufferPlan();
-  void CollectBufferPlan(BasePromise *root);
+  void CollectBufferPlan(BasePromise *root, unsigned long *cnts);
   void FlushBufferPlan(bool sync);
   void FlushBufferPlanCompletion(uint64_t epoch_nr);
 
@@ -151,6 +151,10 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   // node id starts from 1
   int nr_nodes() const { return max_node_id; }
+
+  unsigned long *local_buffer_plan_counters() const {
+    return local_batch_counters + 2;
+  };
 
   static constexpr size_t kMaxNrNode = 1024;
  private:
@@ -169,7 +173,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   std::array<SendChannel *, kMaxNrNode> all_out_channels;
   size_t max_node_id;
 
-  static constexpr ulong kPromiseBarrierWatermark = 1 << 20;
+  static constexpr unsigned long kPromiseBarrierWatermark = 1 << 20;
   // The BufferRootPromise is going to run an analysis on the root promise to
   // keep track of how many handlers needs to be sent.
   //
@@ -177,13 +181,13 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   // channel_batch_counters[level][src][dst], where src and dst are the node
   // number - 1.
   std::atomic_ulong *total_batch_counters;
-  ulong *local_batch_counters;
+  unsigned long *local_batch_counters;
 
   TransportBatchMetadata transport_meta;
 
   unsigned long urgency_cnt[kMaxNrThreads];
  private:
-  void CollectBufferPlanImpl(PromiseRoutine *routine, int level, int src, int nr_extra);
+  void CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts, int level, int src, int nr_extra);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);
 };
 

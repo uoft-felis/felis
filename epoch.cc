@@ -111,15 +111,21 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
 
   uint8_t buf[nr_threads];
   go::BufferChannel *comp = new go::BufferChannel(nr_threads);
+  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
+  auto cnts = (unsigned long *) alloca(sizeof(unsigned long) * cnt_len * nr_threads);
+  std::fill(cnts, cnts + cnt_len * nr_threads, 0);
 
-  for (ulong t = 0; t < nr_threads; t++) {
+  for (auto t = 0; t < nr_threads; t++) {
+    auto cnt = cnts + cnt_len * t;
     auto r = go::Make(
-        [func, t, comp, this, nr_threads]() {
+        [func, t, comp, this, cnt, nr_threads]() {
           conf.IncrementUrgencyCount(t);
           for (auto i = t * kBlock; i < total_nr_txn ; i += kBlock * nr_threads) {
             for (auto j = 0; j < kBlock && i + j < total_nr_txn; j++) {
-              txns[i + j]->ResetRoot();
-              func(txns[i + j]);
+              auto t = txns[i + j];
+              t->ResetRoot();
+              func(t);
+              conf.CollectBufferPlan(t->root_promise(), cnt);
             }
           }
           // logger->info("Issuer done on core {}", t);
@@ -132,9 +138,15 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
 
   comp->Read(buf, nr_threads);
   p.Show("Prepare takes ");
-  for (uint64_t i = 0; i < total_nr_txn; i++) {
-    conf.CollectBufferPlan(txns[i]->root_promise());
+
+  auto local_cnts = conf.local_buffer_plan_counters();
+  for (auto t = 0; t < nr_threads; t++) {
+    auto cnt = cnts + cnt_len * t;
+    for (auto i = 0; i < cnt_len; i++) {
+      local_cnts[i] += cnt[i];
+    }
   }
+
   conf.FlushBufferPlan(sync);
 }
 
