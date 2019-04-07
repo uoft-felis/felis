@@ -329,7 +329,7 @@ class PromiseStream {
 
 class PromiseProc : public PromiseStream<DummyValue> {
  public:
-  PromiseProc() : PromiseStream<DummyValue>(new Promise<DummyValue>()) {}
+  PromiseProc() : PromiseStream<DummyValue>(nullptr) {}
   PromiseProc(const PromiseProc &rhs) = delete;
   PromiseProc(PromiseProc &&rhs) = delete;
   ~PromiseProc();

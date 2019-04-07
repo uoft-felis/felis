@@ -344,10 +344,6 @@ void *Brk::Alloc(size_t s)
   return p;
 }
 
-Brk::~Brk()
-{
-}
-
 static Brk *BrkFromRoutine()
 {
   auto sched = go::Scheduler::Current();

@@ -447,7 +447,7 @@ class NodeServerThreadRoutine : public go::Routine {
     lb.Flush();
   }
   int thread_pool_id() const { return tid.load(std::memory_order_relaxed); }
-  virtual void Run() final;
+  virtual void Run() final __attribute__((noinline));
 
  private:
   void UpdateBatchCounters();

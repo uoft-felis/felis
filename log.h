@@ -22,6 +22,8 @@ class PerfLog {
   void Show(const char *msg);
   void Show(std::string str) { Show(str.c_str()); }
   void Clear();
+
+  uint32_t duration_ms() const { return duration; }
 };
 
 #define abort_if(cond, ...)                     \

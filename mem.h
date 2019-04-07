@@ -18,6 +18,7 @@ enum MemAllocType {
   GenericMemory,
   EpochQueueItem,
   EpochQueuePromise,
+  Txn,
   Promise,
   Epoch,
   EpochQueuePool,
@@ -32,6 +33,7 @@ const std::string kMemAllocTypeLabel[] = {
   "generic",
   "epoch queue item",
   "epoch queue promise",
+  "txn input and state",
   "promise",
   "epoch",
   "^pool:epoch queue",
@@ -238,13 +240,25 @@ class Brk {
  public:
   Brk() : offset(0), limit(0), data(nullptr) {}
   Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p) {}
-  ~Brk();
+  ~Brk() {}
 
-  void move(Brk &&rhs) {
+  Brk(Brk &&rhs) {
     data = rhs.data;
     limit = rhs.limit;
     offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
     ord = rhs.ord;
+
+    rhs.offset = 0;
+    rhs.limit = 0;
+    rhs.data = nullptr;
+  }
+
+  Brk &operator =(Brk &&rhs) {
+    if (this != &rhs) {
+      this->~Brk();
+      new (this) Brk(std::move(rhs));
+    }
+    return *this;
   }
 
   void set_thread_safe(bool safe) {

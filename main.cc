@@ -101,6 +101,10 @@ int main(int argc, char *argv[])
   // init tables from the workload module
   Module<WorkloadModule>::InitModule(workload_name);
 
+  auto client = EpochClient::g_workload_client;
+  logger->info("Generating Benchmarks...");
+  client->GenerateBenchmarks();
+
   logger->info("Ready. Waiting for run command from the controller.");
   console.WaitForServerStatus(felis::Console::ServerStatus::Running);
 
@@ -109,7 +113,7 @@ int main(int argc, char *argv[])
 
   printf("\n");
   logger->info("Starting workload");
-  EpochClient::g_workload_client->Start();
+  client->Start();
 
   console.WaitForServerStatus(Console::ServerStatus::Exiting);
 

@@ -1,8 +1,17 @@
 #include "txn.h"
 #include "index.h"
 #include "util.h"
+#include "literals.h"
 
 namespace felis {
+
+mem::Brk BaseTxn::g_brk;
+
+void BaseTxn::InitBrk(long nr_epochs)
+{
+  auto lmt = 32_M * nr_epochs;
+  g_brk = mem::Brk(mem::MemMapAlloc(mem::Txn, lmt), lmt);
+}
 
 bool BaseTxn::TxnVHandle::AppendNewVersion()
 {

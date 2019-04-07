@@ -13,7 +13,7 @@
 namespace felis {
 
 // A key-value pair, and thankfully, this is immutable.
-class IndexEntity {
+class IndexEntity final {
   friend class IndexShipmentReceiver;
   int alloc_coreid;
   int rel_id;
@@ -54,7 +54,7 @@ private:
   static mem::ParallelPool pool;
 };
 
-class RowEntity {
+class RowEntity final {
   friend class RowShipmentReceiver;
   friend class SortedArrayVHandle;
 

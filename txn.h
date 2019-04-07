@@ -24,9 +24,17 @@ class BaseTxn {
   uint64_t sid;
 
   PromiseProc proc;
+
+  static mem::Brk g_brk;
  public:
   BaseTxn(uint64_t serial_id)
-      : epoch(util::Instance<EpochManager>().current_epoch()), sid(serial_id) {}
+      : epoch(nullptr), sid(serial_id) {}
+
+  static void *operator new(size_t nr_bytes) { return g_brk.Alloc(nr_bytes); }
+  static void operator delete(void *ptr) {}
+  static void InitBrk(long nr_epochs);
+
+  virtual void PrepareState() {}
 
   virtual ~BaseTxn() {}
   virtual void Prepare() = 0;
@@ -312,7 +320,10 @@ class Txn : public BaseTxn {
  protected:
   State state;
  public:
-  Txn(uint64_t serial_id) : BaseTxn(serial_id) {
+  Txn(uint64_t serial_id) : BaseTxn(serial_id) {}
+
+  void PrepareState() final override {
+    epoch = util::Instance<EpochManager>().current_epoch();
     state = epoch->AllocateEpochObjectOnCurrentNode<TxnState>();
   }
 

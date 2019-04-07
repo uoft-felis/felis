@@ -34,16 +34,33 @@ EpochClient::EpochClient() noexcept
   callback.perf.End();
 }
 
+void EpochClient::GenerateBenchmarks()
+{
+  auto total = NumberOfTxns() * (kMaxEpoch - 1);
+  all_txns = (BaseTxn **) mem::MemMapAlloc(
+      mem::Txn, sizeof(BaseTxn *) * total);
+  for (auto i = 1; i < kMaxEpoch; i++) {
+    auto base = (i - 1) * NumberOfTxns();
+    for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
+      all_txns[base + j - 1] = CreateTxn(GenerateSerialId(i, j));
+    }
+  }
+}
+
 void EpochClient::Start()
 {
+  // Ready to start!
   auto worker = go::Make(std::bind(&EpochClient::InitializeEpoch, this));
+
+  logger->info("load percentage {}%", LoadPercentage());
+
   perf = PerfLog();
   go::GetSchedulerFromPool(0)->WakeUp(worker);
 }
 
-uint64_t EpochClient::GenerateSerialId(uint64_t sequence)
+uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 {
-  return (util::Instance<EpochManager>().current_epoch_nr() << 32)
+  return (epoch_nr << 32)
       | (sequence << 8)
       | (conf.node_id() & 0x00FF);
 }
@@ -69,13 +86,14 @@ void EpochClient::RunTxnPromises(std::string label, std::function<void ()> conti
               t->root_promise()->Complete(VarStr());
               l1 += t->root_promise()->nr_routines();
               root++;
-              t->ResetRoot();
             }
           }
           conf.DecrementUrgencyCount(t);
           util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
+          /*
           logger->info("core {} finished issusing {} root pieces and {} L1 pieces",
                        t, root, l1);
+          */
         });
     r->set_urgent(true);
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
@@ -100,6 +118,7 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
           conf.IncrementUrgencyCount(t);
           for (auto i = t * kBlock; i < total_nr_txn ; i += kBlock * nr_threads) {
             for (auto j = 0; j < kBlock && i + j < total_nr_txn; j++) {
+              txns[i + j]->ResetRoot();
               func(txns[i + j]);
             }
           }
@@ -121,24 +140,17 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
 
 void EpochClient::InitializeEpoch()
 {
-  util::Instance<EpochManager>().DoAdvance(this);
+  auto &mgr = util::Instance<EpochManager>();
+  mgr.DoAdvance(this);
+  auto epoch_nr = mgr.current_epoch_nr();
 
   util::Impl<PromiseAllocationService>().Reset();
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
-  auto load_pct = LoadPercentage();
-  logger->info("load percentage {}%", load_pct);
-  total_nr_txn = kEpochBase * load_pct;
-
-  txns.reset(new BaseTxn*[total_nr_txn]);
-
-  //if (NodeConfiguration::g_data_migration)
   disable_load_balance = true;
-  for (uint64_t i = 0; i < total_nr_txn; i++) {
-    auto sequence = i + 1;
-    txns[i] = CreateTxn(GenerateSerialId(i + 1));
-  }
+  txns = all_txns + NumberOfTxns() * (epoch_nr - 1);
+  total_nr_txn = NumberOfTxns();
 
   for (auto i = 0; i < nr_threads; i++) {
     go::GetSchedulerFromPool(i + 1)->WakeUp(
@@ -152,7 +164,11 @@ void EpochClient::InitializeEpoch()
     }));
   }
 
-  IssueTransactions(1, std::mem_fn(&BaseTxn::PrepareInsert));
+  for (auto i = 0; i < total_nr_txn; i++) {
+    txns[i]->PrepareState();
+  }
+
+  IssueTransactions(1, [](auto t) { t->PrepareInsert(); });
 
   RunTxnPromises(
       "Epoch Initialization (Insert)",
@@ -180,6 +196,8 @@ void EpochClient::ExecuteEpoch()
           InitializeEpoch();
         } else {
           perf.Show("All epochs done in");
+          logger->info("Throughput {} txn/s",
+                       NumberOfTxns() * 1000 * (kMaxEpoch - 1) / perf.duration_ms());
           mem::PrintMemStats();
           mem::GetDataRegion().PrintUsageEachClass();
         }
@@ -467,10 +485,10 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     auto s = kEpochPromiseAllocationWorkerLimit / NodeConfiguration::g_nr_threads;
     if (i == 0) s = kEpochPromiseAllocationMainLimit;
-    brks[i].move(mem::Brk(mem::MemMapAlloc(mem::Promise, s), s));
+    brks[i] = mem::Brk(mem::MemMapAlloc(mem::Promise, s), s);
     acc += s;
-    minibrks[i].move(mem::Brk(
-        brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
+    minibrks[i] = mem::Brk(
+        brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE);
   }
   // logger->info("Memory allocated: PromiseAllocator {}GB", acc >> 30);
 }
@@ -481,8 +499,8 @@ void *EpochPromiseAllocationService::Alloc(size_t size)
   if (size < CACHE_LINE_SIZE) {
     auto &b = minibrks[thread_id];
     if (!b.Check(size)) {
-      b.move(mem::Brk(
-          brks[thread_id].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
+      b = mem::Brk(
+          brks[thread_id].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE);
     }
     return b.Alloc(size);
   } else {
@@ -496,8 +514,7 @@ void EpochPromiseAllocationService::Reset()
     // logger->info("  PromiseAllocator {} used {}MB. Resetting now.", i,
     // brks[i].current_size() >> 20);
     brks[i].Reset();
-    minibrks[i].move(
-        mem::Brk(brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE));
+    minibrks[i] = mem::Brk(brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE);
   }
 }
 
@@ -509,7 +526,7 @@ EpochMemory::EpochMemory(mem::Pool *pool)
   logger->info("Allocating EpochMemory");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
-    brks[i].move(mem::Brk((uint8_t *) pool->Alloc(), kEpochMemoryLimit));
+    brks[i] = mem::Brk((uint8_t *) pool->Alloc(), kEpochMemoryLimit);
     brks[i].set_thread_safe(false);
   }
 }

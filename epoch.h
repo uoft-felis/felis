@@ -35,14 +35,17 @@ class EpochClient {
   EpochClient() noexcept;
   virtual ~EpochClient() {}
 
+  void GenerateBenchmarks();
   void Start();
 
   auto completion_object() { return &completion; }
 
   virtual unsigned int LoadPercentage() = 0;
+  unsigned long NumberOfTxns() {
+    return LoadPercentage() * kTxnPerEpoch / 100;
+  };
 
-  // This x100 will be total number of txns.
-  static constexpr size_t kEpochBase = 1000;
+  static constexpr size_t kTxnPerEpoch = 100000;
   static constexpr size_t kMaxEpoch = 10;
  protected:
   friend class BaseTxn;
@@ -53,7 +56,7 @@ class EpochClient {
   void InitializeEpoch();
   void ExecuteEpoch();
 
-  uint64_t GenerateSerialId(uint64_t sequence);
+  uint64_t GenerateSerialId(uint64_t epoch_nr, uint64_t sequence);
 
   virtual BaseTxn *CreateTxn(uint64_t serial_id) = 0;
 
@@ -64,7 +67,8 @@ class EpochClient {
   EpochCallback callback;
   CompletionObject<util::Ref<EpochCallback>> completion;
 
-  util::OwnPtr<BaseTxn *[]> txns;
+  BaseTxn **all_txns;
+  BaseTxn **txns;
   unsigned long total_nr_txn;
   bool disable_load_balance;
 
