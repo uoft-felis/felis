@@ -177,11 +177,13 @@ void ParallelPool::Free(void *ptr, int alloc_core)
 {
   auto cur = CurrentAffinity();
   if (alloc_core < 0 || alloc_core >= kMaxNrPools) {
+    fprintf(stderr, "alloc_core error, is %d\n", alloc_core);
     std::abort();
   }
   // Trying to free to an extra pool. Then you must be on that core to free to
   // this pool!
   if (alloc_core >= g_nr_cores && cur != alloc_core) {
+    fprintf(stderr, "alloc_core is not current core, is %d\n", alloc_core);
     std::abort();
   }
   if (cur == alloc_core) {

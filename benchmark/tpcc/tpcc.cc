@@ -855,41 +855,116 @@ int SliceLocator<StockData>::Locate(const typename StockData::Key &key) {
 int SliceLocator<Warehouse>::Locate(const typename Warehouse::Key &key) {
   return key.w_id - 1;
 }
+#endif
 
 
-#elif ROW_SLICE_MAPPING_2
+#ifdef ROW_SLICE_MAPPING_2
+
+#define DISTRICT_CUT 6
+#define STOCK_CUT 50000
 int SliceLocator<Customer>::Locate(const typename Customer::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.c_w_id)) {
+    if (key.c_d_id < DISTRICT_CUT) {
+      return key.c_w_id - 1;
+    } else {
+      return key.c_w_id;
+    }
+  }
+  return key.c_w_id - 1;
 }
 int SliceLocator<CustomerNameIdx>::Locate(const typename CustomerNameIdx::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.c_w_id)) {
+    if (key.c_d_id < DISTRICT_CUT) {
+      return key.c_w_id - 1;
+    } else {
+      return key.c_w_id;
+    }
+  }
+  return key.c_w_id - 1;
 }
 int SliceLocator<District>::Locate(const typename District::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.d_w_id)) {
+    if (key.d_id < DISTRICT_CUT) {
+      return key.d_w_id - 1;
+    } else {
+      return key.d_w_id;
+    }
+  }
+  return key.d_w_id - 1;
 }
 int SliceLocator<History>::Locate(const typename History::Key &key) {
-
+  // History currently follows order warehouse_id
+  if (ClientBase::is_warehouse_hotspot(key.h_w_id)) {
+    if (key.h_d_id < DISTRICT_CUT) {
+      return key.h_w_id - 1;
+    } else {
+      return key.h_w_id;
+    }
+  }
+  return key.h_w_id - 1;
 }
 int SliceLocator<NewOrder>::Locate(const typename NewOrder::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.no_w_id)) {
+    if (key.no_d_id < DISTRICT_CUT) {
+      return key.no_w_id - 1;
+    } else {
+      return key.no_w_id;
+    }
+  }
+  return key.no_w_id - 1;
 }
 int SliceLocator<OOrder>::Locate(const typename OOrder::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.o_w_id)) {
+    if (key.o_d_id < DISTRICT_CUT) {
+      return key.o_w_id - 1;
+    } else {
+      return key.o_w_id;
+    }
+  }
+  return key.o_w_id - 1;
 }
 int SliceLocator<OOrderCIdIdx>::Locate(const typename OOrderCIdIdx::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.o_w_id)) {
+    if (key.o_d_id < DISTRICT_CUT) {
+      return key.o_w_id - 1;
+    } else {
+      return key.o_w_id;
+    }
+  }
+  return key.o_w_id - 1;
 }
 int SliceLocator<OrderLine>::Locate(const typename OrderLine::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.ol_w_id)) {
+    if (key.ol_d_id < DISTRICT_CUT) {
+      return key.ol_w_id - 1;
+    } else {
+      return key.ol_w_id;
+    }
+  }
+  return key.ol_w_id - 1;
 }
 int SliceLocator<Stock>::Locate(const typename Stock::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.s_w_id)) {
+    if (key.s_i_id < STOCK_CUT) {
+      return key.s_w_id - 1;
+    } else {
+      return key.s_w_id;
+    }
+  }
+  return key.s_w_id - 1;
 }
 int SliceLocator<StockData>::Locate(const typename StockData::Key &key) {
-
+  if (ClientBase::is_warehouse_hotspot(key.s_w_id)) {
+    if (key.s_i_id < STOCK_CUT) {
+      return key.s_w_id - 1;
+    } else {
+      return key.s_w_id;
+    }
+  }
+  return key.s_w_id - 1;
 }
 int SliceLocator<Warehouse>::Locate(const typename Warehouse::Key &key) {
-
+  return key.w_id - 1;
 }
 #endif
 

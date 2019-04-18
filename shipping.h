@@ -52,6 +52,9 @@ class ShippingHandle : public util::ListNode {
    * @return if the handle should be put into queue by the scanner
    */
   bool CheckSession();
+
+  // for analysis in ScanShippingHandle()
+  unsigned long long GetGeneration() { return generation.load(std::memory_order_acquire); }
 };
 
 template <typename T>
@@ -74,11 +77,14 @@ class SliceScanner {
   SliceScanner(Slice * slice);
 
   ShippingHandle *GetNextHandle();
+  void ResetCursor();
  public:
   static void ScannerBegin();
   static void ScannerEnd();
+  static void MigrationApproachingEnd();
   static void MigrationEnd();
   static void StatAddObject();
+  static bool IsConverging();
 };
 
 // Class for sending IOVec.
@@ -107,6 +113,7 @@ class BaseShipment {
 // g_objects_added includes shipped and skipped
 static std::atomic_ulong g_objects_shipped = 0;
 static std::atomic_ulong g_objects_skipped = 0;
+static std::atomic_ullong g_bytes_sent = 0;
 
 /**
  * T is a concept:
@@ -169,9 +176,10 @@ class Shipment : public BaseShipment {
         continue;
       }
       vec[cur_iov].iov_len = 8;
-      vec [cur_iov].iov_base = &obj[i]->encoded_len;
+      vec[cur_iov].iov_base = &obj[i]->encoded_len;
 
       cur_iov += n + 1;
+      g_bytes_sent.fetch_add(obj[i]->encoded_len);
       g_objects_shipped.fetch_add(1);
       i++;
     }
@@ -278,7 +286,22 @@ class ObjectSliceScanner : public SliceScanner {
       AddObject(((ObjectShippingHandle<T> *) handle)->object);
       cnt++;
     }
-    logger->info("ObjectSliceScanner found {} objects", cnt);
+    logger->info("[mig]ObjectSliceScanner found {} objects", cnt);
+  }
+
+  // scan the slice for analyzing the max time a row got send
+  void ScanShippingHandle() {
+    if (!ship) return;
+    ResetCursor();
+    ShippingHandle *handle = nullptr;
+    unsigned long long max = 0;
+    size_t cnt = 0;
+    while ((handle = GetNextHandle())) {
+      auto cur = handle->GetGeneration();
+      max = cur > max ? cur : max;
+      cnt++;
+    }
+    logger->info("[mig]In all the {} objects in slice, most shipped row: {} times", cnt, max);
   }
 };
 

@@ -17,6 +17,7 @@ static constexpr uint64_t kScanningSessionMask = (1 << kScanningSessionStatusBit
 static constexpr uint64_t kScanningSessionConverged = 0x03;
 static constexpr uint64_t kScanningSessionActive = 0x00;
 static constexpr uint64_t kScanningSessionInactive = 0x01;
+static constexpr uint64_t kScanningSessionConverging = 0x02;
 
 /**
  * Scanning session timestamp uses laste two bits for shipping/scanning status.
@@ -31,6 +32,10 @@ static constexpr uint64_t kScanningSessionInactive = 0x01;
  *
  * [ ts + 1 ] 01: the scanner has finished, but the live-migration is still
  * going on now.
+ *
+ * [ ts + 1 ] 10: the shipping data of the live-migration is about to converge,
+ * meaning the epoch client should wait for this migration session to end, before
+ * ending current epoch.
  */
 static std::atomic_ulong g_scanning_session = kScanningSessionConverged;
 
@@ -98,18 +103,41 @@ void SliceScanner::StatAddObject()
   g_objects_added.fetch_add(1);
 }
 
+void SliceScanner::MigrationApproachingEnd()
+{
+  auto session = g_scanning_session.fetch_add(1);
+  abort_if((session & kScanningSessionMask) != kScanningSessionInactive,
+           "Cannot set converging because scanner isn't inactive {}",
+           session);
+}
+
 void SliceScanner::MigrationEnd()
 {
-  logger->info("Migration finishes {} objects were added", g_objects_added.load());
-  auto session = g_scanning_session.fetch_add(2);
-  abort_if((session & kScanningSessionMask) != kScanningSessionInactive,
-           "Cannot end migration because scanner isn't inactive {}",
+  auto session = g_scanning_session.fetch_add(1);
+  auto status = session & kScanningSessionMask;
+  abort_if((status != kScanningSessionConverging &&
+            status != kScanningSessionInactive),
+           "Cannot end migration because scanner isn't converging or isn't active {}",
            session);
+  if (status == kScanningSessionInactive)
+    // in index, will go from Inactive straight to Converged, so add 2
+    g_scanning_session.fetch_add(1);
   g_objects_added.store(0);
+}
+
+bool SliceScanner::IsConverging() {
+  auto session = g_scanning_session.load();
+  return ((session & kScanningSessionMask) == kScanningSessionConverging);
 }
 
 SliceScanner::SliceScanner(Slice * slice) : slice(slice)
 {
+  current_q = &slice->shared_q.elem;
+  current_node = current_q->queue.next;
+}
+
+// reset the cursor used in GetNextHandle, so you can scan the slice again
+void SliceScanner::ResetCursor() {
   current_q = &slice->shared_q.elem;
   current_node = current_q->queue.next;
 }
@@ -243,49 +271,151 @@ void RowShipmentReceiver::Run()
   CPU_ZERO(&cpuset);
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
-  RowEntity ent;
-  auto &mgr = util::Instance<RelationManager>();
-
-  logger->info("New Row Shipment has arrived!");
+  logger->info("[mig]New Row Shipment has arrived!");
   PerfLog perf;
   int count = 0;
-  while (Receive(&ent)) {
-    auto &rel = mgr[ent.rel_id];
-    auto handle = rel.InsertOrDefault(ent.k, [&ent]() { return ent.handle_ptr; });
-    if (handle != ent.handle_ptr) {
-      // the row existed before, so we just write a new version
-      auto var = ent.handle_ptr->ReadExactVersion(0);
-      handle->WriteNewVersion(util::Instance<EpochManager>().current_epoch_nr(), var);
 
-    }
-    // TODO: add row to its slice
-    // ent.slice_id = locate
+
+//#define DISCARD_RECEIVE
+#ifdef DISCARD_RECEIVE
+  RowEntity ent;
+  ent.Prepare(VarStr::FromAlloca(alloca(64), 64), VarStr::FromAlloca(alloca(768), 768));
+  int maxK = 0, maxV = 0;
+  while (Receive(&ent)) {
     count++;
+    maxK = ent.k->len > maxK ? ent.k->len : maxK;
+    maxV = ent.v->len > maxV ? ent.v->len : maxV;
   }
-  logger->info("Row Shipment processing finished, received {} RowEntities", count);
+  logger->info("Max Key length {}, Max Value length {}", maxK, maxV);
+#endif
+
+
+#define BUFFER_RECEIVE
+#ifdef BUFFER_RECEIVE
+  int worker_tid = 0;
+  static constexpr int recvBufSize = 512;
+  static constexpr int batchSize = 32; // entity batch num per lambda
+  RowEntity ent[recvBufSize];
+  for (int i = 0; i < recvBufSize; i++) {
+    ent[i].Prepare(VarStr::FromAlloca(alloca(64), 64), VarStr::FromAlloca(alloca(768), 768));
+  }
+
+  while (true) {
+    int recvCount = recvBufSize;
+    bool lastBatch = false;
+    for (int i = 0; i < recvBufSize; i++) {
+      if (!Receive(&ent[i])) {
+        recvCount = i;
+        lastBatch = true;
+        break;
+      }
+      count++;
+    }
+
+    if (recvCount == 0)
+      break;
+
+    int workerNeeded = (recvCount - 1) / batchSize + 1;
+    go::BufferChannel *complete = new go::BufferChannel(workerNeeded);
+    for (int i = 0; i < recvCount; i += batchSize) {
+      RowEntity *en = ent + i;
+      int entCount = (i + batchSize > recvCount) ? (recvCount - i) : batchSize;
+      auto r = go::Make(
+          [en, entCount, complete] {
+            auto &mgr = util::Instance<RelationManager>();
+            for (int i = 0; i < entCount; i++) {
+              auto rel_id = en[i].get_rel_id();
+              auto slice_id = en[i].slice_id();
+
+              VarStr *k = VarStr::New(en[i].k->len);
+              memcpy((uint8_t *) k + sizeof(VarStr), (uint8_t *) en[i].k + sizeof(VarStr), en[i].k->len);
+
+              VHandle *handle = new VHandle();
+              InitVersion(handle, en[i].v);
+
+              // InsertOrDefault:
+              //   If the key exists in the masstree, then return the value
+              //   If the key does not exist, then execute the lambda function, insert the
+              //     (key, return value of lambda) into the masstree, and return the value
+              auto &rel = mgr[rel_id];
+              bool exist = true;
+              auto ret_handle = rel.InsertOrDefault(k, [&handle]() { return handle; });
+              if (handle != ret_handle) {
+                // key does exist, append a version
+                ret_handle->WriteNewVersion(util::Instance<EpochManager>().current_epoch_nr(), en[i].v);
+                handle = ret_handle;
+              }
+              RowEntity *entity = new felis::RowEntity(en[i].get_rel_id(), k, handle, en[i].slice_id());
+
+              // TODO: add row to its slice
+
+            }
+            uint8_t done = 0;
+            complete->Write(&done, 1);
+          });
+      r->set_urgent(true);
+      go::GetSchedulerFromPool(worker_tid + 1)->WakeUp(r);
+      worker_tid = (worker_tid + 1) % NodeConfiguration::g_nr_threads;
+    }
+    //logger->info("[Receive]dispatched {} RowEntities, total {}", recvCount, count);
+
+    uint8_t buf[recvBufSize / batchSize];
+    complete->Read(buf, workerNeeded);
+    //logger->info("[Receive]worker finished {} RowEntities, total {}", recvCount, count);
+
+    if (lastBatch)
+      break;
+  }
+#endif
+
   perf.End();
-  perf.Show("Processing takes");
+  perf.Show("[mig]RowShipment processing takes");
+  logger->info("[mig]processed {} RowEntities, speed {} row/s", count, count * 1000 / perf.duration_ms());
   sock->Close();
 
 }
 
 void RowScannerRoutine::Run()
 {
-  logger->info("Scanning row...");
+  PerfLog perf_scan;
+  logger->info("[mig]Scanning row...");
   auto &slicer = util::Instance<SliceManager>();
   slicer.ScanAllRow();
-  logger->info("Scanning row done");
+  perf_scan.End();
+  perf_scan.Show("[mig]Scanning row done, takes");
 
   auto all_shipments = slicer.all_row_shipments();
-  for (auto shipment: all_shipments) {
-    logger->info("Shipping row");
-    int iter = 0;
-    while (!shipment->RunSend())
-      iter++;
-    logger->info("Done shipping row, shipped {}/skipped {}/total {}, iter {}",
-      g_objects_shipped, g_objects_skipped, g_objects_shipped + g_objects_skipped, iter);
+  if (all_shipments.size() == 0) {
+    logger->info("[mig]No active shipment. Ending scanning session {}", g_scanning_session.load());
+    SliceScanner::MigrationApproachingEnd();
+    SliceScanner::MigrationEnd();
+    return;
   }
-}
 
+  PerfLog perf_ship;
+  bool approachingEndSet = false;
+  logger->info("[mig]Shipping row...");
+  for (auto shipment: all_shipments) {
+    int iter = 0;
+    while (!shipment->RunSend()) {
+      iter++;
+      if (g_objects_shipped + g_objects_skipped > 650000 && !approachingEndSet) {
+        // TODO: determine converging or not by metrics, rather than magic number
+        SliceScanner::MigrationApproachingEnd();
+        approachingEndSet = true;
+      }
+
+    // logger->info("[mig]iter {}: shipped {}/skipped {}/total {}, sent {} KB",
+    //    iter, g_objects_shipped, g_objects_skipped, g_objects_shipped + g_objects_skipped, g_bytes_sent / 1024);
+
+    }
+    logger->info("[mig]Shipping row done, shipped {}/skipped {}/total {}, iter {}, sent {} KB",
+      g_objects_shipped, g_objects_skipped, g_objects_shipped + g_objects_skipped, iter, g_bytes_sent / 1024);
+  }
+  perf_ship.End();
+  perf_ship.Show("[mig]Shipping row takes");
+
+  slicer.ScanShippingHandle();
+}
 
 }

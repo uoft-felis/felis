@@ -17,6 +17,7 @@ void EpochCallback::operator()()
 {
   perf.End();
   perf.Show(label + std::string(" finishes"));
+  printf("\n");
 
   // Don't call the continuation directly.
   //
@@ -137,7 +138,7 @@ void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseT
   }
 
   comp->Read(buf, nr_threads);
-  p.Show("Prepare takes ");
+  p.Show("Issuing pieces done, takes");
 
   auto local_cnts = conf.local_buffer_plan_counters();
   for (auto t = 0; t < nr_threads; t++) {
@@ -194,7 +195,7 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::ExecuteEpoch()
 {
-  if (NodeConfiguration::g_data_migration) {
+  if (NodeConfiguration::g_data_migration && util::Instance<EpochManager>().current_epoch_nr() == 1) {
     logger->info("Starting data scanner thread");
     auto &peer = util::Instance<felis::NodeConfiguration>().config().row_shipper_peer;
     go::GetSchedulerFromPool(NodeConfiguration::g_nr_threads + 1)->WakeUp(
