@@ -107,6 +107,7 @@ class SliceManager {
   // only the slices which (shipment != nullptr) will be scanned
   void ScanAllIndex() { ScanAll(index_slice_scanners); }
   void ScanAllRow() { ScanAll(row_slice_scanners); }
+  void ScanShippingHandle();
 
  private:
   IndexEntity *OnNewRow(int slice_id, IndexEntity *ent) {

@@ -43,20 +43,18 @@ void RowEntity::DecodeIOVec(struct iovec *vec)
 {
   auto p = (uint8_t *) vec->iov_base;
 
-  auto key_size = *((uint16_t *)(p + 4));
-  assert(key_size > 0);
-  //auto value_size = vec->iov_len - 6 - key_size;
-
-  if (k == nullptr || k->len < key_size) {
-    delete k;
-    k = VarStr::New(key_size);
-  }
   memcpy(&rel_id, p, 4);
-  memcpy((uint8_t *) k + sizeof(VarStr), p + 6, key_size);
+  memcpy(&slice, p + 4, 4);
 
-  if (handle_ptr == nullptr)
-    handle_ptr = new VHandle();
-  felis::InitVersion(handle_ptr, (VarStr *) p + 6 + key_size);
+  auto key_size = *((uint16_t *)(p + 8));
+  assert(key_size > 0);
+  k->len = key_size;
+  memcpy((uint8_t *) k + sizeof(VarStr), p + 10, key_size);
+
+  auto value_size = vec->iov_len - 10 - key_size;
+  assert(value_size > 0);
+  v->len = value_size;
+  memcpy((uint8_t *) v + sizeof(VarStr), p + 10 + key_size, value_size);
 }
 
 int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
@@ -66,19 +64,21 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
 
   vec[0].iov_len = 4;
   vec[0].iov_base = &rel_id;
-  vec[1].iov_len = 2;
-  vec[1].iov_base = &(k->len);
-  vec[2].iov_len = k->len;
-  vec[2].iov_base = (void *) k->data;
+  vec[1].iov_len = 4;
+  vec[1].iov_base = &slice;
+  vec[2].iov_len = 2;
+  vec[2].iov_base = &(k->len);
+  vec[3].iov_len = k->len;
+  vec[3].iov_base = (void *) k->data;
 
   auto v = handle_ptr->ReadExactVersion(handle_ptr->latest_version.load());
-  vec[3].iov_len = v->len;
-  vec[3].iov_base = (void *) v->data;
-  encoded_len = 6 + k->len + v->len;
+  vec[4].iov_len = v->len;
+  vec[4].iov_base = (void *) v->data;
+  encoded_len = 10 + k->len + v->len;
 
   shipping_handle()->PrepareSend();
 
-  return 4;
+  return 5;
 }
 
 bool RowEntity::ShouldSkip()

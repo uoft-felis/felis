@@ -28,7 +28,7 @@ class IndexEntity final {
       : alloc_coreid(mem::ParallelPool::CurrentAffinity()), rel_id(rel_id), k(k),
         handle_ptr(handle), shandle(this) {}
   ~IndexEntity() {}
-  IndexEntity(const IndexEntity &rhs) = delete; // C++17 has guaranteed copy-ellision! :)
+  IndexEntity(const IndexEntity &rhs) = delete; // C++17 has guaranteed copy-elision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
   bool ShouldSkip() { return false; }
@@ -64,11 +64,12 @@ class RowEntity final {
   VarStr *k;
   VHandle *handle_ptr;
   ObjectShippingHandle<RowEntity> shandle;
+  VarStr *v;
  public:
   RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id);
   RowEntity() : RowEntity(-1, nullptr, nullptr, -1) {}
-  ~RowEntity() { delete k; }
-  RowEntity(const RowEntity &rhs) = delete; // C++17 has guaranteed copy-ellision! :)
+  ~RowEntity() {}
+  RowEntity(const RowEntity &rhs) = delete; // C++17 has guaranteed copy-elision! :)
 
   ShippingHandle *shipping_handle() { return &shandle; }
   bool ShouldSkip();
@@ -76,7 +77,9 @@ class RowEntity final {
   uint64_t encoded_len;
 
   void DecodeIOVec(struct iovec *vec);
+  void Prepare(VarStr *k, VarStr *v) { this->k = k; this->v = v; }
 
+  int get_rel_id() const { return rel_id; }
   int slice_id() const { return slice; }
 
   static void *operator new(size_t s) {

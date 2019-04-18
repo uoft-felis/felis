@@ -68,6 +68,14 @@ std::vector<RowShipment *> SliceManager::all_row_shipments()
   return all;
 }
 
+void SliceManager::ScanShippingHandle() {
+  for (int i = 0; i < nr_slices; i++) {
+    if (row_slice_scanners[i] == nullptr)
+      continue;
+    row_slice_scanners[i]->ScanShippingHandle();
+  }
+}
+
 SliceMappingTable::SliceMappingTable() {
   std::fill_n(node_compress, NodeConfiguration::kMaxNrNode, -1);
 }

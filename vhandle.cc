@@ -179,7 +179,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 // therefore this sid makes no sense when it comes to transaction serial id.
 void SortedArrayVHandle::WriteNewVersion(uint64_t epoch_nr, VarStr *obj) {
   uint64_t sid;
-  while (AppendNewVersion( sid = versions[size - 1] + 1, epoch_nr)) {
+  while (!AppendNewVersion(sid = versions[size - 1] + 1, epoch_nr)) {
     asm("pause" : : :"memory");
   }
   WriteWithVersion(sid, obj, epoch_nr);
