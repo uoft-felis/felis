@@ -55,7 +55,14 @@ class BaseRelation {
   void set_read_only(bool v) { read_only = v; }
   bool is_read_only() const { return read_only; }
 
-  uint64_t AutoIncrement(int zone = 0) { return auto_increment_cnt[zone].fetch_add(1); }
+  // In a distributed environment, we may need to generate a AutoIncrement key
+  // on one node and insert on another. In order to prevent conflict, we need to
+  // attach our node id at th end of the key.
+  uint64_t AutoIncrement(int zone = 0) {
+    auto &conf = util::Instance<NodeConfiguration>();
+    auto ts = auto_increment_cnt[zone].fetch_add(1);
+    return (ts << 8) | (conf.node_id() & 0x00FF);
+  }
 };
 
 class RelationManagerBase {

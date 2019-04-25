@@ -34,7 +34,6 @@ struct PromiseRoutine {
   uint32_t capture_len;
   uint8_t level;
   uint8_t node_id;
-  uint16_t pipeline; // Will this promise routine yield? If so, how many times?
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
 
   void (*callback)(PromiseRoutine *, VarStr input);
@@ -189,36 +188,6 @@ struct DummyValue {
 };
 
 template <typename T>
-struct PipelineClosure : public T {
-
-  int nr_pipelines;
-  template <typename ...Args>
-  PipelineClosure(int nr_pipelines, Args... args)
-      : nr_pipelines(nr_pipelines), next(nullptr), T(args...) {}
-
-  PipelineClosure() : nr_pipelines(0), next(nullptr) {}
-
-  T &value() { return *this; }
-  const T &value() const { return *this; }
-
-  BasePromise *next;
-
-  template <typename OutputType>
-  void Yield(const OutputType &output) const {
-    if (!next) return;
-    void *buffer = BasePromise::Alloc(output.EncodeSize() + sizeof(VarStr) + 1);
-    VarStr *output_str = output.EncodeFromAlloca(buffer);
-    next->Complete(*output_str);
-  }
-};
-
-template <typename T>
-struct ExposeNextPromiseTrait { static constexpr bool Value = false; };
-
-template <typename T>
-struct ExposeNextPromiseTrait<PipelineClosure<T>> { static constexpr bool Value = true; };
-
-template <typename T>
 class Promise : public BasePromise {
  public:
   typedef T Type;
@@ -240,11 +209,6 @@ class Promise : public BasePromise {
           capture.DecodeFrom(routine->capture_data);
           t.Decode(&input);
 
-          if constexpr (ExposeNextPromiseTrait<Closure>::Value) {
-              capture.next = routine->next;
-              capture.nr_pipelines = routine->pipeline;
-            }
-
           auto next = routine->next;
           auto output = native_func(capture, t);
           if (next && next->nr_routines() > 0) {
@@ -263,7 +227,6 @@ class Promise : public BasePromise {
     routine->callback = (void (*)(PromiseRoutine *, VarStr)) static_func;
     routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
     capture.EncodeTo(routine->capture_data);
-    if constexpr(ExposeNextPromiseTrait<Closure>::Value) routine->pipeline = capture.nr_pipelines;
 
     Add(routine);
     return routine;

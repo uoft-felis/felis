@@ -22,22 +22,55 @@ struct NewOrderStruct {
 
   uint ts_now;
 
-  uint item_id[kNewOrderMaxItems];
-  uint supplier_warehouse_id[kNewOrderMaxItems];
-  uint order_quantities[kNewOrderMaxItems];
+  struct OrderDetail {
+    uint item_id[kNewOrderMaxItems];
+    uint supplier_warehouse_id[kNewOrderMaxItems];
+    uint order_quantities[kNewOrderMaxItems];
+  } detail;
 };
 
 
 struct NewOrderState {
-  struct {
-    VHandle *warehouse;
-    VHandle *district;
-    VHandle *stocks[15];
-    VHandle *oorder;
-    VHandle *neworder;
-    VHandle *orderlines[15];
-    VHandle *items[15];
-  } rows;
+  VHandle *items[15]; // read-only
+  struct ItemsLookupCompletion : public TxnStateCompletion<NewOrderState> {
+    void operator()(int id, BaseTxn::LookupRowResult rows) {
+      state->items[id] = rows[0];
+    }
+  };
+  NodeBitmap items_nodes;
+
+  VHandle *orderlines[15]; // insert
+  struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
+    void operator()(int id, VHandle *row) {
+      state->orderlines[id] = row;
+      while (!handle(row).AppendNewVersion());
+    }
+  };
+  NodeBitmap orderlines_nodes;
+
+  VHandle *oorder; // insert
+  VHandle *neworder; // insert
+  struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
+    void operator()(int id, VHandle *row) {
+      if (id == 0) {
+        state->oorder = row;
+      } else if (id == 1) {
+        state->neworder = row;
+      }
+      while (!handle(row).AppendNewVersion());
+    }
+  };
+  NodeBitmap other_inserts_nodes;
+
+  VHandle *stocks[15]; // update
+  struct StocksLookupCompletion : public TxnStateCompletion<NewOrderState> {
+    void operator()(int id, BaseTxn::LookupRowResult rows) {
+      logger->debug("AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
+      state->stocks[id] = rows[0];
+      while (!handle(rows[0]).AppendNewVersion());
+    }
+  };
+  NodeBitmap stocks_nodes;
 };
 
 }

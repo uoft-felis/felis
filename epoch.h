@@ -94,16 +94,26 @@ class EpochManager {
   void DoAdvance(EpochClient *client);
 };
 
-template <typename T>
 class EpochObject {
+  friend class Epoch;
+ protected:
   uint64_t epoch_nr;
   int node_id;
   uint64_t offset;
-
-  friend class Epoch;
-  EpochObject(uint64_t epoch_nr, int node_id, uint64_t offset) : epoch_nr(epoch_nr), node_id(node_id), offset(offset) {}
  public:
+  EpochObject(uint64_t epoch_nr, int node_id, uint64_t offset) : epoch_nr(epoch_nr), node_id(node_id), offset(offset) {}
   EpochObject() : epoch_nr(0), node_id(0), offset(0) {}
+
+  int origin_node_id() const { return node_id; }
+};
+
+template <typename T>
+class GenericEpochObject : public EpochObject {
+  friend class Epoch;
+ public:
+  using EpochObject::EpochObject;
+
+  GenericEpochObject(const EpochObject &obj) : EpochObject(obj) {}
 
   operator T*() const {
     return this->operator->();
@@ -114,14 +124,12 @@ class EpochObject {
   }
 
   template <typename P>
-  EpochObject<P> Convert(P *ptr) {
+  GenericEpochObject<P> Convert(P *ptr) {
     uint8_t *p = (uint8_t *) ptr;
     uint8_t *self = util::Instance<EpochManager>().ptr(epoch_nr, node_id, offset);
     int64_t off = p - self;
-    return EpochObject<P>(epoch_nr, node_id, offset + off);
+    return GenericEpochObject<P>(epoch_nr, node_id, offset + off);
   }
-
-  int origin_node_id() const { return node_id; }
 };
 
 // This where we store objects across the entire cluster. Note that these
@@ -154,14 +162,14 @@ class Epoch : public EpochMemory {
  public:
   Epoch(uint64_t epoch_nr, EpochClient *client, mem::Pool *pool) : epoch_nr(epoch_nr), client(client), EpochMemory(pool) {}
   template <typename T>
-  EpochObject<T> AllocateEpochObject(int node_id) {
+  GenericEpochObject<T> AllocateEpochObject(int node_id) {
     auto off = brks[node_id - 1].current_size();
     brks[node_id - 1].Alloc(util::Align(sizeof(T)));
-    return EpochObject<T>(epoch_nr, node_id, off);
+    return GenericEpochObject<T>(epoch_nr, node_id, off);
   }
 
   template <typename T>
-  EpochObject<T> AllocateEpochObjectOnCurrentNode() {
+  GenericEpochObject<T> AllocateEpochObjectOnCurrentNode() {
     return AllocateEpochObject<T>(util::Instance<NodeConfiguration>().node_id());
   }
 

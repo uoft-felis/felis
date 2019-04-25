@@ -19,11 +19,22 @@ struct PaymentStruct {
 };
 
 struct PaymentState {
-  struct {
-    VHandle *warehouse;
-    VHandle *district;
-    VHandle *customer;
-  } rows;
+  VHandle *warehouse;
+  VHandle *district;
+  VHandle *customer;
+  NodeBitmap nodes;
+  struct Completion : public TxnStateCompletion<PaymentState> {
+    void operator()(int id, BaseTxn::LookupRowResult rows) {
+      if (id == 0) {
+        state->warehouse = rows[0];
+      } else if (id == 1) {
+        state->district = rows[0];
+      } else if (id == 2) {
+        state->customer = rows[0];
+      }
+      while (!handle(rows[0]).AppendNewVersion());
+    }
+  };
 };
 
 }

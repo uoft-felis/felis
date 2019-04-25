@@ -813,12 +813,12 @@ void NodeConfiguration::CollectBufferPlan(BasePromise *root, unsigned long *cnts
   auto src_node = node_id();
   for (size_t i = 0; i < root->nr_routines(); i++) {
     auto *routine = root->routine(i);
-    CollectBufferPlanImpl(routine, cnts, 0, src_node, 0);
+    CollectBufferPlanImpl(routine, cnts, 0, src_node);
   }
 }
 
 void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts,
-                                              int level, int src_node, int nr_extra)
+                                              int level, int src_node)
 {
   abort_if(level >= kPromiseMaxLevels, "promise level {} too deep", level);
   routine->level = level;
@@ -826,17 +826,14 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, unsigned 
   auto dst_node = routine->node_id;
   if (dst_node == 0)
     dst_node = src_node;
-  cnts[BatchBufferIndex(level, src_node, dst_node)] += 1 + nr_extra;
+  cnts[BatchBufferIndex(level, src_node, dst_node)] += 1;
 
   if (routine->next == nullptr)
     return;
 
-  if (routine->pipeline > 0)
-    nr_extra = routine->pipeline;
-
   for (size_t i = 0; i < routine->next->nr_routines(); i++) {
     auto *subroutine = routine->next->routine(i);
-    CollectBufferPlanImpl(subroutine, cnts, level + 1, dst_node, nr_extra);
+    CollectBufferPlanImpl(subroutine, cnts, level + 1, dst_node);
   }
 }
 

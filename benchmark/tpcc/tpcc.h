@@ -5,16 +5,16 @@
 
 #include "table_decl.h"
 
-#include <map>
 #include <array>
+#include <cassert>
+#include <map>
 #include <string>
 #include <vector>
-#include <cassert>
 
-#include "index.h"
-#include "util.h"
-#include "sqltypes.h"
 #include "epoch.h"
+#include "index.h"
+#include "sqltypes.h"
+#include "util.h"
 
 #include "slice.h"
 
@@ -40,24 +40,28 @@ struct Config {
 extern Config kTPCCConfig;
 
 enum class TableType : int {
-  Customer, CustomerNameIdx, District, History, Item,
-  NewOrder, OOrder, OOrderCIdIdx, OrderLine, Stock, StockData, Warehouse,
+  Customer,
+  CustomerNameIdx,
+  District,
+  History,
+  Item,
+  NewOrder,
+  OOrder,
+  OOrderCIdIdx,
+  OrderLine,
+  Stock,
+  StockData,
+  Warehouse,
   NRTable
 };
 
 static const char *kTPCCTableNames[] = {
-  "customer",
-  "customer_name_idx",
-  "district",
-  "history",
-  "item",
-  "new_order",
-  "oorder",
-  "oorder_c_id_idx",
-  "order_line",
-  "stock",
-  "stock_data",
-  "warehouse",
+  "customer",   "customer_name_idx",
+  "district",   "history",
+  "item",       "new_order",
+  "oorder",     "oorder_c_id_idx",
+  "order_line", "stock",
+  "stock_data", "warehouse",
 };
 
 // table and schemas definition
@@ -145,7 +149,7 @@ class ClientBase {
   uint max_warehouse;
 
   // TPC-C NewOrder FastIdGen optimization
-  util::OwnPtr<ulong []> new_order_id_counters;
+  util::OwnPtr<ulong[]> new_order_id_counters;
 
  protected:
   static constexpr double kWarehouseSpread = 0.0;
@@ -185,7 +189,7 @@ class ClientBase {
 
   size_t GetCustomerLastName(uint8_t *buf, int num);
   size_t GetCustomerLastName(char *buf, int num) {
-    return GetCustomerLastName((uint8_t *) buf, num);
+    return GetCustomerLastName((uint8_t *)buf, num);
   }
   std::string GetCustomerLastName(int num) {
     std::string ret;
@@ -203,7 +207,7 @@ class ClientBase {
     return GetCustomerLastName(buf, NonUniformRandom(255, 223, 0, 999));
   }
   size_t GetNonUniformCustomerLastNameRun(char *buf) {
-    return GetNonUniformCustomerLastNameRun((uint8_t *) buf);
+    return GetNonUniformCustomerLastNameRun((uint8_t *)buf);
   }
   std::string GetNonUniformCustomerLastNameRun() {
     return GetCustomerLastName(NonUniformRandom(255, 223, 0, 999));
@@ -216,8 +220,10 @@ class ClientBase {
 
  public:
   template <typename TableType, typename KeyType>
-  static void OnNewRow(int slice_id, TableType table, const KeyType &k, felis::VHandle *handle) {
-    util::Instance<felis::SliceManager>().OnNewRow(slice_id, table, k, handle);
+  static void OnNewRow(int slice_id, TableType table, const KeyType &k,
+                       felis::VHandle *handle) {
+    util::Instance<felis::SliceManager>().OnNewRow(
+        slice_id, static_cast<int>(table), k.Encode(), handle);
   }
 
   static void OnUpdateRow(felis::VHandle *handle) {
@@ -235,9 +241,7 @@ class ClientBase {
 // loaders for each table
 namespace loaders {
 
-enum LoaderType {
-  Warehouse, Item, Stock, District, Customer, Order
-};
+enum LoaderType { Warehouse, Item, Stock, District, Customer, Order };
 
 class BaseLoader : public tpcc::ClientBase {
  public:
@@ -252,12 +256,13 @@ template <enum LoaderType TLN>
 class Loader : public go::Routine, public BaseLoader {
   std::mutex *m;
   std::atomic_int *count_down;
+
  public:
   Loader(unsigned long seed, std::mutex *w, std::atomic_int *c)
-      : m(w), count_down(c), BaseLoader(
-          util::FastRandom(seed),
-          util::Instance<felis::NodeConfiguration>().node_id(),
-          util::Instance<felis::NodeConfiguration>().nr_nodes()){}
+      : m(w), count_down(c),
+        BaseLoader(util::FastRandom(seed),
+                   util::Instance<felis::NodeConfiguration>().node_id(),
+                   util::Instance<felis::NodeConfiguration>().nr_nodes()) {}
 
   void DoLoad();
   virtual void Run() {
@@ -267,7 +272,7 @@ class Loader : public go::Routine, public BaseLoader {
   }
 };
 
-}
+} // namespace loaders
 
 enum class TxnType : int {
   NewOrder,
@@ -285,10 +290,10 @@ class Client : public felis::EpochClient, public ClientBase {
   static constexpr unsigned long kClientSeed = 0xdeadbeef;
 
   Client()
-      : felis::EpochClient(), dice(0), ClientBase(
-        kClientSeed,
-        util::Instance<felis::NodeConfiguration>().node_id(),
-        util::Instance<felis::NodeConfiguration>().nr_nodes()) {}
+      : felis::EpochClient(), dice(0),
+        ClientBase(kClientSeed,
+                   util::Instance<felis::NodeConfiguration>().node_id(),
+                   util::Instance<felis::NodeConfiguration>().nr_nodes()) {}
 
   unsigned int LoadPercentage() final override {
     return LoadPercentageByWarehouse();
@@ -298,84 +303,45 @@ class Client : public felis::EpochClient, public ClientBase {
 
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];
+
  protected:
   felis::BaseTxn *CreateTxn(uint64_t serial_id) final override;
 };
 
-using TxnFactory = util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *, uint64_t>;
+using TxnFactory =
+    util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *,
+                  uint64_t>;
 
-}
+int SliceRouter(int16_t slice_id);
+
+} // namespace tpcc
+
+#define ROW_SLICE_MAPPING_DIRECT
 
 namespace felis {
 
-class BaseTxn;
+using namespace tpcc;
 
-template <>
-class SliceLocator<tpcc::Customer> {
- public:
-  int Locate(const typename tpcc::Customer::Key &key);
-};
+#ifdef ROW_SLICE_MAPPING_DIRECT
 
-template <>
-class SliceLocator<tpcc::CustomerNameIdx> {
- public:
-  int Locate(const typename tpcc::CustomerNameIdx::Key &key);
-};
+SHARD_TABLE(Customer) { return key.c_w_id - 1; }
+SHARD_TABLE(CustomerNameIdx) { return key.c_w_id - 1; }
+SHARD_TABLE(District) { return key.d_w_id - 1; }
+SHARD_TABLE(History) { return key.h_w_id - 1; }
+SHARD_TABLE(NewOrder) { return key.no_w_id - 1; }
+SHARD_TABLE(OOrder) { return key.o_w_id - 1; }
+SHARD_TABLE(OOrderCIdIdx) { return key.o_w_id - 1; }
+SHARD_TABLE(OrderLine) { return key.ol_w_id - 1; }
+READ_ONLY_TABLE(Item);
+SHARD_TABLE(Stock) { return key.s_w_id - 1; }
+SHARD_TABLE(StockData) { return key.s_w_id - 1; }
+SHARD_TABLE(Warehouse) { return key.w_id - 1; }
 
-template <>
-class SliceLocator<tpcc::District> {
- public:
-  int Locate(const typename tpcc::District::Key &key);
-};
+#elif ROW_SLICE_MAPPING_2
+// TODO:
 
-template <>
-class SliceLocator<tpcc::History> {
- public:
-  int Locate(const typename tpcc::History::Key &key);
-};
+#endif
 
-template <>
-class SliceLocator<tpcc::NewOrder> {
- public:
-  int Locate(const typename tpcc::NewOrder::Key &key);
-};
-
-template <>
-class SliceLocator<tpcc::OOrder> {
- public:
-  int Locate(const typename tpcc::OOrder::Key &key);
-};
-
-template <>
-class SliceLocator<tpcc::OOrderCIdIdx> {
- public:
-  int Locate(const typename tpcc::OOrderCIdIdx::Key &key);
-};
-
-template <>
-class SliceLocator<tpcc::OrderLine> {
- public:
-  int Locate(const typename tpcc::OrderLine::Key &key);
-};
-
-template <>
-class SliceLocator<tpcc::Stock> {
- public:
-  int Locate(const typename tpcc::Stock::Key &key);
-};
-
-template <>
-class SliceLocator<tpcc::StockData> {
- public:
-  int Locate(const typename tpcc::StockData::Key &key);
-};
-
-template <>
-class SliceLocator<tpcc::Warehouse> {
- public:
-  int Locate(const typename tpcc::Warehouse::Key &key);
-};
-
-}
+} // namespace felis
 
 #endif /* TPCC_H */

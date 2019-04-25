@@ -46,18 +46,6 @@ class BaseTxn {
     root_promise()->AssignSchedulingKey(serial_id());
   }
 
-  template <typename TableType>
-  VHandle *CreateNewRow(const typename TableType::Key &key) {
-    auto slice_id = util::Instance<SliceLocator<TableType>>().Locate(key);
-    auto row = new VHandle();
-    util::Instance<felis::SliceManager>().OnNewRow(slice_id, TableType::kTable, key, row);
-
-    VHandle::pool.Prefetch();
-    RowEntity::pool.Prefetch();
-
-    return row;
-  }
-
   Promise<DummyValue> *root_promise() {
     return proc.promise();
   }
@@ -111,211 +99,188 @@ class BaseTxn {
     uint64_t serial_id() const { return sid; }
   };
 
+  TxnHandle index_handle() { return TxnHandle{sid, epoch->id()}; }
+
   struct TxnIndexOpContext {
     static constexpr size_t kMaxPackedKeys = 15;
     TxnHandle handle;
-    int32_t rel_id;
+    EpochObject state;
+
     // We can batch a lot of keys in the same context. We also should mark if
     // some keys are not used at all. Therefore, we need a bitmap.
     uint16_t keys_bitmap;
-    uint16_t values_bitmap;
+    uint16_t slices_bitmap;
+    uint16_t rels_bitmap;
 
     uint16_t key_len[kMaxPackedKeys];
     const uint8_t *key_data[kMaxPackedKeys];
-    void *value_data[kMaxPackedKeys];
+    int16_t slice_ids[kMaxPackedKeys];
+    int16_t relation_ids[kMaxPackedKeys];
 
-    // We don't need to worry about padding because TxnHandle is perfectly padded.
-    // One Relation ID and two bitmaps.
-    static constexpr size_t kHeaderSize =
-        sizeof(TxnHandle) + sizeof(int32_t) + sizeof(uint16_t) + sizeof(uint16_t);
-
-    TxnIndexOpContext(TxnHandle handle, int32_t rel_id,
-                      uint16_t nr_keys, VarStr **keys,
-                      uint16_t nr_values, void **values)
-        : handle(handle), rel_id(rel_id), keys_bitmap(0), values_bitmap(0) {
-      int j = 0;
-      for (int i = 0; i < nr_keys && i < kMaxPackedKeys; i++) {
-        if (keys[i] == nullptr) continue;
-        keys_bitmap |= 1 << i;
-        key_len[j] = keys[i]->len;
-        key_data[j] = keys[i]->data;
-        j++;
-      }
-      j = 0;
-      for (int i = 0; i < nr_values && i < kMaxPackedKeys; i++) {
-        if (values[i] == nullptr) continue;
-        values_bitmap |= 1 << i;
-        value_data[j++] = values[i];
+    template <typename Func>
+    static void ForEachWithBitmap(uint16_t bitmap, Func f) {
+      for (int i = 0, j = 0; i < kMaxPackedKeys; i++) {
+        const uint16_t mask = (1 << i);
+        if (bitmap & mask) {
+          f(j, i);
+          j++;
+        }
       }
     }
+   private:
+    template <typename R>
+    int _FromKeyParam(uint16_t bitmap, int bitshift, int shift, R param) {
+      auto rel_id = R::kRelationId;
+      for (int i = bitshift; i < kMaxPackedKeys && i < bitshift + param.size(); i++) {
+        if (bitmap & (1 << i)) {
+          auto varstr = param[i - bitshift].EncodeFromRoutine();
+          key_len[shift] = varstr->len;
+          key_data[shift] = varstr->data;
+          relation_ids[shift] = rel_id;
+          slice_ids[shift] = param.EncodeToSliceId(i - bitshift);
 
-    TxnIndexOpContext(TxnHandle handle, int32_t rel_id, VarStr *key)
-        : TxnIndexOpContext(handle, rel_id, 1, &key, 0, nullptr) {}
+          shift++;
+        }
+      }
+      return shift;
+    }
+    template <typename R, typename ...T>
+    void _FromKeyParam(uint16_t bitmap, int bitshift, int shift, R param, T ...rest) {
+      shift = _FromKeyParam(bitmap, bitshift, shift, param);
+      _FromKeyParam(bitmap, bitshift + param.size(), shift, rest...);
+    }
+   public:
 
-    TxnIndexOpContext(TxnHandle handle, int32_t rel_id,
-                      uint16_t nr_keys, VarStr **keys)
-        : TxnIndexOpContext(handle, rel_id, nr_keys, keys, 0, nullptr) {}
+    // We don't need to worry about padding because TxnHandle is perfectly padded.
+    // We also need to send three bitmaps.
+    static constexpr size_t kHeaderSize =
+        sizeof(TxnHandle) + sizeof(EpochObject)
+        + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t);
+
+    TxnIndexOpContext(TxnHandle handle, EpochObject state,
+                      uint16_t keys_bitmap, VarStr **keys,
+                      uint16_t slices_bitmap, int16_t *slice_ids,
+                      uint16_t rels_bitmap, int16_t *rels);
+    template <typename ...T>
+    TxnIndexOpContext(TxnHandle handle, EpochObject state, uint16_t bitmap, T ...params)
+        : handle(handle), state(state),
+          keys_bitmap(bitmap), slices_bitmap(bitmap), rels_bitmap(bitmap) {
+      _FromKeyParam(bitmap, 0, 0, params...);
+    }
 
     TxnIndexOpContext() {}
 
+    size_t EncodeSize() const;
+    uint8_t *EncodeTo(uint8_t *buf) const;
+    const uint8_t *DecodeFrom(const uint8_t *buf);
+  };
+
+  template <typename Extra>
+  struct TxnIndexOpContextEx : public TxnIndexOpContext, public Extra {
+    using TxnIndexOpContext::TxnIndexOpContext;
+
+    void set_extra(const Extra &rhs) {
+      (Extra)(*this) = rhs;
+    }
+
     size_t EncodeSize() const {
-      size_t sum = 0;
-      int nr_keys = __builtin_popcount(keys_bitmap);
-      for (auto i = 0; i < nr_keys; i++) {
-        sum += 2 + key_len[i];
-      }
-      sum += __builtin_popcount(values_bitmap) * sizeof(uint64_t);
-      return kHeaderSize + sum;
+      return TxnIndexOpContext::EncodeSize() + Extra::EncodeSize();
     }
     uint8_t *EncodeTo(uint8_t *buf) const {
-      memcpy(buf, this, kHeaderSize);
-      uint8_t *p = buf + kHeaderSize;
-      int nr_keys = __builtin_popcount(keys_bitmap);
-      int nr_values = __builtin_popcount(values_bitmap);
-
-      for (auto i = 0; i < nr_keys; i++) {
-        memcpy(p, &key_len[i], 2);
-        memcpy(p + 2, key_data[i], key_len[i]);
-        p += 2 + key_len[i];
-      }
-
-      memcpy(p, value_data, nr_values * sizeof(uint64_t));
-      p += nr_values * sizeof(uint64_t);
-
-      return p;
+      return Extra::EncodeTo(TxnIndexOpContext::EncodeTo(buf));
     }
     const uint8_t *DecodeFrom(const uint8_t *buf) {
-      memcpy(this, buf, kHeaderSize);
-
-      const uint8_t *p = buf + kHeaderSize;
-      int nr_keys = __builtin_popcount(keys_bitmap);
-      int nr_values = __builtin_popcount(values_bitmap);
-
-      for (auto i = 0; i < nr_keys; i++) {
-        memcpy(&key_len[i], p, 2);
-        key_data[i] = (uint8_t *) p + 2;
-        p += 2 + key_len[i];
-      }
-
-      memcpy(value_data, p, nr_values * sizeof(uint64_t));
-      p += nr_values * sizeof(uint64_t);
-
-      return p;
+      return Extra::DecodeFrom(TxnIndexOpContext::DecodeFrom(buf));
     }
   };
 
-  TxnHandle index_handle() { return TxnHandle{sid, epoch->id()}; }
+  template <>
+  struct TxnIndexOpContextEx<void> : public TxnIndexOpContext {
+    using TxnIndexOpContext::TxnIndexOpContext;
+  };
 
-  template <typename TableT>
-  TxnIndexOpContext IndexContext(const typename TableT::Key &key) {
-    return TxnIndexOpContext(index_handle(), static_cast<int>(TableT::kTable),
-                             key.EncodeFromRoutine());
-  }
-
-  template <typename TableT, typename KeyIter>
-  TxnIndexOpContext IndexContext(const KeyIter &begin, const KeyIter &end,
-                                 uint16_t keys_bitmap = 0xFFFF) {
-    VarStr *keys[end - begin];
-    int i = 0;
-    for (auto it = begin; it != end; ++it, i++) {
-      if ((keys_bitmap & (1 << i)) == 0) {
-        keys[i] = nullptr;
-      } else {
-        keys[i] = it->EncodeFromRoutine();
-      }
-    }
-    return TxnIndexOpContext(index_handle(), static_cast<int>(TableT::kTable),
-                             end - begin, keys);
-  }
-
-  template <typename TableT, typename KeyIter>
-  TxnIndexOpContext IndexContext(const KeyIter &begin, const KeyIter &end,
-                                 VHandle **values, uint16_t keys_bitmap = 0xFFFF) {
-    VarStr *keys[end - begin];
-    int i = 0;
-    for (auto it = begin; it != end; ++it, i++) {
-      if ((keys_bitmap & (1 << i)) == 0) {
-        keys[i] = nullptr;
-      } else {
-        keys[i] = it->EncodeFromRoutine();
-      }
-    }
-    return TxnIndexOpContext(index_handle(), static_cast<int>(TableT::kTable),
-                             end - begin, keys, end - begin, (void **) values);
-  }
-
-  template <typename TableT>
-  std::tuple<TxnIndexOpContext,
-             int,
-             Optional<Tuple<std::vector<VHandle *>, uint16_t>> (*)(const TxnIndexOpContext &, DummyValue)>
-  TxnLookup(int node, const typename TableT::Key &key) {
-    return std::make_tuple(
-        IndexContext<TableT>(key), node,
-        [](const TxnIndexOpContext &ctx,
-           DummyValue _) -> Optional<Tuple<std::vector<VHandle *>, uint16_t>> {
-          abort_if(ctx.keys_bitmap != 0x01, "ctx.keys_bitmap != 0x01 {}",
-                   ctx.keys_bitmap);
-          VHandle *handle = TxnIndexLookupOpImpl(0, ctx);
-          std::vector<VHandle *> res;
-          res.push_back(handle);
-          return Tuple<std::vector<VHandle *>, uint16_t>(res, 0x01);
-        });
-  }
-
-  template <typename TableT, typename KeyIter>
-  std::tuple<TxnIndexOpContext,
-             int,
-             Optional<Tuple<std::vector<VHandle *>, uint16_t>> (*)(const TxnIndexOpContext &, DummyValue)>
-  TxnLookupMany(int node, KeyIter begin, KeyIter end, uint16_t keys_bitmap = 0xFFFF) {
-    return std::make_tuple(
-        IndexContext<TableT>(begin, end, keys_bitmap),
-        node,
-        [](const TxnIndexOpContext &ctx, DummyValue _)
-        -> Optional<Tuple<std::vector<VHandle *>, uint16_t>> {
-          std::vector<VHandle *> rows;
-          int j = 0;
-          for (auto i = 0; i < ctx.kMaxPackedKeys; i++) {
-            if ((ctx.keys_bitmap & (1 << i)) == 0) continue;
-            rows.push_back(TxnIndexLookupOpImpl(j, ctx));
-            j++;
-          }
-          return Tuple<std::vector<VHandle *>, uint16_t>(rows, ctx.keys_bitmap);
-        });
-  }
-
-  template <typename TableT, typename KeyIter>
-  std::tuple<TxnIndexOpContext,
-             int,
-             Optional<VoidValue> (*)(const TxnIndexOpContext &, DummyValue)>
-  TxnInsert(int node, KeyIter begin, KeyIter end, VHandle **values, uint16_t bitmap = 0xFFFF) {
-    return std::make_tuple(
-        IndexContext<TableT>(begin, end, values, bitmap),
-        node,
-        [](const TxnIndexOpContext &ctx, DummyValue _) -> Optional<VoidValue> {
-          TxnIndexInsertOpImpl(ctx);
-          return nullopt;
-        });
-  }
-
-  template <typename TableT, typename Key>
-  std::tuple<TxnIndexOpContext,
-             int,
-             Optional<VoidValue> (*)(const TxnIndexOpContext &, DummyValue)>
-  TxnInsertOne(int node, Key k, VHandle *v) {
-    Key *begin = &k, *end = begin + 1;
-    VHandle **values = &v;
-    return TxnInsert<TableT>(node, begin, end, values);
-  }
+  static constexpr size_t kMaxRangeScanKeys = 32;
+  using LookupRowResult = std::array<VHandle *, kMaxRangeScanKeys>;
 
  protected:
-  static VHandle *TxnIndexLookupOpImpl(int i, const TxnIndexOpContext &) __attribute__((noinline));
-  static void TxnIndexInsertOpImpl(const TxnIndexOpContext &);
+  struct TxnIndexLookupOpImpl {
+    TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx, int idx);
+    LookupRowResult result;
+  };
+  struct TxnIndexInsertOpImpl {
+    TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx, int idx);
+    VHandle *result;
+  };
+};
+
+template <typename Table>
+class KeyParam {
+ public:
+  static constexpr int kRelationId = static_cast<int>(Table::kTable);
+  using TableType = Table;
+ protected:
+  const typename Table::Key *start;
+  int len;
+ public:
+  KeyParam(const typename Table::Key &k)
+      : start(&k), len(1) {}
+  KeyParam(const typename Table::Key *start, int len)
+      : start(start), len(len) {}
+
+  int EncodeToSliceId(int idx) {
+    return util::Instance<SliceLocator<TableType>>().Locate(start[idx]);
+  }
+
+  int size() const { return len; }
+  const typename Table::Key &operator[](int idx) { return start[idx]; }
+};
+
+template <typename Table>
+class RangeParam {
+ public:
+  static constexpr int kRelationId = static_cast<int>(Table::kTable);
+  using TableType = Table;
+ private:
+  const typename Table::Key *start;
+  const typename Table::Key *end;
+ public:
+  RangeParam(const typename Table::Key &start, const typename Table::Key &end)
+      : start(&start), end(&end) {}
+
+  int EncodeToSliceId(int idx) { return -1 - idx; }
+  int size() const { return 2; }
+  const typename Table::Key &operator[](int idx) {
+    if (idx == 0) return *start;
+    else if (idx == 1) return *end;
+    std::abort();
+  }
+};
+
+class NodeBitmap {
+ public:
+  using Pair = std::tuple<int16_t, uint16_t>;
+ private:
+  uint8_t len;
+  Pair pairs[BaseTxn::TxnIndexOpContext::kMaxPackedKeys];
+ public:
+  NodeBitmap() : len(0) {}
+  NodeBitmap(const NodeBitmap &rhs) : len(rhs.len) {
+    std::copy(rhs.pairs, rhs.pairs + len, pairs);
+  }
+
+  uint8_t size() const { return len; }
+  Pair *begin() { return pairs; }
+  Pair *end() { return pairs + len; }
+
+  void Add(int16_t node, uint16_t bitmap) {
+    pairs[len++] = Pair(node, bitmap);
+  }
 };
 
 template <typename TxnState>
 class Txn : public BaseTxn {
  public:
-  typedef EpochObject<TxnState> State;
+  typedef GenericEpochObject<TxnState> State;
 
  protected:
   State state;
@@ -330,37 +295,6 @@ class Txn : public BaseTxn {
   template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, Types...>;
 
   template <typename Func, typename ...Types>
-  std::tuple<ContextType<void *, Types...>,
-             int,
-             Optional<VoidValue> (*)(const ContextType<void *, Types...>&, Tuple<std::vector<VHandle *>, uint16_t>)>
-  TxnAppendVersion(int node, Func func, Types... params) {
-    void * p = (void *) (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) func;
-    return std::make_tuple(
-        ContextType<void *, Types...>(state, index_handle(), p, params...),
-        node,
-        [](const ContextType<void *, Types...> &ctx, Tuple<std::vector<VHandle *>, uint16_t> args) -> Optional<VoidValue> {
-          void *p = ctx.template _<2>();
-          auto state = ctx.template _<0>();
-          auto index_handle = ctx.template _<1>();
-          auto [handles, bitmap] = args;
-          auto fp = (void (*)(const ContextType<void *, Types...> &, VHandle *, int)) p;
-
-          int j = 0;
-          for (auto i = 0; i < TxnIndexOpContext::kMaxPackedKeys; i++) {
-            if ((bitmap & (1 << i)) == 0) continue;
-            __builtin_prefetch(handles[j]);
-            fp(ctx, handles[j++], i);
-          }
-
-          for (auto &handle: handles) {
-            while (!index_handle(handle).AppendNewVersion());
-          }
-
-          return nullopt;
-        });
-  }
-
-  template <typename Func, typename ...Types>
   std::tuple<ContextType<Types...>,
              int,
              Func>
@@ -370,20 +304,124 @@ class Txn : public BaseTxn {
                            func);
   }
 
+ private:
 
-  template <typename Func, typename ...Types>
-  std::tuple<PipelineClosure<ContextType<Types...>>,
-             int,
-             Func>
-  TxnPipelineProc(int node, Func func, int nr_pipelines, Types... params) {
-    return std::make_tuple(PipelineClosure<ContextType<Types...>>(nr_pipelines,
-                                                                  state,
-                                                                  index_handle(),
-                                                                  params...),
-                           node,
-                           func);
+  template <typename KParam, typename ...KParams>
+  void KeyParamsToBitmap(SliceRoute router, uint16_t bitmap_per_node[],
+                         int bitshift, KParam param, KParams ...rest) {
+    auto &locator = util::Instance<SliceLocator<typename KParam::TableType>>();
+    for (int i = 0; i < param.size(); i++) {
+      auto node = util::Instance<NodeConfiguration>().node_id();
+      auto slice_id = locator.Locate(param[i]);
+      if (slice_id >= 0) node = router(slice_id);
+      bitmap_per_node[node] |= 1 << (i + bitshift);
+    }
+    KeyParamsToBitmap(router, bitmap_per_node, bitshift + param.size(), rest...);
+  }
+  void KeyParamsToBitmap(SliceRoute router, uint16_t bitmap_per_node[], int bitshift) {}
+ public:
+  template <typename ...KParams>
+  NodeBitmap GenerateNodeBitmap(SliceRoute router, KParams ...params) {
+    auto &conf = util::Instance<NodeConfiguration>();
+    uint16_t bitmap_per_node[conf.nr_nodes() + 1];
+    NodeBitmap nodes_bitmap;
+    std::fill(bitmap_per_node, bitmap_per_node + conf.nr_nodes() + 1, 0);
+    KeyParamsToBitmap(router, bitmap_per_node, 0, params...);
+    for (int node = 1; node <= conf.nr_nodes(); node++) {
+      if (bitmap_per_node[node] == 0) continue;
+      nodes_bitmap.Add(node, bitmap_per_node[node]);
+    }
+    return nodes_bitmap;
   }
 
+  template <typename IndexOp,
+            typename OnCompleteParam,
+            typename OnComplete,
+            typename ...KParams>
+  NodeBitmap TxnIndexOp(NodeBitmap nodes_bitmap,
+                        OnCompleteParam *pp,
+                        KParams ...params) {
+    for (auto &p: nodes_bitmap) {
+      auto [node, bitmap] = p;
+      auto op_ctx = TxnIndexOpContextEx<OnCompleteParam>(
+          index_handle(), state, bitmap, params...);
+
+      if constexpr(!std::is_void<OnCompleteParam>()) {
+          if (pp)
+            op_ctx.set_extra(*pp);
+        }
+
+      proc
+          | std::make_tuple(
+              op_ctx,
+              node,
+              [](auto &ctx, auto _) -> Optional<VoidValue> {
+                auto completion = OnComplete();
+                if constexpr (!std::is_void<OnCompleteParam>()) {
+                    completion.args = (OnCompleteParam) ctx;
+                  }
+                completion.state = State(ctx.state);
+                TxnIndexOpContext::ForEachWithBitmap(
+                    ctx.keys_bitmap,
+                    [&ctx, &completion](int j, int i) {
+                      auto op = IndexOp(ctx, j);
+                      auto v = op.result;
+                      completion.handle = ctx.handle;
+                      completion(i, v);
+                    });
+                return nullopt;
+              });
+    }
+    return nodes_bitmap;
+  }
+
+  template <typename IndexOp,
+            typename OnCompleteParam,
+            typename OnComplete,
+            typename ...KParams>
+  NodeBitmap TxnIndexOp(SliceRoute router,
+                        OnCompleteParam *pp,
+                        KParams ...params) {
+    return TxnIndexOp<IndexOp, OnCompleteParam, OnComplete, KParams...>(
+        GenerateNodeBitmap(router, params...),
+        pp,
+        params...);
+  }
+
+ public:
+  template <typename Completion,
+            typename CompletionParam = void,
+            typename Route,
+            typename ...KParams>
+  NodeBitmap TxnIndexLookup(Route r,
+                            CompletionParam *pp,
+                            KParams ...params) {
+    return TxnIndexOp<BaseTxn::TxnIndexLookupOpImpl,
+                      CompletionParam,
+                      Completion,
+                      KParams...>(r, pp, params...);
+  }
+
+  template <typename Completion,
+            typename CompletionParam = void,
+            typename Route,
+            typename ...KParams>
+  NodeBitmap TxnIndexInsert(Route r,
+                            CompletionParam *pp,
+                            KParams ...params) {
+    return TxnIndexOp<BaseTxn::TxnIndexInsertOpImpl,
+                      CompletionParam,
+                      Completion,
+                      KParams...>(r, pp, params...);
+  }
+};
+
+template <typename TxnState>
+class TxnStateCompletion {
+ protected:
+  friend class Txn<TxnState>;
+  BaseTxn::TxnHandle handle;
+  GenericEpochObject<TxnState> state;
 };
 
 }

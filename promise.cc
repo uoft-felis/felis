@@ -19,7 +19,6 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   auto r = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
   r->capture_len = capture_len;
   r->capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
-  r->pipeline = 0;
   r->sched_key = 0;
   r->next = nullptr;
   return r;
@@ -142,8 +141,7 @@ void BasePromise::AssignSchedulingKey(uint64_t key)
 {
   for (int i = 0; i < nr_handlers; i++) {
     auto *child = routine(i);
-    if (child->pipeline == 0)
-      child->sched_key = key;
+    child->sched_key = key;
     if (child->next)
       child->next->AssignSchedulingKey(key);
   }
@@ -185,7 +183,7 @@ void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
 
 void BasePromise::ExecutionRoutine::RunPromiseRoutine(PromiseRoutine *r, const VarStr &in)
 {
-  INIT_ROUTINE_BRK(4096);
+  INIT_ROUTINE_BRK(8192);
   r->callback((PromiseRoutine *) r, in);
 }
 

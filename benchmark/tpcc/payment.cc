@@ -41,93 +41,58 @@ void PaymentTxn::Prepare()
 {
   INIT_ROUTINE_BRK(4096);
 
-  int lookup_node = client->warehouse_to_lookup_node_id(warehouse_id);
-  int customer_lookup_node = client->warehouse_to_lookup_node_id(customer_warehouse_id);
-  int node = Client::warehouse_to_node_id(warehouse_id);
-  int customer_node = Client::warehouse_to_node_id(customer_warehouse_id);
-
   auto warehouse_key = Warehouse::Key::New(warehouse_id);
   auto district_key = District::Key::New(warehouse_id, district_id);
-
-  proc
-      | TxnLookup<Warehouse>(lookup_node, warehouse_key)
-      | TxnAppendVersion(
-          node,
-          [](const auto &ctx, auto *handle, int _) {
-            auto &[state, _1, _2] = ctx;
-            state->rows.warehouse = handle;
-          });
-  proc
-      | TxnLookup<District>(lookup_node, district_key)
-      | TxnAppendVersion(
-          node,
-          [](const auto &ctx, auto *handle, int _) {
-            auto &[state, _1, _2] = ctx;
-            state->rows.district = handle;
-          });
-
-  Customer::Key customer_key;
-  customer_key = Customer::Key::New(
+  auto customer_key = Customer::Key::New(
       customer_warehouse_id, customer_district_id, customer_id);
 
-  proc
-      | TxnLookup<Customer>(customer_lookup_node, customer_key)
-      | TxnAppendVersion(
-          customer_node,
-          [](const auto &ctx, auto *handle, int _) {
-            auto &[state, _1, _2] = ctx;
-            state->rows.customer = handle;
-          });
+  state->nodes =
+      TxnIndexLookup<PaymentState::Completion, void>(
+          tpcc::SliceRouter, nullptr,
+          KeyParam<Warehouse>(warehouse_key),
+          KeyParam<District>(district_key),
+          KeyParam<Customer>(customer_key));
 }
 
 void PaymentTxn::Run()
 {
-  int node = Client::warehouse_to_node_id(warehouse_id);
-  int customer_node = Client::warehouse_to_node_id(customer_warehouse_id);
-
-  proc
-      | TxnProc(
-          node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, payment_amount] = ctx;
-            TxnVHandle vhandle = index_handle(state->rows.warehouse);
-            auto warehouse = vhandle.Read<Warehouse::Value>();
-            warehouse.w_ytd += payment_amount;
-            vhandle.Write(warehouse);
-            ClientBase::OnUpdateRow(state->rows.warehouse);
-            return nullopt;
-          },
-          payment_amount);
-
-  proc
-      | TxnProc(
-          node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, payment_amount] = ctx;
-            TxnVHandle vhandle = index_handle(state->rows.district);
-            auto district = vhandle.Read<District::Value>();
-            district.d_ytd += payment_amount;
-            vhandle.Write(district);
-            ClientBase::OnUpdateRow(state->rows.district);
-            return nullopt;
-          },
-          payment_amount);
-
-  proc
-      | TxnProc(
-          customer_node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, payment_amount] = ctx;
-            TxnVHandle vhandle = index_handle(state->rows.customer);
-            auto customer = vhandle.Read<Customer::Value>();
-            customer.c_balance -= payment_amount;
-            customer.c_ytd_payment += payment_amount;
-            customer.c_payment_cnt++;
-            vhandle.Write(customer);
-            ClientBase::OnUpdateRow(state->rows.customer);
-            return nullopt;
-          },
-          payment_amount);
+  for (auto &p: state->nodes) {
+    auto [node, bitmap] = p;
+    proc
+        | TxnProc(
+            node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, bitmap, payment_amount] = ctx;
+              if (bitmap & 0x01) {
+                // Warehouse
+                TxnVHandle vhandle = index_handle(state->warehouse);
+                auto w = vhandle.Read<Warehouse::Value>();
+                w.w_ytd += payment_amount;
+                vhandle.Write(w);
+                ClientBase::OnUpdateRow(state->warehouse);
+              }
+              if (bitmap & 0x02) {
+                // District
+                TxnVHandle vhandle = index_handle(state->district);
+                auto d = vhandle.Read<District::Value>();
+                d.d_ytd += payment_amount;
+                vhandle.Write(d);
+                ClientBase::OnUpdateRow(state->district);
+              }
+              if (bitmap & 0x04) {
+                // Customer
+                TxnVHandle vhandle = index_handle(state->customer);
+                auto c = vhandle.Read<Customer::Value>();
+                c.c_balance -= payment_amount;
+                c.c_ytd_payment += payment_amount;
+                c.c_payment_cnt++;
+                vhandle.Write(c);
+                ClientBase::OnUpdateRow(state->customer);
+              }
+              return nullopt;
+            },
+            bitmap, payment_amount);
+  }
 }
 
 }

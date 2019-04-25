@@ -800,7 +800,7 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
   // TODO: generate standard TPC-C txn mix here. Currently, only NewOrder,
   // Delivery and Payment are available.
-  int rd = r.next_u32() % 92;
+  int rd = r.next_u32() % 88;
   int txn_type_id = 0;
   while (true) {
     int threshold = kTPCCTxnMix[txn_type_id];
@@ -814,6 +814,8 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 
 }
 
+// TODO:
+#if 0
 #define ROW_SLICE_MAPPING_DIRECT
 
 namespace felis {
@@ -966,6 +968,21 @@ int SliceLocator<StockData>::Locate(const typename StockData::Key &key) {
 int SliceLocator<Warehouse>::Locate(const typename Warehouse::Key &key) {
   return key.w_id - 1;
 }
+}
+
 #endif
+
+#endif
+
+namespace tpcc {
+
+using namespace felis;
+
+int SliceRouter(int16_t slice_id)
+{
+  auto &conf = util::Instance<NodeConfiguration>();
+  auto warehouses_per_node = kTPCCConfig.nr_warehouses / conf.nr_nodes();
+  return 1 + slice_id / warehouses_per_node; // Because node starts from 1
+}
 
 }

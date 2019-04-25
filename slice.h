@@ -15,7 +15,7 @@
 
 namespace felis {
 
-static constexpr int kNrMaxSlices = 1 << 23;
+static constexpr int kNrMaxSlices = 256;
 
 class SliceScanner;
 class ShippingHandle;
@@ -88,11 +88,9 @@ class SliceManager {
     row_slice_scanners[i] = new RowSliceScanner(row_slices[i], shipment);
   }
 
-  template <typename TableType, typename KeyType>
-  void OnNewRow(int slice_id, TableType table, const KeyType &k, VHandle *handle) {
-    auto *kstr = k.Encode();
-    OnNewRow(slice_id, new felis::IndexEntity(int(table), kstr, handle));
-    OnNewRow(slice_id, new felis::RowEntity(int(table), kstr, handle, slice_id));
+  void OnNewRow(int slice_id, int table, VarStr *kstr, VHandle *handle) {
+    OnNewRow(slice_id, new felis::IndexEntity(table, kstr, handle));
+    OnNewRow(slice_id, new felis::RowEntity(table, kstr, handle, slice_id));
   }
 
   void OnUpdateRow(VHandle *handle) {
@@ -185,12 +183,22 @@ class SliceMappingTable {
   }
 };
 
-
 template <typename TableType>
 class SliceLocator {
  public:
-  int Locate(const typename TableType::Key &key);
+  int16_t Locate(const typename TableType::Key &key);
 };
+
+#define SHARD_TABLE(Table)                                              \
+  template <> inline int16_t SliceLocator<Table>::Locate(const Table::Key &key) \
+
+static constexpr int16_t kReadOnlySliceId = std::numeric_limits<int16_t>::min();
+
+// Read only tables are replicated all over the place
+#define READ_ONLY_TABLE(Table)                          \
+  SHARD_TABLE(Table) { return kReadOnlySliceId; }       \
+
+using SliceRoute = int (*)(int16_t slice_id);
 
 }
 

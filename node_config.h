@@ -187,7 +187,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   unsigned long urgency_cnt[kMaxNrThreads];
  private:
-  void CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts, int level, int src, int nr_extra);
+  void CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts, int level, int src);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);
 };
 
