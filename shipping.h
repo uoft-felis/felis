@@ -239,16 +239,7 @@ class ShipmentReceiver : public go::Routine {
   }
 };
 
-class IndexEntity;
 class RowEntity;
-
-class IndexShipmentReceiver : public ShipmentReceiver<IndexEntity> {
- public:
-  IndexShipmentReceiver(go::TcpSocket *sock) : ShipmentReceiver<IndexEntity>(sock) {}
-  ~IndexShipmentReceiver();
-
-  void Run() override final;
-};
 
 class RowShipmentReceiver : public ShipmentReceiver<RowEntity> {
  public:
@@ -305,8 +296,6 @@ class ObjectSliceScanner : public SliceScanner {
   }
 };
 
-using IndexSliceScanner = ObjectSliceScanner<IndexEntity>;
-using IndexShipment = felis::Shipment<felis::IndexEntity>;
 using RowSliceScanner = ObjectSliceScanner<RowEntity>;
 using RowShipment = felis::Shipment<RowEntity>;
 

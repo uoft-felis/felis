@@ -135,12 +135,23 @@ ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t to
 {
   std::vector<std::thread> tasks;
   auto cap = 1 + (total_cap - 1) / g_nr_cores;
-  for (int i = 0; i < g_nr_cores; i++) {
-    auto node = (i + g_core_shifting) / g_cores_per_node;
+  for (int node = g_core_shifting / g_cores_per_node;
+       node < (g_core_shifting + g_nr_cores) / g_cores_per_node;
+       node++) {
     tasks.emplace_back(
-        [this, i, alloc_type, chunk_size, cap, node]() {
-          pools[i] = BasicPool(alloc_type, chunk_size,
-                               cap, node);
+        [alloc_type, chunk_size, cap, this, node]() {
+          fprintf(stderr, "allocating %lu on node %d\n",
+                  chunk_size * cap * g_cores_per_node, node);
+          auto pool_mem = (uint8_t *) MemMapAlloc(
+              alloc_type, chunk_size * cap * g_cores_per_node, node);
+
+          int offset = node * g_cores_per_node - g_core_shifting;
+          for (int i = offset; i < offset + g_cores_per_node; i++) {
+            pools[i] = BasicPool(
+                alloc_type, chunk_size, cap,
+                pool_mem + chunk_size * cap * (i - offset));
+          }
+          pools[offset].need_unmap = true;
         });
   }
   memset(free_nodes, 0, g_nr_cores * g_nr_cores * sizeof(uintptr_t));

@@ -158,6 +158,7 @@ void EpochClient::InitializeEpoch()
   auto epoch_nr = mgr.current_epoch_nr();
 
   util::Impl<PromiseAllocationService>().Reset();
+  util::Impl<PromiseRoutineDispatchService>().Reset();
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
@@ -171,7 +172,6 @@ void EpochClient::InitializeEpoch()
             []() {
               VHandle::Quiescence();
               RowEntity::Quiescence();
-              IndexEntity::Quiescence();
 
               mem::GetDataRegion().Quiescence();
     }));
@@ -217,7 +217,7 @@ void EpochClient::ExecuteEpoch()
       });
 }
 
-const size_t EpochExecutionDispatchService::kMaxItem = 8_M;
+const size_t EpochExecutionDispatchService::kMaxItem = 2_M;
 const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()

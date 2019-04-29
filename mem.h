@@ -37,7 +37,7 @@ const std::string kMemAllocTypeLabel[] = {
   "promise",
   "epoch",
   "^pool:epoch queue",
-  "^pool:row/index entity",
+  "^pool:row entity",
   "^pool:vhandle",
   "^pool:region",
   "coroutine",

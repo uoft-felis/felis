@@ -33,27 +33,10 @@ void Slice::Append(ShippingHandle *handle)
 void SliceManager::Initialize(int nr_slices)
 {
   this->nr_slices = nr_slices;
-  index_slices = new Slice*[nr_slices];
-  index_slice_scanners = new IndexSliceScanner*[nr_slices];
-  memset(index_slices, 0, sizeof(Slice *) * nr_slices);
-  memset(index_slice_scanners, 0, sizeof(IndexSliceScanner*) * nr_slices);
-
   row_slices = new Slice*[nr_slices];
   row_slice_scanners = new RowSliceScanner*[nr_slices];
   memset(row_slices, 0, sizeof(Slice *) * nr_slices);
   memset(row_slice_scanners, 0, sizeof(RowSliceScanner *) * nr_slices);
-}
-
-std::vector<IndexShipment *> SliceManager::all_index_shipments()
-{
-  std::vector<IndexShipment *> all;
-  for (int i = 0; i < nr_slices; i++) {
-    if (index_slice_scanners[i] == nullptr)
-      continue;
-    auto shipment = index_slice_scanners[i]->shipment();
-    if (shipment) all.push_back(shipment);
-  }
-  return all;
 }
 
 std::vector<RowShipment *> SliceManager::all_row_shipments()

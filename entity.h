@@ -12,48 +12,6 @@
 
 namespace felis {
 
-// A key-value pair, and thankfully, this is immutable.
-class IndexEntity final {
-  friend class IndexShipmentReceiver;
-  int alloc_coreid;
-  int rel_id;
-  VarStr *k;
-  VHandle *handle_ptr;
-  ObjectShippingHandle<IndexEntity> shandle;
- public:
-  IndexEntity()
-      : alloc_coreid(mem::ParallelPool::CurrentAffinity()),rel_id(-1),
-        k(nullptr), handle_ptr(nullptr), shandle(this) {}
-  IndexEntity(int rel_id, VarStr *k, VHandle *handle)
-      : alloc_coreid(mem::ParallelPool::CurrentAffinity()), rel_id(rel_id), k(k),
-        handle_ptr(handle), shandle(this) {}
-  ~IndexEntity() {}
-  IndexEntity(const IndexEntity &rhs) = delete; // C++17 has guaranteed copy-elision! :)
-
-  ShippingHandle *shipping_handle() { return &shandle; }
-  bool ShouldSkip() { return false; }
-  int EncodeIOVec(struct iovec *vec, int max_nr_vec);
-  uint64_t encoded_len;
-
-  void DecodeIOVec(struct iovec *vec);
-  void PrepareKey(VarStr *k) { this->k = k; }
-
-  static void *operator new(size_t s) {
-    return pool.Alloc();
-  }
-
-  static void operator delete(void *p) {
-    auto ent = (IndexEntity *) p;
-    pool.Free(p, ent->alloc_coreid);
-  }
-
-  static void InitPool();
-  static void Quiescence() { pool.Quiescence(); }
-
-private:
-  static mem::ParallelPool pool;
-};
-
 class RowEntity final {
   friend class RowShipmentReceiver;
   friend class SortedArrayVHandle;

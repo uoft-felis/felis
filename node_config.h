@@ -19,6 +19,8 @@ struct PromiseRoutine;
 class PromiseRoundRobin;
 class SendChannel;
 
+static constexpr size_t kMaxNrNode = 254;
+
 class TransportBatchMetadata {
  public:
   // Thread local information
@@ -28,25 +30,20 @@ class TransportBatchMetadata {
     std::atomic_ulong expect;
     unsigned long finish;
     // For each level, we had been accumulating increment to global counters.
-    unsigned long *delta; // for each destinations
+    std::array<unsigned long, kMaxNrNode> delta; // for each destinations
 
     LocalMetadata() {}
 
-    void Init(int nr_nodes) {
-      delta = new unsigned long[nr_nodes];
-      Reset(nr_nodes);
-    }
-
+    void Init(int nr_nodes) { Reset(nr_nodes); }
     void Reset(int nr_nodes) {
       expect = 0;
       finish = 0;
-      memset(delta, 0, sizeof(unsigned long) * nr_nodes);
+      std::fill(delta.begin(), delta.begin() + nr_nodes, 0);
     }
    public:
     void IncrementExpected(unsigned long d = 1) { expect.fetch_add(d); }
     bool Finish() { return (++finish) == expect.load(); }
     void AddRoute(int dst) { delta[dst - 1]++; }
-    // unsigned long RouteCount(int dst) { return delta[dst - 1]; }
   };
  private:
   static constexpr auto kMaxLevels = PromiseRoutineTransportService::kPromiseMaxLevels;
@@ -156,7 +153,8 @@ class NodeConfiguration : public PromiseRoutineTransportService {
     return local_batch_counters + 2;
   };
 
-  static constexpr size_t kMaxNrNode = 1024;
+  static constexpr size_t kMaxNrNode = 254;
+
  private:
   static void RunIndexShipmentReceiverThread(std::string host, unsigned short port);
 

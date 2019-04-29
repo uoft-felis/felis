@@ -30,7 +30,7 @@ Config::Config()
 {
   uniform_item_distribution = false;
   nr_items = 100000;
-  nr_warehouses = 32;
+  nr_warehouses = 16;
   districts_per_warehouse = 10;
   customers_per_district = 3000;
 
@@ -59,24 +59,17 @@ void InitializeSliceManager()
     }
 
     felis::RowShipment *row_shipment = nullptr;
-    felis::IndexShipment *index_shipment = nullptr;
     if (ClientBase::is_warehouse_hotspot(wh)) {
       if (NodeConfiguration::g_data_migration) {
         auto &row_peer = conf.config(kTPCCConfig.offload_nodes[0]).row_shipper_peer;
         row_shipment = new felis::RowShipment(row_peer.host, row_peer.port, true);
-      } else {
-        auto &index_peer = conf.config(kTPCCConfig.offload_nodes[0]).index_shipper_peer;
-        index_shipment = new felis::IndexShipment(index_peer.host, index_peer.port, true);
       }
     }
 
     // if shipment is nullptr, the scanner won't scan when called ObjectSliceScanner::Scan()
     manager.InstallRowSlice(i, row_shipment);
-    manager.InstallIndexSlice(i, index_shipment);
     if (row_shipment)
       logger->info("Installed row shipment, slice id {}", i);
-    if (index_shipment)
-      logger->info("Installed index shipment, slice id {}", i);
   }
 }
 
@@ -114,23 +107,6 @@ void InitializeTPCC()
   }
   logger->info("TPCC Table schemas created");
 
-}
-
-// Scan all index slices, and ship the index shipments
-void SendIndexSnapshot()
-{
-  logger->info("Scanning index...");
-  auto &manager = Instance<felis::SliceManager>();
-  manager.ScanAllIndex();
-  logger->info("Scanning index done");
-
-  auto all_shipments = manager.all_index_shipments();
-  for (auto shipment: all_shipments) {
-    logger->info("Shipping index");
-    int iter = 0;
-    while (!shipment->RunSend()) iter++;
-    logger->info("Done shipping index, iter {}", iter);
-  }
 }
 
 // TPC-C workload mix

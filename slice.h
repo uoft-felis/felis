@@ -69,8 +69,6 @@ class VHandle;
 // Each Slice has several SliceQueues, and one Shipment (in ObjectSliceScanner).
 class SliceManager {
  protected:
-  Slice **index_slices;
-  IndexSliceScanner **index_slice_scanners;
   Slice **row_slices;
   RowSliceScanner **row_slice_scanners;
   size_t nr_slices;
@@ -79,38 +77,27 @@ class SliceManager {
   SliceManager() {}
  public:
   void Initialize(int nr_slices);
-  void InstallIndexSlice(int i, IndexShipment *shipment) {
-    index_slices[i] = new Slice();
-    index_slice_scanners[i] = new IndexSliceScanner(index_slices[i], shipment);
-  }
   void InstallRowSlice(int i, RowShipment *shipment) {
     row_slices[i] = new Slice();
     row_slice_scanners[i] = new RowSliceScanner(row_slices[i], shipment);
   }
 
   void OnNewRow(int slice_id, int table, VarStr *kstr, VHandle *handle) {
-    OnNewRow(slice_id, new felis::IndexEntity(table, kstr, handle));
     OnNewRow(slice_id, new felis::RowEntity(table, kstr, handle, slice_id));
   }
 
   void OnUpdateRow(VHandle *handle) {
     auto *ent = handle->row_entity.get();
-    // only RowEntity has OnUpdateRow, IndexEntity is immutable and inserts is handled elsewhere
     OnUpdateRow(ent->slice_id(), ent);
   }
 
-  std::vector<IndexShipment*> all_index_shipments();
   std::vector<RowShipment*> all_row_shipments();
 
   // only the slices which (shipment != nullptr) will be scanned
-  void ScanAllIndex() { ScanAll(index_slice_scanners); }
   void ScanAllRow() { ScanAll(row_slice_scanners); }
   void ScanShippingHandle();
 
  private:
-  IndexEntity *OnNewRow(int slice_id, IndexEntity *ent) {
-    return OnNewRow(index_slices, index_slice_scanners, slice_id, ent);
-  }
   RowEntity *OnNewRow(int slice_id, RowEntity *ent) {
     return OnNewRow(row_slices, row_slice_scanners, slice_id, ent);
   }

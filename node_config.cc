@@ -648,29 +648,6 @@ void NodeConfiguration::SetupNodeName(std::string name)
   }
 }
 
-class NodeIndexShipmentReceiverRoutine : public go::Routine {
-  std::string host;
-  unsigned short port;
- public:
-  NodeIndexShipmentReceiverRoutine(std::string host, unsigned short port) : host(host), port(port) {}
-
-  void Run() final override;
-};
-
-void NodeIndexShipmentReceiverRoutine::Run()
-{
-  go::TcpSocket *server = new go::TcpSocket(8192, 1024);
-  logger->info("Shipment listening on {} {}", host, port);
-  server->Bind(host, port);
-  server->Listen();
-
-  while (true) {
-    auto *client_sock = server->Accept();
-    auto receiver = new IndexShipmentReceiver(client_sock);
-    go::Scheduler::Current()->WakeUp(receiver);
-  }
-}
-
 class NodeRowShipmentReceiverRoutine : public go::Routine {
   std::string host;
   unsigned short port;
@@ -701,13 +678,7 @@ void NodeConfiguration::RunAllServers()
     auto &peer = config().row_shipper_peer;
     go::GetSchedulerFromPool(g_nr_threads + 1)->WakeUp(
         new NodeRowShipmentReceiverRoutine(peer.host, peer.port));
-  } else {
-    logger->info("Starting system thread for index shipment receiving");
-    auto &peer = config().index_shipper_peer;
-    go::GetSchedulerFromPool(g_nr_threads + 1)->WakeUp(
-        new NodeIndexShipmentReceiverRoutine(peer.host, peer.port));
   }
-
   logger->info("Starting node server with id {}", node_id());
   go::GetSchedulerFromPool(0)->WakeUp(new NodeServerRoutine());
 }

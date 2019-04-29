@@ -210,7 +210,7 @@ mem::ParallelPool BaseVHandle::pool;
 
 void BaseVHandle::InitPool()
 {
-  pool = mem::ParallelPool(mem::VhandlePool, 64, 32_M);
+  pool = mem::ParallelPool(mem::VhandlePool, 64, 50_M);
   pool.Register();
 }
 

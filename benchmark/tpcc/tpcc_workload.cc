@@ -71,10 +71,6 @@ class TPCCModule : public Module<WorkloadModule> {
     tpcc::InitializeSliceManager();
     LoadTPCCDataSet();
 
-    // send the initial index snapshot before epoch 0
-    if (!NodeConfiguration::g_data_migration)
-      tpcc::SendIndexSnapshot();
-
     tpcc::TxnFactory::Initialize();
 
     EpochClient::g_workload_client = new tpcc::Client();

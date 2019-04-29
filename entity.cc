@@ -4,41 +4,6 @@
 
 namespace felis {
 
-void IndexEntity::DecodeIOVec(struct iovec *vec)
-{
-  auto p = (uint8_t *) vec->iov_base;
-  auto key_size = vec->iov_len - 12;
-  k->len = key_size;
-  memcpy(&rel_id, p, 4);
-  memcpy((uint8_t *) k + sizeof(VarStr), p + 4, key_size);
-  memcpy(&handle_ptr, p + key_size + 4, 8); // This is a pointer on the original machine though.
-}
-
-int IndexEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
-{
-  if (max_nr_vec < 3)
-    return 0;
-
-  vec[0].iov_len = 4;
-  vec[0].iov_base = &rel_id;
-  vec[1].iov_len = k->len;
-  vec[1].iov_base = (void *) k->data;
-  vec[2].iov_len = 8;
-  vec[2].iov_base = &handle_ptr;
-
-  encoded_len = 12 + k->len;
-
-  return 3;
-}
-
-mem::ParallelPool IndexEntity::pool;
-
-void IndexEntity::InitPool()
-{
-  pool = mem::ParallelPool(mem::EntityPool, sizeof(IndexEntity), 16_M);
-  pool.Register();
-}
-
 void RowEntity::DecodeIOVec(struct iovec *vec)
 {
   auto p = (uint8_t *) vec->iov_base;
@@ -99,7 +64,7 @@ mem::ParallelPool RowEntity::pool;
 
 void RowEntity::InitPool()
 {
-  pool = mem::ParallelPool(mem::EntityPool, sizeof(RowEntity), 32_M);
+  pool = mem::ParallelPool(mem::EntityPool, sizeof(RowEntity), 50_M);
   pool.Register();
 }
 
