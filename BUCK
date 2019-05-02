@@ -6,6 +6,9 @@ includes = ['-I.', '-Ispdlog/include']
 tpcc_headers = [
     'benchmark/tpcc/table_decl.h',
     'benchmark/tpcc/tpcc.h',
+    'benchmark/tpcc/new_order.h',
+    'benchmark/tpcc/payment.h',
+    'benchmark/tpcc/delivery.h',
 ]
 
 tpcc_srcs = [
@@ -37,7 +40,7 @@ db_srcs = [
 	('masstree/straccum.cc', ['-include', 'masstree/build/config.h']),
     ]
 
-libs = ['-pthread', '-lrt', '-ldl', '-ltcmalloc', '-lc++']
+libs = ['-pthread', '-lrt', '-ldl', '-lc++']
 #test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
 test_srcs = ['test/xnode_measure_test.cc']
 

@@ -185,6 +185,8 @@ struct TypedListNode : public TypedListNodeWrapper<T>,
   T *object() { return static_cast<T *>(this); }
 };
 
+// Locks
+
 class SpinLock {
   std::atomic_bool lock = false;
  public:
@@ -201,6 +203,35 @@ class SpinLock {
     lock.store(false);
   }
   void Release() { Unlock(); }
+};
+
+class MCSSpinLock {
+ public:
+  struct QNode {
+    std::atomic_bool done = false;
+    std::atomic<QNode *> next = nullptr;
+  };
+ private:
+  std::atomic<QNode *> tail = nullptr;
+ public:
+  void Lock(QNode *qnode) {
+    QNode *last = tail.exchange(qnode);
+    if (last) {
+      last->next = qnode;
+      while (!qnode->done) __builtin_ia32_pause();
+    }
+  }
+  void Acquire(QNode *qnode) { Lock(qnode); }
+
+  void Unlock(QNode *qnode) {
+    if (!qnode->next) {
+      QNode *owner = qnode;
+      if (tail.compare_exchange_strong(owner, nullptr)) return;
+      while (!qnode->next.load()) __builtin_ia32_pause();
+    }
+    qnode->next.load()->done = true;
+  }
+  void Release(QNode *qnode) { Unlock(qnode); }
 };
 
 template <typename T>

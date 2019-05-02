@@ -105,6 +105,7 @@ class EpochObject {
   EpochObject() : epoch_nr(0), node_id(0), offset(0) {}
 
   int origin_node_id() const { return node_id; }
+  uint64_t nr() const { return epoch_nr; }
 };
 
 template <typename T>

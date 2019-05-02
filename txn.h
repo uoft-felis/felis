@@ -71,7 +71,7 @@ class BaseTxn {
   class TxnVHandle : public TxnApi<VHandle> {
    public:
     using TxnApi<VHandle>::TxnApi;
-    bool AppendNewVersion();
+    void AppendNewVersion();
 
     VarStr *ReadVarStr();
     template <typename T> T Read() {
@@ -180,7 +180,7 @@ class BaseTxn {
     using TxnIndexOpContext::TxnIndexOpContext;
 
     void set_extra(const Extra &rhs) {
-      (Extra)(*this) = rhs;
+      (Extra &)(*this) = rhs;
     }
 
     size_t EncodeSize() const {
@@ -290,6 +290,7 @@ class Txn : public BaseTxn {
   void PrepareState() final override {
     epoch = util::Instance<EpochManager>().current_epoch();
     state = epoch->AllocateEpochObjectOnCurrentNode<TxnState>();
+    // printf("state epoch %lu\n", state.nr());
   }
 
   template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, Types...>;
@@ -347,8 +348,7 @@ class Txn : public BaseTxn {
           index_handle(), state, bitmap, params...);
 
       if constexpr(!std::is_void<OnCompleteParam>()) {
-          if (pp)
-            op_ctx.set_extra(*pp);
+          op_ctx.set_extra(*pp);
         }
 
       proc
@@ -360,14 +360,15 @@ class Txn : public BaseTxn {
                 if constexpr (!std::is_void<OnCompleteParam>()) {
                     completion.args = (OnCompleteParam) ctx;
                   }
+
+                completion.handle = ctx.handle;
                 completion.state = State(ctx.state);
+
                 TxnIndexOpContext::ForEachWithBitmap(
                     ctx.keys_bitmap,
                     [&ctx, &completion](int j, int i) {
                       auto op = IndexOp(ctx, j);
-                      auto v = op.result;
-                      completion.handle = ctx.handle;
-                      completion(i, v);
+                      completion(i, op.result);
                     });
                 return nullopt;
               });

@@ -43,7 +43,7 @@ struct NewOrderState {
   struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
     void operator()(int id, VHandle *row) {
       state->orderlines[id] = row;
-      while (!handle(row).AppendNewVersion());
+      handle(row).AppendNewVersion();
     }
   };
   NodeBitmap orderlines_nodes;
@@ -57,7 +57,7 @@ struct NewOrderState {
       } else if (id == 1) {
         state->neworder = row;
       }
-      while (!handle(row).AppendNewVersion());
+      handle(row).AppendNewVersion();
     }
   };
   NodeBitmap other_inserts_nodes;
@@ -67,7 +67,7 @@ struct NewOrderState {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       logger->debug("AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
       state->stocks[id] = rows[0];
-      while (!handle(rows[0]).AppendNewVersion());
+      handle(rows[0]).AppendNewVersion();
     }
   };
   NodeBitmap stocks_nodes;

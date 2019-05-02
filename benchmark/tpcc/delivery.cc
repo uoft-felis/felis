@@ -13,9 +13,10 @@ DeliveryStruct ClientBase::GenerateTransactionInput<DeliveryStruct>()
   s.warehouse_id = PickWarehouse();
   s.o_carrier_id = PickDistrict();
   s.ts = GetCurrentTime();
+  auto &conf = util::Instance<NodeConfiguration>();
 
-  memcpy(s.last_no_o_ids, g_last_no_o_ids, sizeof(int) * 10);
   for (int i = 0; i < kTPCCConfig.districts_per_warehouse; i++) {
+    s.last_no_o_ids[i] = (g_last_no_o_ids[i] << 8) + (conf.node_id() & 0x00FF);
     g_last_no_o_ids[i]++;
   }
   return s;
@@ -36,6 +37,7 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
 
 void DeliveryTxn::Prepare()
 {
+  INIT_ROUTINE_BRK(16384);
   for (int i = 0; i < kTPCCConfig.districts_per_warehouse; i++) {
     auto district_id = i + 1;
     auto oid = last_no_o_ids[i];
@@ -49,6 +51,7 @@ void DeliveryTxn::Prepare()
     auto no_it = neworder_table.IndexSearchIterator(
         neworder_start.EncodeFromRoutine(), neworder_end.EncodeFromRoutine());
     if (!no_it.IsValid()) {
+      state->nodes[i] = NodeBitmap();
       continue;
     }
 
@@ -56,7 +59,7 @@ void DeliveryTxn::Prepare()
     auto orderline_start = OrderLine::Key::New(
         warehouse_id, district_id, oid, 0);
     auto orderline_end = OrderLine::Key::New(
-        warehouse_id, district_id, oid, std::numeric_limits<int>::max());
+        warehouse_id, district_id, oid, 16);
     auto oorder_key = OOrder::Key::New(warehouse_id, district_id, oid);
     auto customer_key = Customer::Key::New(
         warehouse_id, district_id, customer_id);
@@ -86,7 +89,7 @@ void DeliveryTxn::Run()
     }
     for (auto &p: state->nodes[i]) {
       auto [node, bitmap] = p;
-      if (node == customer_node) continue;
+      if (bitmap == 0x08) continue;
 
       auto next =
           proc
@@ -98,7 +101,7 @@ void DeliveryTxn::Run()
 
                 if (bitmap & 0x10) {
                   index_handle(state->new_orders[i]).Delete();
-                  // TODO: tell zhiqi's shipping code to ignore this?
+                  ClientBase::OnUpdateRow(state->new_orders[i]);
                 }
 
                 if (bitmap & 0x04) {

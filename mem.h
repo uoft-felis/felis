@@ -94,6 +94,7 @@ class WeakPool {
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
+  void *head_ptr() const { return data; }
 
   void Register();
 };

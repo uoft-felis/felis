@@ -15,6 +15,7 @@
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
+#include "literals.h"
 
 namespace felis {
 
@@ -89,28 +90,45 @@ class AllocatorModule : public Module<CoreModule> {
 static AllocatorModule allocator_module;
 
 class CoroutineModule : public Module<CoreModule> {
+  // TODO: make this NUMA friendly
   class CoroutineStackAllocator : public go::RoutineStackAllocator {
-    mem::Pool stack_pool;
-    mem::Pool context_pool;
-    static constexpr int kMaxRoutines = 512;
-    static constexpr int kStackSize = 512 << 10;
+    mem::Pool pools[NodeConfiguration::kMaxNrThreads / mem::kNrCorePerNode];
+    static constexpr int kMaxRoutines = 2048;
+    static constexpr int kStackSize = 500_K;
+
+    struct Chunk {
+      uint8_t stack_space[kStackSize];
+      uint64_t alloc_node;
+      uint8_t ctx_space[];
+    };
    public:
     CoroutineStackAllocator() {
-      stack_pool = mem::Pool(mem::Coroutine, kStackSize, kMaxRoutines);
-      context_pool = mem::Pool(mem::Coroutine, kContextSize, kMaxRoutines);
-      stack_pool.Register();
-      context_pool.Register();
+      auto nr_numa_nodes = NodeConfiguration::kMaxNrThreads / mem::kNrCorePerNode;
+      for (int node = 0; node < nr_numa_nodes; node++) {
+        pools[node] = mem::Pool(
+            mem::Coroutine,
+            util::Align(sizeof(Chunk) + kContextSize, 8192),
+            kMaxRoutines, node);
+        pools[node].Register();
+      }
     }
     void AllocateStackAndContext(
         size_t &stack_size, ucontext * &ctx_ptr, void * &stack_ptr) override final {
+      int tid = go::Scheduler::CurrentThreadPoolId();
+      int node = 0;
+      if (tid > 0) node = (tid - 1) / mem::kNrCorePerNode;
       stack_size = kStackSize;
-      ctx_ptr = (ucontext *) context_pool.Alloc();
-      stack_ptr = stack_pool.Alloc();
+
+      auto ch = (Chunk *) pools[node].Alloc();
+      abort_if(ch == nullptr, "pool on numa node {} is empty", node);
+      ch->alloc_node = node;
+      ctx_ptr = (ucontext *) ch->ctx_space;
+      stack_ptr = ch->stack_space;
       memset(ctx_ptr, 0, kContextSize);
     }
     void FreeStackAndContext(ucontext *ctx_ptr, void *stack_ptr) override final {
-      context_pool.Free(ctx_ptr);
-      stack_pool.Free(stack_ptr);
+      auto ch = (Chunk *) stack_ptr;
+      pools[ch->alloc_node].Free(ch);
     }
   };
 

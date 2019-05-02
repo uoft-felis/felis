@@ -3,6 +3,18 @@
 
 namespace felis {
 
+SpinnerSlot::SpinnerSlot()
+{
+  for (int node = 0; node < 32 / mem::kNrCorePerNode; node++) {
+    auto p = (uint8_t *) mem::MemMapAlloc(mem::VhandlePool, 4096, node);
+    auto delta = 4096 / mem::kNrCorePerNode;
+    for (int i = 0; i < mem::kNrCorePerNode; i++, p += delta) {
+      slots[i + node * mem::kNrCorePerNode] = (std::atomic_bool *) p;
+      new (p) std::atomic_bool(false);
+    }
+  }
+}
+
 void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver,
                               void *handle)
 {
@@ -57,7 +69,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
 
   abort_if(core_id < 0, "We should not run on thread pool 0!");
 
-  while (!slots[core_id].done) {
+  while (!slots[core_id]->load(std::memory_order_acquire)) {
     asm("pause" : : :"memory");
     wait_cnt++;
 
@@ -79,7 +91,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
   asm volatile("" : : :"memory");
 
   DTRACE_PROBE3(felis, wait_jiffies, wait_cnt, sid, ver);
-  slots[core_id].done = 0;
+  slots[core_id]->store(false, std::memory_order_release);
   return true;
 }
 
@@ -87,7 +99,7 @@ void SpinnerSlot::Notify(uint64_t bitmap)
 {
   while (bitmap) {
     int idx = __builtin_ctzll(bitmap);
-    slots[idx].done = 1;
+    slots[idx]->store(true, std::memory_order_release);
     bitmap &= ~(1 << idx);
   }
 }

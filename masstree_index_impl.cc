@@ -42,30 +42,28 @@ MasstreeIndex::Iterator::Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
                                   const VarStr *terminate_key)
     : end_key(terminate_key), it(scan_it), ti(GetThreadInfo()), vhandle(nullptr)
 {
-  AdaptKey();
+  Adapt();
 }
 
-void MasstreeIndex::Iterator::AdaptKey()
+void MasstreeIndex::Iterator::Adapt()
 {
   if (!it->terminated) {
     // wrap the iterator
     auto s = it->key.full_string();
     cur_key.len = s.length();
     cur_key.data = (const uint8_t *) s.data();
+    vhandle = it->entry.value();
   }
 }
 
 void MasstreeIndex::Iterator::Next()
 {
-  do {
-    it->next(*ti);
-    AdaptKey();
-  } while (IsValid());
+  it->next(*ti);
+  Adapt();
 }
 
 bool MasstreeIndex::Iterator::IsValid() const
 {
-
   if (end_key == nullptr)
     return !it->terminated;
   else

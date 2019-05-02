@@ -41,7 +41,7 @@ class MasstreeIndex {
     VHandle *row() { return vhandle; }
 
    private:
-    void AdaptKey();
+    void Adapt();
   };
   void Initialize(threadinfo *ti);
  protected:

@@ -18,12 +18,9 @@ class SpinnerSlot : public VHandleSyncService {
  public:
   static constexpr int kNrSpinners = 32;
  private:
-  struct {
-    volatile long done;
-    long __padding__[7];
-  } slots[kNrSpinners];
+  std::atomic_bool *slots[kNrSpinners];
  public:
-  SpinnerSlot() { memset(slots, 0, 64 * kNrSpinners); }
+  SpinnerSlot();
 
   bool Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt);
   void Notify(uint64_t bitmap) final override;

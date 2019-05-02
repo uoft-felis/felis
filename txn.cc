@@ -13,9 +13,9 @@ void BaseTxn::InitBrk(long nr_epochs)
   g_brk = mem::Brk(mem::MemMapAlloc(mem::Txn, lmt), lmt);
 }
 
-bool BaseTxn::TxnVHandle::AppendNewVersion()
+void BaseTxn::TxnVHandle::AppendNewVersion()
 {
-  return api->AppendNewVersion(sid, epoch_nr);
+  api->AppendNewVersion(sid, epoch_nr);
 }
 
 VarStr *BaseTxn::TxnVHandle::ReadVarStr()
@@ -124,7 +124,7 @@ BaseTxn::TxnIndexLookupOpImpl::TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx
     result[0] = handle;
   } else if (ctx.slice_ids[idx] == -1) {
     VarStr range_start(ctx.key_len[idx], 0, ctx.key_data[idx]);
-    VarStr range_end(ctx.key_len[idx + 1], 0, ctx.key_data[idx]);
+    VarStr range_end(ctx.key_len[idx + 1], 0, ctx.key_data[idx + 1]);
     auto &mgr = util::Instance<RelationManager>();
     auto &table = mgr[ctx.relation_ids[idx]];
     int i = 0;

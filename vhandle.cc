@@ -16,7 +16,6 @@ VHandleSyncService &BaseVHandle::sync()
 }
 
 SortedArrayVHandle::SortedArrayVHandle()
-    : lock(false)
 {
   capacity = 4;
   // value_mark = 0;
@@ -51,12 +50,10 @@ void SortedArrayVHandle::EnsureSpace()
 }
 
 // Insert a new version into the version array, with value pending.
-bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
+void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
-  bool expected = false;
-  if (!lock.compare_exchange_strong(expected, true)) {
-    return false;
-  }
+  util::MCSSpinLock::QNode qnode;
+  lock.Lock(&qnode);
   gc_rule((VHandle *) this, sid, epoch_nr);
 
   // append this version at the end of version array
@@ -79,8 +76,7 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   // the minimum sid of this epoch. In felis, we can assume this. However if we
   // were to replay Ermia, we couldn't.
 
-  lock.store(false);
-  return true;
+  lock.Unlock(&qnode);
 }
 
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
@@ -104,6 +100,7 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 
   p = std::lower_bound(start, end, sid);
   if (p == versions) {
+    logger->critical("cannot found for sid {} start is {} begin is {}", sid, *start, *versions);
     return nullptr;
   }
 found:
@@ -178,10 +175,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 // just append a version, with sid = last sid + 1, and with value.
 // therefore this sid makes no sense when it comes to transaction serial id.
 void SortedArrayVHandle::WriteNewVersion(uint64_t epoch_nr, VarStr *obj) {
-  uint64_t sid;
-  while (!AppendNewVersion(sid = versions[size - 1] + 1, epoch_nr)) {
-    asm("pause" : : :"memory");
-  }
+  uint64_t sid = versions[size - 1] + 1;
+  AppendNewVersion(sid, epoch_nr);
   WriteWithVersion(sid, obj, epoch_nr);
 }
 

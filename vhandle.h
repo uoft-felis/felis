@@ -45,7 +45,7 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class RowEntity;
   friend class SliceManager;
 
-  std::atomic_bool lock;
+  util::MCSSpinLock lock;
   short alloc_by_regionid;
   short this_coreid;
   unsigned int capacity;
@@ -68,7 +68,7 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle();
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
-  bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
+  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(uint64_t version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
@@ -77,6 +77,7 @@ class SortedArrayVHandle : public BaseVHandle {
   void Prefetch() const { __builtin_prefetch(versions); }
 
   const size_t nr_versions() const { return size; }
+  uint64_t first_version() const { return versions[0]; }
  private:
   void EnsureSpace();
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);

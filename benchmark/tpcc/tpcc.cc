@@ -683,7 +683,7 @@ void Loader<LoaderType::Order>::DoLoad()
         OOrder::Value v_oo;
 
         v_oo.o_c_id = c_ids[c - 1];
-        if (k_oo.o_id < 2101)
+        if ((k_oo.o_id >> 8) < 2101)
           v_oo.o_carrier_id = RandomNumber(1, 10);
         else
           v_oo.o_carrier_id = 0;
@@ -776,7 +776,7 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
   // TODO: generate standard TPC-C txn mix here. Currently, only NewOrder,
   // Delivery and Payment are available.
-  int rd = r.next_u32() % 88;
+  int rd = r.next_u32() % 92;
   int txn_type_id = 0;
   while (true) {
     int threshold = kTPCCTxnMix[txn_type_id];
