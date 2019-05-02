@@ -660,7 +660,7 @@ class NodeRowShipmentReceiverRoutine : public go::Routine {
 void NodeRowShipmentReceiverRoutine::Run()
 {
   go::TcpSocket *server = new go::TcpSocket(8192, 1024);
-  logger->info("Row Shipment listening on {} {}", host, port);
+  logger->info("Row Shipment receiving thread listening on {}:{}", host, port);
   server->Bind(host, port);
   server->Listen();
 
@@ -674,7 +674,6 @@ void NodeRowShipmentReceiverRoutine::Run()
 void NodeConfiguration::RunAllServers()
 {
   if (NodeConfiguration::g_data_migration) {
-    logger->info("Starting system thread for row shipment receiving");
     auto &peer = config().row_shipper_peer;
     go::GetSchedulerFromPool(g_nr_threads + 1)->WakeUp(
         new NodeRowShipmentReceiverRoutine(peer.host, peer.port));

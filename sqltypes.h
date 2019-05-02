@@ -43,6 +43,7 @@ struct VarStr {
   static VarStr *FromAlloca(void *ptr, uint16_t length) {
     VarStr *str = static_cast<VarStr *>(ptr);
     str->len = length;
+    str->region_id = -5206; // something peculiar, making you realize it's allocated from stack
     str->data = (uint8_t *) str + sizeof(VarStr);
     return str;
   }

@@ -297,11 +297,9 @@ void RowShipmentReceiver::Run()
               auto rel_id = en[i].get_rel_id();
               auto slice_id = en[i].slice_id();
 
-              VarStr *k = VarStr::New(en[i].k->len);
-              memcpy((uint8_t *) k + sizeof(VarStr), (uint8_t *) en[i].k + sizeof(VarStr), en[i].k->len);
-
-              VHandle *handle = new VHandle();
-              InitVersion(handle, en[i].v);
+              VarStr *k = VarStr::New(en[i].k->len), *v = VarStr::New(en[i].v->len);
+              memcpy((uint8_t *)k->data, en[i].k->data, en[i].k->len);
+              memcpy((uint8_t *)v->data, en[i].v->data, en[i].v->len);
 
               // InsertOrDefault:
               //   If the key exists in the masstree, then return the value
@@ -309,13 +307,14 @@ void RowShipmentReceiver::Run()
               //     (key, return value of lambda) into the masstree, and return the value
               auto &rel = mgr[rel_id];
               bool exist = true;
-              auto ret_handle = rel.InsertOrDefault(k, [&handle]() { return handle; });
-              if (handle != ret_handle) {
-                // key does exist, append a version
-                ret_handle->WriteNewVersion(util::Instance<EpochManager>().current_epoch_nr(), en[i].v);
-                handle = ret_handle;
+              auto handle = rel.InsertOrDefault(k, [&exist]() { exist = false; return new VHandle(); });
+              if (exist) {
+                handle->WriteNewVersion(util::Instance<EpochManager>().current_epoch_nr(), v);
+              } else {
+                InitVersion(handle, v);
               }
-              RowEntity *entity = new felis::RowEntity(en[i].get_rel_id(), k, handle, en[i].slice_id());
+
+              RowEntity *entity = new felis::RowEntity(rel_id, k, handle, slice_id);
 
               // TODO: add row to its slice
 

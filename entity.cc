@@ -14,12 +14,12 @@ void RowEntity::DecodeIOVec(struct iovec *vec)
   auto key_size = *((uint16_t *)(p + 8));
   assert(key_size > 0);
   k->len = key_size;
-  memcpy((uint8_t *) k + sizeof(VarStr), p + 10, key_size);
+  memcpy((uint8_t *) k->data, p + 10, key_size);
 
   auto value_size = vec->iov_len - 10 - key_size;
   assert(value_size > 0);
   v->len = value_size;
-  memcpy((uint8_t *) v + sizeof(VarStr), p + 10 + key_size, value_size);
+  memcpy((uint8_t *) v->data, p + 10 + key_size, value_size);
 }
 
 int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)

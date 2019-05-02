@@ -156,8 +156,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   static constexpr size_t kMaxNrNode = 254;
 
  private:
-  static void RunIndexShipmentReceiverThread(std::string host, unsigned short port);
-
   SendChannel *GetOutputChannel(int node_id);
 
   std::vector<go::TcpSocket *> clients;
