@@ -143,9 +143,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   void FlushBufferPlan(bool sync);
   void FlushBufferPlanCompletion(uint64_t epoch_nr);
 
-  void SendBarrier(int node_id);
-  void BroadcastBarrier();
-
   // node id starts from 1
   int nr_nodes() const { return max_node_id; }
 

@@ -900,26 +900,6 @@ void NodeConfiguration::FlushBufferPlanCompletion(uint64_t epoch_nr)
   }
 }
 
-void NodeConfiguration::SendBarrier(int node_id)
-{
-  // TODO:
-  // auto out = GetOutputChannel(node_id);
-  // uint64_t eop = 0;
-  // out->Write(&eop, 8);
-  TBD();
-}
-
-void NodeConfiguration::BroadcastBarrier()
-{
-  // TODO:
-  TBD();
-
-  for (auto &config: all_config) {
-    if (!config) continue;
-    SendBarrier(config->id);
-  }
-}
-
 }
 
 namespace util {

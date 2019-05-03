@@ -68,7 +68,7 @@ uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 
 static constexpr int kBlock = 32;
 
-void EpochClient::RunTxnPromises(std::string label, std::function<void ()> continuation)
+void EpochClient::RunTxnPromises(const char *label, std::function<void ()> continuation)
 {
   callback.label = label;
   callback.continuation = continuation;
@@ -225,20 +225,31 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
   auto max_item_percore = kMaxItem / NodeConfiguration::g_nr_threads;
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &queue = queues[i];
+    auto numa_node =
+        (i + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+
     queue.zq.end = queue.zq.start = 0;
     queue.zq.q = (PromiseRoutineWithInput *)
-                 mem::MemMapAlloc(mem::EpochQueuePromise,
-                                  max_item_percore * sizeof(PromiseRoutineWithInput));
+                 mem::MemMapAlloc(
+                     mem::EpochQueuePromise,
+                     max_item_percore * sizeof(PromiseRoutineWithInput),
+                     numa_node);
     queue.pq.len = 0;
     queue.pq.q = (PriorityQueueHeapEntry *)
-                 mem::MemMapAlloc(mem::EpochQueueItem,
-                                  max_item_percore * sizeof(PriorityQueueHeapEntry));
+                 mem::MemMapAlloc(
+                     mem::EpochQueueItem,
+                     max_item_percore * sizeof(PriorityQueueHeapEntry),
+                     numa_node);
     queue.pq.ht = (PriorityQueueHashHeader *)
-                  mem::MemMapAlloc(mem::EpochQueueItem,
-                                   kHashTableSize * sizeof(PriorityQueueHashHeader));
+                  mem::MemMapAlloc(
+                      mem::EpochQueueItem,
+                      kHashTableSize * sizeof(PriorityQueueHashHeader),
+                      numa_node);
     queue.pq.pending.q = (PromiseRoutineWithInput *)
-                         mem::MemMapAlloc(mem::EpochQueuePromise,
-                                          max_item_percore * sizeof(PromiseRoutineWithInput));
+                         mem::MemMapAlloc(
+                             mem::EpochQueuePromise,
+                             max_item_percore * sizeof(PromiseRoutineWithInput),
+                             numa_node);
     queue.pq.pending.start = 0;
     queue.pq.pending.end = 0;
 
@@ -246,7 +257,12 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
       queue.pq.ht[t].Initialize();
     }
 
-    queue.pq.pool = mem::BasicPool(mem::EpochQueuePool, kPriorityQueuePoolElementSize, max_item_percore);
+    queue.pq.pool = mem::BasicPool(
+        mem::EpochQueuePool,
+        kPriorityQueuePoolElementSize,
+        max_item_percore,
+        numa_node);
+
     queue.pq.pool.Register();
 
     new (&queue.lock) util::SpinLock();

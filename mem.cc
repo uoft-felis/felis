@@ -124,9 +124,10 @@ void BasicPool::Free(void *ptr)
 }
 
 thread_local int ParallelPool::g_affinity = -1;
-int ParallelPool::g_nr_cores = 0;
-int ParallelPool::g_cores_per_node = 8;
-int ParallelPool::g_core_shifting = 0;
+
+static int g_nr_cores = 0;
+static int g_cores_per_node = 8;
+static int g_core_shifting = 0;
 
 ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap)
     : pools(new BasicPool[kMaxNrPools]),
@@ -222,9 +223,14 @@ void ParallelPool::Quiescence()
   }
 }
 
+void ParallelPool::Register()
+{
+  for (auto i = 0; i < g_nr_cores; i++) pools[i].Register();
+}
+
 static std::mutex *g_core_locks;
 
-void ParallelPool::InitTotalNumberOfCores(int nr_cores, int core_shifting)
+void InitTotalNumberOfCores(int nr_cores, int core_shifting)
 {
   g_nr_cores = nr_cores;
   g_core_shifting = core_shifting;
@@ -326,7 +332,7 @@ void ParallelRegion::PrintUsageEachClass()
     if (proposed_caps[i] == 0) continue;
     auto &pool = pools[i];
     size_t used = 0;
-    for (int j = 0; j < ParallelPool::g_nr_cores; j++) {
+    for (int j = 0; j < g_nr_cores; j++) {
       used += pool.pools[j].stats.used;
     }
     auto chk_size = 32UL << i;
@@ -420,21 +426,35 @@ void PrintMemStats() {
 void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node)
 {
   int flags = MAP_ANONYMOUS | MAP_PRIVATE;
-  if (length >= 2 >> 20)
+  if (length >= 2 << 20) {
     flags |= MAP_HUGETLB;
+    length = util::Align(length, 2 << 20);
+  } else {
+    length = util::Align(length, 4096);
+  }
   void *data = MemMap(alloc_type, nullptr, length,
                       PROT_READ | PROT_WRITE, flags, -1, 0);
 
 #ifndef DISABLE_NUMA
-  if (numa_node >= 0 && length >= 2 << 20) {
-    unsigned long nodemask = 1 << numa_node;
-    if (syscall(__NR_mbind,
-                data, length, 2 /* MPOL_BIND */, &nodemask, sizeof(unsigned long) * 8,
-                1 << 0 /* MPOL_MF_STRICT */) < 0) {
-      perror("mbind");
-      std::abort();
-    }
+  unsigned long nodemask = 0;
+
+  if (numa_node == -1) {
+    for (auto n = g_core_shifting / kNrCorePerNode; n < g_nr_cores / kNrCorePerNode; n++)
+      nodemask |= 1 << n;
+  } else {
+    nodemask = 1 << numa_node;
   }
+  if (syscall(
+          __NR_mbind,
+          data, length,
+          2 /* MPOL_BIND */,
+          &nodemask,
+          sizeof(unsigned long) * 8,
+          1 << 0 /* MPOL_MF_STRICT */) < 0) {
+    perror("mbind");
+    std::abort();
+  }
+
 #endif
 
   if (mlock(data, length) < 0) {

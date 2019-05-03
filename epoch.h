@@ -20,7 +20,7 @@ class EpochCallback {
   friend EpochClient;
   PerfLog perf;
   EpochClient *client;
-  std::string label;
+  const char *label;
   std::function<void ()> continuation;
  public:
   EpochCallback(EpochClient *client) : client(client) {}
@@ -61,7 +61,7 @@ class EpochClient {
   virtual BaseTxn *CreateTxn(uint64_t serial_id) = 0;
 
  private:
-  void RunTxnPromises(std::string label, std::function<void ()> continuation);
+  void RunTxnPromises(const char *label, std::function<void ()> continuation);
 
  protected:
   EpochCallback callback;

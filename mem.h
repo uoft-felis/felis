@@ -143,9 +143,6 @@ class ParallelPool {
   MemAllocType alloc_type;
 
   static thread_local int g_affinity;
-  static int g_nr_cores;
-  static int g_cores_per_node;
-  static int g_core_shifting;
  public:
   ParallelPool() : pools(nullptr), free_nodes(nullptr), total_cap(0) {}
   ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
@@ -170,9 +167,7 @@ class ParallelPool {
     return *this;
   }
 
-  void Register() {
-    for (auto i = 0; i < g_nr_cores; i++) pools[i].Register();
-  }
+  void Register();
 
   // You can add a dedicate pool.
   void AddExtraBasicPool(int core, size_t cap = 0, int node = -1);
@@ -189,9 +184,10 @@ class ParallelPool {
   // SetCurrentAffinity() will acquire a lock before setting the affinity for
   // the current thread. This is essential to keep the ParallelPool safe.
   static void SetCurrentAffinity(int aff);
-  static void InitTotalNumberOfCores(int nr_cores, int core_shifting = 0);
   static int CurrentAffinity();
 };
+
+void InitTotalNumberOfCores(int nr_cores, int core_shifting = 0);
 
 // In the future, we might also need a Plain Region that makes up of Pools
 // instead of ParallelPools?
