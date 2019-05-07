@@ -16,18 +16,28 @@ class Epoch;
 class BaseTxn;
 class EpochClient;
 
+enum EpochPhase : int {
+  CallInsert,
+  Insert,
+  CallInitialize,
+  Initialize,
+  CallExecute,
+  Execute,
+};
+
 class EpochCallback {
-  friend EpochClient;
+  friend class EpochClient;
   PerfLog perf;
   EpochClient *client;
   const char *label;
-  std::function<void ()> continuation;
+  EpochPhase phase;
  public:
-  EpochCallback(EpochClient *client) : client(client) {}
+  EpochCallback(EpochClient *client) : client(client), label(nullptr) {}
   void operator()();
 };
 
 class EpochClient {
+  friend class EpochCallback;
   PerfLog perf;
  public:
   static EpochClient *g_workload_client;
@@ -51,8 +61,6 @@ class EpochClient {
   friend class BaseTxn;
   friend class EpochCallback;
 
-  void IssueTransactions(uint64_t epoch_nr, std::function<void (BaseTxn *)> func, bool sync = true);
-
   void InitializeEpoch();
   void ExecuteEpoch();
 
@@ -61,7 +69,18 @@ class EpochClient {
   virtual BaseTxn *CreateTxn(uint64_t serial_id) = 0;
 
  private:
-  void RunTxnPromises(const char *label, std::function<void ()> continuation);
+  void RunTxnPromises(const char *label);
+
+  using TxnMemberFunc = void (BaseTxn::*)();
+  void CallTxns(uint64_t epoch_nr, TxnMemberFunc func);
+  void CallTxnsOnComplete(bool sync = true);
+
+  void OnCallInsertComplete();
+  void OnInsertComplete();
+  void OnCallInitializeComplete();
+  void OnInitializeComplete();
+  void OnCallExecuteComplete();
+  void OnExecuteComplete();
 
  protected:
   EpochCallback callback;
@@ -70,6 +89,8 @@ class EpochClient {
   BaseTxn **all_txns;
   BaseTxn **txns;
   unsigned long total_nr_txn;
+  unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
+
   bool disable_load_balance;
 
   NodeConfiguration &conf;

@@ -19,11 +19,20 @@ void EpochCallback::operator()()
   perf.Show(label + std::string(" finishes"));
   printf("\n");
 
-  // Don't call the continuation directly.
-  //
-  // This is because we might Reset() the PromiseAllocationService, which would free
-  // the current go::Routine.
-  go::GetSchedulerFromPool(0)->WakeUp(go::Make(continuation));
+  // TODO: We might Reset() the PromiseAllocationService, which would free the
+  // current go::Routine. Is it necessary to run some function in the another
+  // go::Routine?
+
+  static void (EpochClient::*phase_mem_funcs[])() = {
+      &EpochClient::OnCallInsertComplete,
+      &EpochClient::OnInsertComplete,
+      &EpochClient::OnCallInitializeComplete,
+      &EpochClient::OnInitializeComplete,
+      &EpochClient::OnCallExecuteComplete,
+      &EpochClient::OnExecuteComplete,
+  };
+
+  std::invoke(phase_mem_funcs[static_cast<int>(phase)], *client);
 }
 
 EpochClient::EpochClient() noexcept
@@ -33,6 +42,22 @@ EpochClient::EpochClient() noexcept
       conf(util::Instance<NodeConfiguration>())
 {
   callback.perf.End();
+
+  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
+  unsigned long *cnt_mem = nullptr;
+
+  for (int t = 0; t < NodeConfiguration::g_nr_threads; t++) {
+    auto d = std::div(t + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto numa_node = d.quot;
+    auto offset_in_node = d.rem;
+    if (offset_in_node == 0) {
+      cnt_mem = (unsigned long *) mem::MemMapAlloc(
+          mem::Epoch,
+          cnt_len * sizeof(unsigned long) * mem::kNrCorePerNode,
+          numa_node);
+    }
+    per_core_cnts[t] = cnt_mem + cnt_len * offset_in_node;
+  }
 }
 
 void EpochClient::GenerateBenchmarks()
@@ -68,10 +93,9 @@ uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 
 static constexpr int kBlock = 32;
 
-void EpochClient::RunTxnPromises(const char *label, std::function<void ()> continuation)
+void EpochClient::RunTxnPromises(const char *label)
 {
   callback.label = label;
-  callback.continuation = continuation;
   callback.perf.Clear();
   callback.perf.Start();
   auto nr_threads = NodeConfiguration::g_nr_threads;
@@ -101,50 +125,47 @@ void EpochClient::RunTxnPromises(const char *label, std::function<void ()> conti
   }
 }
 
-void EpochClient::IssueTransactions(uint64_t epoch_nr, std::function<void (BaseTxn *)> func, bool sync)
+void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
+  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
   conf.ResetBufferPlan();
   conf.FlushBufferPlanCompletion(epoch_nr);
+  callback.label = "CallTxns";
 
-  PerfLog p;
-  p.Start();
-
-  uint8_t buf[nr_threads];
-  go::BufferChannel *comp = new go::BufferChannel(nr_threads);
-  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
-  auto cnts = (unsigned long *) alloca(sizeof(unsigned long) * cnt_len * nr_threads);
-  std::fill(cnts, cnts + cnt_len * nr_threads, 0);
-
+  completion.Increment(nr_threads);
   for (auto t = 0; t < nr_threads; t++) {
-    auto cnt = cnts + cnt_len * t;
+    auto cnt = per_core_cnts[t];
     auto r = go::Make(
-        [func, t, comp, this, cnt, nr_threads]() {
+        [func, t, this, cnt, cnt_len, nr_threads]() {
+          std::fill(cnt, cnt + cnt_len, 0);
           conf.IncrementUrgencyCount(t);
           for (auto i = t * kBlock; i < total_nr_txn ; i += kBlock * nr_threads) {
             for (auto j = 0; j < kBlock && i + j < total_nr_txn; j++) {
               auto t = txns[i + j];
               t->ResetRoot();
-              func(t);
+              std::invoke(func, t);
               conf.CollectBufferPlan(t->root_promise(), cnt);
             }
           }
           // logger->info("Issuer done on core {}", t);
-          uint8_t done = 0;
-          comp->Write(&done, 1);
+          completion.Complete();
         });
     r->set_urgent(true);
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
+}
 
-  comp->Read(buf, nr_threads);
-  p.Show("Issuing pieces done, takes");
+void EpochClient::CallTxnsOnComplete(bool sync)
+{
+  auto nr_threads = NodeConfiguration::g_nr_threads;
+
+  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
 
   auto local_cnts = conf.local_buffer_plan_counters();
   for (auto t = 0; t < nr_threads; t++) {
-    auto cnt = cnts + cnt_len * t;
     for (auto i = 0; i < cnt_len; i++) {
-      local_cnts[i] += cnt[i];
+      local_cnts[i] += per_core_cnts[t][i];
     }
   }
 
@@ -181,40 +202,66 @@ void EpochClient::InitializeEpoch()
     txns[i]->PrepareState();
   }
 
-  IssueTransactions(1, [](auto t) { t->PrepareInsert(); });
-
-  RunTxnPromises(
-      "Epoch Initialization (Insert)",
-      [this] () {
-        IssueTransactions(1, std::mem_fn(&BaseTxn::Prepare));
-        RunTxnPromises(
-            "Epoch Initialization (Lookup/RangeScan)",
-            std::bind(&EpochClient::ExecuteEpoch, this));
-      });
+  callback.phase = EpochPhase::CallInsert;
+  CallTxns(epoch_nr, &BaseTxn::PrepareInsert);
 }
 
-void EpochClient::ExecuteEpoch()
+void EpochClient::OnCallInsertComplete()
 {
+  CallTxnsOnComplete();
+  callback.phase = EpochPhase::Insert;
+  RunTxnPromises("Epoch Initialization (Insert)");
+}
+
+void EpochClient::OnInsertComplete()
+{
+  callback.phase = EpochPhase::CallInitialize;
+  CallTxns(
+      util::Instance<EpochManager>().current_epoch_nr(),
+      &BaseTxn::Prepare);
+}
+
+void EpochClient::OnCallInitializeComplete()
+{
+  CallTxnsOnComplete();
+  callback.phase = EpochPhase::Initialize;
+  RunTxnPromises("Epoch Initialization (AppendNew)");
+}
+
+void EpochClient::OnInitializeComplete()
+{
+  callback.phase = EpochPhase::CallExecute;
+
   if (NodeConfiguration::g_data_migration && util::Instance<EpochManager>().current_epoch_nr() == 1) {
     logger->info("Starting data scanner thread");
     auto &peer = util::Instance<felis::NodeConfiguration>().config().row_shipper_peer;
     go::GetSchedulerFromPool(NodeConfiguration::g_nr_threads + 1)->WakeUp(
       new felis::RowScannerRoutine());
   }
-  IssueTransactions(1, std::mem_fn(&BaseTxn::RunAndAssignSchedulingKey));
-  RunTxnPromises(
-      "Epoch Execution",
-      [this]() {
-        if (util::Instance<EpochManager>().current_epoch_nr() + 1 < kMaxEpoch) {
-          InitializeEpoch();
-        } else {
-          perf.Show("All epochs done in");
-          logger->info("Throughput {} txn/s",
-                       NumberOfTxns() * 1000 * (kMaxEpoch - 1) / perf.duration_ms());
-          mem::PrintMemStats();
-          mem::GetDataRegion().PrintUsageEachClass();
-        }
-      });
+
+  CallTxns(
+      util::Instance<EpochManager>().current_epoch_nr(),
+      &BaseTxn::RunAndAssignSchedulingKey);
+}
+
+void EpochClient::OnCallExecuteComplete()
+{
+  CallTxnsOnComplete();
+  callback.phase = EpochPhase::Execute;
+  RunTxnPromises("Epoch Execution");
+}
+
+void EpochClient::OnExecuteComplete()
+{
+  if (util::Instance<EpochManager>().current_epoch_nr() + 1 < kMaxEpoch) {
+    InitializeEpoch();
+  } else {
+    perf.Show("All epochs done in");
+    logger->info("Throughput {} txn/s",
+                 NumberOfTxns() * 1000 * (kMaxEpoch - 1) / perf.duration_ms());
+    mem::PrintMemStats();
+    mem::GetDataRegion().PrintUsageEachClass();
+  }
 }
 
 const size_t EpochExecutionDispatchService::kMaxItem = 2_M;
@@ -227,9 +274,10 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
 
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &queue = queues[i];
-    auto numa_node =
-        (i + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
-    auto offset_in_node = i % mem::kNrCorePerNode;
+    auto d = std::div(i + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto numa_node = d.quot;
+    auto offset_in_node = d.rem;
+
     if (offset_in_node == 0) {
       qmem = (Queue *) mem::MemMapAlloc(
           mem::EpochQueuePool, sizeof(Queue) * mem::kNrCorePerNode, numa_node);

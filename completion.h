@@ -10,10 +10,10 @@ class CompletionObject {
   std::atomic_ulong comp_count;
   T callback;
  public:
-  CompletionObject(ulong count, T callback)
+  CompletionObject(unsigned long count, T callback)
       : comp_count(count), callback(callback) {}
 
-  void Complete(ulong dec = 1) {
+  void Complete(unsigned long dec = 1) {
     if (comp_count.fetch_sub(dec) == dec) {
       callback();
     }
@@ -23,11 +23,11 @@ class CompletionObject {
     Complete();
   }
 
-  void Increment(ulong inc) {
+  void Increment(unsigned long inc) {
     comp_count.fetch_add(inc);
   }
 
-  ulong left_over() const {
+  unsigned long left_over() const {
     return comp_count.load();
   }
 };
