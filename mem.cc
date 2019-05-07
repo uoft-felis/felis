@@ -130,9 +130,7 @@ static int g_cores_per_node = 8;
 static int g_core_shifting = 0;
 
 ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap)
-    : pools(new BasicPool[kMaxNrPools]),
-      free_nodes(new uintptr_t[g_nr_cores * g_nr_cores]),
-      chunk_size(chunk_size), total_cap(total_cap), alloc_type(alloc_type)
+    : chunk_size(chunk_size), total_cap(total_cap), alloc_type(alloc_type)
 {
   std::vector<std::thread> tasks;
   auto cap = 1 + (total_cap - 1) / g_nr_cores;
@@ -141,21 +139,27 @@ ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t to
        node++) {
     tasks.emplace_back(
         [alloc_type, chunk_size, cap, this, node]() {
-          fprintf(stderr, "allocating %lu on node %d\n",
-                  chunk_size * cap * g_cores_per_node, node);
-          auto pool_mem = (uint8_t *) MemMapAlloc(
-              alloc_type, chunk_size * cap * g_cores_per_node, node);
+          constexpr auto header_size = CACHE_LINE_SIZE + kMaxNrPools * sizeof(uintptr_t);
 
+          fprintf(stderr, "allocating %lu on node %d\n",
+                  (header_size + chunk_size * cap) * g_cores_per_node, node);
+          auto mem = (uint8_t *) MemMapAlloc(
+              alloc_type, (header_size + chunk_size * cap) * g_cores_per_node, node);
           int offset = node * g_cores_per_node - g_core_shifting;
           for (int i = offset; i < offset + g_cores_per_node; i++) {
-            pools[i] = BasicPool(
+            auto pool_ptr = mem + (i - offset) * (header_size + chunk_size * cap);
+            auto pool_mem = pool_ptr + header_size;
+
+            pools[i] = new (pool_ptr) BasicPool(
                 alloc_type, chunk_size, cap,
-                pool_mem + chunk_size * cap * (i - offset));
+                pool_mem);
+
+            free_nodes[i] = (uintptr_t *) (pool_ptr + CACHE_LINE_SIZE);
+            std::fill(free_nodes[i], free_nodes[i] + g_nr_cores, 0);
           }
-          pools[offset].need_unmap = true;
         });
   }
-  memset(free_nodes, 0, g_nr_cores * g_nr_cores * sizeof(uintptr_t));
+
   for (auto &th: tasks) {
     th.join();
   }
@@ -163,26 +167,24 @@ ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t to
 
 ParallelPool::~ParallelPool()
 {
-  delete [] pools;
-  delete [] free_nodes;
+  // TODO: unmap() and delete stuff
 }
 
 void ParallelPool::Prefetch()
 {
-  __builtin_prefetch(pools[CurrentAffinity()].head);
+  __builtin_prefetch(pools[CurrentAffinity()]->head);
 }
 
 void ParallelPool::AddExtraBasicPool(int core, size_t cap, int node)
 {
   if (cap == 0) cap = total_cap / g_nr_cores;
-  pools[core] = BasicPool(alloc_type, chunk_size, cap, node);
+  pools[core] = new BasicPool(alloc_type, chunk_size, cap, node);
 }
 
 void *ParallelPool::Alloc()
 {
-  if (pools == nullptr) return nullptr;
   auto cur = CurrentAffinity();
-  return pools[cur].Alloc();
+  return pools[cur]->Alloc();
 }
 
 void ParallelPool::Free(void *ptr, int alloc_core)
@@ -199,33 +201,33 @@ void ParallelPool::Free(void *ptr, int alloc_core)
     std::abort();
   }
   if (cur == alloc_core) {
-    pools[cur].Free(ptr);
+    pools[cur]->Free(ptr);
   } else {
-    *(uintptr_t *)ptr = free_nodes[cur * g_nr_cores + alloc_core];
-    free_nodes[cur * g_nr_cores + alloc_core] = (uintptr_t)ptr;
+    *(uintptr_t *)ptr = free_nodes[cur][alloc_core];
+    free_nodes[cur][alloc_core] = (uintptr_t)ptr;
   }
 }
 
 void ParallelPool::Quiescence()
 {
-  if (pools == 0) return;
-
   auto cur = CurrentAffinity();
-  auto &pool = pools[cur];
+  auto pool = pools[cur];
+  if (!pool) return;
+
   for (int i = 0; i < g_nr_cores; i++) {
-    uintptr_t head = free_nodes[i * g_nr_cores + cur];
+    uintptr_t head = free_nodes[i][cur];
     while (head) {
       uintptr_t *ptr = (uintptr_t *) head;
       head = *ptr;
-      pool.Free(ptr);
+      pool->Free(ptr);
     }
-    free_nodes[i * g_nr_cores + cur] = 0;
+    free_nodes[i][cur] = 0;
   }
 }
 
 void ParallelPool::Register()
 {
-  for (auto i = 0; i < g_nr_cores; i++) pools[i].Register();
+  for (auto i = 0; i < g_nr_cores; i++) pools[i]->Register();
 }
 
 static std::mutex *g_core_locks;
@@ -333,7 +335,7 @@ void ParallelRegion::PrintUsageEachClass()
     auto &pool = pools[i];
     size_t used = 0;
     for (int j = 0; j < g_nr_cores; j++) {
-      used += pool.pools[j].stats.used;
+      used += pool.pools[j]->stats.used;
     }
     auto chk_size = 32UL << i;
     printf("RegionInfo: class %d size %lu mem %lu/%lu\n", i, chk_size, used,
@@ -444,15 +446,18 @@ void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node)
   } else {
     nodemask = 1 << numa_node;
   }
-  if (syscall(
-          __NR_mbind,
-          data, length,
-          2 /* MPOL_BIND */,
-          &nodemask,
-          sizeof(unsigned long) * 8,
-          1 << 0 /* MPOL_MF_STRICT */) < 0) {
-    perror("mbind");
-    std::abort();
+  if (nodemask != 0) {
+    if (syscall(
+            __NR_mbind,
+            data, length,
+            2 /* MPOL_BIND */,
+            &nodemask,
+            sizeof(unsigned long) * 8,
+            1 << 0 /* MPOL_MF_STRICT */) < 0) {
+      fprintf(stderr, "Fail to mbind on address %p length %lu mask %lx\n",
+              data, length, nodemask);
+      std::abort();
+    }
   }
 
 #endif

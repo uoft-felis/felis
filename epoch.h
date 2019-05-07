@@ -242,18 +242,6 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     size_t start;
   };
 
-  struct Queue {
-    PriorityQueue pq;
-    ZeroQueue zq;
-    util::SpinLock lock;
-  };
-
-  static const size_t kMaxItem;
-  static const size_t kHashTableSize;
-  static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
-
-  std::array<Queue, kMaxNrThreads> queues;
-
   struct State {
     PromiseRoutineWithInput current;
     CompleteCounter complete_counter;
@@ -262,8 +250,18 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     State() : current({nullptr, VarStr()}), running(false) {}
   };
 
-  std::array<util::CacheAligned<State>, kMaxNrThreads> states;
+  struct Queue {
+    PriorityQueue pq;
+    ZeroQueue zq;
+    util::SpinLock lock;
+    State state;
+  };
 
+  static const size_t kMaxItem;
+  static const size_t kHashTableSize;
+  static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
+
+  std::array<Queue *, kMaxNrThreads> queues;
   std::atomic_ulong tot_bubbles;
 
  private:
@@ -279,7 +277,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Complete(int core_id) final override;
   void PrintInfo() final override;
   bool IsRunning(int core_id) final override {
-    return states[core_id]->running.load(std::memory_order_acquire);
+    return queues[core_id]->state.running.load(std::memory_order_acquire);
   }
 };
 
@@ -289,8 +287,8 @@ class EpochPromiseAllocationService : public PromiseAllocationService {
   template <typename T> friend T &util::Instance() noexcept;
   EpochPromiseAllocationService();
 
-  mem::Brk *brks;
-  mem::Brk *minibrks; // for mini objects
+  mem::Brk *brks[NodeConfiguration::kMaxNrThreads + 1];
+  mem::Brk *minibrks[NodeConfiguration::kMaxNrThreads + 1]; // for mini objects
  public:
   void *Alloc(size_t size) final override;
   void Reset() final override;

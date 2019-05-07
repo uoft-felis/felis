@@ -412,7 +412,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
     Checker::SanityCheckWarehouse(&k, &v);
 
-    auto handle = relation(TableType::Warehouse).InsertOrCreate(k.EncodeFromAlloca(large_buf));
+    auto handle = relation(TableType::Warehouse).SearchOrCreate(k.EncodeFromAlloca(large_buf));
     auto slice_id = util::Instance<felis::SliceLocator<tpcc::Warehouse>>().Locate(k);
     OnNewRow(slice_id, TableType::Warehouse, k, handle);
     felis::InitVersion(handle, v.Encode());
@@ -452,7 +452,7 @@ void Loader<LoaderType::Item>::DoLoad()
     v.i_im_id = RandomNumber(1, 10000);
 
     Checker::SanityCheckItem(&k, &v);
-    auto handle = relation(TableType::Item).InsertOrCreate(k.EncodeFromAlloca(large_buf));
+    auto handle = relation(TableType::Item).SearchOrCreate(k.EncodeFromAlloca(large_buf));
     // no OnNewRow() here, we don't ship Item table
     felis::InitVersion(handle, v.Encode());
   }
@@ -503,12 +503,12 @@ void Loader<LoaderType::Stock>::DoLoad()
 
       Checker::SanityCheckStock(&k, &v);
 
-      handle = relation(TableType::Stock).InsertOrCreate(k.EncodeFromAlloca(large_buf));
+      handle = relation(TableType::Stock).SearchOrCreate(k.EncodeFromAlloca(large_buf));
       auto slice_id = util::Instance<felis::SliceLocator<tpcc::Stock>>().Locate(k);
       OnNewRow(slice_id, TableType::Stock, k, handle);
       felis::InitVersion(handle, v.Encode());
 
-      handle = relation(TableType::StockData).InsertOrCreate(k_data.EncodeFromAlloca(large_buf));
+      handle = relation(TableType::StockData).SearchOrCreate(k_data.EncodeFromAlloca(large_buf));
       slice_id = util::Instance<felis::SliceLocator<tpcc::StockData>>().Locate(k_data);
       OnNewRow(slice_id, TableType::StockData, k_data, handle);
       felis::InitVersion(handle, v_data.Encode());
@@ -546,7 +546,7 @@ void Loader<LoaderType::District>::DoLoad()
 
       Checker::SanityCheckDistrict(&k, &v);
 
-      auto handle = relation(TableType::District).InsertOrCreate(k.EncodeFromAlloca(large_buf));
+      auto handle = relation(TableType::District).SearchOrCreate(k.EncodeFromAlloca(large_buf));
       auto slice_id = util::Instance<felis::SliceLocator<tpcc::District>>().Locate(k);
       OnNewRow(slice_id, TableType::District, k, handle);
       felis::InitVersion(handle, v.Encode());
@@ -605,7 +605,7 @@ void Loader<LoaderType::Customer>::DoLoad()
         v.c_data.assign(RandomStr(RandomNumber(300, 500)));
 
         Checker::SanityCheckCustomer(&k, &v);
-        handle = relation(TableType::Customer).InsertOrCreate(k.EncodeFromAlloca(large_buf));
+        handle = relation(TableType::Customer).SearchOrCreate(k.EncodeFromAlloca(large_buf));
         auto slice_id = util::Instance<felis::SliceLocator<tpcc::Customer>>().Locate(k);
         OnNewRow(slice_id, TableType::Customer, k, handle);
         felis::InitVersion(handle, v.Encode());
@@ -617,7 +617,7 @@ void Loader<LoaderType::Customer>::DoLoad()
         // index structure is:
         // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-        handle = relation(TableType::CustomerNameIdx).InsertOrCreate(k_idx.EncodeFromAlloca(large_buf));
+        handle = relation(TableType::CustomerNameIdx).SearchOrCreate(k_idx.EncodeFromAlloca(large_buf));
         slice_id = util::Instance<felis::SliceLocator<tpcc::CustomerNameIdx>>().Locate(k_idx);
         OnNewRow(slice_id, TableType::CustomerNameIdx, k_idx, handle);
         felis::InitVersion(handle, v_idx.Encode());
@@ -635,7 +635,7 @@ void Loader<LoaderType::Customer>::DoLoad()
         v_hist.h_amount = 1000;
         v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
-        handle = relation(TableType::History).InsertOrCreate(k_hist.EncodeFromAlloca(large_buf));
+        handle = relation(TableType::History).SearchOrCreate(k_hist.EncodeFromAlloca(large_buf));
         slice_id = util::Instance<felis::SliceLocator<tpcc::History>>().Locate(k_hist);
         OnNewRow(slice_id, TableType::History, k_hist, handle);
         felis::InitVersion(handle, v_hist.Encode());
@@ -693,7 +693,7 @@ void Loader<LoaderType::Order>::DoLoad()
 
         Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
-        handle = relation(TableType::OOrder).InsertOrCreate(k_oo.EncodeFromAlloca(large_buf));
+        handle = relation(TableType::OOrder).SearchOrCreate(k_oo.EncodeFromAlloca(large_buf));
         auto slice_id = util::Instance<felis::SliceLocator<tpcc::OOrder>>().Locate(k_oo);
         OnNewRow(slice_id, TableType::OOrder, k_oo, handle);
         felis::InitVersion(handle, v_oo.Encode());
@@ -701,7 +701,7 @@ void Loader<LoaderType::Order>::DoLoad()
         const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
         const auto v_oo_idx = OOrderCIdIdx::Value::New(0);
 
-        handle = relation(TableType::OOrderCIdIdx).InsertOrCreate(k_oo_idx.EncodeFromAlloca(large_buf));
+        handle = relation(TableType::OOrderCIdIdx).SearchOrCreate(k_oo_idx.EncodeFromAlloca(large_buf));
         slice_id = util::Instance<felis::SliceLocator<tpcc::OOrderCIdIdx>>().Locate(k_oo_idx);
         OnNewRow(slice_id, TableType::OOrderCIdIdx, k_oo_idx, handle);
         felis::InitVersion(handle, v_oo_idx.Encode());
@@ -712,7 +712,7 @@ void Loader<LoaderType::Order>::DoLoad()
 
           Checker::SanityCheckNewOrder(&k_no, &v_no);
 
-          handle = relation(TableType::NewOrder).InsertOrCreate(k_no.EncodeFromAlloca(large_buf));
+          handle = relation(TableType::NewOrder).SearchOrCreate(k_no.EncodeFromAlloca(large_buf));
           slice_id = util::Instance<felis::SliceLocator<tpcc::NewOrder>>().Locate(k_no);
           OnNewRow(slice_id, TableType::NewOrder, k_no, handle);
           felis::InitVersion(handle, v_no.Encode());
@@ -738,7 +738,7 @@ void Loader<LoaderType::Order>::DoLoad()
           //v_ol.ol_dist_info = RandomStr(24);
 
           Checker::SanityCheckOrderLine(&k_ol, &v_ol);
-          handle = relation(TableType::OrderLine).InsertOrCreate(k_ol.EncodeFromAlloca(large_buf));
+          handle = relation(TableType::OrderLine).SearchOrCreate(k_ol.EncodeFromAlloca(large_buf));
           auto slice_id = util::Instance<felis::SliceLocator<tpcc::OrderLine>>().Locate(k_ol);
           OnNewRow(slice_id, TableType::OrderLine, k_ol, handle);
           felis::InitVersion(handle, v_ol.Encode());

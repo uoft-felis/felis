@@ -307,7 +307,7 @@ void RowShipmentReceiver::Run()
               //     (key, return value of lambda) into the masstree, and return the value
               auto &rel = mgr[rel_id];
               bool exist = true;
-              auto handle = rel.InsertOrDefault(k, [&exist]() { exist = false; return new VHandle(); });
+              auto handle = rel.SearchOrDefault(k, [&exist]() { exist = false; return new VHandle(); });
               if (exist) {
                 handle->WriteNewVersion(util::Instance<EpochManager>().current_epoch_nr(), v);
               } else {

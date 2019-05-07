@@ -5,6 +5,7 @@
 #include <string>
 #include <atomic>
 #include <cstdio>
+#include <array>
 #include <sys/mman.h>
 
 #include "json11/json11.hpp"
@@ -132,19 +133,24 @@ class Pool : public BasicPool {
   }
 };
 
+static_assert(sizeof(BasicPool) <= CACHE_LINE_SIZE);
+
 // Fast Parallel Pool, but need a quiescence
 class ParallelPool {
   static constexpr int kMaxNrPools = 64;
   friend class ParallelRegion;
-  BasicPool *pools;
-  uintptr_t *free_nodes;
+  std::array<BasicPool *, kMaxNrPools> pools;
+  std::array<uintptr_t *, kMaxNrPools> free_nodes;
   size_t chunk_size;
   size_t total_cap;
   MemAllocType alloc_type;
 
   static thread_local int g_affinity;
  public:
-  ParallelPool() : pools(nullptr), free_nodes(nullptr), total_cap(0) {}
+  ParallelPool() : total_cap(0) {
+    pools.fill(nullptr);
+    free_nodes.fill(nullptr);
+  }
   ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
   ParallelPool(const ParallelPool& rhs) = delete;
   ParallelPool(ParallelPool &&rhs) {
@@ -154,8 +160,9 @@ class ParallelPool {
     total_cap = rhs.total_cap;
     alloc_type = rhs.alloc_type;
 
-    rhs.pools = nullptr;
-    rhs.free_nodes = nullptr;
+    rhs.total_cap = 0;
+    rhs.pools.fill(nullptr);
+    rhs.free_nodes.fill(nullptr);
   }
   ~ParallelPool();
 

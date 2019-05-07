@@ -73,17 +73,17 @@ class Flushable {
 };
 
 class PromiseRoundRobin : public Flushable<PromiseRoundRobin> {
+  static constexpr size_t kBufferSize = 16384;
   struct Queue {
-    PromiseRoutineWithInput *routines;
+    std::array<PromiseRoutineWithInput, kBufferSize> routines;
     std::atomic_bool lock;
     unsigned int flusher_start;
     std::atomic_uint append_start;
   };
 
-  util::CacheAligned<Queue> queues[NodeConfiguration::kMaxNrThreads + 1];
+  std::array<Queue *, NodeConfiguration::kMaxNrThreads + 1> queues;
   int idx;
   std::atomic_ulong round;
-  static constexpr size_t kBufferSize = 16384;
  public:
   PromiseRoundRobin(int idx);
   void QueueRoutine(PromiseRoutine *routine, const VarStr &in);
@@ -155,8 +155,13 @@ PromiseRoundRobin::PromiseRoundRobin(int idx)
 {
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     auto &q = queues[i];
+    int numa_node = -1;
+
+    if (i > 0)
+      numa_node = (i - 1 + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+
+    q = (Queue *) mem::MemMapAlloc(mem::EpochQueueItem, sizeof(Queue), numa_node);
     q->lock = false;
-    q->routines = new PromiseRoutineWithInput[kBufferSize];
     q->flusher_start = 0;
     q->append_start = 0;
   }
@@ -213,7 +218,10 @@ bool PromiseRoundRobin::PushRelease(int thr, unsigned int start, unsigned int en
   // ulong delta = nr_threads - nr_routines % nr_threads;
   ulong delta = nr_routines % nr_threads;
   ulong rnd = round.fetch_add(delta);
-  memcpy(routines, queues[thr]->routines + start, nr_routines * sizeof(PromiseRoutineWithInput));
+  // memcpy(routines, queues[thr]->routines + start, nr_routines * sizeof(PromiseRoutineWithInput));
+  std::copy(queues[thr]->routines.begin() + start,
+            queues[thr]->routines.begin() + start + nr_routines,
+            routines);
   Unlock(thr);
 
 #if 0

@@ -106,17 +106,8 @@ template <class IndexPolicy>
 class RelationPolicy : public BaseRelation,
 		       public IndexPolicy {
  public:
-  // Name hiding!
-  VHandle *InsertOrDefault(const VarStr *k, std::function<VHandle * ()> default_func) {
-    return IndexPolicy::InsertOrDefault(
-        k,
-        [this, default_func]() {
-          // AutoIncrement();
-          return default_func();
-        });
-  }
-  VHandle *InsertOrCreate(const VarStr *k) {
-    return InsertOrDefault(k, []() { return new VHandle(); });
+  VHandle *SearchOrCreate(const VarStr *k) {
+    return this->SearchOrDefault(k, []() { return new VHandle(); });
   }
 };
 

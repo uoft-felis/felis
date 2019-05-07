@@ -223,49 +223,57 @@ const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
   auto max_item_percore = kMaxItem / NodeConfiguration::g_nr_threads;
+  Queue *qmem = nullptr;
+
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &queue = queues[i];
     auto numa_node =
         (i + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+    auto offset_in_node = i % mem::kNrCorePerNode;
+    if (offset_in_node == 0) {
+      qmem = (Queue *) mem::MemMapAlloc(
+          mem::EpochQueuePool, sizeof(Queue) * mem::kNrCorePerNode, numa_node);
+    }
+    queue = qmem + offset_in_node;
 
-    queue.zq.end = queue.zq.start = 0;
-    queue.zq.q = (PromiseRoutineWithInput *)
+    queue->zq.end = queue->zq.start = 0;
+    queue->zq.q = (PromiseRoutineWithInput *)
                  mem::MemMapAlloc(
                      mem::EpochQueuePromise,
                      max_item_percore * sizeof(PromiseRoutineWithInput),
                      numa_node);
-    queue.pq.len = 0;
-    queue.pq.q = (PriorityQueueHeapEntry *)
+    queue->pq.len = 0;
+    queue->pq.q = (PriorityQueueHeapEntry *)
                  mem::MemMapAlloc(
                      mem::EpochQueueItem,
                      max_item_percore * sizeof(PriorityQueueHeapEntry),
                      numa_node);
-    queue.pq.ht = (PriorityQueueHashHeader *)
+    queue->pq.ht = (PriorityQueueHashHeader *)
                   mem::MemMapAlloc(
                       mem::EpochQueueItem,
                       kHashTableSize * sizeof(PriorityQueueHashHeader),
                       numa_node);
-    queue.pq.pending.q = (PromiseRoutineWithInput *)
+    queue->pq.pending.q = (PromiseRoutineWithInput *)
                          mem::MemMapAlloc(
                              mem::EpochQueuePromise,
                              max_item_percore * sizeof(PromiseRoutineWithInput),
                              numa_node);
-    queue.pq.pending.start = 0;
-    queue.pq.pending.end = 0;
+    queue->pq.pending.start = 0;
+    queue->pq.pending.end = 0;
 
     for (size_t t = 0; t < kHashTableSize; t++) {
-      queue.pq.ht[t].Initialize();
+      queue->pq.ht[t].Initialize();
     }
 
-    queue.pq.pool = mem::BasicPool(
+    queue->pq.pool = mem::BasicPool(
         mem::EpochQueuePool,
         kPriorityQueuePoolElementSize,
         max_item_percore,
         numa_node);
 
-    queue.pq.pool.Register();
+    queue->pq.pool.Register();
 
-    new (&queue.lock) util::SpinLock();
+    new (&queue->lock) util::SpinLock();
   }
   tot_bubbles = 0;
 }
@@ -274,8 +282,8 @@ void EpochExecutionDispatchService::Reset()
 {
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &q = queues[i];
-    q.zq.end = q.zq.start = 0;
-    q.pq.len = 0;
+    q->zq.end = q->zq.start = 0;
+    q->pq.len = 0;
   }
   tot_bubbles = 0;
 }
@@ -291,11 +299,11 @@ void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *ro
 {
   bool locked = false;
   bool should_preempt = false;
-  auto &lock = queues[core_id].lock;
+  auto &lock = queues[core_id]->lock;
   lock.Lock();
 
-  auto &zq = queues[core_id].zq;
-  auto &pq = queues[core_id].pq.pending;
+  auto &zq = queues[core_id]->zq;
+  auto &pq = queues[core_id]->pq.pending;
   size_t i = 0;
 
   auto max_item_percore = kMaxItem / NodeConfiguration::g_nr_threads;
@@ -383,16 +391,16 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
 bool
 EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_pop)
 {
-  auto &zq = queues[core_id].zq;
-  auto &q = queues[core_id].pq;
-  auto &lock = queues[core_id].lock;
-
+  auto &zq = queues[core_id]->zq;
+  auto &q = queues[core_id]->pq;
+  auto &lock = queues[core_id]->lock;
+  auto &state = queues[core_id]->state;
   if (zq.start < zq.end.load(std::memory_order_acquire)) {
-    states[core_id]->running.store(true, std::memory_order_release);
+    state.running.store(true, std::memory_order_release);
     auto r = zq.q[zq.start];
     if (should_pop(r, nullptr)) {
       zq.start++;
-      states[core_id]->current = r;
+      state.current = r;
       return true;
     }
     return false;
@@ -405,7 +413,7 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
 
     auto promise_routine = node->object()->promise_routine;
 
-    states[core_id]->running.store(true, std::memory_order_relaxed);
+    state.running.store(true, std::memory_order_relaxed);
     if (should_pop(promise_routine, node->object()->state)) {
       node->Remove();
       q.pool.Free(node);
@@ -420,17 +428,17 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
         q.pool.Free(top.ent);
       }
 
-      states[core_id]->current = promise_routine;
+      state.current = promise_routine;
       return true;
     }
     return false;
   }
 
-  states[core_id]->running.store(false, std::memory_order_relaxed);
+  state.running.store(false, std::memory_order_relaxed);
 
   // We do not need locks to protect completion counters. There can only be MT
   // access on Pop() and Add(), the counters are per-core anyway.
-  auto &c = states[core_id]->complete_counter;
+  auto &c = state.complete_counter;
   auto n = c.completed;
   auto comp = EpochClient::g_workload_client->completion_object();
   c.completed = 0;
@@ -453,16 +461,17 @@ void EpochExecutionDispatchService::AddBubble()
 
 bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
 {
-  auto &lock = queues[core_id].lock;
+  auto &lock = queues[core_id]->lock;
   bool new_routine = true;
-  auto &zq = queues[core_id].zq;
-  auto &q = queues[core_id].pq;
+  auto &zq = queues[core_id]->zq;
+  auto &q = queues[core_id]->pq;
+  auto &state = queues[core_id]->state;
 
   ProcessPending(q);
 
   lock.Lock();
 
-  auto &r = states[core_id]->current;
+  auto &r = state.current;
   auto key = std::get<0>(r)->sched_key;
 
   if (!force && zq.end.load(std::memory_order_relaxed) == zq.start) {
@@ -478,7 +487,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
   } else  {
     AddToPriorityQueue(q, r);
   }
-  states[core_id]->running.store(false, std::memory_order_relaxed);
+  state.running.store(false, std::memory_order_relaxed);
 
 done:
   lock.Unlock();
@@ -487,7 +496,7 @@ done:
 
 void EpochExecutionDispatchService::Complete(int core_id)
 {
-  auto &c = states[core_id]->complete_counter;
+  auto &c = queues[core_id]->state.complete_counter;
   c.completed++;
 }
 
@@ -495,7 +504,7 @@ void EpochExecutionDispatchService::PrintInfo()
 {
   puts("===================================");
   for (int core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
-    auto &q = queues[core_id].pq.q;
+    auto &q = queues[core_id]->pq.q;
     printf("DEBUG: %lu and %lu,%lu on core %d\n",
            q[0].key, q[1].key, q[2].key, core_id);
   }
@@ -504,20 +513,25 @@ void EpochExecutionDispatchService::PrintInfo()
 
 static constexpr size_t kEpochPromiseAllocationWorkerLimit = 1024_M;
 static constexpr size_t kEpochPromiseAllocationMainLimit = 128_M;
+static constexpr size_t kEpochPromiseMiniBrkSize = 4 * CACHE_LINE_SIZE;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()
 {
-  brks = new mem::Brk[NodeConfiguration::g_nr_threads + 1];
-  minibrks = new mem::Brk[NodeConfiguration::g_nr_threads + 1];
-
   size_t acc = 0;
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     auto s = kEpochPromiseAllocationWorkerLimit / NodeConfiguration::g_nr_threads;
-    if (i == 0) s = kEpochPromiseAllocationMainLimit;
-    brks[i] = mem::Brk(mem::MemMapAlloc(mem::Promise, s), s);
+    int numa_node = -1;
+    if (i == 0) {
+      s = kEpochPromiseAllocationMainLimit;
+    } else {
+      numa_node = (i - 1 + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+    }
+    brks[i] = mem::Brk::New(mem::MemMapAlloc(mem::Promise, s, numa_node), s);
     acc += s;
-    minibrks[i] = mem::Brk(
-        brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE);
+    constexpr auto mini_brk_size = 4 * CACHE_LINE_SIZE;
+    minibrks[i] = mem::Brk::New(
+        brks[i]->Alloc(kEpochPromiseMiniBrkSize),
+        kEpochPromiseMiniBrkSize);
   }
   // logger->info("Memory allocated: PromiseAllocator {}GB", acc >> 30);
 }
@@ -526,14 +540,15 @@ void *EpochPromiseAllocationService::Alloc(size_t size)
 {
   int thread_id = go::Scheduler::CurrentThreadPoolId();
   if (size < CACHE_LINE_SIZE) {
-    auto &b = minibrks[thread_id];
-    if (!b.Check(size)) {
-      b = mem::Brk(
-          brks[thread_id].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE);
+    auto b = minibrks[thread_id];
+    if (!b->Check(size)) {
+      b = mem::Brk::New(
+          brks[thread_id]->Alloc(kEpochPromiseMiniBrkSize),
+          kEpochPromiseMiniBrkSize);
     }
-    return b.Alloc(size);
+    return b->Alloc(size);
   } else {
-    return brks[thread_id].Alloc(util::Align(size, CACHE_LINE_SIZE));
+    return brks[thread_id]->Alloc(util::Align(size, CACHE_LINE_SIZE));
   }
 }
 
@@ -542,8 +557,10 @@ void EpochPromiseAllocationService::Reset()
   for (size_t i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     // logger->info("  PromiseAllocator {} used {}MB. Resetting now.", i,
     // brks[i].current_size() >> 20);
-    brks[i].Reset();
-    minibrks[i] = mem::Brk(brks[i].Alloc(CACHE_LINE_SIZE), CACHE_LINE_SIZE);
+    brks[i]->Reset();
+    minibrks[i] = mem::Brk::New(
+        brks[i]->Alloc(kEpochPromiseMiniBrkSize),
+        kEpochPromiseMiniBrkSize);
   }
 }
 

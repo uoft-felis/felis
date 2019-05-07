@@ -143,7 +143,7 @@ BaseTxn::TxnIndexInsertOpImpl::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx
            "InsertOp should have same number of keys and values. bitmap {} != {}",
            ctx.keys_bitmap, ctx.slices_bitmap);
   VarStr key(ctx.key_len[idx], 0, ctx.key_data[idx]);
-  result = rel.InsertOrDefault(
+  result = rel.SearchOrDefault(
       &key,
       [&ctx, idx]() {
         VarStr *kstr = VarStr::New(ctx.key_len[idx]);

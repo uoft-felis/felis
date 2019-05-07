@@ -1,4 +1,4 @@
-((nil . ((projectile-project-compilation-cmd . "./buck.pex build db")
+((nil . ((projectile-project-compilation-cmd . "buck build db")
 	 (indent-tabs-mode . nil)))
  (c-mode . ((mode . c++)
             (c-basic-offset . 2)))

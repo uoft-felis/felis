@@ -53,7 +53,25 @@ class MasstreeIndex {
   } nr_keys [NodeConfiguration::kMaxNrThreads]; // scalable counting
 
  public:
-  VHandle *InsertOrDefault(const VarStr *k, std::function<VHandle * ()> default_func);
+
+  struct SearchOrDefaultHandler {
+    virtual VHandle *operator()() const = 0;
+  };
+
+  VHandle *SearchOrDefaultImpl(const VarStr *k, const SearchOrDefaultHandler &default_handler);
+
+  template <typename Func>
+  VHandle *SearchOrDefault(const VarStr *k, Func default_func) {
+    struct SearchOrDefaultHandlerImpl : public SearchOrDefaultHandler {
+      Func f;
+      SearchOrDefaultHandlerImpl(Func f) : f(f) {}
+      VHandle *operator()() const override final {
+        return f();
+      }
+    };
+    return SearchOrDefaultImpl(k, SearchOrDefaultHandlerImpl(default_func));
+  }
+
   VHandle *Search(const VarStr *k);
 
   Iterator IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) __attribute__((noinline));
