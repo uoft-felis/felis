@@ -16,6 +16,54 @@ class Epoch;
 class BaseTxn;
 class EpochClient;
 
+using TxnMemberFunc = void (BaseTxn::*)();
+
+class EpochClientBaseWorker : public go::Routine {
+ protected:
+  static constexpr int kBlock = 32;
+  int t;
+  int nr_threads;
+  EpochClient *client;
+ public:
+  EpochClientBaseWorker(int t, EpochClient *client)
+      : t(t), nr_threads(NodeConfiguration::g_nr_threads), client(client) {
+    set_reuse(true);
+  }
+  void Reset() { Init(); ctx = nullptr; }
+};
+
+class ParallelPoolQuiescenceWorker : public go::Routine {
+ public:
+  ParallelPoolQuiescenceWorker() : go::Routine() {
+    set_reuse(true);
+  }
+  void Reset() { Init(); ctx = nullptr; }
+  void Run() override final;
+};
+
+class RunTxnPromiseWorker : public EpochClientBaseWorker {
+ public:
+  using EpochClientBaseWorker::EpochClientBaseWorker;
+  void Run() override final;
+};
+
+class CallTxnsWorker : public EpochClientBaseWorker {
+  TxnMemberFunc mem_func;
+ public:
+  using EpochClientBaseWorker::EpochClientBaseWorker;
+  void Run() override final;
+  void set_function(TxnMemberFunc func) { mem_func = func; }
+};
+
+struct EpochWorkers {
+  RunTxnPromiseWorker run_worker;
+  CallTxnsWorker call_worker;
+  ParallelPoolQuiescenceWorker quiescence_worker;
+
+  EpochWorkers(int t, EpochClient *client)
+      : run_worker(t, client), call_worker(t, client) {}
+};
+
 enum EpochPhase : int {
   CallInsert,
   Insert,
@@ -38,7 +86,10 @@ class EpochCallback {
 
 class EpochClient {
   friend class EpochCallback;
+  friend class RunTxnPromiseWorker;
+  friend class CallTxnsWorker;
   PerfLog perf;
+  EpochWorkers *workers[NodeConfiguration::kMaxNrThreads];
  public:
   static EpochClient *g_workload_client;
 
@@ -70,8 +121,6 @@ class EpochClient {
 
  private:
   void RunTxnPromises(const char *label);
-
-  using TxnMemberFunc = void (BaseTxn::*)();
   void CallTxns(uint64_t epoch_nr, TxnMemberFunc func);
   void CallTxnsOnComplete(bool sync = true);
 

@@ -19,6 +19,7 @@ struct PromiseRoutine;
 class PromiseRoundRobin;
 class SendChannel;
 
+// TODO: Clean these constant up. They are all over the place.
 static constexpr size_t kMaxNrNode = 254;
 
 class TransportBatchMetadata {
@@ -49,41 +50,16 @@ class TransportBatchMetadata {
   static constexpr auto kMaxLevels = PromiseRoutineTransportService::kPromiseMaxLevels;
 
   // Given a level, how many pieces we should see for each destination node?
-  std::array<std::atomic_ulong *, kMaxLevels> counters;
-  std::array<LocalMetadata *, kMaxLevels> thread_local_data;
+  std::array<std::array<std::atomic_ulong, kMaxNrNode>, kMaxLevels> counters;
+  std::array<LocalMetadata *, 32> thread_local_data;
   friend class NodeConfiguration;
  public:
-  TransportBatchMetadata() {
-    counters.fill(nullptr);
-    thread_local_data.fill(nullptr);
-  }
+  TransportBatchMetadata() {}
 
-  void Init(int nr_nodes, int nr_cores) {
-    for (auto &p: thread_local_data) {
-      p = new LocalMetadata[nr_cores];
-      for (auto i = 0; i < nr_cores; i++) p[i].Init(nr_nodes);
-    }
-    for (auto &p: counters) {
-      p = new std::atomic_ulong[nr_nodes];
-    }
-  }
-
-  void Reset(int nr_nodes, int nr_cores) {
-    for (auto p: thread_local_data) {
-      for (auto i = 0; i < nr_cores; i++) p[i].Reset(nr_nodes);
-    }
-    for (auto p: counters) {
-      for (auto i = 0; i < nr_nodes; i++) p[i] = 0;
-    }
-  }
-
-  LocalMetadata &GetLocalData(int level, int core) { return thread_local_data[level][core]; }
-
-  unsigned long Merge(int level, LocalMetadata &local, int node) {
-    auto v = local.delta[node - 1];
-    local.delta[node - 1] = 0;
-    return counters[level][node - 1].fetch_add(v) + v;
-  }
+  void Init(int nr_nodes, int nr_cores);
+  void Reset(int nr_nodes, int nr_cores);
+  LocalMetadata &GetLocalData(int level, int core) { return thread_local_data[core][level]; }
+  unsigned long Merge(int level, LocalMetadata &local, int node);
 };
 
 class NodeConfiguration : public PromiseRoutineTransportService {
@@ -130,13 +106,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   void PreparePromisesToQueue(int core, int level, unsigned long nr) final override;
   void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
   void ForceFlushPromiseRoutine() final override;
-  long UrgencyCount(int core_id) final override { return urgency_cnt[core_id]; }
-  void IncrementUrgencyCount(int core_id, long delta = 1) {
-    urgency_cnt[core_id] += delta;
-  }
-  void DecrementUrgencyCount(int core_id, long delta = 1) {
-    urgency_cnt[core_id] -= delta;
-  }
 
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root, unsigned long *cnts);
@@ -177,8 +146,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   unsigned long *local_batch_counters;
 
   TransportBatchMetadata transport_meta;
-
-  unsigned long urgency_cnt[kMaxNrThreads];
  private:
   void CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts, int level, int src);
   size_t BatchBufferIndex(int level, int src_node, int dst_node);

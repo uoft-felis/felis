@@ -18,6 +18,42 @@
 
 namespace felis {
 
+void TransportBatchMetadata::Init(int nr_nodes, int nr_cores)
+{
+  LocalMetadata *mem = nullptr;
+  for (auto i = 0; i < nr_cores; i++) {
+    auto d = std::div(i + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto numa_node = d.quot;
+    auto numa_offset = d.rem;
+    if (numa_offset == 0) {
+      mem = (LocalMetadata *) mem::MemMapAlloc(
+          mem::Promise,
+          sizeof(LocalMetadata) * kMaxLevels * mem::kNrCorePerNode,
+          numa_node);
+    }
+    thread_local_data[i] = mem + kMaxLevels * numa_offset;
+  }
+}
+
+void TransportBatchMetadata::Reset(int nr_nodes, int nr_cores)
+{
+  for (auto i = 0; i < nr_cores; i++) {
+    for (auto j = 0; j < kMaxLevels; j++) {
+      thread_local_data[i][j].Reset(nr_nodes);
+    }
+  }
+  for (auto &p: counters) {
+    for (auto n = 0; n < nr_nodes; n++) p[n] = 0;
+  }
+}
+
+unsigned long TransportBatchMetadata::Merge(int level, LocalMetadata &local, int node)
+{
+  auto v = local.delta[node - 1];
+  local.delta[node - 1] = 0;
+  return counters[level][node - 1].fetch_add(v) + v;
+}
+
 template <typename T>
 class Flushable {
  protected:
@@ -427,8 +463,6 @@ NodeConfiguration::NodeConfiguration()
   transport_meta.Init(nr_nodes(), g_nr_threads);
 
   ResetBufferPlan();
-
-  memset(urgency_cnt, 0, kMaxNrThreads * sizeof(long));
 }
 
 using go::TcpSocket;
