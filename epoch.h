@@ -32,15 +32,6 @@ class EpochClientBaseWorker : public go::Routine {
   void Reset() { Init(); ctx = nullptr; }
 };
 
-class ParallelPoolQuiescenceWorker : public go::Routine {
- public:
-  ParallelPoolQuiescenceWorker() : go::Routine() {
-    set_reuse(true);
-  }
-  void Reset() { Init(); ctx = nullptr; }
-  void Run() override final;
-};
-
 class RunTxnPromiseWorker : public EpochClientBaseWorker {
  public:
   using EpochClientBaseWorker::EpochClientBaseWorker;
@@ -58,7 +49,6 @@ class CallTxnsWorker : public EpochClientBaseWorker {
 struct EpochWorkers {
   RunTxnPromiseWorker run_worker;
   CallTxnsWorker call_worker;
-  ParallelPoolQuiescenceWorker quiescence_worker;
 
   EpochWorkers(int t, EpochClient *client)
       : run_worker(t, client), call_worker(t, client) {}
@@ -82,6 +72,7 @@ class EpochCallback {
  public:
   EpochCallback(EpochClient *client) : client(client), label(nullptr) {}
   void operator()();
+  void RunBackgroundWork();
 };
 
 class EpochClient {
@@ -133,7 +124,7 @@ class EpochClient {
 
  protected:
   EpochCallback callback;
-  CompletionObject<util::Ref<EpochCallback>> completion;
+  CompletionObject<EpochCallback &> completion;
 
   BaseTxn **all_txns;
   BaseTxn **txns;

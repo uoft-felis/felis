@@ -35,6 +35,16 @@ void EpochCallback::operator()()
   std::invoke(phase_mem_funcs[static_cast<int>(phase)], *client);
 }
 
+void EpochCallback::RunBackgroundWork()
+{
+  if (phase == EpochPhase::CallExecute) {
+    VHandle::Quiescence();
+    RowEntity::Quiescence();
+
+    mem::GetDataRegion().Quiescence();
+  }
+}
+
 EpochClient::EpochClient() noexcept
     : callback(EpochCallback(this)),
       completion(0, callback),
@@ -177,14 +187,6 @@ void EpochClient::CallTxnsOnComplete(bool sync)
   conf.FlushBufferPlan(sync);
 }
 
-void ParallelPoolQuiescenceWorker::Run()
-{
-  VHandle::Quiescence();
-  RowEntity::Quiescence();
-
-  mem::GetDataRegion().Quiescence();
-}
-
 void EpochClient::InitializeEpoch()
 {
   auto &mgr = util::Instance<EpochManager>();
@@ -199,12 +201,6 @@ void EpochClient::InitializeEpoch()
   disable_load_balance = true;
   txns = all_txns + NumberOfTxns() * (epoch_nr - 1);
   total_nr_txn = NumberOfTxns();
-
-  for (auto i = 0; i < nr_threads; i++) {
-    auto r = &workers[i]->quiescence_worker;
-    r->Reset();
-    go::GetSchedulerFromPool(i + 1)->WakeUp(r);
-  }
 
   for (auto i = 0; i < total_nr_txn; i++) {
     txns[i]->PrepareState();
