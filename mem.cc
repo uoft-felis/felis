@@ -279,12 +279,16 @@ ParallelRegion::ParallelRegion()
 
 void *ParallelRegion::Alloc(size_t sz)
 {
-  void * r = pools[SizeToClass(sz)].Alloc();
-  if (r == nullptr) {
-    fprintf(stderr, "size %ld on class %d has no more memory preallocated\n", sz, SizeToClass(sz));
-    std::abort();
-  }
+  auto &p = pools[SizeToClass(sz)];
+  void *r = nullptr;
+
+  if (p.total_cap == 0) goto error;
+  r = p.Alloc();
+  if (r == nullptr) goto error;
   return r;
+error:
+  fprintf(stderr, "size %ld on class %d has no more memory preallocated\n", sz, SizeToClass(sz));
+  std::abort();
 }
 
 void ParallelRegion::Free(void *ptr, int alloc_core, size_t sz)

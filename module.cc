@@ -12,6 +12,7 @@
 #include "promise.h"
 #include "slice.h"
 #include "txn.h"
+#include "gc.h"
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -70,6 +71,7 @@ class AllocatorModule : public Module<CoreModule> {
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     tasks.emplace_back(VHandle::InitPool);
     tasks.emplace_back(RowEntity::InitPool);
+    tasks.emplace_back(GC::InitPool);
     tasks.emplace_back([]() { BaseTxn::InitBrk(EpochClient::kMaxEpoch - 1); });
 
     tasks.emplace_back(util::Impl<PromiseAllocationService>);

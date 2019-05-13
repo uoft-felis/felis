@@ -15,9 +15,7 @@ class CompletionObject {
 
   void Complete(unsigned long dec = 1) {
     bool done = (comp_count.fetch_sub(dec) == dec);
-    callback.RunBackgroundWork();
-    if (done)
-      callback();
+    callback(done);
   }
 
   void operator()() {

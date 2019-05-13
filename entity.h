@@ -12,6 +12,8 @@
 
 namespace felis {
 
+class VHandle;
+
 class RowEntity final {
   friend class RowShipmentReceiver;
   friend class SortedArrayVHandle;

@@ -71,8 +71,7 @@ class EpochCallback {
   EpochPhase phase;
  public:
   EpochCallback(EpochClient *client) : client(client), label(nullptr) {}
-  void operator()();
-  void RunBackgroundWork();
+  void operator()(bool done);
 };
 
 class EpochClient {

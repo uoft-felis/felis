@@ -260,21 +260,6 @@ bool PromiseRoundRobin::PushRelease(int thr, unsigned int start, unsigned int en
             routines);
   Unlock(thr);
 
-#if 0
-  // This is putting promise that's co-located together on the same thread.
-  // It's not real roundrobin
-  for (int i = 0; i < nr_threads; i++) {
-    size_t start = i * nr_routines / nr_threads;
-    size_t end = (i + 1) * nr_routines / nr_threads;
-
-    if (end == start) continue;
-    BasePromise::QueueRoutine(routines + start, end - start, idx,
-                              (i + rnd) % nr_threads + 1,
-                              false);
-  }
-#endif
-
-  // True roundrobin
   PromiseRoutineWithInput rounds[kBufferSize / nr_threads + 1];
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   for (int i = 0; i < nr_threads; i++) {

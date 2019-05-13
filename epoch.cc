@@ -6,6 +6,7 @@
 #include "log.h"
 #include "vhandle.h"
 #include "mem.h"
+#include "gc.h"
 
 #include "literals.h"
 
@@ -13,35 +14,37 @@ namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
 
-void EpochCallback::operator()()
+void EpochCallback::operator()(bool done)
 {
-  perf.End();
-  perf.Show(label);
-  printf("\n");
+  auto p = phase;
+  if (done) {
+    perf.End();
+    perf.Show(label);
+    printf("\n");
 
-  // TODO: We might Reset() the PromiseAllocationService, which would free the
-  // current go::Routine. Is it necessary to run some function in the another
-  // go::Routine?
+    // TODO: We might Reset() the PromiseAllocationService, which would free the
+    // current go::Routine. Is it necessary to run some function in the another
+    // go::Routine?
 
-  static void (EpochClient::*phase_mem_funcs[])() = {
+    static void (EpochClient::*phase_mem_funcs[])() = {
       &EpochClient::OnCallInsertComplete,
       &EpochClient::OnInsertComplete,
       &EpochClient::OnCallInitializeComplete,
       &EpochClient::OnInitializeComplete,
       &EpochClient::OnCallExecuteComplete,
       &EpochClient::OnExecuteComplete,
-  };
+    };
 
-  std::invoke(phase_mem_funcs[static_cast<int>(phase)], *client);
-}
+    std::invoke(phase_mem_funcs[static_cast<int>(phase)], *client);
+  }
 
-void EpochCallback::RunBackgroundWork()
-{
-  if (phase == EpochPhase::CallExecute) {
+  if (p == EpochPhase::CallExecute) {
     VHandle::Quiescence();
     RowEntity::Quiescence();
 
     mem::GetDataRegion().Quiescence();
+  } else if (p == EpochPhase::CallInitialize) {
+    util::Instance<GC>().RunGC();
   }
 }
 
@@ -112,6 +115,7 @@ void RunTxnPromiseWorker::Run()
   for (auto i = t * kBlock; i < client->total_nr_txn; i += kBlock * nr_threads) {
     for (auto j = 0; j < kBlock && i + j < client->total_nr_txn; j++) {
       auto t = client->txns[i + j];
+      t->root_promise()->AssignSequence(i + j);
       t->root_promise()->Complete(VarStr());
     }
   }
@@ -147,6 +151,7 @@ void CallTxnsWorker::Run()
       auto t = client->txns[i + j];
       t->ResetRoot();
       std::invoke(mem_func, t);
+      t->root_promise()->AssignSequence(i + j);
       client->conf.CollectBufferPlan(t->root_promise(), cnt);
     }
   }
@@ -160,6 +165,8 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func)
   conf.ResetBufferPlan();
   conf.FlushBufferPlanCompletion(epoch_nr);
   callback.label = "CallTxns";
+  callback.perf.Clear();
+  callback.perf.Start();
 
   completion.Increment(nr_threads);
   for (auto t = 0; t < nr_threads; t++) {

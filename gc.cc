@@ -4,94 +4,66 @@
 #include "vhandle.h"
 #include "index.h"
 #include "node_config.h"
+#include "epoch.h"
+
+#include "literals.h"
 
 namespace felis {
 
-using util::Instance;
-using util::InstanceInit;
+mem::ParallelPool GC::g_block_pool;
 
-static InstanceInit<DeletedGarbageHeads> _;
-
-struct DeletedGarbage : public util::ListNode {
-  int relation_id;
-  VarStr key;
-  VHandle *handle;
-  uint64_t epoch_nr;
-
-  DeletedGarbage(int relation_id, VarStr key, VHandle *vhandle, uint64_t epoch_nr)
-      : relation_id(relation_id), key(key), handle(vhandle), epoch_nr(epoch_nr) {}
-};
-
-DeletedGarbageHeads::DeletedGarbageHeads()
+void GC::InitPool()
 {
-  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-    garbage_heads[i].Initialize();
+  g_block_pool = mem::ParallelPool(mem::VhandlePool, Block::kBlockSize, 2_M);
+}
+
+void GC::AddVHandle(VHandle *handle)
+{
+  // Either there's nothing to collect, or it's already in the GC queue.
+  if (handle->size != 2)
+    return;
+  VHandleCollectionHandler<GC>::AddVHandle(handle);
+}
+
+void GC::RunGC()
+{
+  cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+  VHandleCollectionHandler<GC>::RunHandler();
+}
+
+void GC::Process(VHandle *handle)
+{
+  util::MCSSpinLock::QNode qnode;
+  handle->lock.Lock(&qnode);
+  Collect(handle);
+  handle->lock.Unlock(&qnode);
+}
+
+void GC::Collect(VHandle *handle)
+{
+  auto *versions = handle->versions;
+  uintptr_t *objects = handle->versions + handle->capacity;
+  int i = 0;
+  while (i < handle->size - 1 && (versions[i + 1] >> 32) < cur_epoch_nr) {
+    i++;
   }
-}
-
-#define PROACTIVE_GC
-
-void DeletedGarbageHeads::AttachGarbage(int rel_id, VarStr key, VHandle *vhandle, uint64_t epoch_nr)
-{
-#ifdef PROACTIVE_GC
-  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
-  auto ent = new DeletedGarbage(rel_id, key, vhandle, epoch_nr);
-  ent->InsertAfter(&garbage_heads[idx]);
-#else
-  delete g->key;
-  delete g;
-#endif
-}
-
-void DeletedGarbageHeads::CollectGarbage(uint64_t epoch_nr)
-{
-#ifdef PROACTIVE_GC
-  int idx = go::Scheduler::CurrentThreadPoolId() - 1;
-  ListNode *head = &garbage_heads[idx];
-  ListNode *ent = head->prev;
-  size_t gc_count = 0;
-  auto &mgr = Instance<RelationManager>();
-  while (ent != head) {
-    auto prev = ent->prev;
-    auto *entry = (DeletedGarbage *) ent;
-    if (epoch_nr - entry->epoch_nr < 2)
-      break;
-    auto &rel = mgr[entry->relation_id];
-
-    // We don't have to search over the index again, unless this handle is
-    // freed.
-
-    // auto handle = rel.Search(&entry->key);
-    auto *handle = entry->handle;
-    if (handle->last_update_epoch() == entry->epoch_nr) {
-      rel.ImmediateDelete(&entry->key);
-      // Nobody should be able to reach handle after we immediately delete from
-      // the index.
-      //
-      // However this assumes there should not be double deletion within an
-      // epoch. We **must** check if the delete is the last operation in the
-      // epoch before marking it as garbage.
-      delete handle;
-    }
-
-    gc_count++;
-    ent->Remove();
-    delete entry;
-
-    ent = prev;
+  for (auto j = 0; j < i; j++) {
+    delete (VarStr *) objects[j];
   }
-  DTRACE_PROBE1(felis, deleted_gc_per_core, gc_count);
-  logger->info("Proactive GC {} cleaned {} garbage keys", idx, gc_count);
-#endif
+  std::move(objects + i, objects + handle->size, objects);
+  std::move(versions + i, versions + handle->size, versions);
+  handle->size -= i;
+  handle->latest_version.fetch_sub(i);
 }
 
-void EpochGCRule::operator()(VHandle *handle, uint64_t sid, uint64_t ep)
-{
-  if (ep > last_gc_epoch) {
-    // gaurantee that we're the *first one* to garbage collect at the *epoch boundary*.
-    handle->GarbageCollect();
-    last_gc_epoch = ep;
-  }
 }
+
+namespace util {
+
+using namespace felis;
+
+static GC g_gc;
+
+GC *InstanceInit<GC>::instance = &g_gc;
 
 }

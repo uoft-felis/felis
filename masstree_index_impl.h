@@ -45,7 +45,6 @@ class MasstreeIndex {
   };
   void Initialize(threadinfo *ti);
  protected:
-  friend DeletedGarbageHeads;
 
   struct {
     uint64_t add_cnt;

@@ -147,6 +147,16 @@ void BasePromise::AssignSchedulingKey(uint64_t key)
   }
 }
 
+void BasePromise::AssignSequence(uint64_t seq)
+{
+  for (int i = 0; i < nr_handlers; i++) {
+    auto *child = routine(i);
+    child->seq = seq;
+    if (child->next)
+      child->next->AssignSequence(seq);
+  }
+}
+
 void BasePromise::Add(PromiseRoutine *child)
 {
   abort_if(nr_handlers >= kMaxHandlersLimit,

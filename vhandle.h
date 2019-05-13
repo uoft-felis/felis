@@ -8,7 +8,6 @@
 #include "felis_probes.h"
 #include "mem.h"
 #include "sqltypes.h"
-#include "gc.h"
 #include "shipping.h"
 #include "entity.h"
 
@@ -29,10 +28,7 @@ class BaseVHandle {
   static mem::ParallelPool pool;
   static void InitPool();
   static void Quiescence() { pool.Quiescence(); }
- protected:
-  EpochGCRule gc_rule;
  public:
-  uint64_t last_update_epoch() const { return gc_rule.last_gc_epoch; }
   void Prefetch() const {}
 
   VHandleSyncService &sync();
@@ -44,6 +40,7 @@ class SliceManager;
 class SortedArrayVHandle : public BaseVHandle {
   friend class RowEntity;
   friend class SliceManager;
+  friend class GC;
 
   util::MCSSpinLock lock;
   short alloc_by_regionid;

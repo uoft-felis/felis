@@ -23,7 +23,7 @@ db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'module.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
     'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'shipping.h', 'completion.h', 'entity.h',
-    'slice.h'
+    'slice.h', 'vhandle_cch.h',
 ]
 
 db_srcs = [

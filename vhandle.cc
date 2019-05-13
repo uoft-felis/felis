@@ -5,6 +5,7 @@
 #include "log.h"
 #include "vhandle.h"
 #include "node_config.h"
+#include "gc.h"
 
 #include "literals.h"
 
@@ -54,7 +55,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
   util::MCSSpinLock::QNode qnode;
   lock.Lock(&qnode);
-  gc_rule((VHandle *) this, sid, epoch_nr);
+  // gc_rule((VHandle *) this, sid, epoch_nr);
 
   // append this version at the end of version array
   size++;
@@ -75,6 +76,8 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   // this epoch anyway. Of course, this is assuming sid will never smaller than
   // the minimum sid of this epoch. In felis, we can assume this. However if we
   // were to replay Ermia, we couldn't.
+
+  util::Instance<GC>().AddVHandle((VHandle *) this);
 
   lock.Unlock(&qnode);
 }
