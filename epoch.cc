@@ -79,15 +79,33 @@ EpochClient::EpochClient() noexcept
   }
 }
 
+EpochTxnSet::EpochTxnSet()
+{
+  auto nr_threads = NodeConfiguration::g_nr_threads;
+  auto d = std::div((int) EpochClient::kTxnPerEpoch, nr_threads);
+  for (auto t = 0; t < nr_threads; t++) {
+    size_t nr = d.quot;
+    if (t < d.rem) nr++;
+    auto numa_node = (t + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+    auto p = mem::MemMapAlloc(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
+    per_core_txns[t] = new (p) TxnSet(nr);
+  }
+}
+
+EpochTxnSet::~EpochTxnSet()
+{
+  // TODO: free these pointers via munmap().
+}
+
 void EpochClient::GenerateBenchmarks()
 {
-  auto total = NumberOfTxns() * (kMaxEpoch - 1);
-  all_txns = (BaseTxn **) mem::MemMapAlloc(
-      mem::Txn, sizeof(BaseTxn *) * total);
+  all_txns = new EpochTxnSet[kMaxEpoch - 1];
   for (auto i = 1; i < kMaxEpoch; i++) {
-    auto base = (i - 1) * NumberOfTxns();
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
-      all_txns[base + j - 1] = CreateTxn(GenerateSerialId(i, j));
+      auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
+      auto t = d.rem, pos = d.quot;
+      BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
+      all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, j));
     }
   }
 }
@@ -110,14 +128,20 @@ uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
       | (conf.node_id() & 0x00FF);
 }
 
+void AllocStateTxnWorker::Run()
+{
+  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
+    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
+    txn->PrepareState();
+  }
+}
+
 void RunTxnPromiseWorker::Run()
 {
-  for (auto i = t * kBlock; i < client->total_nr_txn; i += kBlock * nr_threads) {
-    for (auto j = 0; j < kBlock && i + j < client->total_nr_txn; j++) {
-      auto t = client->txns[i + j];
-      t->root_promise()->AssignSequence(i + j);
-      t->root_promise()->Complete(VarStr());
-    }
+  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
+    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
+    txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
+    txn->root_promise()->Complete(VarStr());
   }
   // conf.DecrementUrgencyCount(t);
   util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
@@ -146,16 +170,14 @@ void CallTxnsWorker::Run()
   auto cnt_len = nr_nodes * nr_nodes * NodeConfiguration::kPromiseMaxLevels;
   std::fill(cnt, cnt + cnt_len, 0);
   // conf.IncrementUrgencyCount(t);
-  for (auto i = t * kBlock; i < client->total_nr_txn ; i += kBlock * nr_threads) {
-    for (auto j = 0; j < kBlock && i + j < client->total_nr_txn; j++) {
-      auto t = client->txns[i + j];
-      t->ResetRoot();
-      std::invoke(mem_func, t);
-      t->root_promise()->AssignSequence(i + j);
-      client->conf.CollectBufferPlan(t->root_promise(), cnt);
-    }
+
+  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
+    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
+    txn->ResetRoot();
+    std::invoke(mem_func, txn);
+    txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
+    client->conf.CollectBufferPlan(txn->root_promise(), cnt);
   }
-  // logger->info("Issuer done on core {}", t);
   client->completion.Complete();
 }
 
@@ -173,7 +195,6 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func)
     auto r = &workers[t]->call_worker;
     r->Reset();
     r->set_function(func);
-    r->set_urgent(true);
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
 }
@@ -206,11 +227,14 @@ void EpochClient::InitializeEpoch()
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
   disable_load_balance = true;
-  txns = all_txns + NumberOfTxns() * (epoch_nr - 1);
+  cur_txns = &all_txns[epoch_nr - 1];
   total_nr_txn = NumberOfTxns();
 
-  for (auto i = 0; i < total_nr_txn; i++) {
-    txns[i]->PrepareState();
+  for (auto t = 0; t < nr_threads; t++) {
+    auto r = &workers[t]->alloc_state_worker;
+    r->Reset();
+    r->set_urgent(true);
+    go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
 
   callback.phase = EpochPhase::CallInsert;
@@ -623,17 +647,34 @@ void EpochPromiseAllocationService::Reset()
   }
 }
 
-static constexpr size_t kEpochMemoryLimit = 256_M;
+static constexpr size_t kEpochMemoryLimitPerCore = 16_M;
 
-EpochMemory::EpochMemory(mem::Pool *pool)
-    : pool(pool)
+EpochMemory::EpochMemory()
 {
   logger->info("Allocating EpochMemory");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
-    brks[i] = mem::Brk((uint8_t *) pool->Alloc(), kEpochMemoryLimit);
-    brks[i].set_thread_safe(false);
+    node_mem[i].mmap_buf =
+        (uint8_t *) mem::MemMap(
+            mem::Epoch, nullptr, kEpochMemoryLimitPerCore * conf.g_nr_threads,
+            PROT_READ | PROT_WRITE,
+            MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+    for (int t = 0; t < conf.g_nr_threads; t++) {
+      auto p = node_mem[i].mmap_buf + t * kEpochMemoryLimitPerCore;
+      auto numa_node = (t + conf.g_core_shifting) / mem::kNrCorePerNode;
+      unsigned long nodemask = 1 << numa_node;
+      abort_if(syscall(
+          __NR_mbind,
+          p, kEpochMemoryLimitPerCore,
+          2 /* MPOL_BIND */,
+          &nodemask,
+          sizeof(unsigned long) * 8,
+          1 << 0 /* MPOL_MF_STRICT */) < 0, "mbind failed!");
+    }
+    abort_if(mlock(node_mem[i].mmap_buf, kEpochMemoryLimitPerCore * conf.g_nr_threads) < 0,
+             "Cannot allocate memory. mlock() failed.");
   }
+  Reset();
 }
 
 EpochMemory::~EpochMemory()
@@ -641,9 +682,19 @@ EpochMemory::~EpochMemory()
   logger->info("Freeing EpochMemory");
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
-    auto ptr = brks[i].ptr();
-    pool->Free(ptr);
-    brks[i].Reset();
+    munmap(node_mem[i].mmap_buf, kEpochMemoryLimitPerCore * conf.g_nr_threads);
+  }
+}
+
+void EpochMemory::Reset()
+{
+  auto &conf = util::Instance<NodeConfiguration>();
+  // I only manage the current node.
+  auto node_id = conf.node_id();
+  auto &m = node_mem[node_id - 1];
+  for (int t = 0; t < conf.g_nr_threads; t++) {
+    auto p = m.mmap_buf + t * kEpochMemoryLimitPerCore;
+    m.brks[t] = mem::Brk::New(p, kEpochMemoryLimitPerCore);
   }
 }
 
@@ -651,26 +702,28 @@ Epoch *EpochManager::epoch(uint64_t epoch_nr) const
 {
   abort_if(epoch_nr != cur_epoch_nr, "Confused by epoch_nr {} since current epoch is {}",
            epoch_nr, cur_epoch_nr)
-  return cur_epoch.get();
+      return cur_epoch;
 }
 
 uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const
 {
-  return epoch(epoch_nr)->brks[node_id - 1].ptr() + offset;
+  return epoch(epoch_nr)->mem->node_mem[node_id - 1].mmap_buf + offset;
 }
+
+static Epoch *g_epoch; // We don't support concurrent epochs for now.
 
 void EpochManager::DoAdvance(EpochClient *client)
 {
-  cur_epoch.reset();
   cur_epoch_nr++;
-  cur_epoch.reset(new Epoch(cur_epoch_nr, client, pool));
+  cur_epoch->~Epoch();
+  cur_epoch = new (cur_epoch) Epoch(cur_epoch_nr, client, mem);
   logger->info("We are going into epoch {}", cur_epoch_nr);
 }
 
-EpochManager::EpochManager(mem::Pool *pool)
-    : pool(pool),
-      cur_epoch_nr(0)
+EpochManager::EpochManager(EpochMemory *mem, Epoch *epoch)
+    : cur_epoch_nr(0), cur_epoch(epoch), mem(mem)
 {
+  cur_epoch->mem = mem;
 }
 
 }
@@ -683,8 +736,10 @@ EpochManager *InstanceInit<EpochManager>::instance = nullptr;
 
 InstanceInit<EpochManager>::InstanceInit()
 {
-  instance = new EpochManager(new mem::Pool(mem::Epoch, kEpochMemoryLimit,
-                                            util::Instance<NodeConfiguration>().nr_nodes()));
+  // We currently do not support concurrent epochs.
+  static Epoch g_epoch;
+  static EpochMemory mem;
+  instance = new EpochManager(&mem, &g_epoch);
 }
 
 }

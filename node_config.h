@@ -16,7 +16,7 @@ class NodeServerRoutine;
 class NodeServerThreadRoutine;
 struct PromiseRoutine;
 
-class PromiseRoundRobin;
+class TransportImpl;
 class SendChannel;
 
 // TODO: Clean these constant up. They are all over the place.
@@ -69,7 +69,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   int id;
   // Round Robin for local transport
-  PromiseRoundRobin *lb;
+  TransportImpl *lb;
  public:
 
   static size_t g_nr_threads;

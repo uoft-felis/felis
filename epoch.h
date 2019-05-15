@@ -20,7 +20,6 @@ using TxnMemberFunc = void (BaseTxn::*)();
 
 class EpochClientBaseWorker : public go::Routine {
  protected:
-  static constexpr int kBlock = 32;
   int t;
   int nr_threads;
   EpochClient *client;
@@ -46,12 +45,19 @@ class CallTxnsWorker : public EpochClientBaseWorker {
   void set_function(TxnMemberFunc func) { mem_func = func; }
 };
 
+class AllocStateTxnWorker : public EpochClientBaseWorker {
+ public:
+  using EpochClientBaseWorker::EpochClientBaseWorker;
+  void Run() override final;
+};
+
 struct EpochWorkers {
   RunTxnPromiseWorker run_worker;
   CallTxnsWorker call_worker;
+  AllocStateTxnWorker alloc_state_worker;
 
   EpochWorkers(int t, EpochClient *client)
-      : run_worker(t, client), call_worker(t, client) {}
+      : run_worker(t, client), call_worker(t, client), alloc_state_worker(t, client) {}
 };
 
 enum EpochPhase : int {
@@ -74,10 +80,22 @@ class EpochCallback {
   void operator()(bool done);
 };
 
+struct EpochTxnSet {
+  struct TxnSet {
+    size_t nr;
+    BaseTxn *txns[];
+    TxnSet(size_t nr) : nr(nr) {}
+  };
+  std::array<TxnSet *, NodeConfiguration::kMaxNrThreads> per_core_txns;
+  EpochTxnSet();
+  ~EpochTxnSet();
+};
+
 class EpochClient {
   friend class EpochCallback;
   friend class RunTxnPromiseWorker;
   friend class CallTxnsWorker;
+  friend class AllocStateTxnWorker;
   PerfLog perf;
   EpochWorkers *workers[NodeConfiguration::kMaxNrThreads];
  public:
@@ -125,8 +143,8 @@ class EpochClient {
   EpochCallback callback;
   CompletionObject<EpochCallback &> completion;
 
-  BaseTxn **all_txns;
-  BaseTxn **txns;
+  EpochTxnSet *all_txns;
+  EpochTxnSet *cur_txns;
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
 
@@ -135,15 +153,16 @@ class EpochClient {
   NodeConfiguration &conf;
 };
 
-class EpochManager {
-  mem::Pool *pool;
+class EpochMemory;
+class Epoch;
 
+class EpochManager {
   template <typename T> friend struct util::InstanceInit;
-  // std::array<Epoch *, kMaxConcurrentEpochs> concurrent_epochs;
-  util::OwnPtr<Epoch> cur_epoch;
+  EpochMemory *mem;
+  Epoch *cur_epoch;
   uint64_t cur_epoch_nr;
 
-  EpochManager(mem::Pool *pool);
+  EpochManager(EpochMemory *mem, Epoch *epoch);
  public:
   Epoch *epoch(uint64_t epoch_nr) const;
   uint8_t *ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const;
@@ -200,45 +219,54 @@ class GenericEpochObject : public EpochObject {
 // We mainly use this to store the transaction execution states, but we could
 // store other types of POJOs as well.
 //
-// The allocator is simply an brk. Objects were replicated by replicating the
-// node_id and the offset.
+// The allocator is simply an brk. Objects were represented by the node_id and
+// the offset related to the mmap backed buffer.
 class EpochMemory {
- protected:
-  mem::Brk brks[NodeConfiguration::kMaxNrNode];
-  mem::Pool *pool;
+  friend class Epoch;
+
+  struct {
+    uint8_t *mmap_buf;
+    std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads> brks; // per-core brks
+  } node_mem[NodeConfiguration::kMaxNrNode];
 
   friend class EpochManager;
-  EpochMemory(mem::Pool *pool);
-  ~EpochMemory();
  public:
+  EpochMemory();
+  ~EpochMemory();
+
+  void Reset();
 };
 
-class Epoch : public EpochMemory {
+class Epoch {
  protected:
   uint64_t epoch_nr;
   EpochClient *client;
+  EpochMemory *mem;
   friend class EpochManager;
 
   // std::array<int, NodeConfiguration::kMaxNrNode> counter;
  public:
-  Epoch(uint64_t epoch_nr, EpochClient *client, mem::Pool *pool) : epoch_nr(epoch_nr), client(client), EpochMemory(pool) {}
-  template <typename T>
-  GenericEpochObject<T> AllocateEpochObject(int node_id) {
-    auto off = brks[node_id - 1].current_size();
-    brks[node_id - 1].Alloc(util::Align(sizeof(T)));
-    return GenericEpochObject<T>(epoch_nr, node_id, off);
+  Epoch() : epoch_nr(0), client(nullptr), mem(nullptr) {}
+
+  Epoch(uint64_t epoch_nr, EpochClient *client, EpochMemory *mem)
+      : epoch_nr(epoch_nr), client(client), mem(mem) {
+    mem->Reset();
   }
 
   template <typename T>
   GenericEpochObject<T> AllocateEpochObjectOnCurrentNode() {
-    return AllocateEpochObject<T>(util::Instance<NodeConfiguration>().node_id());
+    auto node_id = util::Instance<NodeConfiguration>().node_id();
+    auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    abort_if(core_id < 0, "Must run on the worker thread");
+    auto ptr = (uint8_t *) mem->node_mem[node_id - 1].brks[core_id]->Alloc(sizeof(T));
+    auto off = ptr - mem->node_mem[node_id - 1].mmap_buf;
+    return GenericEpochObject<T>(epoch_nr, node_id, off);
   }
 
   uint64_t id() const { return epoch_nr; }
 
   EpochClient *epoch_client() const { return client; }
 };
-
 
 // For scheduling transactions during execution
 class EpochExecutionDispatchService : public PromiseRoutineDispatchService {

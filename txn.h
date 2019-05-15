@@ -25,12 +25,14 @@ class BaseTxn {
 
   PromiseProc proc;
 
-  static mem::Brk g_brk;
+  using BrkType = std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads / mem::kNrCorePerNode>;
+  static BrkType g_brk;
+  static int g_cur_numa_node;
  public:
   BaseTxn(uint64_t serial_id)
       : epoch(nullptr), sid(serial_id) {}
 
-  static void *operator new(size_t nr_bytes) { return g_brk.Alloc(nr_bytes); }
+  static void *operator new(size_t nr_bytes) { return g_brk[g_cur_numa_node]->Alloc(nr_bytes); }
   static void operator delete(void *ptr) {}
   static void InitBrk(long nr_epochs);
 

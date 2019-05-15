@@ -199,6 +199,11 @@ class SpinLock {
   }
   void Acquire() { Lock(); }
 
+  bool TryLock() {
+    bool locked = false;
+    return lock.compare_exchange_strong(locked, true);
+  }
+
   void Unlock() {
     lock.store(false);
   }

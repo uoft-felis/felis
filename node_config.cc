@@ -108,36 +108,55 @@ class Flushable {
   }
 };
 
-class PromiseRoundRobin : public Flushable<PromiseRoundRobin> {
-  static constexpr size_t kBufferSize = 16384;
+class TransportImpl : public Flushable<TransportImpl> {
+  static constexpr size_t kBufferSize = 16383;
   struct Queue {
+    // Putting these per-core task buffer simply because it's too large and we
+    // can't put them on the stack!
+    struct {
+      std::array<PromiseRoutineWithInput, kBufferSize> routines;
+      size_t nr;
+    } task_buffer[NodeConfiguration::kMaxNrThreads];
+
     std::array<PromiseRoutineWithInput, kBufferSize> routines;
-    std::atomic_bool lock;
-    unsigned int flusher_start;
-    std::atomic_uint append_start;
+    std::atomic_uint append_start = 0;
+    unsigned int flusher_start = 0;
+    bool need_scan = false;
+    util::SpinLock lock;
   };
 
   std::array<Queue *, NodeConfiguration::kMaxNrThreads + 1> queues;
+  std::atomic_ulong dice;
   int idx;
-  std::atomic_ulong round;
+
  public:
-  PromiseRoundRobin(int idx);
+  TransportImpl(int idx);
   void QueueRoutine(PromiseRoutine *routine, const VarStr &in);
   void QueueBubble();
 
-  std::tuple<uint, uint> GetFlushRange(int tid);
-  void UpdateFlushStart(int tid, unsigned int flusher_start);
-  bool PushRelease(int thr, unsigned int start, unsigned int end);
-  void DoFlush() {
-    BasePromise::FlushScheduler();
+  std::tuple<uint, uint> GetFlushRange(int tid) {
+    return {
+      queues[tid]->flusher_start,
+      queues[tid]->append_start.load(std::memory_order_acquire),
+    };
   }
+  void UpdateFlushStart(int tid, unsigned int flush_start) {
+    queues[tid]->flusher_start = flush_start;
+  }
+
+  bool PushRelease(int tid, unsigned int start, unsigned int end);
+  void DoFlush();
+
   bool TryLock(int i) {
-    bool locked = false;
-    return queues[i]->lock.compare_exchange_strong(locked, true);
+    return queues[i]->lock.TryLock();
   }
   void Unlock(int i) {
-    queues[i]->lock.store(false);
+    queues[i]->lock.Unlock();
   }
+
+ private:
+  void FlushOnCore(int thread, unsigned int start, unsigned int end);
+  void SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int start, unsigned int end, int thread);
 };
 
 class SendChannel : public Flushable<SendChannel> {
@@ -173,8 +192,15 @@ class SendChannel : public Flushable<SendChannel> {
   void Finish(size_t sz);
   long PendingFlush(int core_id);
 
-  std::tuple<uint, uint> GetFlushRange(int thr);
-  void UpdateFlushStart(int thr, uint flush_start);
+  std::tuple<unsigned int, unsigned int> GetFlushRange(int tid) {
+    return {
+      channels[tid]->flusher_start,
+      channels[tid]->append_start.load(std::memory_order_acquire),
+    };
+  }
+  void UpdateFlushStart(int tid, unsigned int flush_start) {
+    channels[tid]->flusher_start = flush_start;
+  }
   bool PushRelease(int thr, unsigned int start, unsigned int end);
   void DoFlush();
   bool TryLock(int i) {
@@ -186,101 +212,111 @@ class SendChannel : public Flushable<SendChannel> {
   }
 };
 
-PromiseRoundRobin::PromiseRoundRobin(int idx)
-    : idx(idx), round(0)
+TransportImpl::TransportImpl(int idx)
+    : idx(idx), dice(0)
 {
+  auto mem =
+      (Queue *) mem::MemMapAlloc(mem::EpochQueueItem, sizeof(Queue), -1);
+
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
-    auto &q = queues[i];
-    int numa_node = -1;
-
-    if (i > 0)
-      numa_node = (i - 1 + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
-
-    q = (Queue *) mem::MemMapAlloc(mem::EpochQueueItem, sizeof(Queue), numa_node);
-    q->lock = false;
-    q->flusher_start = 0;
-    q->append_start = 0;
+    if (i > 0) {
+      auto d = std::div(i - 1 + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+      if (d.rem == 0) {
+        mem = (Queue *) mem::MemMapAlloc(
+            mem::EpochQueueItem, sizeof(Queue) * mem::kNrCorePerNode, d.quot);
+      }
+      queues[i] = new (mem + d.rem) Queue();
+    } else {
+      queues[0] = new (mem) Queue();
+    }
   }
 }
 
-std::tuple<uint, uint> PromiseRoundRobin::GetFlushRange(int tid)
+void TransportImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
 {
-  auto &q = queues[tid];
-  return {
-    q->flusher_start, q->append_start.load(std::memory_order_acquire)
-  };
+  int tid = go::Scheduler::CurrentThreadPoolId();
+  auto q = queues[tid];
+  auto nr_threads = NodeConfiguration::g_nr_threads;
+  auto core = (routine->seq - 1) % nr_threads;
+  auto pos = q->append_start.load(std::memory_order_acquire);
+  q->routines[pos] = {routine, in};
+  if (routine->sched_key != 0 || tid != core + 1) q->need_scan = true;
+  q->append_start.store(pos + 1, std::memory_order_release);
+
+  if (pos == kBufferSize - 1) {
+    q->lock.Lock();
+    auto start = q->flusher_start, end = q->append_start.load(std::memory_order_acquire);
+    q->flusher_start = 0;
+    q->append_start.store(0, std::memory_order_release);
+    PushRelease(tid, start, end);
+    q->need_scan = false;
+  }
 }
 
-void PromiseRoundRobin::UpdateFlushStart(int tid, unsigned int flusher_start)
-{
-  queues[tid]->flusher_start = flusher_start;
-}
-
-void PromiseRoundRobin::QueueBubble()
+void TransportImpl::QueueBubble()
 {
   // Currently we don't batch the bubbles, and we consider bubbles are rare.
   util::Impl<PromiseRoutineDispatchService>().AddBubble();
 }
 
-void PromiseRoundRobin::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
+void TransportImpl::DoFlush()
 {
-  int tid = go::Scheduler::CurrentThreadPoolId();
-  auto &q = queues[tid];
-retry:
-  auto end = q->append_start.load(std::memory_order_relaxed);
-  if (end == kBufferSize) {
-    while (!TryLock(tid)) __builtin_ia32_pause();
-
-    auto start = q->flusher_start;
-    q->append_start.store(0, std::memory_order_release);
-    q->flusher_start = 0;
-    PushRelease(tid, start, end);
-    goto retry;
-  }
-  q->routines[end] = std::make_tuple(routine, in);
-  q->append_start.store(end + 1, std::memory_order_release);
+  BasePromise::FlushScheduler();
 }
 
-bool PromiseRoundRobin::PushRelease(int thr, unsigned int start, unsigned int end)
+bool TransportImpl::PushRelease(int tid, unsigned int start, unsigned int end)
 {
-  auto nr_routines = end - start;
-  if (nr_routines == 0) {
-    Unlock(thr);
-    return false;
-  }
-
-  PromiseRoutineWithInput routines[kBufferSize];
-  int nr_threads = NodeConfiguration::g_nr_threads;
-  // ulong delta = nr_threads - nr_routines % nr_threads;
-  ulong delta = nr_routines % nr_threads;
-  ulong rnd = round.fetch_add(delta);
-  // memcpy(routines, queues[thr]->routines + start, nr_routines * sizeof(PromiseRoutineWithInput));
-  std::copy(queues[thr]->routines.begin() + start,
-            queues[thr]->routines.begin() + start + nr_routines,
-            routines);
-  Unlock(thr);
-
-  PromiseRoutineWithInput rounds[kBufferSize / nr_threads + 1];
-  auto &transport = util::Impl<PromiseRoutineTransportService>();
-  for (int i = 0; i < nr_threads; i++) {
-    int sz = 0;
-    int core = (i + rnd) % nr_threads;
-    std::array<unsigned long, NodeConfiguration::kPromiseMaxLevels> cnts;
-    cnts.fill(0);
-    for (int j = i; j < nr_routines; j += nr_threads) {
-      auto [r, _] = routines[j];
-      rounds[sz++] = routines[j];
-      cnts[r->level]++;
-    }
-    for (auto i = 0; i < NodeConfiguration::kPromiseMaxLevels; i++) {
-      if (cnts[i] == 0) continue;
-      transport.PreparePromisesToQueue(core, i, cnts[i]);
-    }
-    if (sz == 0) continue;
-    BasePromise::QueueRoutine(rounds, sz, idx, core + 1, false);
-  }
-
+  FlushOnCore(tid, start, end);
+  Unlock(tid);
   return true;
+}
+
+void TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
+{
+  auto q = queues[tid];
+  auto nr_threads = NodeConfiguration::g_nr_threads;
+
+  if (!q->need_scan) {
+    SubmitOnCore(q->routines.data(), start, end, tid);
+  } else {
+    for (int i = 0; i < nr_threads; i++)
+      q->task_buffer[i].nr = 0;
+
+    auto delta = dice.fetch_add((end - start) % nr_threads, std::memory_order_release);
+    for (int j = start; j < end; j++) {
+      auto &p = q->routines[j];
+      auto [r, _] = p;
+      auto core = 0;
+      if (r->sched_key == 0) {
+        core = (r->seq - 1) % nr_threads;
+      } else {
+        core = (delta + j - start) % nr_threads;
+      }
+      q->task_buffer[core].routines[q->task_buffer[core].nr++] = p;
+    }
+    for (int i = 0; i < nr_threads; i++) {
+      SubmitOnCore(q->task_buffer[i].routines.data(), 0, q->task_buffer[i].nr, i + 1);
+    }
+  }
+}
+
+void TransportImpl::SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int start, unsigned int end, int thread)
+{
+  if (start == end) return;
+
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
+  std::array<unsigned long, NodeConfiguration::kPromiseMaxLevels> cnts;
+  cnts.fill(0);
+  for (int j = start; j < end; j++) {
+    auto [r, _] = routines[j];
+    cnts[r->level]++;
+  }
+  for (auto i = 0; i < NodeConfiguration::kPromiseMaxLevels; i++) {
+    if (cnts[i] == 0) continue;
+    transport.PreparePromisesToQueue(thread - 1, i, cnts[i]);
+  }
+  // TODO: refact this into core_id instead of thread_id?
+  BasePromise::QueueRoutine(routines + start, end - start, idx, thread, false);
 }
 
 SendChannel::SendChannel(go::TcpSocket *sock)
@@ -298,19 +334,6 @@ SendChannel::SendChannel(go::TcpSocket *sock)
   }
   flusher_channel = new go::BufferChannel(512);
   go::GetSchedulerFromPool(0)->WakeUp(new FlusherRoutine(flusher_channel, out));
-}
-
-std::tuple<uint, uint> SendChannel::GetFlushRange(int tid)
-{
-  auto &chn = channels[tid];
-  return {
-    chn->flusher_start, chn->append_start.load(std::memory_order_acquire),
-  };
-}
-
-void SendChannel::UpdateFlushStart(int tid, uint flush_start)
-{
-  channels[tid]->flusher_start = flush_start;
 }
 
 void *SendChannel::Alloc(size_t sz)
@@ -416,7 +439,7 @@ size_t NodeConfiguration::BatchBufferIndex(int level, int src_node, int dst_node
 }
 
 NodeConfiguration::NodeConfiguration()
-    : lb(new PromiseRoundRobin(0))
+    : lb(new TransportImpl(0))
 {
   auto &console = util::Instance<Console>();
 
@@ -460,7 +483,7 @@ class NodeServerThreadRoutine : public go::Routine {
   int idx;
   ulong src_node_id;
   std::atomic<long> tid;
-  PromiseRoundRobin lb;
+  TransportImpl lb;
   NodeConfiguration &conf;
  public:
   NodeServerThreadRoutine(TcpSocket *client_sock, int idx)

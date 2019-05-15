@@ -5,12 +5,16 @@
 
 namespace felis {
 
-mem::Brk BaseTxn::g_brk;
+BaseTxn::BrkType BaseTxn::g_brk;
+int BaseTxn::g_cur_numa_node = 0;
 
 void BaseTxn::InitBrk(long nr_epochs)
 {
-  auto lmt = 32_M * nr_epochs;
-  g_brk = mem::Brk(mem::MemMapAlloc(mem::Txn, lmt), lmt);
+  auto lmt = 16_M * nr_epochs;
+  for (auto n = 0; n < NodeConfiguration::g_nr_threads / mem::kNrCorePerNode; n++) {
+    auto numa_node = n + NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
+    g_brk[n] = mem::Brk::New(mem::MemMapAlloc(mem::Txn, lmt, numa_node), lmt);
+  }
 }
 
 void BaseTxn::TxnVHandle::AppendNewVersion()
