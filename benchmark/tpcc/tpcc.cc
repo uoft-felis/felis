@@ -769,14 +769,14 @@ uint Client::warehouse_to_lookup_node_id(uint warehouse_id)
 }
 
 static constexpr int kTPCCTxnMix[] = {
-  45, 43, 4,
+  49, 47, 4,
 };
 
 felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
   // TODO: generate standard TPC-C txn mix here. Currently, only NewOrder,
   // Delivery and Payment are available.
-  int rd = r.next_u32() % 92;
+  int rd = r.next_u32() % 100;
   int txn_type_id = 0;
   while (true) {
     int threshold = kTPCCTxnMix[txn_type_id];
