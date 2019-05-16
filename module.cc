@@ -95,7 +95,7 @@ class CoroutineModule : public Module<CoreModule> {
   // TODO: make this NUMA friendly
   class CoroutineStackAllocator : public go::RoutineStackAllocator {
     mem::Pool pools[NodeConfiguration::kMaxNrThreads / mem::kNrCorePerNode];
-    static constexpr int kMaxRoutines = 2048;
+    static constexpr int kMaxRoutines = 1024;
     static constexpr int kStackSize = 500_K;
 
     struct Chunk {

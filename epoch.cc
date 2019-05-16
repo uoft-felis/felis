@@ -594,8 +594,8 @@ void EpochExecutionDispatchService::PrintInfo()
   puts("===================================");
 }
 
-static constexpr size_t kEpochPromiseAllocationWorkerLimit = 1024_M;
-static constexpr size_t kEpochPromiseAllocationMainLimit = 128_M;
+static constexpr size_t kEpochPromiseAllocationWorkerLimit = 512_M;
+static constexpr size_t kEpochPromiseAllocationMainLimit = 64_M;
 static constexpr size_t kEpochPromiseMiniBrkSize = 4 * CACHE_LINE_SIZE;
 
 EpochPromiseAllocationService::EpochPromiseAllocationService()

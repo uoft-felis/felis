@@ -14,7 +14,7 @@ mem::ParallelPool GC::g_block_pool;
 
 void GC::InitPool()
 {
-  g_block_pool = mem::ParallelPool(mem::VhandlePool, Block::kBlockSize, 2_M);
+  g_block_pool = mem::ParallelPool(mem::VhandlePool, Block::kBlockSize, 4096);
 }
 
 void GC::AddVHandle(VHandle *handle)
