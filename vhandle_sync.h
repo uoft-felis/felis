@@ -38,7 +38,8 @@ namespace util {
 template <>
 struct InstanceInit<felis::SpinnerSlot> {
   static constexpr bool kHasInstance = true;
-  static inline felis::SpinnerSlot *instance = new felis::SpinnerSlot();
+  static felis::SpinnerSlot *instance;
+  InstanceInit();
 };
 
 }

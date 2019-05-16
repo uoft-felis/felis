@@ -5,7 +5,10 @@ namespace felis {
 
 SpinnerSlot::SpinnerSlot()
 {
-  for (int node = 0; node < 32 / mem::kNrCorePerNode; node++) {
+  auto nr_numa_nodes = (NodeConfiguration::g_core_shifting
+                            + NodeConfiguration::g_nr_threads) / mem::kNrCorePerNode;
+  for (int node = NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
+           node < nr_numa_nodes; node++) {
     auto p = (uint8_t *) mem::MemMapAlloc(mem::VhandlePool, 4096, node);
     auto delta = 4096 / mem::kNrCorePerNode;
     for (int i = 0; i < mem::kNrCorePerNode; i++, p += delta) {
@@ -105,3 +108,16 @@ void SpinnerSlot::Notify(uint64_t bitmap)
 }
 
 } // namespace felis
+
+namespace util {
+
+using namespace felis;
+
+SpinnerSlot *InstanceInit<SpinnerSlot>::instance = nullptr;
+
+InstanceInit<SpinnerSlot>::InstanceInit()
+{
+  instance = new felis::SpinnerSlot();
+}
+
+}

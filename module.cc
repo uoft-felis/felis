@@ -13,6 +13,7 @@
 #include "slice.h"
 #include "txn.h"
 #include "gc.h"
+#include "vhandle_sync.h"
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -80,6 +81,7 @@ class AllocatorModule : public Module<CoreModule> {
         []() {
           util::InstanceInit<EpochManager>();
           util::InstanceInit<SliceMappingTable>();
+          util::InstanceInit<SpinnerSlot>();
         });
     for (auto &t: tasks) t.join();
 
