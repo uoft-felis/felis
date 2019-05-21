@@ -223,6 +223,7 @@ void BasePromise::ExecutionRoutine::Run()
       (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
+            // logger->info("Wakup Coroutine {}", (void *) state);
             state->Init();
             sched->WakeUp(state);
           }
@@ -238,6 +239,7 @@ void BasePromise::ExecutionRoutine::Run()
     RunPromiseRoutine(rt, in);
     svc.Complete(core_id);
   }
+  // logger->info("Coroutine Exit");
 }
 
 bool BasePromise::ExecutionRoutine::Preempt(bool force)
@@ -246,7 +248,7 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
   int core_id = scheduler()->thread_pool_id() - 1;
   bool spawn = !force;
 
-  if (svc.Preempt(core_id, force)) {
+  if (svc.Preempt(core_id, force, this)) {
     set_busy_poll(true);
     // logger->info("Initial sleep. Spawning a new coroutine. force = {}", force);
  sleep:
@@ -254,24 +256,26 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
       sched->WakeUp(new ExecutionRoutine());
     sched->RunNext(go::Scheduler::SleepState);
 
+    spawn = true;
     auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
         [this, &spawn]
         (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
           if (state == this)
             return true;
           if (state != nullptr) {
+            // logger->info("Unfinished encoutered, no spawn.");
             if (state->is_detached()) {
               state->Init();
               sched->WakeUp(state);
             }
             spawn = false;
           } else {
-            logger->info("Spawning because I saw a new piece");
+            // logger->info("Spawning because I saw a new piece");
           }
           return false;
         });
 
-    spawn = true;
+    // logger->info("Just got up!");
     if (!svc.Peek(core_id, should_pop))
       goto sleep;
 

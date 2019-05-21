@@ -154,7 +154,7 @@ class PromiseRoutineDispatchService {
 
   virtual void Add(int core_id, PromiseRoutineWithInput *r, size_t nr_routines) = 0;
   virtual void AddBubble() = 0;
-  virtual bool Preempt(int core_id, bool force) = 0;
+  virtual bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;

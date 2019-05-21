@@ -369,13 +369,15 @@ again:
 }
 
 bool
-EpochExecutionDispatchService::AddToPriorityQueue(PriorityQueue &q, PromiseRoutineWithInput &r)
+EpochExecutionDispatchService::AddToPriorityQueue(
+    PriorityQueue &q, PromiseRoutineWithInput &r,
+    BasePromise::ExecutionRoutine *state)
 {
   bool smaller = false;
   auto [rt, in] = r;
   auto node = (PriorityQueueValue *) q.pool.Alloc();
   node->promise_routine = r;
-  node->state = nullptr;
+  node->state = state;
   auto key = rt->sched_key;
 
   auto &hl = q.ht[Hash(key) % kHashTableSize];
@@ -486,7 +488,7 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
-bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
+bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *routine_state)
 {
   auto &lock = queues[core_id]->lock;
   bool new_routine = true;
@@ -512,7 +514,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force)
     zq.q[zq.end.load(std::memory_order_relaxed)] = r;
     zq.end.fetch_add(1, std::memory_order_release);
   } else  {
-    AddToPriorityQueue(q, r);
+    AddToPriorityQueue(q, r, routine_state);
   }
   state.running.store(false, std::memory_order_relaxed);
 

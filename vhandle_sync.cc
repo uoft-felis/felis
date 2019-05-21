@@ -5,15 +5,14 @@ namespace felis {
 
 SpinnerSlot::SpinnerSlot()
 {
-  auto nr_numa_nodes = (NodeConfiguration::g_core_shifting
-                            + NodeConfiguration::g_nr_threads) / mem::kNrCorePerNode;
-  for (int node = NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
-           node < nr_numa_nodes; node++) {
-    auto p = (uint8_t *) mem::MemMapAlloc(mem::VhandlePool, 4096, node);
+  auto nr_numa_nodes = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
+  for (int node = 0; node < nr_numa_nodes; node++) {
+    auto p = (uint8_t *) mem::MemMapAlloc(
+        mem::VhandlePool, 4096,
+        node + NodeConfiguration::g_core_shifting / mem::kNrCorePerNode);
     auto delta = 4096 / mem::kNrCorePerNode;
     for (int i = 0; i < mem::kNrCorePerNode; i++, p += delta) {
-      slots[i + node * mem::kNrCorePerNode] = (std::atomic_bool *) p;
-      new (p) std::atomic_bool(false);
+      slots[i + node * mem::kNrCorePerNode] = new (p) std::atomic_bool(false);
     }
   }
 }
@@ -51,6 +50,10 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
 
   // installing newval
   while (true) {
+    if (!IsPendingVal(oldval)) {
+      logger->critical("strange oldval {0:x}", oldval);
+    }
+
     uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
     if (val == oldval) break;
     oldval = val;

@@ -340,14 +340,15 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   std::atomic_ulong tot_bubbles;
 
  private:
-  bool AddToPriorityQueue(PriorityQueue &q, PromiseRoutineWithInput &r);
+  bool AddToPriorityQueue(PriorityQueue &q, PromiseRoutineWithInput &r,
+                          BasePromise::ExecutionRoutine *state = nullptr);
   void ProcessPending(PriorityQueue &q);
 
  public:
   void Add(int core_id, PromiseRoutineWithInput *routines, size_t nr_routines) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
-  bool Preempt(int core_id, bool force) final override;
+  bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   void PrintInfo() final override;
