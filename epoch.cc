@@ -14,10 +14,10 @@ namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
 
-void EpochCallback::operator()(bool done)
+void EpochCallback::operator()(unsigned long cnt)
 {
   auto p = phase;
-  if (done) {
+  if (cnt == 0) {
     perf.End();
     perf.Show(label);
     printf("\n");
@@ -27,24 +27,12 @@ void EpochCallback::operator()(bool done)
     // go::Routine?
 
     static void (EpochClient::*phase_mem_funcs[])() = {
-      &EpochClient::OnCallInsertComplete,
       &EpochClient::OnInsertComplete,
-      &EpochClient::OnCallInitializeComplete,
       &EpochClient::OnInitializeComplete,
-      &EpochClient::OnCallExecuteComplete,
       &EpochClient::OnExecuteComplete,
     };
 
     std::invoke(phase_mem_funcs[static_cast<int>(phase)], *client);
-  }
-
-  if (p == EpochPhase::CallExecute) {
-    VHandle::Quiescence();
-    RowEntity::Quiescence();
-
-    mem::GetDataRegion().Quiescence();
-  } else if (p == EpochPhase::CallInitialize) {
-    util::Instance<GC>().RunGC();
   }
 }
 
@@ -136,33 +124,6 @@ void AllocStateTxnWorker::Run()
   }
 }
 
-void RunTxnPromiseWorker::Run()
-{
-  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
-    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
-    txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
-    txn->root_promise()->Complete(VarStr());
-  }
-  // conf.DecrementUrgencyCount(t);
-  util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
-}
-
-void EpochClient::RunTxnPromises(const char *label)
-{
-  callback.label = label;
-  callback.perf.Clear();
-  callback.perf.Start();
-  auto nr_threads = NodeConfiguration::g_nr_threads;
-
-  for (auto t = 0; t < nr_threads; t++) {
-    auto r = &workers[t]->run_worker;
-    r->Reset();
-
-    r->set_urgent(true);
-    go::GetSchedulerFromPool(t + 1)->WakeUp(r);
-  }
-}
-
 void CallTxnsWorker::Run()
 {
   auto nr_nodes = client->conf.nr_nodes();
@@ -178,41 +139,43 @@ void CallTxnsWorker::Run()
     txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
     client->conf.CollectBufferPlan(txn->root_promise(), cnt);
   }
-  client->completion.Complete();
+
+  client->conf.FlushBufferPlan(client->per_core_cnts[t]);
+
+  if (client->callback.phase == EpochPhase::Execute) {
+    VHandle::Quiescence();
+    RowEntity::Quiescence();
+
+    mem::GetDataRegion().Quiescence();
+  } else if (client->callback.phase == EpochPhase::Initialize) {
+    util::Instance<GC>().RunGC();
+  }
+
+  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
+    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
+    txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
+    txn->root_promise()->Complete(VarStr());
+  }
+  // conf.DecrementUrgencyCount(t);
+  util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
 }
 
-void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func)
+void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *label)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
   conf.ResetBufferPlan();
   conf.FlushBufferPlanCompletion(epoch_nr);
-  callback.label = "CallTxns";
+  callback.label = label;
   callback.perf.Clear();
   callback.perf.Start();
 
-  completion.Increment(nr_threads);
+  completion.Increment(conf.nr_nodes());
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->call_worker;
     r->Reset();
     r->set_function(func);
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
-}
-
-void EpochClient::CallTxnsOnComplete(bool sync)
-{
-  auto nr_threads = NodeConfiguration::g_nr_threads;
-
-  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
-
-  auto local_cnts = conf.local_buffer_plan_counters();
-  for (auto t = 0; t < nr_threads; t++) {
-    for (auto i = 0; i < cnt_len; i++) {
-      local_cnts[i] += per_core_cnts[t][i];
-    }
-  }
-
-  conf.FlushBufferPlan(sync);
 }
 
 void EpochClient::InitializeEpoch()
@@ -237,35 +200,22 @@ void EpochClient::InitializeEpoch()
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
 
-  callback.phase = EpochPhase::CallInsert;
-  CallTxns(epoch_nr, &BaseTxn::PrepareInsert);
-}
-
-void EpochClient::OnCallInsertComplete()
-{
-  CallTxnsOnComplete();
   callback.phase = EpochPhase::Insert;
-  RunTxnPromises("Epoch Initialization (Insert)");
+  CallTxns(epoch_nr, &BaseTxn::PrepareInsert, "Insert");
 }
 
 void EpochClient::OnInsertComplete()
 {
-  callback.phase = EpochPhase::CallInitialize;
+  callback.phase = EpochPhase::Initialize;
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
-      &BaseTxn::Prepare);
-}
-
-void EpochClient::OnCallInitializeComplete()
-{
-  CallTxnsOnComplete();
-  callback.phase = EpochPhase::Initialize;
-  RunTxnPromises("Epoch Initialization (AppendNew)");
+      &BaseTxn::Prepare,
+      "Initialization");
 }
 
 void EpochClient::OnInitializeComplete()
 {
-  callback.phase = EpochPhase::CallExecute;
+  callback.phase = EpochPhase::Execute;
 
   if (NodeConfiguration::g_data_migration && util::Instance<EpochManager>().current_epoch_nr() == 1) {
     logger->info("Starting data scanner thread");
@@ -276,14 +226,8 @@ void EpochClient::OnInitializeComplete()
 
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
-      &BaseTxn::RunAndAssignSchedulingKey);
-}
-
-void EpochClient::OnCallExecuteComplete()
-{
-  CallTxnsOnComplete();
-  callback.phase = EpochPhase::Execute;
-  RunTxnPromises("Epoch Execution");
+      &BaseTxn::RunAndAssignSchedulingKey,
+      "Execution");
 }
 
 void EpochClient::OnExecuteComplete()

@@ -31,12 +31,6 @@ class EpochClientBaseWorker : public go::Routine {
   void Reset() { Init(); ctx = nullptr; }
 };
 
-class RunTxnPromiseWorker : public EpochClientBaseWorker {
- public:
-  using EpochClientBaseWorker::EpochClientBaseWorker;
-  void Run() override final;
-};
-
 class CallTxnsWorker : public EpochClientBaseWorker {
   TxnMemberFunc mem_func;
  public:
@@ -52,32 +46,29 @@ class AllocStateTxnWorker : public EpochClientBaseWorker {
 };
 
 struct EpochWorkers {
-  RunTxnPromiseWorker run_worker;
   CallTxnsWorker call_worker;
   AllocStateTxnWorker alloc_state_worker;
 
   EpochWorkers(int t, EpochClient *client)
-      : run_worker(t, client), call_worker(t, client), alloc_state_worker(t, client) {}
+      : call_worker(t, client), alloc_state_worker(t, client) {}
 };
 
 enum EpochPhase : int {
-  CallInsert,
   Insert,
-  CallInitialize,
   Initialize,
-  CallExecute,
   Execute,
 };
 
 class EpochCallback {
   friend class EpochClient;
+  friend class CallTxnsWorker;
   PerfLog perf;
   EpochClient *client;
   const char *label;
   EpochPhase phase;
  public:
   EpochCallback(EpochClient *client) : client(client), label(nullptr) {}
-  void operator()(bool done);
+  void operator()(unsigned long cnt);
 };
 
 struct EpochTxnSet {
@@ -129,14 +120,10 @@ class EpochClient {
 
  private:
   void RunTxnPromises(const char *label);
-  void CallTxns(uint64_t epoch_nr, TxnMemberFunc func);
-  void CallTxnsOnComplete(bool sync = true);
+  void CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *label);
 
-  void OnCallInsertComplete();
   void OnInsertComplete();
-  void OnCallInitializeComplete();
   void OnInitializeComplete();
-  void OnCallExecuteComplete();
   void OnExecuteComplete();
 
  protected:

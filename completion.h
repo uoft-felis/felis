@@ -14,8 +14,8 @@ class CompletionObject {
       : comp_count(count), callback(callback) {}
 
   void Complete(unsigned long dec = 1) {
-    bool done = (comp_count.fetch_sub(dec) == dec);
-    callback(done);
+    auto cnt = comp_count.fetch_sub(dec) - dec;
+    callback(cnt);
   }
 
   void operator()() {

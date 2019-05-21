@@ -457,16 +457,13 @@ NodeConfiguration::NodeConfiguration()
     max_node_id = std::max((int) max_node_id, idx);
   }
 
-  total_batch_counters = new std::atomic_ulong[kPromiseMaxLevels * nr_nodes() * nr_nodes()];
-  local_batch_counters = new ulong[2 + kPromiseMaxLevels * nr_nodes() * nr_nodes()];
+  auto nr = kPromiseMaxLevels * nr_nodes() * nr_nodes();
+  total_batch_counters = new std::atomic_ulong[nr];
+  local_batch = new (malloc(sizeof(LocalBatch) + sizeof(std::atomic_ulong) * nr)) LocalBatch;
 
-  for (int i = 0; i < kPromiseMaxLevels; i++) {
-    for (int j = 0; j < nr_nodes(); j++) {
-      for (int k = 0; k < nr_nodes(); k++) {
-        total_batch_counters[BatchBufferIndex(i, j + 1, k + 1)] = 0;
-      }
-    }
-  }
+  std::fill(total_batch_counters, total_batch_counters + nr, 0);
+  std::fill(local_batch->counters, local_batch->counters + nr, 0);
+  local_batch->magic = PromiseRoutine::kUpdateBatchCounter;
 
   transport_meta.Init(nr_nodes(), g_nr_threads);
 
@@ -820,11 +817,14 @@ void NodeConfiguration::ForceFlushPromiseRoutine()
 
 void NodeConfiguration::ResetBufferPlan()
 {
-  local_batch_counters[0] = std::numeric_limits<ulong>::max();
-  memset(local_batch_counters + 2, 0,
-         kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(ulong));
-  for (ulong i = 0; i < kPromiseMaxLevels * nr_nodes() * nr_nodes(); i++)
-    total_batch_counters[i].store(0);
+  local_batch_completed = 0;
+  auto nr = kPromiseMaxLevels * nr_nodes() * nr_nodes();
+  std::fill(local_batch->counters,
+            local_batch->counters + nr,
+            0);
+  std::fill(total_batch_counters,
+            total_batch_counters + nr,
+            0);
   transport_meta.Reset(nr_nodes(), g_nr_threads);
 }
 
@@ -857,78 +857,56 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, unsigned 
   }
 }
 
-void NodeConfiguration::FlushBufferPlan(bool sync)
+void NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
 {
-  EpochClient::g_workload_client->completion_object()->Increment(nr_nodes() - 1);
-  local_batch_counters[1] = (ulong) node_id();
-  logger->info("Flushing buffer plan");
   for (int i = 0; i < kPromiseMaxLevels; i++) {
-    bool all_zero = true;
     for (int src = 0; src < nr_nodes(); src++) {
       for (int dst = 0; dst < nr_nodes(); dst++) {
         auto idx = BatchBufferIndex(i, src + 1, dst + 1);
-        auto counter = local_batch_counters[2 + idx];
-        if (counter == 0) continue;
-
+        auto counter = per_core_cnts[idx];
+        local_buffer_plan_counters()[idx].fetch_add(counter);
         total_batch_counters[idx].fetch_add(counter);
-        all_zero = false;
+
+        if (counter == 0) continue;
 
         if (dst + 1 == node_id()) {
           EpochClient::g_workload_client->completion_object()->Increment(counter);
         }
       }
     }
-    if (all_zero) continue;
-
-    for (int src = 0; src < nr_nodes(); src++) {
-      for (int dst = 0; dst < nr_nodes(); dst++) {
-        auto idx = BatchBufferIndex(i, src + 1, dst + 1);
-        auto counter = local_batch_counters[2 + idx];
-
-        printf(" %d->%d=%lu(%lu)", src + 1, dst + 1,
-               total_batch_counters[idx].load(), counter);
-      }
-    }
-
-    puts("");
   }
 
-  std::vector<std::function<void ()>> funcs;
+  if (local_batch_completed.fetch_add(1) + 1 < g_nr_threads)
+    return;
+
+  local_batch->node_id = (ulong) node_id();
+  logger->info("Flushing buffer plan");
 
   for (int id = 1; id <= nr_nodes(); id++) {
     if (id == node_id()) continue;
 
     auto out = all_nodes[id]->output_channel();
     auto in = all_nodes[id]->input_channel();
-    auto buffer_size = 16 + kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(ulong);
-    auto buffer = local_batch_counters;
-    funcs.emplace_back(
-        [in, out, buffer, buffer_size]() {
-          uint64_t remote_epoch_finished;
-          in->Read(&remote_epoch_finished, 8);
 
-          // Read and replay slice mapping table updates.
-          uint32_t num_slice_table_updates;
-          in->Read(&num_slice_table_updates, 4);
-          for (int i = 0; i < num_slice_table_updates; i++) {
-            uint32_t op;
-            in->Read(&op, 4);
-            util::Instance<SliceMappingTable>().ReplayUpdate(op);
-          }
+    uint64_t remote_epoch_finished;
+    in->Read(&remote_epoch_finished, 8);
 
-          out->Write(buffer, buffer_size);
-          out->Flush();
-        });
+    // Read and replay slice mapping table updates.
+    uint32_t num_slice_table_updates;
+    in->Read(&num_slice_table_updates, 4);
+    for (int i = 0; i < num_slice_table_updates; i++) {
+      uint32_t op;
+      in->Read(&op, 4);
+      util::Instance<SliceMappingTable>().ReplayUpdate(op);
+    }
+
+    out->Write(
+        local_batch,
+        16 + kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(unsigned long));
+    out->Flush();
   }
 
-  if (sync) {
-    for (auto &f: funcs) f();
-  } else {
-    auto sched = go::Scheduler::Current();
-    for (auto &f: funcs)
-      sched->WakeUp(go::Make(f));
-    sched->current_routine()->VoluntarilyPreempt(false);
-  }
+  EpochClient::g_workload_client->completion_object()->Complete();
 }
 
 void NodeConfiguration::FlushBufferPlanCompletion(uint64_t epoch_nr)

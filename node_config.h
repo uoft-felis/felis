@@ -109,14 +109,14 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root, unsigned long *cnts);
-  void FlushBufferPlan(bool sync);
+  void FlushBufferPlan(unsigned long *per_core_cnts);
   void FlushBufferPlanCompletion(uint64_t epoch_nr);
 
   // node id starts from 1
   int nr_nodes() const { return max_node_id; }
 
-  unsigned long *local_buffer_plan_counters() const {
-    return local_batch_counters + 2;
+  std::atomic_ulong *local_buffer_plan_counters() const {
+    return local_batch->counters;
   };
 
   static constexpr size_t kMaxNrNode = 254;
@@ -143,7 +143,12 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   // channel_batch_counters[level][src][dst], where src and dst are the node
   // number - 1.
   std::atomic_ulong *total_batch_counters;
-  unsigned long *local_batch_counters;
+  struct LocalBatch {
+    unsigned long magic;
+    unsigned long node_id;
+    std::atomic_ulong counters[];
+  } *local_batch;
+  std::atomic_ulong local_batch_completed;
 
   TransportBatchMetadata transport_meta;
  private:
