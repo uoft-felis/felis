@@ -112,7 +112,7 @@ class inline_str_base {
   }
 
   inline_str_base(const inline_str_base &that) : sz(that.sz) {
-    memcpy(&buf[0], &that.buf[0], sz);
+    __builtin_memcpy(&buf[0], &that.buf[0], sz);
   }
 
   inline_str_base &
@@ -120,7 +120,7 @@ class inline_str_base {
     if (this == &that)
       return *this;
     sz = that.sz;
-    memcpy(&buf[0], &that.buf[0], sz);
+    __builtin_memcpy(&buf[0], &that.buf[0], sz);
     return *this;
   }
 
@@ -138,7 +138,7 @@ class inline_str_base {
     if (zeropad) {
       assert(N >= sz);
       std::string r(N, 0);
-      memcpy((char *) r.data(), &buf[0], sz);
+      __builtin_memcpy((char *) r.data(), &buf[0], sz);
       return r;
     } else {
       return std::string(&buf[0], sz);
@@ -159,7 +159,7 @@ class inline_str_base {
 
   void assign(const char *s, size_t n) {
     assert(n <= N);
-    memcpy(&buf[0], s, n);
+    __builtin_memcpy(&buf[0], s, n);
     sz = n;
   }
 
@@ -219,14 +219,14 @@ class Char {
   }
 
   Char(const Char &that) {
-    memcpy(&buf[0], &that.buf[0], N);
+    __builtin_memcpy(&buf[0], &that.buf[0], N);
   }
 
   Char &
   operator=(const Char &that) {
     if (this == &that)
       return *this;
-    memcpy(&buf[0], &that.buf[0], N);
+    __builtin_memcpy(&buf[0], &that.buf[0], N);
     return *this;
   }
 
@@ -248,7 +248,7 @@ class Char {
 
   inline void assign(const char *s, size_t n) {
     assert(n <= N);
-    memcpy(&buf[0], s, n);
+    __builtin_memcpy(&buf[0], s, n);
     if ((N - n) > 0) // to suppress compiler warning
       memset(&buf[n], FillChar, N - n); // pad with spaces
   }
@@ -279,10 +279,10 @@ struct Serializer {
   static size_t EncodeSize(const T *ptr) { return sizeof(T); }
 
   static void EncodeTo(uint8_t *buf, const T *ptr) {
-    memcpy(buf, ptr, EncodeSize(ptr));
+    __builtin_memcpy(buf, ptr, EncodeSize(ptr));
   }
   static void DecodeFrom(T *ptr, const uint8_t *buf) {
-    memcpy(ptr, buf, sizeof(T));
+    __builtin_memcpy(ptr, buf, sizeof(T));
   }
 };
 
@@ -295,7 +295,7 @@ struct Serializer<inline_str_base<SizeType, N>> {
   static void EncodeTo(uint8_t *buf, const ObjectType *p) {
     SizeType sz = p->size();
     Serializer<SizeType>::EncodeTo(buf, (const SizeType *) &sz);
-    memcpy(buf + Serializer<SizeType>::EncodeSize((const SizeType *) &sz),
+    __builtin_memcpy(buf + Serializer<SizeType>::EncodeSize((const SizeType *) &sz),
 	   p->data(), p->size());
   }
   static void DecodeFrom(ObjectType *p, const uint8_t *buf) {
@@ -315,13 +315,13 @@ struct Serializer<std::vector<T>> {
   static void EncodeTo(uint8_t *buf, const ObjectType *p) {
     size_t len = p->size();
     Serializer<size_t>::EncodeTo(buf, &len);
-    memcpy(buf + sizeof(size_t), p->data(), len * sizeof(T));
+    __builtin_memcpy(buf + sizeof(size_t), p->data(), len * sizeof(T));
   }
   static void DecodeFrom(ObjectType *p, const uint8_t *buf) {
     size_t len;
-    memcpy(&len, buf, sizeof(size_t));
+    __builtin_memcpy(&len, buf, sizeof(size_t));
     p->resize(len);
-    memcpy(p->data(), buf + sizeof(size_t), len * sizeof(T));
+    __builtin_memcpy(p->data(), buf + sizeof(size_t), len * sizeof(T));
   }
 };
 
@@ -335,7 +335,7 @@ template<>
 struct KeySerializer<uint16_t> : public Serializer<uint16_t> {
   static void EncodeTo(uint8_t *buf, const uint16_t *ptr) {
     uint16_t be = htobe16(*ptr); // has to be BE!
-    memcpy(buf, &be, EncodeSize(ptr));
+    __builtin_memcpy(buf, &be, EncodeSize(ptr));
   }
   static void DecodeFrom(uint16_t *ptr, const uint8_t *buf) {
     uint16_t h = be16toh(*buf);
@@ -347,7 +347,7 @@ template <>
 struct KeySerializer<uint32_t> : public Serializer<uint32_t> {
   static void EncodeTo(uint8_t *buf, const uint32_t *ptr) {
     uint32_t be = htobe32(*ptr); // has to be BE!
-    memcpy(buf, &be, EncodeSize(ptr));
+    __builtin_memcpy(buf, &be, EncodeSize(ptr));
   }
   static void DecodeFrom(uint32_t *ptr, const uint8_t *buf) {
     uint32_t h = be32toh(*(const uint32_t *) buf);
