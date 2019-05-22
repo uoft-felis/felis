@@ -101,12 +101,12 @@ void InitializeTPCC()
   logger->info("data migration mode {}", NodeConfiguration::g_data_migration);
 
   auto &mgr = Instance<RelationManager>();
-  for (int table = 0; table < int(TableType::NRTable); table++) {
-    std::string name = kTPCCTableNames[static_cast<int>(table)];
+  for (int table = static_cast<int>(TableType::TPCCBase) + 1;
+       table < static_cast<int>(TableType::NRTable);
+       table++) {
     mgr.GetRelationOrCreate(int(table));
   }
   logger->info("TPCC Table schemas created");
-
 }
 
 // TPC-C workload mix

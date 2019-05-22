@@ -40,6 +40,7 @@ struct Config {
 extern Config kTPCCConfig;
 
 enum class TableType : int {
+  TPCCBase = 100,
   Customer,
   CustomerNameIdx,
   District,
@@ -53,15 +54,6 @@ enum class TableType : int {
   StockData,
   Warehouse,
   NRTable
-};
-
-static const char *kTPCCTableNames[] = {
-  "customer",   "customer_name_idx",
-  "district",   "history",
-  "item",       "new_order",
-  "oorder",     "oorder_c_id_idx",
-  "order_line", "stock",
-  "stock_data", "warehouse",
 };
 
 // table and schemas definition
