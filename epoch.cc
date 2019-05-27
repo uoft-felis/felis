@@ -32,12 +32,16 @@ void EpochCallback::operator()(unsigned long cnt)
       &EpochClient::OnExecuteComplete,
     };
 
-    std::invoke(phase_mem_funcs[static_cast<int>(phase)], *client);
+    abort_if(go::Scheduler::Current()->current_routine() == &client->control,
+             "Cannot call control thread from itself");
+    client->control.Reset(phase_mem_funcs[static_cast<int>(phase)]);
+    go::Scheduler::Current()->WakeUp(&client->control);
   }
 }
 
-EpochClient::EpochClient() noexcept
-    : callback(EpochCallback(this)),
+EpochClient::EpochClient()
+    : control(this),
+      callback(EpochCallback(this)),
       completion(0, callback),
       disable_load_balance(false),
       conf(util::Instance<NodeConfiguration>())
@@ -101,12 +105,12 @@ void EpochClient::GenerateBenchmarks()
 void EpochClient::Start()
 {
   // Ready to start!
-  auto worker = go::Make(std::bind(&EpochClient::InitializeEpoch, this));
+  control.Reset(&EpochClient::InitializeEpoch);
 
   logger->info("load percentage {}%", LoadPercentage());
 
   perf = PerfLog();
-  go::GetSchedulerFromPool(0)->WakeUp(worker);
+  go::GetSchedulerFromPool(0)->WakeUp(&control);
 }
 
 uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
@@ -140,7 +144,7 @@ void CallTxnsWorker::Run()
     client->conf.CollectBufferPlan(txn->root_promise(), cnt);
   }
 
-  client->conf.FlushBufferPlan(client->per_core_cnts[t]);
+  bool finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
   if (client->callback.phase == EpochPhase::Execute) {
     VHandle::Quiescence();
@@ -158,6 +162,9 @@ void CallTxnsWorker::Run()
   }
   // conf.DecrementUrgencyCount(t);
   util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
+
+  if (finished)
+    client->completion.Complete();
 }
 
 void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *label)

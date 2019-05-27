@@ -194,7 +194,7 @@ class SpinLock {
     bool locked = false;
     while (!lock.compare_exchange_strong(locked, true)) {
       locked = false;
-      __builtin_ia32_pause();
+      _mm_pause();
     }
   }
   void Acquire() { Lock(); }
@@ -223,7 +223,7 @@ class MCSSpinLock {
     QNode *last = tail.exchange(qnode);
     if (last) {
       last->next = qnode;
-      while (!qnode->done) __builtin_ia32_pause();
+      while (!qnode->done) _mm_pause();
     }
   }
   void Acquire(QNode *qnode) { Lock(qnode); }
@@ -232,7 +232,7 @@ class MCSSpinLock {
     if (!qnode->next) {
       QNode *owner = qnode;
       if (tail.compare_exchange_strong(owner, nullptr)) return;
-      while (!qnode->next.load()) __builtin_ia32_pause();
+      while (!qnode->next.load()) _mm_pause();
     }
     qnode->next.load()->done = true;
   }

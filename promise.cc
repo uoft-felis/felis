@@ -212,7 +212,7 @@ void BasePromise::ExecutionRoutine::Run()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
-  // logger->info("new ExecutionRoutine up and running on {}", core_id);
+  trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PromiseRoutineWithInput next_r;
   // BasePromise::ExecutionRoutine *next_state = nullptr;
@@ -223,9 +223,11 @@ void BasePromise::ExecutionRoutine::Run()
       (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
-            // logger->info("Wakup Coroutine {}", (void *) state);
+            trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
             state->Init();
             sched->WakeUp(state);
+          } else {
+            trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
           }
           return false;
         }
@@ -236,10 +238,11 @@ void BasePromise::ExecutionRoutine::Run()
 
   while (svc.Peek(core_id, should_pop)) {
     auto [rt, in] = next_r;
+    // trace(TRACE_EXEC_ROUTINE "Run {}", (void *) rt);
     RunPromiseRoutine(rt, in);
     svc.Complete(core_id);
   }
-  // logger->info("Coroutine Exit");
+  trace(TRACE_EXEC_ROUTINE "Coroutine Exit");
 }
 
 bool BasePromise::ExecutionRoutine::Preempt(bool force)
@@ -250,7 +253,7 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
 
   if (svc.Preempt(core_id, force, this)) {
     set_busy_poll(true);
-    // logger->info("Initial sleep. Spawning a new coroutine. force = {}", force);
+    trace(TRACE_EXEC_ROUTINE "Initial sleep. Spawning a new coroutine. force = {}", force);
  sleep:
     if (spawn)
       sched->WakeUp(new ExecutionRoutine());
@@ -263,19 +266,19 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
           if (state == this)
             return true;
           if (state != nullptr) {
-            // logger->info("Unfinished encoutered, no spawn.");
+            trace(TRACE_EXEC_ROUTINE "Unfinished encoutered, no spawn.");
             if (state->is_detached()) {
               state->Init();
               sched->WakeUp(state);
             }
             spawn = false;
           } else {
-            // logger->info("Spawning because I saw a new piece");
+            trace(TRACE_EXEC_ROUTINE "Spawning because I saw a new piece");
           }
           return false;
         });
 
-    // logger->info("Just got up!");
+    trace(TRACE_EXEC_ROUTINE "Just got up!");
     if (!svc.Peek(core_id, should_pop))
       goto sleep;
 

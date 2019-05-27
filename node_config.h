@@ -109,7 +109,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
 
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root, unsigned long *cnts);
-  void FlushBufferPlan(unsigned long *per_core_cnts);
+  bool FlushBufferPlan(unsigned long *per_core_cnts);
   void FlushBufferPlanCompletion(uint64_t epoch_nr);
 
   // node id starts from 1

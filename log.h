@@ -48,4 +48,23 @@ class PerfLog {
                          __PRETTY_FUNCTION__, msg);                     \
       })                                                                \
 
+// We don't use logger->trace because it's even lower than debug. We would like
+// to turn on trace for only some tags.
+static bool is_trace_enabled(std::string_view msg = "")
+{
+  return (msg.length() > 0 && msg.at(0) == '\x7f');
+}
+
+template <typename ...T>
+static void trace(std::string_view fmt, T... args)
+{
+  if (is_trace_enabled(fmt)) {
+    logger->info(fmt.substr(1).data(), args...);
+  }
+}
+
+// Trace tags
+#define TRACE_EXEC_ROUTINE // "\x7f" "Trace ExecRoutine: "
+#define TRACE_GC // "\x7f" "Trace GC: "
+
 #endif /* LOG_H */

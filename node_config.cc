@@ -345,7 +345,7 @@ void *SendChannel::Alloc(size_t sz)
 retry:
   auto end = chn->append_start.load(std::memory_order_relaxed);
   if (end + sz >= kPerThreadBuffer) {
-    while (!TryLock(tid)) __builtin_ia32_pause();
+    while (!TryLock(tid)) _mm_pause();
     auto start = chn->flusher_start;
     chn->flusher_start = 0;
     chn->append_start.store(0, std::memory_order_release);
@@ -857,7 +857,7 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, unsigned 
   }
 }
 
-void NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
+bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
 {
   for (int i = 0; i < kPromiseMaxLevels; i++) {
     for (int src = 0; src < nr_nodes(); src++) {
@@ -877,7 +877,7 @@ void NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
   }
 
   if (local_batch_completed.fetch_add(1) + 1 < g_nr_threads)
-    return;
+    return false;
 
   local_batch->node_id = (ulong) node_id();
   logger->info("Flushing buffer plan");
@@ -906,7 +906,7 @@ void NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
     out->Flush();
   }
 
-  EpochClient::g_workload_client->completion_object()->Complete();
+  return true;
 }
 
 void NodeConfiguration::FlushBufferPlanCompletion(uint64_t epoch_nr)

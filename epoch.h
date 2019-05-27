@@ -16,6 +16,22 @@ class Epoch;
 class BaseTxn;
 class EpochClient;
 
+using EpochMemberFunc = void (EpochClient::*)();
+
+class EpochControl : public go::Routine {
+  EpochClient *client;
+  EpochMemberFunc func;
+ public:
+
+  EpochControl(EpochClient *client) : client(client) {
+    set_reuse(true);
+  }
+  void Reset(EpochMemberFunc f) { Init(); ctx = nullptr; func = f; }
+  void Run() override final {
+    std::invoke(func, *client);
+  }
+};
+
 using TxnMemberFunc = void (BaseTxn::*)();
 
 class EpochClientBaseWorker : public go::Routine {
@@ -23,12 +39,21 @@ class EpochClientBaseWorker : public go::Routine {
   int t;
   int nr_threads;
   EpochClient *client;
+  std::atomic_bool finished;
  public:
   EpochClientBaseWorker(int t, EpochClient *client)
-      : t(t), nr_threads(NodeConfiguration::g_nr_threads), client(client) {
+      : t(t), nr_threads(NodeConfiguration::g_nr_threads), client(client), finished(true) {
     set_reuse(true);
   }
-  void Reset() { Init(); ctx = nullptr; }
+  void Reset() {
+    bool old = true;
+    while (!finished.compare_exchange_strong(old, false)) {
+      old = true;
+      _mm_pause();
+    }
+    go::Routine::Reset();
+  }
+  void OnFinish() override final { finished = true; }
 };
 
 class CallTxnsWorker : public EpochClientBaseWorker {
@@ -88,11 +113,12 @@ class EpochClient {
   friend class CallTxnsWorker;
   friend class AllocStateTxnWorker;
   PerfLog perf;
+  EpochControl control;
   EpochWorkers *workers[NodeConfiguration::kMaxNrThreads];
  public:
   static EpochClient *g_workload_client;
 
-  EpochClient() noexcept;
+  EpochClient();
   virtual ~EpochClient() {}
 
   void GenerateBenchmarks();

@@ -79,9 +79,11 @@ void Module<Type>::InitModule(std::string name)
   for (auto p = head(); p; p = p->next) {
     if (p->info.name == name) {
       p->Load();
-      break;
+      return;
     }
   }
+  printf("Cannot find workload module %s\n", name.c_str());
+  std::abort();
 }
 
 }

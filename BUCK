@@ -19,6 +19,16 @@ tpcc_srcs = [
     'benchmark/tpcc/delivery.cc',
 ]
 
+ycsb_headers = [
+    'benchmark/ycsb/table_decl.h',
+    'benchmark/ycsb/ycsb.h',
+]
+
+ycsb_srcs = [
+    'benchmark/ycsb/ycsb.cc',
+    'benchmark/ycsb/ycsb_workload.cc',
+]
+
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'module.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
@@ -52,13 +62,21 @@ cxx_library(
     link_whole=True,
 )
 
+cxx_library(
+    name='ycsb',
+    srcs=ycsb_srcs,
+    compiler_flags=includes,
+    headers=db_headers + ycsb_headers,
+    link_whole=True,
+)
+
 cxx_binary(
     name='db',
     srcs=['main.cc', 'module.cc'] + db_srcs,
-    headers=db_headers + tpcc_headers,
+    headers=db_headers,
     compiler_flags=includes,
     linker_flags=libs,
-    deps=[':tpcc'],
+    deps=[':tpcc', ':ycsb'],
 )
 
 cxx_test(

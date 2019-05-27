@@ -1,7 +1,7 @@
 // -*- mode: c++ -*-
 
-#ifndef TABLE_DECL_H
-#define TABLE_DECL_H
+#ifndef TPCC_TABLE_DECL_H
+#define TPCC_TABLE_DECL_H
 
 #include "sqltypes.h"
 
@@ -163,4 +163,4 @@ VALUES(WarehouseValue);
 
 }
 
-#endif /* TABLE_DECL_H */
+#endif /* TPCC_TABLE_DECL_H */

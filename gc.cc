@@ -54,6 +54,17 @@ void GC::Collect(VHandle *handle)
   std::move(versions + i, versions + handle->size, versions);
   handle->size -= i;
   handle->latest_version.fetch_sub(i);
+
+
+  if (is_trace_enabled(TRACE_GC)) {
+    std::stringstream ss;
+    for (auto j = 0; j < handle->size; j++) {
+      ss << versions[j] << "->0x"
+         << std::hex << objects[j] << " ";
+    }
+
+    trace(TRACE_GC "GC on row {} {}", (void *) handle, ss.str());
+  }
 }
 
 }
