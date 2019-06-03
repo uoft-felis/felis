@@ -17,6 +17,10 @@ EpochClient *EpochClient::g_workload_client = nullptr;
 void EpochCallback::operator()(unsigned long cnt)
 {
   auto p = phase;
+
+  trace(TRACE_COMPLETION "callback cnt {} on core {}",
+        cnt, go::Scheduler::CurrentThreadPoolId() - 1);
+
   if (cnt == 0) {
     perf.End();
     perf.Show(label);
@@ -144,7 +148,7 @@ void CallTxnsWorker::Run()
     client->conf.CollectBufferPlan(txn->root_promise(), cnt);
   }
 
-  bool finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
+  bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
   if (client->callback.phase == EpochPhase::Execute) {
     VHandle::Quiescence();
@@ -155,15 +159,18 @@ void CallTxnsWorker::Run()
     util::Instance<GC>().RunGC();
   }
 
-  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
-    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
+  auto pq = client->cur_txns->per_core_txns[t];
+
+  for (auto i = 0; i < pq->nr; i++) {
+    auto txn = pq->txns[i];
     txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
     txn->root_promise()->Complete(VarStr());
   }
-  // conf.DecrementUrgencyCount(t);
-  util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
 
-  if (finished)
+  util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
+  client->completion.Complete();
+
+  if (node_finished)
     client->completion.Complete();
 }
 
@@ -176,7 +183,7 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   callback.perf.Clear();
   callback.perf.Start();
 
-  completion.Increment(conf.nr_nodes());
+  completion.Increment(conf.nr_nodes() + nr_threads);
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->call_worker;
     r->Reset();
@@ -484,7 +491,7 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
 
   if (n + nr_bubbles > 0) {
     // logger->info("DispatchService on core {} notifies {} completions",
-    // core_id, n + nr_bubbles);
+    //             core_id, n + nr_bubbles);
     comp->Complete(n + nr_bubbles);
   }
   return false;

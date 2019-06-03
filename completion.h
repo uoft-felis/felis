@@ -2,6 +2,7 @@
 #define _COMPLETION_H
 
 #include <atomic>
+#include "log.h"
 
 namespace felis {
 

@@ -255,8 +255,9 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
     set_busy_poll(true);
     trace(TRACE_EXEC_ROUTINE "Initial sleep. Spawning a new coroutine. force = {}", force);
  sleep:
-    if (spawn)
+    if (spawn) {
       sched->WakeUp(new ExecutionRoutine());
+    }
     sched->RunNext(go::Scheduler::SleepState);
 
     spawn = true;

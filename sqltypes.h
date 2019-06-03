@@ -203,7 +203,7 @@ template <unsigned int N, char FillChar = ' '>
 class Char {
  public:
   Char() {
-    memset(&buf[0], FillChar, N);
+    __builtin_memset(&buf[0], FillChar, N);
   }
 
   Char(const char *s) {

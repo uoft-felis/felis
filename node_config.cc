@@ -57,49 +57,30 @@ unsigned long TransportBatchMetadata::Merge(int level, LocalMetadata &local, int
 template <typename T>
 class Flushable {
  protected:
-
-  static constexpr auto kThreadBitmapSize =
-      NodeConfiguration::kMaxNrThreads / 64 + 1;
-
-  static inline void ThreadBitmapInit(uint64_t *bitmap) {
-    memset(bitmap, 0, sizeof(uint64_t) * kThreadBitmapSize);
-  }
-
-  static inline void ThreadBitmapMark(uint64_t *bitmap, int idx) {
-    uint64_t mask = 1 << (idx % 64);
-    bitmap[idx / 64] |= mask;
-  }
-
-  static inline bool ThreadBitmapIsMarked(uint64_t *bitmap, int idx) {
-    uint64_t mask = 1 << (idx % 64);
-    return (bitmap[idx / 64] & mask) != 0;
-  }
-
  private:
   T *self() { return (T *) this; }
 
  public:
 
   void Flush() {
-    uint64_t flushed[kThreadBitmapSize];
+    std::bitset<NodeConfiguration::kMaxNrThreads + 1> flushed;
     bool need_do_flush = false;
-    size_t nr_flushed = 0;
     // Also flush the main go-routine
     auto nr_threads = NodeConfiguration::g_nr_threads + 1;
-    ThreadBitmapInit(flushed);
 
-    while (nr_flushed < nr_threads) {
-      for (int i = 0; i < nr_threads; i++) {
-        if (!ThreadBitmapIsMarked(flushed, i)
-            && self()->TryLock(i)) {
-          auto [start, end] = self()->GetFlushRange(i);
-          self()->UpdateFlushStart(i, end);
+    while (flushed.count() < nr_threads) {
+      int i = 0;
+      for (auto i = 0; i < nr_threads; i++) {
+        if (!flushed[i]) {
+          if (self()->TryLock(i)) {
+            auto [start, end] = self()->GetFlushRange(i);
+            self()->UpdateFlushStart(i, end);
 
-          if (self()->PushRelease(i, start, end)) {
-            need_do_flush = true;
+            if (self()->PushRelease(i, start, end)) {
+              need_do_flush = true;
+            }
+            flushed.set(i);
           }
-          ThreadBitmapMark(flushed, i);
-          nr_flushed++;
         }
       }
     }
@@ -268,11 +249,13 @@ bool TransportImpl::PushRelease(int tid, unsigned int start, unsigned int end)
 {
   FlushOnCore(tid, start, end);
   Unlock(tid);
-  return true;
+  return end > start;
 }
-
-void TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
+pp
+vonid TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
 {
+  if (start == end) return;
+
   auto q = queues[tid];
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
@@ -791,8 +774,8 @@ void NodeConfiguration::FinishPromiseFromQueue(PromiseRoutine *routine)
     auto idx = BatchBufferIndex(level, src_node, dst_node);
     auto target_cnt = total_batch_counters[idx].load();
     auto cnt = transport_meta.Merge(level, meta, dst_node);
-    // printf("cnt %lu, target %lu\n", cnt, target_cnt);
-    if (cnt == target_cnt) {
+    if (cnt == target_cnt && cnt > 0) {
+      printf("cnt %lu, target %lu\n", cnt, target_cnt);
       // Flush channels to this route
       if (dst_node != src_node) {
         GetOutputChannel(dst_node)->Flush();
@@ -870,6 +853,7 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
         if (counter == 0) continue;
 
         if (dst + 1 == node_id()) {
+          trace(TRACE_COMPLETION "Increment {} of pieces", counter);
           EpochClient::g_workload_client->completion_object()->Increment(counter);
         }
       }
