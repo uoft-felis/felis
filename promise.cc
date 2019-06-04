@@ -20,6 +20,7 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   r->capture_len = capture_len;
   r->capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
   r->sched_key = 0;
+  r->affinity = std::numeric_limits<uint64_t>::max();
   r->next = nullptr;
   return r;
 }
@@ -147,13 +148,14 @@ void BasePromise::AssignSchedulingKey(uint64_t key)
   }
 }
 
-void BasePromise::AssignSequence(uint64_t seq)
+void BasePromise::AssignAffinity(uint64_t aff)
 {
   for (int i = 0; i < nr_handlers; i++) {
     auto *child = routine(i);
-    child->seq = seq;
+    if (child->affinity == std::numeric_limits<uint64_t>::max())
+      child->affinity = aff;
     if (child->next)
-      child->next->AssignSequence(seq);
+      child->next->AssignAffinity(aff);
   }
 }
 

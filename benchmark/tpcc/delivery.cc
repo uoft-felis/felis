@@ -146,6 +146,7 @@ void DeliveryTxn::Run()
       }
     }
   }
+  root_promise()->AssignAffinity(NodeConfiguration::g_nr_threads);
 }
 
 } // namespace tpcc

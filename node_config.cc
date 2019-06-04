@@ -218,10 +218,9 @@ void TransportImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
   int tid = go::Scheduler::CurrentThreadPoolId();
   auto q = queues[tid];
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  auto core = (routine->seq - 1) % nr_threads;
   auto pos = q->append_start.load(std::memory_order_acquire);
   q->routines[pos] = {routine, in};
-  if (routine->sched_key != 0 || tid != core + 1) q->need_scan = true;
+  if (routine->sched_key != 0 || tid != routine->affinity + 1) q->need_scan = true;
   q->append_start.store(pos + 1, std::memory_order_release);
 
   if (pos == kBufferSize - 1) {
@@ -251,8 +250,8 @@ bool TransportImpl::PushRelease(int tid, unsigned int start, unsigned int end)
   Unlock(tid);
   return end > start;
 }
-pp
-vonid TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
+
+void TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
 {
   if (start == end) return;
 
@@ -270,8 +269,8 @@ vonid TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
       auto &p = q->routines[j];
       auto [r, _] = p;
       auto core = 0;
-      if (r->sched_key == 0) {
-        core = (r->seq - 1) % nr_threads;
+      if (r->affinity < nr_threads) {
+        core = r->affinity;
       } else {
         core = (delta + j - start) % nr_threads;
       }

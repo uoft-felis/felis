@@ -81,7 +81,6 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
 
     if ((wait_cnt & 0x7FFFFFF) == 0) {
       printf("Deadlock on core %d? %lu (using %p) waiting for %lu\n", core_id, sid, routine, ver);
-      printf("UrgencyCnt is %lu\n", transport.UrgencyCount(core_id));
       util::Impl<PromiseRoutineDispatchService>().PrintInfo();
     }
 

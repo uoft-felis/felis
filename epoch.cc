@@ -144,7 +144,6 @@ void CallTxnsWorker::Run()
     auto txn = client->cur_txns->per_core_txns[t]->txns[i];
     txn->ResetRoot();
     std::invoke(mem_func, txn);
-    txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
     client->conf.CollectBufferPlan(txn->root_promise(), cnt);
   }
 
@@ -163,7 +162,10 @@ void CallTxnsWorker::Run()
 
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
-    txn->root_promise()->AssignSequence(i * nr_threads + t + 1);
+    // Try to assign a default partition scheme if nothing has been
+    // assigned. Because transactions are already round-robinned, there is no
+    // imbalanced here.
+    txn->root_promise()->AssignAffinity(t);
     txn->root_promise()->Complete(VarStr());
   }
 

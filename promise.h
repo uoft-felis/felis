@@ -35,7 +35,7 @@ struct PromiseRoutine {
   uint8_t level;
   uint8_t node_id;
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
-  uint64_t seq; // We use this to hash into which core to run on.
+  uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 
   void (*callback)(PromiseRoutine *, VarStr input);
   void *callback_native_func;
@@ -104,7 +104,7 @@ class BasePromise {
   void Complete(const VarStr &in);
   void Add(PromiseRoutine *child);
   void AssignSchedulingKey(uint64_t key);
-  void AssignSequence(uint64_t seq);
+  void AssignAffinity(uint64_t affinity);
 
   static void *operator new(std::size_t size);
   static void *Alloc(size_t size);
