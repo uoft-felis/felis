@@ -1,13 +1,7 @@
 Build
 -----
 
-If you are using nix, we have a nix `default.nix` for felis. You can simply 
-
-```
-nix-shell
-```
-
-To use the nix environment. Otherwise, if you installed all dependencies from other sources you can skip this step.
+If you on the CSL cluster, you don't need to install any dependencies. Otherwise, you need Clang 8 and Buck.
 
 1. If you have not runned before, you can run the configure script
 

@@ -227,6 +227,7 @@ void InitSlab(size_t memsz)
 {
   auto nr_numa_nodes = ParallelAllocationPolicy::g_nr_cores / kNrCorePerNode;
   g_slabmem = new SlabMemory[nr_numa_nodes];
+  memsz /= nr_numa_nodes;
 
   std::vector<std::thread> tasks;
   for (int n = 0 ; n < nr_numa_nodes; n++) {

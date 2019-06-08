@@ -1,11 +1,13 @@
 #include <unistd.h>
 #include <cstdio>
+#include <string_view>
 
 #include "module.h"
 #include "node_config.h"
 #include "console.h"
 #include "log.h"
 #include "epoch.h"
+#include "opts.h"
 
 void show_usage(const char *progname)
 {
@@ -13,9 +15,8 @@ void show_usage(const char *progname)
   puts("\t-w\tworkload name");
   puts("\t-n\tnode name");
   puts("\t-c\tcontroller IP address");
-  puts("\t-p\tCPU count");
-  puts("\t-s\tCPU core shift offset");
-  puts("\t-m\tturn on data migration mode");
+
+  puts("\nSee opts.h for extented options.");
 
   std::exit(-1);
 }
@@ -49,7 +50,7 @@ int main(int argc, char *argv[])
   std::string workload_name;
   std::string node_name;
 
-  while ((opt = getopt(argc, argv, "w:n:c:p:s:mX:")) != -1) {
+  while ((opt = getopt(argc, argv, "w:n:c:X:")) != -1) {
     switch (opt) {
       case 'w':
         workload_name = std::string(optarg);
@@ -60,20 +61,24 @@ int main(int argc, char *argv[])
       case 'c':
         ParseControllerAddress(std::string(optarg));
         break;
-      case 'p':
-        NodeConfiguration::g_nr_threads = atoi(optarg);
-        break;
-      case 's':
-        NodeConfiguration::g_core_shifting = atoi(optarg);
-        break;
-      case 'm':
-        NodeConfiguration::g_data_migration = true;
+      case 'X':
+        if (!Options::ParseExtentedOptions(std::string(optarg))) {
+          fprintf(stderr, "Ignoring extended argument %s\n", optarg);
+        }
         break;
       default:
         show_usage(argv[0]);
         break;
     }
   }
+
+
+  NodeConfiguration::g_nr_threads = std::stoi(Option::GetOrDefault(Options::kCpu, "4"));
+
+  if (Option::IsPresent(Options::kCoreShifting)) {
+    NodeConfiguration::g_core_shifting = std::stoi(Option::Get(Options::kCoreShifting));
+  }
+  NodeConfiguration::g_data_migration = Option::IsPresent(Options::kDataMigration);
 
   Module<CoreModule>::ShowAllModules();
   Module<WorkloadModule>::ShowAllModules();

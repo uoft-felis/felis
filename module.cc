@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 
 #include "module.h"
+#include "opts.h"
 
 #include "node_config.h"
 #include "epoch.h"
@@ -67,7 +68,8 @@ class AllocatorModule : public Module<CoreModule> {
 
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads,
                                 NodeConfiguration::g_core_shifting);
-    mem::InitSlab(8_G);
+    mem::InitSlab(ParseLargeNumber(Option::GetOrDefault(Options::kMem, "4G")));
+
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
