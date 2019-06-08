@@ -10,6 +10,7 @@
 
 #include "json11/json11.hpp"
 #include "util.h"
+#include "literals.h"
 
 namespace mem {
 
@@ -44,6 +45,11 @@ const std::string kMemAllocTypeLabel[] = {
   "coroutine",
 };
 
+struct PoolStatistics {
+  long long used;
+  long long watermark;
+};
+
 class WeakPool {
  protected:
   friend class ParallelPool;
@@ -55,11 +61,7 @@ class WeakPool {
   size_t capacity;
   MemAllocType alloc_type;
   bool need_unmap;
-
-  struct PoolStatistics {
-    long long used;
-    long long watermark;
-  } stats;
+  PoolStatistics stats;
 
  public:
   WeakPool() : data(nullptr), len(0), head(nullptr), capacity(0), need_unmap(false) {}
@@ -95,19 +97,26 @@ class WeakPool {
   void Free(void *ptr);
 
   size_t total_capacity() const { return capacity; }
-  void *head_ptr() const { return data; }
+  void *data_ptr() const { return data; }
+  bool is_full() const { return head == nullptr; }
+  bool is_empty() const { return stats.used == 0; }
 
   void Register();
 };
 
 // This checks ownership of the pointer
 class BasicPool : public WeakPool {
+  bool suppress_warning = false;
  public:
   using WeakPool::WeakPool;
 
   long CheckPointer(void *ptr);
   void *Alloc();
   void Free(void *ptr);
+
+  void set_suppress_warning(bool suppress_warning) {
+    this->suppress_warning = suppress_warning;
+  }
 };
 
 // Thread-Safe version
@@ -135,55 +144,65 @@ class Pool : public BasicPool {
 
 static_assert(sizeof(BasicPool) <= CACHE_LINE_SIZE);
 
-// Fast Parallel Pool, but need a quiescence
-class ParallelPool {
-  static constexpr int kMaxNrPools = 64;
+void InitTotalNumberOfCores(int nr_cores, int core_shifting = 0);
+
+// Before we implement a region allocator, we need to implement a Slab
+// allocator. Slab allocator is to make memory from different pools shared at
+// the page granularity to reduce memory fragmentation. This is extremely useful
+// for the partitioned skewed workload, where one core allocate all the memory.
+
+void InitSlab(size_t mem);
+
+// SlabPool can take care of chunks <= 512_K or chunks <= 16_M. For chunks larger
+// than 512_K, SlabPool will ask for memory from the large metaslabs. These are
+// 64_M in page size.
+class Slab;
+class SlabPool {
   friend class ParallelRegion;
-  std::array<BasicPool *, kMaxNrPools> pools;
-  std::array<uintptr_t *, kMaxNrPools> free_nodes;
-  size_t chunk_size;
-  size_t total_cap;
+  util::GenericListNode<Slab> empty;
+  util::GenericListNode<Slab> half_full;
   MemAllocType alloc_type;
+  unsigned int numa_node;
+  unsigned int nr_empty;
+  unsigned int nr_buffer;
+  unsigned int chunk_size;
 
-  static thread_local int g_affinity;
+  PoolStatistics stats;
  public:
-  ParallelPool() : total_cap(0) {
-    pools.fill(nullptr);
-    free_nodes.fill(nullptr);
-  }
-  ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
-  ParallelPool(const ParallelPool& rhs) = delete;
-  ParallelPool(ParallelPool &&rhs) {
-    pools = rhs.pools;
-    free_nodes = rhs.free_nodes;
-    chunk_size = rhs.chunk_size;
-    total_cap = rhs.total_cap;
-    alloc_type = rhs.alloc_type;
+  SlabPool(MemAllocType alloc_type, unsigned int chunk_size,
+           unsigned int nr_buffer, int numa_node);
 
-    rhs.total_cap = 0;
-    rhs.pools.fill(nullptr);
-    rhs.free_nodes.fill(nullptr);
-  }
-  ~ParallelPool();
-
-  ParallelPool &operator=(ParallelPool &&rhs) {
-    if (&rhs != this) {
-      this->~ParallelPool();
-      new (this) ParallelPool(std::move(rhs));
-    }
-    return *this;
-  }
-
+  void *Alloc();
+  void Free(void *ptr);
   void Register();
 
-  // You can add a dedicate pool.
-  void AddExtraBasicPool(int core, size_t cap = 0, int node = -1);
+  static constexpr size_t kSlabPageSize = 2_M;
+  static constexpr size_t kLargeSlabPageSize = 64_M;
+  static size_t PageSize(bool large_slab) {
+    return large_slab ? kLargeSlabPageSize : kSlabPageSize;
+  }
 
-  void Prefetch();
-  void *Alloc();
-  void Free(void *ptr, int alloc_core);
-  void Quiescence();
+  static size_t PageSize(size_t chunk_size) {
+    return PageSize(chunk_size >= 512_K);
+  }
 
+  bool is_large_slab() const { return chunk_size >= 512_K; }
+  size_t metaslab_page_size() const { return PageSize(is_large_slab()); }
+
+ private:
+  Slab *RefillSlab();
+  void ReturnSlab();
+};
+
+class ParallelAllocationPolicy {
+ protected:
+  static thread_local int g_affinity;
+ public:
+  static int g_nr_cores;
+  static int g_core_shifting;
+  static std::mutex *g_core_locks;
+
+  static constexpr int kMaxNrPools = 64;
   // Affinity can override the current thread id. However, this has to be
   // exclusive among different cores. That's why we need the maximum number of
   // cores upfront.
@@ -194,18 +213,120 @@ class ParallelPool {
   static int CurrentAffinity();
 };
 
-void InitTotalNumberOfCores(int nr_cores, int core_shifting = 0);
+template <typename PoolType>
+class ParallelAllocator : public ParallelAllocationPolicy {
+ protected:
+  std::array<PoolType *, kMaxNrPools> pools;
+  std::array<uintptr_t *, kMaxNrPools> free_nodes;
+  size_t chunk_size;
+  size_t total_cap;
+  MemAllocType alloc_type;
+ public:
+  ParallelAllocator() : total_cap(0) {
+    pools.fill(nullptr);
+    free_nodes.fill(nullptr);
+  }
+  ParallelAllocator(const ParallelAllocator<PoolType>& rhs) = delete;
+  ParallelAllocator(ParallelAllocator<PoolType> &&rhs) {
+    pools = rhs.pools;
+    free_nodes = rhs.free_nodes;
+    chunk_size = rhs.chunk_size;
+    total_cap = rhs.total_cap;
+    alloc_type = rhs.alloc_type;
 
-// In the future, we might also need a Plain Region that makes up of Pools
-// instead of ParallelPools?
+    rhs.total_cap = 0;
+    rhs.pools.fill(nullptr);
+    rhs.free_nodes.fill(nullptr);
+  }
+
+  size_t capacity() const { return total_cap; }
+  PoolType *get_pool(int idx) const { return pools[idx]; }
+
+  void Register() {
+    for (auto i = 0; i < g_nr_cores; i++) pools[i]->Register();
+  }
+  void *Alloc() {
+    auto cur = CurrentAffinity();
+    return pools[cur]->Alloc();
+  }
+  void Free(void *ptr, int alloc_core) {
+    auto cur = CurrentAffinity();
+    if (alloc_core < 0 || alloc_core >= kMaxNrPools) {
+      fprintf(stderr, "alloc_core error, is %d\n", alloc_core);
+      std::abort();
+    }
+    // Trying to free to an extra pool. Then you must be on that core to free to
+    // this pool!
+    if (alloc_core >= g_nr_cores && cur != alloc_core) {
+      fprintf(stderr, "alloc_core is not current core, is %d\n", alloc_core);
+      std::abort();
+    }
+    if (cur == alloc_core) {
+      pools[cur]->Free(ptr);
+    } else {
+      *(uintptr_t *) ptr = free_nodes[cur][alloc_core];
+      free_nodes[cur][alloc_core] = (uintptr_t)ptr;
+    }
+  }
+  void Quiescence() {
+    auto cur = CurrentAffinity();
+    auto pool = pools[cur];
+    if (!pool) return;
+
+    for (int i = 0; i < g_nr_cores; i++) {
+      uintptr_t head = free_nodes[i][cur];
+      while (head) {
+        uintptr_t *ptr = (uintptr_t *) head;
+        head = *ptr;
+        pool->Free(ptr);
+      }
+      free_nodes[i][cur] = 0;
+    }
+  }
+};
+
+class ParallelPool : public ParallelAllocator<BasicPool> {
+ public:
+  ParallelPool() : ParallelAllocator() {}
+  ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap);
+  ~ParallelPool();
+  ParallelPool(ParallelPool &&rhs) : ParallelAllocator(std::move(rhs)) {}
+
+  ParallelPool &operator=(ParallelPool &&rhs) {
+    if (&rhs != this) {
+      this->~ParallelPool();
+      new (this) ParallelPool(std::move(rhs));
+    }
+    return *this;
+  }
+
+  // You can add a dedicate pool.
+  void AddExtraBasicPool(int core, size_t cap = 0, int node = -1);
+};
+
+class ParallelSlabPool : public ParallelAllocator<SlabPool> {
+ public:
+  ParallelSlabPool() : ParallelAllocator() {}
+  ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, unsigned int buffer);
+  ~ParallelSlabPool();
+  ParallelSlabPool(ParallelSlabPool &&rhs) : ParallelAllocator(std::move(rhs)) {}
+
+  ParallelSlabPool &operator=(ParallelSlabPool &&rhs) {
+    if (&rhs != this) {
+      this->~ParallelSlabPool();
+      new (this) ParallelSlabPool(std::move(rhs));
+    }
+    return *this;
+  }
+};
+
 class ParallelRegion {
   static const int kMaxPools = 20;
   // static const int kMaxPools = 12;
-  ParallelPool pools[32];
+  ParallelSlabPool pools[32];
   size_t proposed_caps[32];
  public:
   ParallelRegion();
-
   ParallelRegion(const ParallelRegion &) = delete;
 
   static int SizeToClass(size_t sz) {

@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
   std::string workload_name;
   std::string node_name;
 
-  while ((opt = getopt(argc, argv, "w:n:c:p:s:m")) != -1) {
+  while ((opt = getopt(argc, argv, "w:n:c:p:s:mX:")) != -1) {
     switch (opt) {
       case 'w':
         workload_name = std::string(optarg);

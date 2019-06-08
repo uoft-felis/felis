@@ -52,7 +52,7 @@ class RowEntity final {
   }
 
   static void InitPool();
-  static mem::ParallelPool pool;
+  static mem::ParallelSlabPool pool;
   static void Quiescence() { pool.Quiescence(); };
 };
 

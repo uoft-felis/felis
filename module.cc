@@ -67,6 +67,7 @@ class AllocatorModule : public Module<CoreModule> {
 
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads,
                                 NodeConfiguration::g_core_shifting);
+    mem::InitSlab(8_G);
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });

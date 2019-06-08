@@ -204,11 +204,11 @@ void *SortedArrayVHandle::operator new(size_t nr_bytes)
   return pool.Alloc();
 }
 
-mem::ParallelPool BaseVHandle::pool;
+mem::ParallelSlabPool BaseVHandle::pool;
 
 void BaseVHandle::InitPool()
 {
-  pool = mem::ParallelPool(mem::VhandlePool, 64, 50_M);
+  pool = mem::ParallelSlabPool(mem::VhandlePool, 64, 4);
   pool.Register();
 }
 

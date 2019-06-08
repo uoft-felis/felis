@@ -60,11 +60,11 @@ RowEntity::RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id)
     handle_ptr->row_entity.reset(this);
 }
 
-mem::ParallelPool RowEntity::pool;
+mem::ParallelSlabPool RowEntity::pool;
 
 void RowEntity::InitPool()
 {
-  pool = mem::ParallelPool(mem::EntityPool, sizeof(RowEntity), 50_M);
+  pool = mem::ParallelSlabPool(mem::EntityPool, sizeof(RowEntity), 4);
   pool.Register();
 }
 

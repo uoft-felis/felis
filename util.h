@@ -157,6 +157,10 @@ struct GenericListNode {
     prev = next = nullptr; // detached
   }
 
+  bool is_detached() {
+    return prev == next && next == nullptr;
+  }
+
   void Initialize() {
     prev = next = this;
   }

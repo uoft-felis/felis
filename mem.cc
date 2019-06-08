@@ -15,12 +15,13 @@
 #include "log.h"
 #include "util.h"
 #include "gopp/gopp.h"
+#include "literals.h"
 
 namespace mem {
 
-static std::atomic_long g_mem_tracker[NumMemTypes];
-static std::mutex g_all_pools_lock;
-static std::vector<WeakPool *> g_all_pools;
+static std::atomic_llong g_mem_tracker[NumMemTypes];
+static std::mutex g_ps_lock;
+static std::vector<std::tuple<MemAllocType, PoolStatistics *>> g_ps;
 
 WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap,
                    int numa_node)
@@ -58,8 +59,8 @@ WeakPool::~WeakPool()
 
 void WeakPool::Register()
 {
-  std::lock_guard _(g_all_pools_lock);
-  g_all_pools.push_back(this);
+  std::lock_guard _(g_ps_lock);
+  g_ps.emplace_back(alloc_type, &stats);
 }
 
 void *WeakPool::Alloc()
@@ -68,8 +69,6 @@ void *WeakPool::Alloc()
 
   r = head;
   if (r == nullptr) {
-    fprintf(stderr, "%s memory pool is full, returning nullptr\n",
-            kMemAllocTypeLabel[alloc_type].c_str());
     return r;
   }
 
@@ -93,18 +92,20 @@ void WeakPool::Free(void *ptr)
 long BasicPool::CheckPointer(void *ptr)
 {
   if (ptr == nullptr) {
-    fprintf(stderr, "pointer ptr is nullptr\n");
+    if (!suppress_warning) fprintf(stderr, "pointer ptr is nullptr\n");
     return -1;
   }
   if (ptr < data || ptr >= (uint8_t *) data + len) {
-    fprintf(stderr, "%p is out of bounds %p - %p\n",
-            ptr, data, (uint8_t *) data + len);
-   std::abort();
+    if (!suppress_warning)
+      fprintf(stderr, "%p is out of bounds %p - %p\n",
+              ptr, data, (uint8_t *) data + len);
+    std::abort();
   }
   auto r = std::div((uint8_t *) ptr - (uint8_t *) data, (long long) len / capacity);
   if (r.rem != 0) {
-    fprintf(stderr, "%p is not aligned. %p with chunk_size %lu\n",
-            ptr, data, len / capacity);
+    if (!suppress_warning)
+      fprintf(stderr, "%p is not aligned. %p with chunk_size %lu\n",
+              ptr, data, len / capacity);
     std::abort();
   }
   return r.quot;
@@ -113,6 +114,9 @@ long BasicPool::CheckPointer(void *ptr)
 void *BasicPool::Alloc()
 {
   void *ptr = WeakPool::Alloc();
+  if (!suppress_warning && ptr == nullptr)
+    fprintf(stderr, "%s memory pool is full, returning nullptr\n",
+            kMemAllocTypeLabel[alloc_type].c_str());
   CheckPointer(ptr);
   return ptr;
 }
@@ -123,32 +127,329 @@ void BasicPool::Free(void *ptr)
   WeakPool::Free(ptr);
 }
 
-thread_local int ParallelPool::g_affinity = -1;
+thread_local int ParallelAllocationPolicy::g_affinity = -1;
 
-static int g_nr_cores = 0;
-static int g_cores_per_node = 8;
-static int g_core_shifting = 0;
+int ParallelAllocationPolicy::g_nr_cores = 0;
+int ParallelAllocationPolicy::g_core_shifting = 0;
+std::mutex * ParallelAllocationPolicy::g_core_locks;
+
+void InitTotalNumberOfCores(int nr_cores, int core_shifting)
+{
+  ParallelAllocationPolicy::g_nr_cores = nr_cores;
+  ParallelAllocationPolicy::g_core_shifting = core_shifting;
+  ParallelAllocationPolicy::g_core_locks = new std::mutex[nr_cores];
+}
+
+void ParallelAllocationPolicy::SetCurrentAffinity(int aff)
+{
+  if (g_affinity != -1) {
+    g_core_locks[g_affinity].unlock();
+  }
+  if (aff >= g_nr_cores || aff < -1) {
+    std::abort();
+  }
+  if (aff != -1) {
+    g_core_locks[aff].lock();
+  }
+  g_affinity = aff;
+}
+
+int ParallelAllocationPolicy::CurrentAffinity()
+{
+  auto aff = g_affinity == -1 ? go::Scheduler::CurrentThreadPoolId() - 1 : g_affinity;
+  if (aff < 0 || aff >= kMaxNrPools) {
+    std::abort();
+  }
+  return aff;
+}
+
+class Slab : public util::GenericListNode<Slab> {
+  friend class SlabPool;
+  BasicPool pool;
+
+  Slab(util::GenericListNode<Slab> *qhead, MemAllocType alloc_type, size_t chunk_size, void *p) {
+    InsertAfter(qhead);
+    pool = BasicPool(alloc_type, chunk_size, SlabPool::PageSize(chunk_size) / chunk_size, p);
+  }
+};
+
+class MetaSlab : public util::GenericListNode<MetaSlab> {
+  friend class SlabPool;
+  friend class SlabMemory;
+  bool large_slab = false;
+  uint32_t alloc_bitmap;
+  uint8_t *ptr;
+  uint8_t slabs[32 * sizeof(Slab)];
+
+  MetaSlab(uint8_t *ptr) : ptr(ptr), alloc_bitmap(0) {}
+
+  void *AllocSlab();
+  void FreeSlab(void *ptr);
+};
+
+static_assert(SlabPool::kLargeSlabPageSize / SlabPool::kSlabPageSize == 32);
+
+struct SlabMemory {
+  Pool pool;
+  uint8_t *p;
+  uint64_t data_offset;
+  uint64_t data_len;
+  uint64_t page_size;
+  util::SpinLock half_full_lock;
+  util::GenericListNode<MetaSlab> half_full;
+
+  bool Contains(void *ptr) {
+    return ptr > p && ptr < p + data_len;
+  }
+
+  MetaSlab *GetMetaSlab(void *slab) {
+    auto idx = ((uint8_t *) slab - p) / sizeof(MetaSlab);
+    return ((MetaSlab *) p) + idx;
+  }
+
+  Slab *GetSlab(void *ptr, bool large_slab) {
+    auto d = std::lldiv(((uint8_t *) ptr - p) - data_offset, SlabPool::kLargeSlabPageSize);
+    auto idx = d.quot;
+    auto slab_idx = large_slab ? 0 : d.rem / SlabPool::kSlabPageSize;
+    return ((Slab *) ((MetaSlab *) p + idx)->slabs) + slab_idx;
+  }
+
+  MetaSlab *NewMetaSlab();
+  void DestroyMetaSlab(MetaSlab *);
+
+  void *AllocSlab(bool large_slab, void *&data_ptr);
+  void FreeSlab(void *ptr);
+};
+
+static SlabMemory *g_slabmem;
+
+void InitSlab(size_t memsz)
+{
+  auto nr_numa_nodes = ParallelAllocationPolicy::g_nr_cores / kNrCorePerNode;
+  g_slabmem = new SlabMemory[nr_numa_nodes];
+
+  std::vector<std::thread> tasks;
+  for (int n = 0 ; n < nr_numa_nodes; n++) {
+    tasks.emplace_back(
+        [memsz, n]() {
+          auto &m = g_slabmem[n];
+          m.p = (uint8_t *) MemMapAlloc(mem::GenericMemory, memsz, n);
+          auto nr_metaslabs = ((memsz - 1) / SlabPool::kLargeSlabPageSize + 1);
+          m.data_offset = util::Align(nr_metaslabs * sizeof(MetaSlab), SlabPool::kLargeSlabPageSize);
+          m.data_len = memsz;
+
+          nr_metaslabs -= m.data_offset / SlabPool::kLargeSlabPageSize;
+          m.pool = Pool(mem::GenericMemory, sizeof(MetaSlab), nr_metaslabs, m.p);
+          m.pool.set_suppress_warning(true);
+          m.half_full.Initialize();
+
+          printf("Initialized %lu metaslabs on numa node %d, memsz = %lu bytes\n",
+                 nr_metaslabs, n, memsz);
+        });
+  }
+
+  for (auto &t: tasks)
+    t.join();
+}
+
+static SlabMemory *FindSlabMemory(void *ptr, int default_numa_node)
+{
+  auto n = default_numa_node;
+  if (g_slabmem[n].Contains(ptr)) {
+    return &g_slabmem[n];
+  }
+  int nr_numa_node = ParallelAllocationPolicy::g_nr_cores / kNrCorePerNode;
+  for (n = 0; n < nr_numa_node; n++) {
+    if (g_slabmem[n].Contains(ptr))
+      return &g_slabmem[n];
+  }
+  fprintf(stderr, "Cannot find slab memory for ptr 0x%p\n", ptr);
+  return nullptr;
+}
+
+MetaSlab *SlabMemory::NewMetaSlab()
+{
+  auto mp = (uint8_t *) pool.Alloc();
+  if (mp == nullptr)
+    return nullptr;
+  auto idx = (mp - p) / sizeof(MetaSlab);
+  printf("new metaslab idx %lu\n", idx);
+  return new (mp) MetaSlab(p + data_offset + idx * SlabPool::kLargeSlabPageSize);
+}
+
+void SlabMemory::DestroyMetaSlab(MetaSlab *metaslab)
+{
+  metaslab->~MetaSlab();
+  pool.Free(metaslab);
+}
+
+void *SlabMemory::AllocSlab(bool large_slab, void *&data_ptr)
+{
+  MetaSlab *metaslab;
+  if (large_slab) {
+    metaslab = NewMetaSlab();
+    if (metaslab == nullptr) return nullptr;
+    metaslab->large_slab = true;
+    data_ptr = metaslab->ptr;
+    return metaslab->slabs;
+  }
+
+  util::Guard<util::SpinLock> _(half_full_lock);
+  if (half_full.empty()) {
+    metaslab = NewMetaSlab();
+    if (metaslab == nullptr) return nullptr;
+    metaslab->InsertAfter(&half_full);
+  }
+  metaslab = half_full.next->object();
+  auto idx = __builtin_ctz(~metaslab->alloc_bitmap);
+  metaslab->alloc_bitmap |= uint32_t(1) << idx;
+  if (~metaslab->alloc_bitmap == 0) {
+    metaslab->Remove(); // Remove from the half-full
+  }
+  data_ptr = metaslab->ptr + idx * SlabPool::kSlabPageSize;
+  return metaslab->slabs + idx * sizeof(Slab);
+}
+
+void SlabMemory::FreeSlab(void *slab)
+{
+  auto metaslab = GetMetaSlab(slab);
+  if (!metaslab->large_slab) {
+    util::Guard<util::SpinLock> _(half_full_lock);
+
+    auto slab_idx = ((uint8_t *) slab - metaslab->slabs) / sizeof(Slab);
+    if (~metaslab->alloc_bitmap == 0)
+      metaslab->InsertAfter(&half_full);
+    metaslab->alloc_bitmap &= ~(uint32_t(1) << slab_idx);
+    if (metaslab->alloc_bitmap != 0)
+      return;
+    metaslab->Remove(); // Remove from the half-full
+  }
+  DestroyMetaSlab(metaslab);
+}
+
+SlabPool::SlabPool(MemAllocType alloc_type, unsigned int chunk_size,
+                   unsigned int nr_buffer, int numa_node)
+    : alloc_type(alloc_type), numa_node(numa_node), chunk_size(chunk_size),
+      nr_empty(0), nr_buffer(nr_buffer)
+{
+  stats.used = stats.watermark = 0;
+  empty.Initialize();
+  half_full.Initialize();
+  while (nr_empty < nr_buffer) {
+    RefillSlab();
+  }
+}
+
+void SlabPool::Register()
+{
+  std::lock_guard _(g_ps_lock);
+  g_ps.emplace_back(alloc_type, &stats);
+}
+
+Slab *SlabPool::RefillSlab()
+{
+  auto n = numa_node;
+  void *p = nullptr;
+  auto s = g_slabmem[n].AllocSlab(is_large_slab(), p);
+
+  int nr_numa_node = ParallelAllocationPolicy::g_nr_cores / kNrCorePerNode;
+  if (s != nullptr)
+    goto found;
+
+  for (n = 0; n < nr_numa_node; n++) {
+    s = g_slabmem[n].AllocSlab(is_large_slab(), p);
+    if (s != nullptr)
+      goto found;
+  }
+
+  fprintf(stderr, "Cannot find any memory from global slabs! chunk_size %u\n", chunk_size);
+  std::abort();
+found:
+  g_mem_tracker[alloc_type].fetch_add(metaslab_page_size());
+
+  nr_empty++;
+  return new (s) Slab(&empty, alloc_type, chunk_size, p);
+}
+
+void SlabPool::ReturnSlab()
+{
+  auto slab = empty.prev->object();
+  slab->Remove();
+
+  auto m = FindSlabMemory(slab, numa_node);
+  slab->~Slab();
+  m->FreeSlab(slab);
+  nr_empty--;
+
+  g_mem_tracker[alloc_type].fetch_sub(metaslab_page_size());
+}
+
+void *SlabPool::Alloc()
+{
+  if (chunk_size == 0) return nullptr;
+  stats.used += chunk_size;
+  stats.watermark = std::max(stats.used, stats.watermark);
+
+  if (!half_full.empty()) {
+    auto slab = half_full.next->object();
+    void *o = slab->pool.Alloc();
+    if (slab->pool.is_full()) {
+      slab->Remove();
+    }
+    return o;
+  } else {
+    auto slab = empty.empty()
+                ? RefillSlab() : empty.next->object();
+    void *o = slab->pool.Alloc();
+    slab->Remove();
+    slab->InsertAfter(&half_full);
+    nr_empty--;
+    return o;
+  }
+}
+
+void SlabPool::Free(void *ptr)
+{
+  stats.used -= chunk_size;
+
+  auto m = FindSlabMemory(ptr, numa_node);
+  auto slab = m->GetSlab(ptr, is_large_slab());
+  slab->pool.Free(ptr);
+  if (slab->is_detached()) {
+    slab->InsertAfter(&half_full);
+  }
+  if (slab->pool.is_empty()) {
+    slab->Remove();
+    slab->InsertAfter(&empty);
+    nr_empty++;
+  }
+
+  if (nr_empty > nr_buffer)
+    ReturnSlab();
+}
 
 ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t total_cap)
-    : chunk_size(chunk_size), total_cap(total_cap), alloc_type(alloc_type)
 {
+  this->chunk_size = chunk_size;
+  this->total_cap = total_cap;
+  this->alloc_type = alloc_type;
   std::vector<std::thread> tasks;
   auto cap = 1 + (total_cap - 1) / g_nr_cores;
-  for (int node = g_core_shifting / g_cores_per_node;
-       node < (g_core_shifting + g_nr_cores) / g_cores_per_node;
+  for (int node = g_core_shifting / kNrCorePerNode;
+       node < (g_core_shifting + g_nr_cores) / kNrCorePerNode;
        node++) {
     tasks.emplace_back(
         [alloc_type, chunk_size, cap, this, node]() {
-          constexpr auto header_size = CACHE_LINE_SIZE + kMaxNrPools * sizeof(uintptr_t);
+          constexpr auto kHeaderSize = CACHE_LINE_SIZE + kMaxNrPools * sizeof(uintptr_t);
 
           fprintf(stderr, "allocating %lu on node %d\n",
-                  (header_size + chunk_size * cap) * g_cores_per_node, node);
+                  (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
           auto mem = (uint8_t *) MemMapAlloc(
-              alloc_type, (header_size + chunk_size * cap) * g_cores_per_node, node);
-          int offset = node * g_cores_per_node - g_core_shifting;
-          for (int i = offset; i < offset + g_cores_per_node; i++) {
-            auto pool_ptr = mem + (i - offset) * (header_size + chunk_size * cap);
-            auto pool_mem = pool_ptr + header_size;
+              alloc_type, (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
+          int offset = node * kNrCorePerNode - g_core_shifting;
+          for (int i = offset; i < offset + kNrCorePerNode; i++) {
+            auto pool_ptr = mem + (i - offset) * (kHeaderSize + chunk_size * cap);
+            auto pool_mem = pool_ptr + kHeaderSize;
 
             pools[i] = new (pool_ptr) BasicPool(
                 alloc_type, chunk_size, cap,
@@ -170,96 +471,36 @@ ParallelPool::~ParallelPool()
   // TODO: unmap() and delete stuff
 }
 
-void ParallelPool::Prefetch()
-{
-  __builtin_prefetch(pools[CurrentAffinity()]->head);
-}
-
 void ParallelPool::AddExtraBasicPool(int core, size_t cap, int node)
 {
   if (cap == 0) cap = total_cap / g_nr_cores;
   pools[core] = new BasicPool(alloc_type, chunk_size, cap, node);
 }
 
-void *ParallelPool::Alloc()
+ParallelSlabPool::ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, unsigned int buffer)
 {
-  auto cur = CurrentAffinity();
-  return pools[cur]->Alloc();
-}
+  this->alloc_type = alloc_type;
+  this->chunk_size = chunk_size;
+  this->total_cap = buffer * ParallelAllocationPolicy::g_nr_cores;
 
-void ParallelPool::Free(void *ptr, int alloc_core)
-{
-  auto cur = CurrentAffinity();
-  if (alloc_core < 0 || alloc_core >= kMaxNrPools) {
-    fprintf(stderr, "alloc_core error, is %d\n", alloc_core);
-    std::abort();
-  }
-  // Trying to free to an extra pool. Then you must be on that core to free to
-  // this pool!
-  if (alloc_core >= g_nr_cores && cur != alloc_core) {
-    fprintf(stderr, "alloc_core is not current core, is %d\n", alloc_core);
-    std::abort();
-  }
-  if (cur == alloc_core) {
-    pools[cur]->Free(ptr);
-  } else {
-    *(uintptr_t *)ptr = free_nodes[cur][alloc_core];
-    free_nodes[cur][alloc_core] = (uintptr_t)ptr;
-  }
-}
-
-void ParallelPool::Quiescence()
-{
-  auto cur = CurrentAffinity();
-  auto pool = pools[cur];
-  if (!pool) return;
-
-  for (int i = 0; i < g_nr_cores; i++) {
-    uintptr_t head = free_nodes[i][cur];
-    while (head) {
-      uintptr_t *ptr = (uintptr_t *) head;
-      head = *ptr;
-      pool->Free(ptr);
+  uint8_t *mem = nullptr;
+  for (int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+    constexpr auto kHeaderSize = sizeof(SlabPool) + kMaxNrPools * sizeof(uintptr_t);
+    auto d = std::div(i + g_core_shifting, kNrCorePerNode);
+    auto numa_node = d.quot;
+    auto numa_offset = d.rem;
+    if (numa_offset == 0) {
+      mem = (uint8_t *) MemMapAlloc(alloc_type, kHeaderSize * kNrCorePerNode);
     }
-    free_nodes[i][cur] = 0;
+    pools[i] = new (mem + numa_offset * kHeaderSize)
+               SlabPool(alloc_type, chunk_size, buffer, numa_node);
+    free_nodes[i] = (uintptr_t *) (mem + numa_offset * kHeaderSize + sizeof(SlabPool));
   }
 }
 
-void ParallelPool::Register()
+ParallelSlabPool::~ParallelSlabPool()
 {
-  for (auto i = 0; i < g_nr_cores; i++) pools[i]->Register();
-}
-
-static std::mutex *g_core_locks;
-
-void InitTotalNumberOfCores(int nr_cores, int core_shifting)
-{
-  g_nr_cores = nr_cores;
-  g_core_shifting = core_shifting;
-  g_core_locks = new std::mutex[nr_cores];
-}
-
-void ParallelPool::SetCurrentAffinity(int aff)
-{
-  if (g_affinity != -1) {
-    g_core_locks[g_affinity].unlock();
-  }
-  if (aff >= g_nr_cores || aff < -1) {
-    std::abort();
-  }
-  if (aff != -1) {
-    g_core_locks[aff].lock();
-  }
-  g_affinity = aff;
-}
-
-int ParallelPool::CurrentAffinity()
-{
-  auto aff = g_affinity == -1 ? go::Scheduler::CurrentThreadPoolId() - 1 : g_affinity;
-  if (aff < 0 || aff >= kMaxNrPools) {
-    std::abort();
-  }
-  return aff;
+  // TODO: unmap the pools buffer.
 }
 
 ParallelRegion::ParallelRegion()
@@ -282,7 +523,6 @@ void *ParallelRegion::Alloc(size_t sz)
   auto &p = pools[SizeToClass(sz)];
   void *r = nullptr;
 
-  if (p.total_cap == 0) goto error;
   r = p.Alloc();
   if (r == nullptr) goto error;
   return r;
@@ -309,18 +549,18 @@ void ParallelRegion::InitPools()
 {
   std::vector<std::thread> tasks;
   for (int i = 0; i < kMaxPools; i++) {
-    if (proposed_caps[i] == 0) continue;
-
     tasks.emplace_back(
         [this, i] {
-          pools[i] = ParallelPool(mem::RegionPool, 1 << (i + 5), proposed_caps[i]);
+          size_t chunk_size = 1ULL << (i + 5);
+          size_t nr_buffer = proposed_caps[i] * chunk_size / SlabPool::PageSize(chunk_size);
+          printf("chunk_size %lu nr_buffer %lu\n", chunk_size, nr_buffer);
+          pools[i] = ParallelSlabPool(mem::RegionPool, chunk_size, nr_buffer);
         });
   }
   for (auto &th: tasks) {
     th.join();
   }
   for (int i = 0; i < kMaxPools; i++) {
-    if (proposed_caps[i] == 0) continue;
     pools[i].Register();
   }
 }
@@ -338,12 +578,12 @@ void ParallelRegion::PrintUsageEachClass()
     if (proposed_caps[i] == 0) continue;
     auto &pool = pools[i];
     size_t used = 0;
-    for (int j = 0; j < g_nr_cores; j++) {
-      used += pool.pools[j]->stats.used;
+    for (int j = 0; j < ParallelAllocationPolicy::g_nr_cores; j++) {
+      used += pool.get_pool(j)->stats.used;
     }
     auto chk_size = 32UL << i;
     printf("RegionInfo: class %d size %lu mem %lu/%lu\n", i, chk_size, used,
-           chk_size * pool.total_cap);
+           chk_size * pool.capacity());
   }
 }
 
@@ -394,35 +634,35 @@ std::string MemTypeToString(MemAllocType alloc_type) {
 }
 
 void PrintMemStats() {
-  logger->info("General memory statistics:");
+  puts("General memory statistics:");
   for (int i = 0; i < EpochQueuePool; i++) {
     auto bucket = static_cast<MemAllocType>(i);
     auto size = g_mem_tracker[i].load();
-    logger->info("   {}: {} MB", MemTypeToString(bucket), size / 1024 / 1024);
+    printf("   %s: %llu MB\n", MemTypeToString(bucket).c_str(), size / 1024 / 1024);
   }
 
-  logger->info("Pool usage statistics:");
+  puts("Pool usage statistics:");
 
   auto N = static_cast<int>(NumMemTypes);
-  WeakPool::PoolStatistics stats[N];
-  memset(stats, 0, sizeof(WeakPool::PoolStatistics) * N);
+  PoolStatistics stats[N];
+  memset(stats, 0, sizeof(PoolStatistics) * N);
 
   {
-    std::lock_guard _(g_all_pools_lock);
-    for (auto p: g_all_pools) {
-      auto i = static_cast<int>(p->alloc_type);
-      if (i >= N || i < 0) {
+    std::lock_guard _(g_ps_lock);
+    for (auto ps: g_ps) {
+      auto i = static_cast<int>(std::get<0>(ps));
+      if (i >= N || i < EpochQueuePool) {
         fprintf(stderr, "Invalid alloc type %d\n", i);
         std::abort();
       }
-      stats[i].used += p->stats.used;
-      stats[i].watermark += p->stats.watermark;
+      stats[i].used += std::get<1>(ps)->used;
+      stats[i].watermark += std::get<1>(ps)->watermark;
     }
   }
 
   for (int i = EpochQueuePool; i < NumMemTypes; i++) {
     auto bucket = static_cast<MemAllocType>(i);
-    logger->info("    {}: {}/{} MB used (max {} MB)", MemTypeToString(bucket),
+    printf("    %s: %llu/%llu MB used (max %llu MB)\n", MemTypeToString(bucket).c_str(),
                  stats[i].used / 1024 / 1024, g_mem_tracker[bucket].load() / 1024 / 1024,
                  stats[i].watermark / 1024 / 1024);
   }
@@ -445,7 +685,9 @@ void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node)
   unsigned long nodemask = 0;
 
   if (numa_node == -1) {
-    for (auto n = g_core_shifting / kNrCorePerNode; n < g_nr_cores / kNrCorePerNode; n++)
+    for (auto n = ParallelAllocationPolicy::g_core_shifting / kNrCorePerNode;
+         n < ParallelAllocationPolicy::g_nr_cores / kNrCorePerNode;
+         n++)
       nodemask |= 1 << n;
   } else {
     nodemask = 1 << numa_node;

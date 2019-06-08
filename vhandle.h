@@ -25,7 +25,7 @@ class VHandleSyncService {
 
 class BaseVHandle {
  public:
-  static mem::ParallelPool pool;
+  static mem::ParallelSlabPool pool;
   static void InitPool();
   static void Quiescence() { pool.Quiescence(); }
  public:
