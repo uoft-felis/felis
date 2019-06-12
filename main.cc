@@ -73,12 +73,12 @@ int main(int argc, char *argv[])
   }
 
 
-  NodeConfiguration::g_nr_threads = std::stoi(Option::GetOrDefault(Options::kCpu, "4"));
+  NodeConfiguration::g_nr_threads = Options::kCpu.ToInt("4");
 
-  if (Option::IsPresent(Options::kCoreShifting)) {
-    NodeConfiguration::g_core_shifting = std::stoi(Option::Get(Options::kCoreShifting));
+  if (Options::kCoreShifting) {
+    NodeConfiguration::g_core_shifting = Options::kCoreShifting.ToInt();
   }
-  NodeConfiguration::g_data_migration = Option::IsPresent(Options::kDataMigration);
+  NodeConfiguration::g_data_migration = Options::kDataMigration;
 
   Module<CoreModule>::ShowAllModules();
   Module<WorkloadModule>::ShowAllModules();

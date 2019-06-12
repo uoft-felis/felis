@@ -11,6 +11,8 @@
 
 namespace felis {
 
+bool VHandleSyncService::g_lock_elision = false;
+
 VHandleSyncService &BaseVHandle::sync()
 {
   return util::Impl<VHandleSyncService>();
@@ -54,7 +56,7 @@ void SortedArrayVHandle::EnsureSpace()
 void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
   util::MCSSpinLock::QNode qnode;
-  lock.Lock(&qnode);
+  if (likely(!VHandleSyncService::g_lock_elision)) lock.Lock(&qnode);
   // gc_rule((VHandle *) this, sid, epoch_nr);
 
   // append this version at the end of version array
@@ -79,7 +81,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 
   util::Instance<GC>().AddVHandle((VHandle *) this);
 
-  lock.Unlock(&qnode);
+  if (likely(!VHandleSyncService::g_lock_elision)) lock.Unlock(&qnode);
 }
 
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)

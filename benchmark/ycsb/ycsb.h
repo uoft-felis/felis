@@ -26,9 +26,10 @@ class Client : public felis::EpochClient {
   // Zipfian random generator
   RandRng rand;
 
-  static constexpr double kTheta = 0.00;
  public:
-  static constexpr size_t kTableSize = 400;
+  static double g_theta;
+  static size_t g_table_size;
+  static bool g_enable_partition;
 
   Client() noexcept;
   unsigned int LoadPercentage() final override { return 100; }

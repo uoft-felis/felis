@@ -68,9 +68,17 @@ class AllocatorModule : public Module<CoreModule> {
 
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads,
                                 NodeConfiguration::g_core_shifting);
-    mem::InitSlab(ParseLargeNumber(Option::GetOrDefault(Options::kMem, "4G")));
+    mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
 
+    // Legacy
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
+
+    if (Options::kEpochQueueLength)
+      EpochExecutionDispatchService::g_max_item = Options::kEpochQueueLength.ToLargeNumber();
+
+    if (Options::kVHandleLockElision)
+      VHandleSyncService::g_lock_elision = true;
+
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     tasks.emplace_back(VHandle::InitPool);

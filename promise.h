@@ -237,10 +237,13 @@ class Promise : public BasePromise {
   // Static promise routine func should return a std::optional<T>. If the func
   // returns nothing, then it should return std::optional<VoidValue>.
   template <typename Func, typename Closure>
-  Promise<typename Next<Func, Closure>::Type> *Then(const Closure &capture, int placement, Func func) {
+  Promise<typename Next<Func, Closure>::Type> *Then(
+      const Closure &capture, int placement, Func func,
+      uint64_t affinity = std::numeric_limits<uint64_t>::max()) {
     auto routine = AttachRoutine(capture, func);
     routine->node_id = placement;
     routine->level = 0;
+    routine->affinity = affinity;
     auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
     routine->next = next_promise;
     return next_promise;

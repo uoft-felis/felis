@@ -1,5 +1,7 @@
 #include <sys/mman.h>
 #include <algorithm>
+#include <map>
+#include <fstream>
 
 #include "epoch.h"
 #include "txn.h"
@@ -7,8 +9,11 @@
 #include "vhandle.h"
 #include "mem.h"
 #include "gc.h"
+#include "opts.h"
 
 #include "literals.h"
+
+#include "json11/json11.hpp"
 
 namespace felis {
 
@@ -251,20 +256,32 @@ void EpochClient::OnExecuteComplete()
   if (util::Instance<EpochManager>().current_epoch_nr() + 1 < kMaxEpoch) {
     InitializeEpoch();
   } else {
+    // End of the experiment.
     perf.Show("All epochs done in");
-    logger->info("Throughput {} txn/s",
-                 NumberOfTxns() * 1000 * (kMaxEpoch - 1) / perf.duration_ms());
+    auto thr = NumberOfTxns() * 1000 * (kMaxEpoch - 1) / perf.duration_ms();
+    logger->info("Throughput {} txn/s", thr);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
+
+    if (Options::kOutputDir) {
+      json11::Json::object result {
+        {"duration", static_cast<int>(perf.duration_ms())},
+        {"throughput", static_cast<int>(thr)},
+      };
+      auto node_name = util::Instance<NodeConfiguration>().config().name;
+      std::ofstream result_output(Options::kOutputDir.Get() + "/" + node_name + "-result.json");
+      result_output << json11::Json(result).dump() << std::endl;
+    }
+    std::exit(0);
   }
 }
 
-const size_t EpochExecutionDispatchService::kMaxItem = 2_M;
+size_t EpochExecutionDispatchService::g_max_item = 20_M;
 const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
-  auto max_item_percore = kMaxItem / NodeConfiguration::g_nr_threads;
+  auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
   Queue *qmem = nullptr;
 
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
@@ -349,7 +366,7 @@ void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *ro
   auto &pq = queues[core_id]->pq.pending;
   size_t i = 0;
 
-  auto max_item_percore = kMaxItem / NodeConfiguration::g_nr_threads;
+  auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
 
 again:
   size_t zdelta = 0,
@@ -427,7 +444,7 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
 
   for (size_t i = 0; i < plen; i++) {
     auto pos = pstart + i;
-    AddToPriorityQueue(q, q.pending.q[pos % (kMaxItem / NodeConfiguration::g_nr_threads)]);
+    AddToPriorityQueue(q, q.pending.q[pos % (g_max_item / NodeConfiguration::g_nr_threads)]);
   }
   if (plen)
     q.pending.start.fetch_add(plen);

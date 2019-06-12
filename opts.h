@@ -6,50 +6,6 @@
 
 namespace felis {
 
-struct Option {
-  static inline std::vector<Option *> g_options;
-  static inline std::vector<std::string> g_suffices;
-  static inline std::vector<bool> g_present;
-  static std::string Get(const Option &o) { return g_suffices[o.id]; }
-  static std::string GetOrDefault(const Option &o, const char *def) {
-    if (IsPresent(o))
-      return g_suffices[o.id];
-    else
-      return def;
-  }
-  static bool IsPresent(const Option &o) { return g_present[o.id]; }
-  int id;
-  std::string prefix;
-  Option(const char *name) : prefix(name), id(g_options.size()) {
-    g_options.push_back(this);
-    g_suffices.emplace_back();
-    g_present.emplace_back(false);
-  }
-};
-
-struct Options {
-
-// Long live the JVM style command line arguments!
-static inline const auto kCpu = Option("cpu");
-static inline const auto kMem = Option("mem");
-static inline const auto kDataMigration = Option("DataMigrationMode");
-
-static inline const auto kCoreShifting = Option("CoreShifting");
-
-static inline bool ParseExtentedOptions(std::string arg)
-{
-  for (auto o: Option::g_options) {
-    if (arg.compare(0, o->prefix.length(), o->prefix) == 0) {
-      Option::g_suffices[o->id] = arg.substr(o->prefix.length());
-      Option::g_present[o->id] = true;
-      return true;
-    }
-  }
-  return false;
-}
-
-};;
-
 static inline long long ParseLargeNumber(std::string s)
 {
   size_t pos;
@@ -62,6 +18,65 @@ static inline long long ParseLargeNumber(std::string s)
   }
   return l;
 }
+
+struct Option {
+  static inline std::vector<Option *> g_options;
+  static inline std::vector<std::string> g_suffices;
+  static inline std::vector<bool> g_present;
+
+  int id;
+  std::string prefix;
+  Option(const char *name) : prefix(name), id(g_options.size()) {
+    g_options.push_back(this);
+    g_suffices.emplace_back();
+    g_present.emplace_back(false);
+  }
+
+  operator bool() const { return g_present[id]; }
+  std::string Get(const char *def = nullptr) const {
+    if (*this)
+      return g_suffices[id];
+    else
+      return def ? std::string(def) : std::string();
+  }
+  int ToInt(const char *def = nullptr) const {
+    return std::stoi(Get(def));
+  }
+  long long ToLargeNumber(const char *def = nullptr) const {
+    return ParseLargeNumber(Get(def));
+  }
+};
+
+struct Options {
+
+  // Long live the JVM style command line arguments!
+  static inline const auto kCpu = Option("cpu");
+  static inline const auto kMem = Option("mem");
+  static inline const auto kOutputDir = Option("OutputDir");
+  static inline const auto kDataMigration = Option("DataMigrationMode");
+
+  static inline const auto kCoreShifting = Option("CoreShifting");
+
+  static inline const auto kEpochQueueLength = Option("EpochQueueLength");
+  static inline const auto kVHandleLockElision = Option("VHandleLockElision");
+
+  static inline const auto kYcsbTableSize = Option("YcsbTableSize");
+  static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");
+  static inline const auto kYcsbEnablePartition = Option("YcsbEnablePartition");
+
+  static inline bool ParseExtentedOptions(std::string arg)
+  {
+    for (auto o: Option::g_options) {
+      if (arg.compare(0, o->prefix.length(), o->prefix) == 0) {
+        Option::g_suffices[o->id] = arg.substr(o->prefix.length());
+        Option::g_present[o->id] = true;
+        return true;
+      }
+    }
+    return false;
+  }
+
+};
 
 }
 

@@ -357,8 +357,10 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     util::SpinLock lock;
     State state;
   };
+ public:
+  static size_t g_max_item;
+ private:
 
-  static const size_t kMaxItem;
   static const size_t kHashTableSize;
   static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
 
