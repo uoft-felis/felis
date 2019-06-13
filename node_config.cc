@@ -624,7 +624,6 @@ void NodeServerRoutine::Run()
            "Cannot bind peer address");
   abort_if(!server_sock->Listen(NodeConfiguration::kMaxNrNode),
            "Cannot listen");
-  console.UpdateServerStatus(Console::ServerStatus::Listening);
 
   console.WaitForServerStatus(Console::ServerStatus::Connecting);
   // Now if anybody else tries to connect to us, it should be in the listener

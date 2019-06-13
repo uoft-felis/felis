@@ -7,6 +7,7 @@
 #include "txn.h"
 #include "log.h"
 #include "vhandle.h"
+#include "console.h"
 #include "mem.h"
 #include "gc.h"
 #include "opts.h"
@@ -265,14 +266,20 @@ void EpochClient::OnExecuteComplete()
 
     if (Options::kOutputDir) {
       json11::Json::object result {
+        {"cpu", static_cast<int>(NodeConfiguration::g_nr_threads)},
         {"duration", static_cast<int>(perf.duration_ms())},
         {"throughput", static_cast<int>(thr)},
       };
       auto node_name = util::Instance<NodeConfiguration>().config().name;
-      std::ofstream result_output(Options::kOutputDir.Get() + "/" + node_name + "-result.json");
+      time_t tm;
+      char now[80];
+      time(&tm);
+      strftime(now, 80, "-%F-%X", localtime(&tm));
+      std::ofstream result_output(
+          Options::kOutputDir.Get() + "/" + node_name + now + ".json");
       result_output << json11::Json(result).dump() << std::endl;
     }
-    std::exit(0);
+    util::Instance<Console>().UpdateServerStatus(Console::ServerStatus::Exiting);
   }
 }
 

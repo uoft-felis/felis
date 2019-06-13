@@ -1,13 +1,23 @@
 #include <sys/time.h>
 
+#include "opts.h"
 #include "log.h"
+#include "literals.h"
 
 std::unique_ptr<spdlog::logger> logger(nullptr);
 
 void InitializeLogger(const std::string &hostname)
 {
-  auto file_sink = std::make_shared<spdlog::sinks::simple_file_sink_mt>(
+  std::shared_ptr<spdlog::sinks::base_sink<std::mutex>> file_sink;
+
+  if (felis::Options::kOutputDir) {
+    file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+        felis::Options::kOutputDir.Get() + "/" + hostname + ".log",
+        5_M, 100);
+  } else {
+    file_sink = std::make_shared<spdlog::sinks::simple_file_sink_mt>(
       "dbg-" + hostname + ".log", true);
+  }
   file_sink->set_level(spdlog::level::debug);
 
   auto console_sink = std::make_shared<spdlog::sinks::ansicolor_stdout_sink_mt>();
