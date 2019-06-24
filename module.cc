@@ -79,12 +79,15 @@ class AllocatorModule : public Module<CoreModule> {
     if (Options::kVHandleLockElision)
       VHandleSyncService::g_lock_elision = true;
 
+    if (Options::kNrEpoch)
+      EpochClient::g_max_epoch = Options::kNrEpoch.ToInt();
+
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     tasks.emplace_back(VHandle::InitPool);
     tasks.emplace_back(RowEntity::InitPool);
     tasks.emplace_back(GC::InitPool);
-    tasks.emplace_back([]() { BaseTxn::InitBrk(EpochClient::kMaxEpoch - 1); });
+    tasks.emplace_back([]() { BaseTxn::InitBrk(EpochClient::g_max_epoch - 1); });
 
     tasks.emplace_back(util::Impl<PromiseAllocationService>);
     tasks.emplace_back(util::Impl<PromiseRoutineDispatchService>);

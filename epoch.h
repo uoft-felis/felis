@@ -132,7 +132,7 @@ class EpochClient {
   };
 
   static constexpr size_t kTxnPerEpoch = 100000;
-  static constexpr size_t kMaxEpoch = 50;
+  static inline size_t g_max_epoch = 50;
  protected:
   friend class BaseTxn;
   friend class EpochCallback;

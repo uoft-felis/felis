@@ -101,8 +101,8 @@ EpochTxnSet::~EpochTxnSet()
 
 void EpochClient::GenerateBenchmarks()
 {
-  all_txns = new EpochTxnSet[kMaxEpoch - 1];
-  for (auto i = 1; i < kMaxEpoch; i++) {
+  all_txns = new EpochTxnSet[g_max_epoch - 1];
+  for (auto i = 1; i < g_max_epoch; i++) {
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
       auto t = d.rem, pos = d.quot;
@@ -254,12 +254,12 @@ void EpochClient::OnInitializeComplete()
 
 void EpochClient::OnExecuteComplete()
 {
-  if (util::Instance<EpochManager>().current_epoch_nr() + 1 < kMaxEpoch) {
+  if (util::Instance<EpochManager>().current_epoch_nr() + 1 < g_max_epoch) {
     InitializeEpoch();
   } else {
     // End of the experiment.
     perf.Show("All epochs done in");
-    auto thr = NumberOfTxns() * 1000 * (kMaxEpoch - 1) / perf.duration_ms();
+    auto thr = NumberOfTxns() * 1000 * (g_max_epoch - 1) / perf.duration_ms();
     logger->info("Throughput {} txn/s", thr);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();

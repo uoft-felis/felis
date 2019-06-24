@@ -10,8 +10,9 @@ int BaseTxn::g_cur_numa_node = 0;
 
 void BaseTxn::InitBrk(long nr_epochs)
 {
-  auto lmt = 16_M * nr_epochs;
-  for (auto n = 0; n < NodeConfiguration::g_nr_threads / mem::kNrCorePerNode; n++) {
+  auto nr_numa_nodes = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
+  auto lmt = 18_M * nr_epochs / nr_numa_nodes;
+  for (auto n = 0; n < nr_numa_nodes; n++) {
     auto numa_node = n + NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
     g_brk[n] = mem::Brk::New(mem::MemMapAlloc(mem::Txn, lmt, numa_node), lmt);
   }

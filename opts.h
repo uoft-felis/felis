@@ -57,6 +57,7 @@ struct Options {
 
   static inline const auto kCoreShifting = Option("CoreShifting");
 
+  static inline const auto kNrEpoch = Option("NrEpoch");
   static inline const auto kEpochQueueLength = Option("EpochQueueLength");
   static inline const auto kVHandleLockElision = Option("VHandleLockElision");
 

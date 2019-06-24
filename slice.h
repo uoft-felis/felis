@@ -83,10 +83,14 @@ class SliceManager {
   }
 
   void OnNewRow(int slice_id, int table, VarStr *kstr, VHandle *handle) {
+    if (!NodeConfiguration::g_data_migration) return;
+
     OnNewRow(slice_id, new felis::RowEntity(table, kstr, handle, slice_id));
   }
 
   void OnUpdateRow(VHandle *handle) {
+    if (!NodeConfiguration::g_data_migration) return;
+
     auto *ent = handle->row_entity.get();
     OnUpdateRow(ent->slice_id(), ent);
   }
