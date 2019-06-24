@@ -37,8 +37,10 @@ class BaseVHandle {
 
 class RowEntity;
 class SliceManager;
+class VersionBuffer;
 
 class SortedArrayVHandle : public BaseVHandle {
+  friend class VersionBuffer;
   friend class RowEntity;
   friend class SliceManager;
   friend class GC;
@@ -56,6 +58,8 @@ class SortedArrayVHandle : public BaseVHandle {
   util::OwnPtr<RowEntity> row_entity;
 
  public:
+  std::atomic_long buf_pos = -1;
+
   static void *operator new(size_t nr_bytes);
 
   static void operator delete(void *ptr) {
@@ -77,6 +81,7 @@ class SortedArrayVHandle : public BaseVHandle {
   const size_t nr_versions() const { return size; }
   uint64_t first_version() const { return versions[0]; }
  private:
+  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
   void EnsureSpace();
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };

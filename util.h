@@ -223,8 +223,13 @@ class MCSSpinLock {
  private:
   std::atomic<QNode *> tail = nullptr;
  public:
+  bool TryLock(QNode *qnode) {
+    QNode *old = nullptr;
+    return tail.compare_exchange_strong(old, qnode);
+  }
+
   void Lock(QNode *qnode) {
-    QNode *last = tail.exchange(qnode);
+    auto last = tail.exchange(qnode);
     if (last) {
       last->next = qnode;
       while (!qnode->done) _mm_pause();
@@ -234,7 +239,7 @@ class MCSSpinLock {
 
   void Unlock(QNode *qnode) {
     if (!qnode->next) {
-      QNode *owner = qnode;
+      auto owner = qnode;
       if (tail.compare_exchange_strong(owner, nullptr)) return;
       while (!qnode->next.load()) _mm_pause();
     }

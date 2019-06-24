@@ -52,13 +52,8 @@ void SortedArrayVHandle::EnsureSpace()
   }
 }
 
-// Insert a new version into the version array, with value pending.
-void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
+void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr)
 {
-  util::MCSSpinLock::QNode qnode;
-  if (likely(!VHandleSyncService::g_lock_elision)) lock.Lock(&qnode);
-  // gc_rule((VHandle *) this, sid, epoch_nr);
-
   // append this version at the end of version array
   size++;
   EnsureSpace();
@@ -74,14 +69,26 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
   versions[i] = last;
 
+
   // We don't need to move the values, because they are all kPendingValue in
   // this epoch anyway. Of course, this is assuming sid will never smaller than
   // the minimum sid of this epoch. In felis, we can assume this. However if we
   // were to replay Ermia, we couldn't.
 
   util::Instance<GC>().AddVHandle((VHandle *) this);
+}
 
-  if (likely(!VHandleSyncService::g_lock_elision)) lock.Unlock(&qnode);
+// Insert a new version into the version array, with value pending.
+void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
+{
+  if (likely(!VHandleSyncService::g_lock_elision)) {
+    util::MCSSpinLock::QNode qnode;
+    lock.Lock(&qnode);
+    AppendNewVersionNoLock(sid, epoch_nr);
+    lock.Unlock(&qnode);
+  } else {
+    AppendNewVersionNoLock(sid, epoch_nr);
+  }
 }
 
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
