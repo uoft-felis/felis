@@ -132,6 +132,8 @@ class EpochClient {
   };
 
   static constexpr size_t kTxnPerEpoch = 100000;
+  static constexpr size_t kMaxPiecesPerPhase = 128 * kTxnPerEpoch;
+
   static inline size_t g_max_epoch = 50;
  protected:
   friend class BaseTxn;
@@ -157,7 +159,7 @@ class EpochClient {
   CompletionObject<EpochCallback &> completion;
 
   EpochTxnSet *all_txns;
-  EpochTxnSet *cur_txns;
+  std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
 
@@ -172,8 +174,8 @@ class Epoch;
 class EpochManager {
   template <typename T> friend struct util::InstanceInit;
   EpochMemory *mem;
-  Epoch *cur_epoch;
-  uint64_t cur_epoch_nr;
+  std::atomic<Epoch *> cur_epoch;
+  std::atomic_uint64_t cur_epoch_nr;
 
   EpochManager(EpochMemory *mem, Epoch *epoch);
  public:

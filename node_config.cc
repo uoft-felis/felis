@@ -570,6 +570,7 @@ void NodeServerThreadRoutine::UpdateBatchCounters()
   auto buffer_size = 8 + NodeConfiguration::kPromiseMaxLevels * nr_nodes * nr_nodes * sizeof(ulong);
   auto *counters = (ulong *) alloca(buffer_size);
   auto in = sock->input_channel();
+  auto total_cnt = 0;
 
   in->Read(counters, buffer_size);
   src_node_id = counters[0];
@@ -588,7 +589,7 @@ void NodeServerThreadRoutine::UpdateBatchCounters()
         all_zero = false;
 
         if (dst + 1 == conf.node_id())
-          cmp->Increment(cnt);
+          total_cnt += cnt;
       }
     }
 
@@ -607,7 +608,10 @@ void NodeServerThreadRoutine::UpdateBatchCounters()
     }
     puts("");
   }
-  cmp->Complete();
+
+  // We now have the counter. We need to adjust the completion count with the
+  // real counter.
+  cmp->Complete(EpochClient::kMaxPiecesPerPhase - total_cnt);
 }
 
 void NodeServerRoutine::Run()

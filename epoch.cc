@@ -132,8 +132,8 @@ uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 
 void AllocStateTxnWorker::Run()
 {
-  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
-    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
+  for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
+    auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
     txn->PrepareState();
   }
 }
@@ -146,8 +146,8 @@ void CallTxnsWorker::Run()
   std::fill(cnt, cnt + cnt_len, 0);
   // conf.IncrementUrgencyCount(t);
 
-  for (auto i = 0; i < client->cur_txns->per_core_txns[t]->nr; i++) {
-    auto txn = client->cur_txns->per_core_txns[t]->txns[i];
+  for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
+    auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
     txn->ResetRoot();
     std::invoke(mem_func, txn);
     client->conf.CollectBufferPlan(txn->root_promise(), cnt);
@@ -164,7 +164,7 @@ void CallTxnsWorker::Run()
     util::Instance<GC>().RunGC();
   }
 
-  auto pq = client->cur_txns->per_core_txns[t];
+  auto pq = client->cur_txns.load()->per_core_txns[t];
 
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
@@ -176,7 +176,7 @@ void CallTxnsWorker::Run()
   }
 
   util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
-  client->completion.Complete();
+  // client->completion.Complete();
 
   if (node_finished)
     client->completion.Complete();
@@ -191,7 +191,12 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   callback.perf.Clear();
   callback.perf.Start();
 
-  completion.Increment(conf.nr_nodes() + nr_threads);
+  // When another node sends its counter to us, it will not send pieces
+  // first. This makes it hard to esitmate when we are about to finish all in a
+  // phase. Therefore, we pretend all other nodes are going to send the maximum
+  // pieces in this phase, and adjust this value when the counter arrives
+  // eventually.
+  completion.Increment((conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1);
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->call_worker;
     r->Reset();
@@ -349,7 +354,8 @@ void EpochExecutionDispatchService::Reset()
 {
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &q = queues[i];
-    q->zq.end = q->zq.start = 0;
+    q->zq.end.store(0, std::memory_order_seq_cst);
+    q->zq.start = 0;
     q->pq.len = 0;
   }
   tot_bubbles = 0;
@@ -687,12 +693,16 @@ void EpochMemory::Reset()
 Epoch *EpochManager::epoch(uint64_t epoch_nr) const
 {
   abort_if(epoch_nr != cur_epoch_nr, "Confused by epoch_nr {} since current epoch is {}",
-           epoch_nr, cur_epoch_nr)
-      return cur_epoch;
+           epoch_nr, cur_epoch_nr);
+  return cur_epoch;
 }
 
 uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const
 {
+  abort_if(epoch_nr != cur_epoch_nr,
+           "Confused by epoch_nr {} since current epoch is {}, node {}, offset "
+           "{}, current core {}",
+           epoch_nr, cur_epoch_nr, node_id, offset, go::Scheduler::CurrentThreadPoolId() - 1);
   return epoch(epoch_nr)->mem->node_mem[node_id - 1].mmap_buf + offset;
 }
 
@@ -700,8 +710,8 @@ static Epoch *g_epoch; // We don't support concurrent epochs for now.
 
 void EpochManager::DoAdvance(EpochClient *client)
 {
-  cur_epoch_nr++;
-  cur_epoch->~Epoch();
+  cur_epoch_nr.fetch_add(1);
+  cur_epoch.load()->~Epoch();
   cur_epoch = new (cur_epoch) Epoch(cur_epoch_nr, client, mem);
   logger->info("We are going into epoch {}", cur_epoch_nr);
 }
@@ -709,7 +719,7 @@ void EpochManager::DoAdvance(EpochClient *client)
 EpochManager::EpochManager(EpochMemory *mem, Epoch *epoch)
     : cur_epoch_nr(0), cur_epoch(epoch), mem(mem)
 {
-  cur_epoch->mem = mem;
+  cur_epoch.load()->mem = mem;
 }
 
 }
