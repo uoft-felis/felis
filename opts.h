@@ -54,12 +54,15 @@ struct Options {
   static inline const auto kMem = Option("mem");
   static inline const auto kOutputDir = Option("OutputDir");
   static inline const auto kDataMigration = Option("DataMigrationMode");
+  static inline const auto kMaxNodeLimit = Option("MaxNodeLimit");
 
   static inline const auto kCoreShifting = Option("CoreShifting");
 
   static inline const auto kNrEpoch = Option("NrEpoch");
   static inline const auto kEpochQueueLength = Option("EpochQueueLength");
   static inline const auto kVHandleLockElision = Option("VHandleLockElision");
+
+  static inline const auto kTpccWarehouses = Option("TpccWarehouses");
 
   static inline const auto kYcsbTableSize = Option("YcsbTableSize");
   static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");

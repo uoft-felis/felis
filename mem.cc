@@ -274,7 +274,7 @@ MetaSlab *SlabMemory::NewMetaSlab()
   if (mp == nullptr)
     return nullptr;
   auto idx = (mp - p) / sizeof(MetaSlab);
-  printf("new metaslab idx %lu\n", idx);
+  // printf("new metaslab idx %lu\n", idx);
   return new (mp) MetaSlab(p + data_offset + idx * SlabPool::kLargeSlabPageSize);
 }
 

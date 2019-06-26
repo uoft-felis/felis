@@ -16,6 +16,7 @@
 #include "node_config.h"
 #include "console.h"
 #include "tpcc.h"
+#include "opts.h"
 
 using felis::Relation;
 using felis::RelationManager;
@@ -76,6 +77,9 @@ void InitializeSliceManager()
 // load TPC-C related configs from module "console" to kTPCCConfig
 void InitializeTPCC()
 {
+  if (felis::Options::kTpccWarehouses)
+    kTPCCConfig.nr_warehouses = felis::Options::kTpccWarehouses.ToInt();
+
   auto conf = Instance<Console>().FindConfigSection("tpcc").object_items();
   auto it = conf.find("hot_warehouses");
   if (it != conf.end()) {

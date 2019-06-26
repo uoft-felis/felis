@@ -15,6 +15,7 @@
 
 #include "promise.h"
 #include "slice.h"
+#include "opts.h"
 
 namespace felis {
 
@@ -439,6 +440,12 @@ NodeConfiguration::NodeConfiguration()
     max_node_id = std::max((int) max_node_id, idx);
   }
 
+  if (Options::kMaxNodeLimit) {
+    max_node_id = std::min(max_node_id, (size_t) Options::kMaxNodeLimit.ToInt());
+    for (auto i = max_node_id + 1; i < all_config.size(); i++) all_config[i] = nullopt;
+    logger->info("Limit number of node to {}", max_node_id);
+  }
+
   auto nr = kPromiseMaxLevels * nr_nodes() * nr_nodes();
   total_batch_counters = new std::atomic_ulong[nr];
   local_batch = new (malloc(sizeof(LocalBatch) + sizeof(std::atomic_ulong) * nr)) LocalBatch;
@@ -489,11 +496,10 @@ class NodeServerRoutine : public go::Routine {
 
 void NodeServerThreadRoutine::Run()
 {
-  while (true) {
-    ulong nr_recv[NodeConfiguration::kPromiseMaxLevels];
-    memset(nr_recv, 0, sizeof(ulong) * NodeConfiguration::kPromiseMaxLevels);
-    ulong nr_recv_bytes = 0;
+  std::array<ulong, NodeConfiguration::kPromiseMaxLevels> nr_recv;
+  nr_recv.fill(0);
 
+  while (true) {
     while (true) {
       auto in = sock->input_channel();
       size_t promise_size = 0;
@@ -507,7 +513,6 @@ void NodeServerThreadRoutine::Run()
         UpdateBatchCounters();
         break;
       }
-
       abort_if(src_node_id == 0,
                "Protocol error. Should always send the updated counters first");
 
@@ -521,16 +526,16 @@ void NodeServerThreadRoutine::Run()
         level = r->level;
 
         lb.QueueRoutine(r, input);
-
-        nr_recv_bytes += 8 + promise_size;
+        // nr_recv_bytes += 8 + promise_size;
       }
 
       auto cnt = ++nr_recv[level];
       auto idx = conf.BatchBufferIndex(level, src_node_id, conf.node_id());
 
       if (cnt == conf.total_batch_counters[idx].load()) {
-        logger->info("Flush from node {}, level = {}, cur_recv_bytes {}, cnt = {}",
-                     src_node_id, level, nr_recv_bytes, cnt);
+        logger->info("Flush from node {}, level = {}, cnt = {}",
+                     src_node_id, level, cnt);
+        nr_recv[level] = 0;
         Flush();
       }
 
