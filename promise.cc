@@ -169,7 +169,6 @@ void BasePromise::Add(PromiseRoutine *child)
 void BasePromise::Complete(const VarStr &in)
 {
   auto &transport = util::Impl<PromiseRoutineTransportService>();
-
   for (size_t i = 0; i < nr_handlers; i++) {
     auto r = routine(i);
     transport.TransportPromiseRoutine(r, in);
@@ -240,7 +239,8 @@ void BasePromise::ExecutionRoutine::Run()
 
   while (svc.Peek(core_id, should_pop)) {
     auto [rt, in] = next_r;
-    // trace(TRACE_EXEC_ROUTINE "Run {}", (void *) rt);
+    if (rt->sched_key != 0)
+      trace(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
     RunPromiseRoutine(rt, in);
     svc.Complete(core_id);
   }
@@ -249,12 +249,17 @@ void BasePromise::ExecutionRoutine::Run()
 
 bool BasePromise::ExecutionRoutine::Preempt(bool force)
 {
+  // TODO:
+  //
+  // `force` should be deprecated? It means I'll preempt no matter what, even if
+  // the scheduler tell me not to. This is why, under this setting, no matter
+  // what we'll always need to spawn a new routine. However, I doubt if we ever
+  // need anything like this?
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
   bool spawn = !force;
 
   if (svc.Preempt(core_id, force, this)) {
-    set_busy_poll(true);
     trace(TRACE_EXEC_ROUTINE "Initial sleep. Spawning a new coroutine. force = {}", force);
  sleep:
     if (spawn) {

@@ -65,7 +65,7 @@ struct NewOrderState {
   VHandle *stocks[15]; // update
   struct StocksLookupCompletion : public TxnStateCompletion<NewOrderState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
-      logger->debug("AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
+      debug(DBG_WORKLOAD "AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
       state->stocks[id] = rows[0];
       handle(rows[0]).AppendNewVersion();
     }

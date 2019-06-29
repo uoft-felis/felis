@@ -13,7 +13,7 @@ void InitializeLogger(const std::string &hostname)
   if (felis::Options::kOutputDir) {
     file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
         felis::Options::kOutputDir.Get() + "/" + hostname + ".log",
-        5_M, 100);
+        500_M, 100);
   } else {
     file_sink = std::make_shared<spdlog::sinks::simple_file_sink_mt>(
       "dbg-" + hostname + ".log", true);

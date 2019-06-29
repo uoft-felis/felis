@@ -131,8 +131,8 @@ void NewOrderTxn::Run()
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
                 if ((bitmap & (1 << i)) == 0) continue;
 
-                logger->debug("Txn {} updating its {} row {}",
-                              index_handle.serial_id(), i, (void *) state->stocks[i]);
+                debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
+                      index_handle.serial_id(), i, (void *) state->stocks[i]);
 
                 TxnVHandle vhandle = index_handle(state->stocks[i]);
                 auto stock = vhandle.Read<Stock::Value>();
@@ -145,9 +145,9 @@ void NewOrderTxn::Run()
 
                 vhandle.Write(stock);
                 ClientBase::OnUpdateRow(state->stocks[i]);
-                logger->debug("Txn {} updated its {} row {}",
-                              index_handle.serial_id(), i,
-                              (void *)state->stocks[i]);
+                debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
+                      index_handle.serial_id(), i,
+                      (void *)state->stocks[i]);
               }
               return nullopt;
             }, bitmap, params);

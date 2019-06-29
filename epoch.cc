@@ -144,7 +144,6 @@ void CallTxnsWorker::Run()
   auto cnt = client->per_core_cnts[t];
   auto cnt_len = nr_nodes * nr_nodes * NodeConfiguration::kPromiseMaxLevels;
   std::fill(cnt, cnt + cnt_len, 0);
-  // conf.IncrementUrgencyCount(t);
 
   for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
     auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
@@ -219,6 +218,8 @@ void EpochClient::InitializeEpoch()
   disable_load_balance = true;
   cur_txns = &all_txns[epoch_nr - 1];
   total_nr_txn = NumberOfTxns();
+
+  logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->alloc_state_worker;
@@ -354,9 +355,9 @@ void EpochExecutionDispatchService::Reset()
 {
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &q = queues[i];
-    q->zq.end.store(0, std::memory_order_seq_cst);
-    q->zq.start = 0;
-    q->pq.len = 0;
+    q->zq.end.store(0);
+    q->zq.start.store(0);
+    // q->pq.len = 0;
   }
   tot_bubbles = 0;
 }
@@ -401,8 +402,8 @@ again:
                "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
       zq.q[pos] = r;
     } else {
-      auto pos = pend + pdelta++;
       if (pdelta >= plimit) goto again;
+      auto pos = pend + pdelta++;
       pq.q[pos % max_item_percore] = r;
     }
   }
@@ -422,6 +423,7 @@ EpochExecutionDispatchService::AddToPriorityQueue(
   bool smaller = false;
   auto [rt, in] = r;
   auto node = (PriorityQueueValue *) q.pool.Alloc();
+  node->Initialize();
   node->promise_routine = r;
   node->state = state;
   auto key = rt->sched_key;
@@ -429,11 +431,14 @@ EpochExecutionDispatchService::AddToPriorityQueue(
   auto &hl = q.ht[Hash(key) % kHashTableSize];
   auto *ent = hl.next;
   while (ent != &hl) {
-    if (ent->object()->key == key)
+    if (ent->object()->key == key) {
       goto found;
+    }
     ent = ent->next;
   }
+
   ent = (PriorityQueueHashEntry *) q.pool.Alloc();
+  ent->Initialize();
   ent->object()->key = key;
   ent->object()->values.Initialize();
   ent->InsertAfter(hl.prev);
@@ -452,8 +457,8 @@ found:
 void
 EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
 {
-  size_t pstart = q.pending.start.load(std::memory_order_acquire),
-           plen = q.pending.end.load(std::memory_order_acquire) - pstart;
+  size_t pstart = q.pending.start.load(std::memory_order_acquire);
+  long plen = q.pending.end.load(std::memory_order_acquire) - pstart;
 
   for (size_t i = 0; i < plen; i++) {
     auto pos = pstart + i;
@@ -470,11 +475,12 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto &q = queues[core_id]->pq;
   auto &lock = queues[core_id]->lock;
   auto &state = queues[core_id]->state;
-  if (zq.start < zq.end.load(std::memory_order_acquire)) {
+  auto zstart = zq.start.load(std::memory_order_acquire);
+  if (zstart < zq.end.load(std::memory_order_acquire)) {
     state.running.store(true, std::memory_order_release);
-    auto r = zq.q[zq.start];
+    auto r = zq.q[zstart];
     if (should_pop(r, nullptr)) {
-      zq.start++;
+      zq.start.store(zstart + 1, std::memory_order_relaxed);
       state.current = r;
       return true;
     }
@@ -549,7 +555,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise
   auto &r = state.current;
   auto key = std::get<0>(r)->sched_key;
 
-  if (!force && zq.end.load(std::memory_order_relaxed) == zq.start) {
+  if (!force && zq.end.load(std::memory_order_acquire) == zq.start.load(std::memory_order_acquire)) {
     if (q.len == 0 || key < q.q[0].key) {
       new_routine = false;
       goto done;
@@ -557,7 +563,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise
   }
 
   if (key == 0) {
-    zq.q[zq.end.load(std::memory_order_relaxed)] = r;
+    zq.q[zq.end.load(std::memory_order_acquire)] = r;
     zq.end.fetch_add(1, std::memory_order_release);
   } else  {
     AddToPriorityQueue(q, r, routine_state);
@@ -575,15 +581,39 @@ void EpochExecutionDispatchService::Complete(int core_id)
   c.completed++;
 }
 
-void EpochExecutionDispatchService::PrintInfo()
+int EpochExecutionDispatchService::TraceDependency(uint64_t key)
 {
-  puts("===================================");
   for (int core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
-    auto &q = queues[core_id]->pq.q;
-    printf("DEBUG: %lu and %lu,%lu on core %d\n",
-           q[0].key, q[1].key, q[2].key, core_id);
+    auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
+    auto &q = queues[core_id]->pq.pending;
+    if (q.end.load() > max_item_percore) puts("pending queue wraps around");
+    abort_if(q.end.load() < q.start.load(), "WTF? pending queue underflows");
+    for (auto i = q.start.load(); i < q.end.load(); i++) {
+      if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
+        printf("found %lu in the pending area of %d\n", key, core_id);
+      }
+    }
+    for (auto i = 0; i < q.end.load(); i++) {
+      if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
+        printf("found %lu in the consumed pending area of %d\n", key, core_id);
+      }
+    }
+
+    auto &hl = queues[core_id]->pq.ht[Hash(key) % kHashTableSize];
+    auto ent = hl.next;
+    while (ent != &hl) {
+      if (ent->object()->key == key) {
+        if (ent->object()->values.empty()) {
+          printf("found but empty hash entry of key %lu on core %d\n", key, core_id);
+        }
+        return core_id;
+      }
+      ent = ent->next;
+    }
+    if (std::get<0>(queues[core_id]->state.current)->sched_key == key)
+      return core_id;
   }
-  puts("===================================");
+  return -1;
 }
 
 static constexpr size_t kEpochPromiseAllocationWorkerLimit = 512_M;

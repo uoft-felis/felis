@@ -103,7 +103,7 @@ class TransportImpl : public Flushable<TransportImpl> {
     std::array<PromiseRoutineWithInput, kBufferSize> routines;
     std::atomic_uint append_start = 0;
     unsigned int flusher_start = 0;
-    bool need_scan = false;
+    std::atomic_bool need_scan = false;
     util::SpinLock lock;
   };
 
@@ -221,7 +221,8 @@ void TransportImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
   auto nr_threads = NodeConfiguration::g_nr_threads;
   auto pos = q->append_start.load(std::memory_order_acquire);
   q->routines[pos] = {routine, in};
-  if (routine->sched_key != 0 || tid != routine->affinity + 1) q->need_scan = true;
+  if (routine->affinity == std::numeric_limits<uint64_t>::max()) routine->affinity = tid - 1;
+  if (tid != routine->affinity + 1 || tid == 0) q->need_scan = true;
   q->append_start.store(pos + 1, std::memory_order_release);
 
   if (pos == kBufferSize - 1) {
@@ -275,7 +276,8 @@ void TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
       } else {
         core = (delta + j - start) % nr_threads;
       }
-      q->task_buffer[core].routines[q->task_buffer[core].nr++] = p;
+      q->task_buffer[core]
+          .routines[q->task_buffer[core].nr++] = p;
     }
     for (int i = 0; i < nr_threads; i++) {
       SubmitOnCore(q->task_buffer[i].routines.data(), 0, q->task_buffer[i].nr, i + 1);
@@ -294,6 +296,8 @@ void TransportImpl::SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int
     auto [r, _] = routines[j];
     cnts[r->level]++;
   }
+  abort_if(thread == 0 || thread > NodeConfiguration::g_nr_threads,
+           "{} is invalid, start {} end {}", thread, start, end);
   for (auto i = 0; i < NodeConfiguration::kPromiseMaxLevels; i++) {
     if (cnts[i] == 0) continue;
     transport.PreparePromisesToQueue(thread - 1, i, cnts[i]);
@@ -538,26 +542,6 @@ void NodeServerThreadRoutine::Run()
         nr_recv[level] = 0;
         Flush();
       }
-
-#if 0
-      // Load balancing?
-      if (cnt % (1 << 17) == 0) {
-        auto sched = go::Scheduler::Current();
-        auto r =
-            go::Make(
-                [this]() {
-                  auto ord = std::memory_order_relaxed;
-                  auto new_tid = (tid.load(ord) + 1) % NodeConfiguration::g_nr_threads + 1;
-                  tid.store(new_tid, ord);
-                  auto sched = go::GetSchedulerFromPool(tid.load());
-                  sched->WakeUp(this);
-                });
-        r->set_urgent(true);
-        sched->WakeUp(r);
-        sched->RunNext(go::Scheduler::ReadyState);
-      }
-#endif
-
     }
   }
 }

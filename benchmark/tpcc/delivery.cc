@@ -89,13 +89,13 @@ void DeliveryTxn::Run()
     }
     for (auto &p: state->nodes[i]) {
       auto [node, bitmap] = p;
-      if (bitmap == 0x08) continue;
+      // if (bitmap == 0x08) continue;
 
       auto next =
           proc
           | TxnProc(
               node,
-              [](const auto &ctx, auto args) -> Optional<Tuple<int>> {
+              [](const auto &ctx, auto args) -> Optional<VoidValue> {
                 auto &[state, index_handle, bitmap, district_id, carrier_id, ts] = ctx;
                 int i = district_id - 1;
 
@@ -122,12 +122,16 @@ void DeliveryTxn::Run()
                     handle.Write(ol);
                     ClientBase::OnUpdateRow(state->order_lines[i][j]);
                   }
-                  return Tuple<int>(sum);
+
+                  auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
+                  customer.c_balance = sum;
+                  index_handle(state->customers[i]).Write(customer);
+                  ClientBase::OnUpdateRow(state->customers[i]);
                 }
 
                 return nullopt;
               }, bitmap, i + 1, o_carrier_id, ts);
-
+#if 0
       if (node == sum_node) {
         next
             | TxnProc(
@@ -144,6 +148,7 @@ void DeliveryTxn::Run()
                   return nullopt;
                 }, i);
       }
+#endif
     }
   }
   root_promise()->AssignAffinity(NodeConfiguration::g_nr_threads);

@@ -54,6 +54,7 @@ class EpochClientBaseWorker : public go::Routine {
     go::Routine::Reset();
   }
   void OnFinish() override final { finished = true; }
+  bool has_finished() const { return finished.load(); }
 };
 
 class CallTxnsWorker : public EpochClientBaseWorker {
@@ -125,6 +126,7 @@ class EpochClient {
   void Start();
 
   auto completion_object() { return &completion; }
+  EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
 
   virtual unsigned int LoadPercentage() = 0;
   unsigned long NumberOfTxns() {
@@ -342,7 +344,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   struct ZeroQueue {
     PromiseRoutineWithInput *q;
     std::atomic_ulong end;
-    size_t start;
+    std::atomic_ulong start;
   };
 
   struct State {
@@ -381,7 +383,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
-  void PrintInfo() final override;
+  int TraceDependency(uint64_t key) final override;
   bool IsRunning(int core_id) final override {
     return queues[core_id]->state.running.load(std::memory_order_acquire);
   }

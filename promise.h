@@ -93,7 +93,7 @@ class BasePromise {
     void Run() final override;
     void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready = false) final override;
 
-    bool Preempt(bool force);
+    bool Preempt(bool force = false);
    private:
     void RunPromiseRoutine(PromiseRoutine *r, const VarStr &in);
   };
@@ -161,7 +161,7 @@ class PromiseRoutineDispatchService {
   virtual bool IsRunning(int core_id) = 0;
 
   // For debugging
-  virtual void PrintInfo() {};
+  virtual int TraceDependency(uint64_t) { return -1; }
 };
 
 class PromiseAllocationService {

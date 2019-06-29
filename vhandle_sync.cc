@@ -35,7 +35,7 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
     uintptr_t newval = val & ~mask;
     bool notified = false;
     if ((oldval = __sync_val_compare_and_swap(addr, val, newval)) == val) {
-      notified = Spin(sid, ver, wait_cnt);
+      notified = Spin(sid, ver, wait_cnt, addr);
       oldval = *addr;
     }
     if (!IsPendingVal(oldval))
@@ -65,11 +65,12 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
   Notify(bitmap);
 }
 
-bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
+bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uintptr_t *ptr)
 {
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto sched = go::Scheduler::Current();
   auto &transport = util::Impl<PromiseRoutineTransportService>();
+  auto &dispatch = util::Impl<PromiseRoutineDispatchService>();
   auto routine = sched->current_routine();
   // routine->set_busy_poll(true);
 
@@ -80,16 +81,15 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt)
     wait_cnt++;
 
     if ((wait_cnt & 0x7FFFFFF) == 0) {
-      printf("Deadlock on core %d? %lu (using %p) waiting for %lu\n", core_id, sid, routine, ver);
-      util::Impl<PromiseRoutineDispatchService>().PrintInfo();
+      int dep = dispatch.TraceDependency(ver);
+      printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu), ptr %p\n",
+             core_id, sid, routine, ver, dep, ver & 0xFF, ptr);
+      sleep(600);
     }
 
     if ((wait_cnt & 0x0FFF) == 0) {
       transport.ForceFlushPromiseRoutine();
-      if (!((BasePromise::ExecutionRoutine *) routine)->Preempt(
-              transport.UrgencyCount(core_id) > 0)) {
-        return true;
-      }
+      ((BasePromise::ExecutionRoutine *) routine)->Preempt();
     }
   }
 
