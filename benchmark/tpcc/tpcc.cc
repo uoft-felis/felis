@@ -432,8 +432,13 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 template <>
 void Loader<LoaderType::Item>::DoLoad()
 {
+  auto delta = (kTPCCConfig.nr_items) / (max_warehouse - min_warehouse);
   void *large_buf = alloca(1024);
   for (uint i = 1; i <= kTPCCConfig.nr_items; i++) {
+    if (i % delta == 1) {
+      // Just trying to be load balanced
+      SetAllocAffinity((i - 1) / delta + min_warehouse);
+    }
     // items don't "belong" to a certain warehouse, so no pinning
     // TODO: can we also replicate its entire index too?
     auto k = Item::Key::New(i);
@@ -462,6 +467,7 @@ void Loader<LoaderType::Item>::DoLoad()
   }
   relation(TableType::Item).set_key_length(sizeof(Item::Key));
   logger->info("Item Table loading done.");
+  RestoreAllocAffinity();
 }
 
 template <>

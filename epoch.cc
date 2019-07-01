@@ -145,6 +145,9 @@ void CallTxnsWorker::Run()
   auto cnt_len = nr_nodes * nr_nodes * NodeConfiguration::kPromiseMaxLevels;
   std::fill(cnt, cnt + cnt_len, 0);
 
+  set_urgent(true);
+  util::Instance<NodeConfiguration>().ContinueInboundPhase();
+
   for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
     auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
     txn->ResetRoot();
@@ -173,19 +176,21 @@ void CallTxnsWorker::Run()
     txn->root_promise()->AssignAffinity(t);
     txn->root_promise()->Complete(VarStr());
   }
+  set_urgent(false);
 
   util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
   // client->completion.Complete();
 
-  if (node_finished)
+  if (node_finished) {
     client->completion.Complete();
+  }
 }
 
 void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *label)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
   conf.ResetBufferPlan();
-  conf.FlushBufferPlanCompletion(epoch_nr);
+  conf.SendStartPhase();
   callback.label = label;
   callback.perf.Clear();
   callback.perf.Start();
@@ -285,6 +290,7 @@ void EpochClient::OnExecuteComplete()
           Options::kOutputDir.Get() + "/" + node_name + now + ".json");
       result_output << json11::Json(result).dump() << std::endl;
     }
+    conf.CloseAndShutdown();
     util::Instance<Console>().UpdateServerStatus(Console::ServerStatus::Exiting);
   }
 }
@@ -550,8 +556,6 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise
 
   ProcessPending(q);
 
-  lock.Lock();
-
   auto &r = state.current;
   auto key = std::get<0>(r)->sched_key;
 
@@ -571,7 +575,6 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise
   state.running.store(false, std::memory_order_relaxed);
 
 done:
-  lock.Unlock();
   return new_routine;
 }
 

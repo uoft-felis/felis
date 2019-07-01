@@ -57,8 +57,8 @@ struct PromiseRoutine {
   static std::tuple<PromiseRoutine *, VarStr> CreateFromPacket(go::TcpInputChannel *in,
                                                                size_t packet_len);
 
-  static constexpr size_t kUpdateBatchCounter = std::numeric_limits<size_t>::max();
-  static constexpr size_t kBubble = std::numeric_limits<size_t>::max() - 0x00FFFFFF;
+  static constexpr size_t kUpdateBatchCounter = std::numeric_limits<uint64_t>::max() - (1ULL << 56);
+  static constexpr size_t kBubble = std::numeric_limits<uint64_t>::max() - (1ULL << 56) - 0x00FFFFFF;
 };
 
 static_assert(sizeof(PromiseRoutine) == CACHE_LINE_SIZE);
@@ -159,6 +159,7 @@ class PromiseRoutineDispatchService {
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;
   virtual bool IsRunning(int core_id) = 0;
+  virtual bool IsReady(int core_id) = 0;
 
   // For debugging
   virtual int TraceDependency(uint64_t) { return -1; }

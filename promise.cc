@@ -213,6 +213,9 @@ void BasePromise::ExecutionRoutine::Run()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
+  if (!svc.IsReady(core_id))
+    return;
+
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PromiseRoutineWithInput next_r;
@@ -240,7 +243,7 @@ void BasePromise::ExecutionRoutine::Run()
   while (svc.Peek(core_id, should_pop)) {
     auto [rt, in] = next_r;
     if (rt->sched_key != 0)
-      trace(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+      debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
     RunPromiseRoutine(rt, in);
     svc.Complete(core_id);
   }

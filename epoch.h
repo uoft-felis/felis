@@ -387,6 +387,9 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   bool IsRunning(int core_id) final override {
     return queues[core_id]->state.running.load(std::memory_order_acquire);
   }
+  bool IsReady(int core_id) final override {
+    return EpochClient::g_workload_client->get_worker(core_id)->call_worker.has_finished();
+  }
 };
 
 // We use thread-local brks to reduce the memory allocation cost for all

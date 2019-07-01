@@ -475,22 +475,35 @@ class NodeServerThreadRoutine : public go::Routine {
   std::atomic<long> tid;
   TransportImpl lb;
   NodeConfiguration &conf;
+  go::BufferChannel ctrl_chn;
  public:
   NodeServerThreadRoutine(TcpSocket *client_sock, int idx)
       : sock(client_sock),
         idx(idx), src_node_id(0),
         tid(1),
-        lb(idx), conf(Instance<NodeConfiguration>()) {
+        lb(idx),
+        conf(Instance<NodeConfiguration>()),
+        ctrl_chn(go::BufferChannel(128)) {
+    set_reuse(true);
     client_sock->OmitReadLock();
   }
   void Flush() {
     lb.Flush();
   }
+  void ContinueEpoch() {
+    uint8_t one = 1;
+    ctrl_chn.Write(&one, 1);
+  }
+  void CloseChannel() {
+    ctrl_chn.Close();
+  }
+
   int thread_pool_id() const { return tid.load(std::memory_order_relaxed); }
   virtual void Run() final __attribute__((noinline));
 
  private:
   void UpdateBatchCounters();
+  void UpdateSliceMappingTables(int nr_ops);
 };
 
 class NodeServerRoutine : public go::Routine {
@@ -500,48 +513,69 @@ class NodeServerRoutine : public go::Routine {
 
 void NodeServerThreadRoutine::Run()
 {
+
   std::array<ulong, NodeConfiguration::kPromiseMaxLevels> nr_recv;
   nr_recv.fill(0);
 
   while (true) {
-    while (true) {
-      auto in = sock->input_channel();
-      size_t promise_size = 0;
-      in->Read(&promise_size, 8);
+    auto in = sock->input_channel();
+    size_t promise_size = 0;
+    in->Read(&promise_size, 8);
 
-      if (promise_size == 0) {
+    if (promise_size == 0) {
+      break;
+    }
+
+    uint8_t mode = 0xFF & (promise_size >> 56);
+
+    if (mode == 0xFF) {
+      // Begining of the epoch
+      uint8_t all_present[conf.g_nr_threads];
+      int nr_ops = promise_size & std::numeric_limits<int32_t>::max();
+      int node_id;
+      in->Read(&node_id, 4);
+      src_node_id = node_id;
+
+      UpdateSliceMappingTables(nr_ops);
+
+      logger->info("Sleeping src node {}", src_node_id);
+      // Waiting for the signal to start
+      if (!ctrl_chn.Read(&all_present, conf.g_nr_threads))
         break;
-      }
 
-      if (promise_size == PromiseRoutine::kUpdateBatchCounter) {
-        UpdateBatchCounters();
-        break;
-      }
-      abort_if(src_node_id == 0,
-               "Protocol error. Should always send the updated counters first");
+      logger->info("Receiving from {} wakes up", src_node_id);
+      continue;
+    }
 
-      uint8_t level = 0;
+    if (promise_size == PromiseRoutine::kUpdateBatchCounter) {
+      UpdateBatchCounters();
+      continue;
+    }
 
-      if (promise_size & PromiseRoutine::kBubble) {
-        level = (promise_size & 0x00FF);
-        util::Impl<PromiseRoutineDispatchService>().AddBubble();
-      } else {
-        auto [r, input] = PromiseRoutine::CreateFromPacket(in, promise_size);
-        level = r->level;
+    abort_if(src_node_id == 0,
+             "Protocol error. Should always send the node id first");
 
-        lb.QueueRoutine(r, input);
-        // nr_recv_bytes += 8 + promise_size;
-      }
+    uint8_t level = 0;
 
-      auto cnt = ++nr_recv[level];
-      auto idx = conf.BatchBufferIndex(level, src_node_id, conf.node_id());
+    if (promise_size & PromiseRoutine::kBubble) {
+      level = (promise_size & 0x00FF);
+      util::Impl<PromiseRoutineDispatchService>().AddBubble();
+    } else {
+      auto [r, input] = PromiseRoutine::CreateFromPacket(in, promise_size);
+      level = r->level;
 
-      if (cnt == conf.total_batch_counters[idx].load()) {
-        logger->info("Flush from node {}, level = {}, cnt = {}",
-                     src_node_id, level, cnt);
-        nr_recv[level] = 0;
-        Flush();
-      }
+      lb.QueueRoutine(r, input);
+      // nr_recv_bytes += 8 + promise_size;
+    }
+
+    auto cnt = ++nr_recv[level];
+    auto idx = conf.BatchBufferIndex(level, src_node_id, conf.node_id());
+
+    if (cnt == conf.total_batch_counters[idx].load()) {
+      logger->info("Flush from node {}, level = {}, cnt = {}",
+                   src_node_id, level, cnt);
+      nr_recv[level] = 0;
+      Flush();
     }
   }
 }
@@ -596,6 +630,17 @@ void NodeServerThreadRoutine::UpdateBatchCounters()
   // We now have the counter. We need to adjust the completion count with the
   // real counter.
   cmp->Complete(EpochClient::kMaxPiecesPerPhase - total_cnt);
+}
+
+void NodeServerThreadRoutine::UpdateSliceMappingTables(int nr_ops)
+{
+  auto in = sock->input_channel();
+  auto &table = util::Instance<SliceMappingTable>();
+  uint32_t op;
+  for (int i = 0; i < nr_ops; i++) {
+    in->Read(&op, 4);
+    table.ReplayUpdate(op);
+  }
 }
 
 void NodeServerRoutine::Run()
@@ -861,20 +906,6 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
     if (id == node_id()) continue;
 
     auto out = all_nodes[id]->output_channel();
-    auto in = all_nodes[id]->input_channel();
-
-    uint64_t remote_epoch_finished;
-    in->Read(&remote_epoch_finished, 8);
-
-    // Read and replay slice mapping table updates.
-    uint32_t num_slice_table_updates;
-    in->Read(&num_slice_table_updates, 4);
-    for (int i = 0; i < num_slice_table_updates; i++) {
-      uint32_t op;
-      in->Read(&op, 4);
-      util::Instance<SliceMappingTable>().ReplayUpdate(op);
-    }
-
     out->Write(
         local_batch,
         16 + kPromiseMaxLevels * nr_nodes() * nr_nodes() * sizeof(unsigned long));
@@ -884,22 +915,41 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
   return true;
 }
 
-void NodeConfiguration::FlushBufferPlanCompletion(uint64_t epoch_nr)
+void NodeConfiguration::SendStartPhase()
 {
-  for (auto *sock: clients) {
-    auto out = sock->output_channel();
-    out->Write(&epoch_nr, 8);
+  auto &broadcast_buffer = util::Instance<SliceMappingTable>().broadcast_buffer;
+  auto nr_ent = broadcast_buffer.size();
+  auto buf_cnt = nr_ent * 4 + 12;
+  auto buf = (uint8_t *) alloca(buf_cnt);
+  uint64_t hdr = (uint64_t(0xFF) << 56) | nr_ent;
+  memcpy(buf, &hdr, 8);
+  memcpy(buf + 8, &id, 4);
+  memcpy(buf + 12, broadcast_buffer.data(), nr_ent * 4);
 
-    // Write out all the slice mapping table update commands.
-    auto &broadcast_buffer = util::Instance<SliceMappingTable>().broadcast_buffer;
-    auto int_buf = broadcast_buffer.size();
-    out->Write(&int_buf, 4);
-    for (const auto &it : broadcast_buffer) {
-      out->Write(&it, 4);
-    }
-    broadcast_buffer.clear();
-
+  // Write out all the slice mapping table update commands.
+  for (int i = 1; i <= nr_nodes(); i++) {
+    if (i == node_id()) continue;
+    auto out = all_nodes[i]->output_channel();
+    out->Write(buf, buf_cnt);
     out->Flush();
+  }
+
+  broadcast_buffer.clear();
+}
+
+void NodeConfiguration::ContinueInboundPhase()
+{
+  for (auto tr: all_in_routines) {
+    if (tr == nullptr) continue;
+    tr->ContinueEpoch();
+  }
+}
+
+void NodeConfiguration::CloseAndShutdown()
+{
+  for (auto tr: all_in_routines) {
+    if (tr == nullptr) continue;
+    tr->CloseChannel();
   }
 }
 

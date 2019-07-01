@@ -110,7 +110,9 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root, unsigned long *cnts);
   bool FlushBufferPlan(unsigned long *per_core_cnts);
-  void FlushBufferPlanCompletion(uint64_t epoch_nr);
+  void SendStartPhase();
+  void ContinueInboundPhase();
+  void CloseAndShutdown();
 
   // node id starts from 1
   int nr_nodes() const { return max_node_id; }
@@ -135,7 +137,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   std::array<SendChannel *, kMaxNrNode> all_out_channels;
   size_t max_node_id;
 
-  static constexpr unsigned long kPromiseBarrierWatermark = 1 << 20;
   // The BufferRootPromise is going to run an analysis on the root promise to
   // keep track of how many handlers needs to be sent.
   //
