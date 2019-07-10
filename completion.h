@@ -8,14 +8,19 @@ namespace felis {
 
 template <typename T>
 class CompletionObject {
-  std::atomic_ulong comp_count;
+  std::atomic_long comp_count;
   T callback;
  public:
   CompletionObject(unsigned long count, T callback)
       : comp_count(count), callback(callback) {}
 
-  void Complete(unsigned long dec = 1) {
+  void Complete(long dec = 1) {
+    callback.PreComplete();
     auto cnt = comp_count.fetch_sub(dec) - dec;
+    if (cnt < 0) {
+      fprintf(stderr, "Completion handler isn't enough!\n");
+      std::abort();
+    }
     callback(cnt);
   }
 

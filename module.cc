@@ -15,6 +15,7 @@
 #include "txn.h"
 #include "gc.h"
 #include "vhandle_sync.h"
+#include "vhandle_batchappender.h"
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -96,6 +97,8 @@ class AllocatorModule : public Module<CoreModule> {
           util::InstanceInit<EpochManager>();
           util::InstanceInit<SliceMappingTable>();
           util::InstanceInit<SpinnerSlot>();
+          if (Options::kVHandleBatchAppend)
+            util::InstanceInit<BatchAppender>();
         });
     for (auto &t: tasks) t.join();
 

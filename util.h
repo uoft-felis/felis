@@ -223,6 +223,7 @@ class MCSSpinLock {
  private:
   std::atomic<QNode *> tail = nullptr;
  public:
+  bool IsLocked() { return tail.load() != nullptr; }
   bool TryLock(QNode *qnode) {
     QNode *old = nullptr;
     return tail.compare_exchange_strong(old, qnode);

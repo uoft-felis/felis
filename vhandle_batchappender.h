@@ -5,23 +5,24 @@
 
 namespace felis {
 
-struct VersionBuffer {
-  static constexpr size_t kMaxBatch = 15;
-  size_t buf_cnt;
-  uint64_t versions[kMaxBatch];
+struct VersionBufferHandle {
+  uint8_t *prealloc_ptr;
+  long pos;
 
-  void Append(uint64_t sid) { versions[buf_cnt++] = sid; }
-  void FlushInto(VHandle *handle, uint64_t epoch_nr);
+  void Append(VHandle *handle, uint64_t sid, uint64_t epoch_nr);
+  void FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr);
 };
 
 struct VersionBufferHead;
 
 class BatchAppender {
+  friend class VersionBufferHead;
   std::array<VersionBufferHead *, NodeConfiguration::kMaxNrThreads> buffer_heads;
  public:
   BatchAppender();
-  VersionBuffer *GetOrInstall(VHandle *handle);
+  VersionBufferHandle GetOrInstall(VHandle *handle);
   void FinalizeFlush(uint64_t epoch_nr);
+  void Reset();
 };
 
 }

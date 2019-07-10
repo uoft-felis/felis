@@ -44,6 +44,8 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class RowEntity;
   friend class SliceManager;
   friend class GC;
+  friend class VersionBufferHead;
+  friend class VersionBufferHandle;
 
   util::MCSSpinLock lock;
   short alloc_by_regionid;

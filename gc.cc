@@ -55,7 +55,6 @@ void GC::Collect(VHandle *handle)
   handle->size -= i;
   handle->latest_version.fetch_sub(i);
 
-
   if (is_trace_enabled(TRACE_GC)) {
     std::stringstream ss;
     for (auto j = 0; j < handle->size; j++) {

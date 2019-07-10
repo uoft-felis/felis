@@ -7,6 +7,9 @@
 #include "node_config.h"
 #include "gc.h"
 
+#include "opts.h"
+#include "vhandle_batchappender.h"
+
 #include "literals.h"
 
 namespace felis {
@@ -83,6 +86,25 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
   if (likely(!VHandleSyncService::g_lock_elision)) {
     util::MCSSpinLock::QNode qnode;
+    VersionBufferHandle handle;
+
+    if (sid == 0) goto slowpath;
+    if (!Options::kVHandleBatchAppend) goto slowpath;
+
+    if (buf_pos.load(std::memory_order_acquire) == -1
+        && lock.TryLock(&qnode)) {
+      AppendNewVersionNoLock(sid, epoch_nr);
+      lock.Unlock(&qnode);
+      return;
+    }
+
+    handle = util::Instance<BatchAppender>().GetOrInstall((VHandle *) this);
+    if (handle.prealloc_ptr) {
+      handle.Append((VHandle *) this, sid, epoch_nr);
+      return;
+    }
+
+ slowpath:
     lock.Lock(&qnode);
     AppendNewVersionNoLock(sid, epoch_nr);
     lock.Unlock(&qnode);
@@ -157,12 +179,15 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   auto it = std::lower_bound(versions, versions + size, sid);
   if (it == versions + size || *it != sid) {
     // sid is greater than all the versions, or the located lower_bound isn't sid version
-    logger->critical("Diverging outcomes! sid {} pos {}/{}", sid, it - versions, size);
+    logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
+                     sid, it - versions, size);
+    logger->critical("bufpos {}", buf_pos.load());
     std::stringstream ss;
     for (int i = 0; i < size; i++) {
       ss << versions[i] << ' ';
     }
     logger->critical("Versions: {}", ss.str());
+    std::abort();
     return false;
   }
 

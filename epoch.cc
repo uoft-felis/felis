@@ -7,6 +7,7 @@
 #include "txn.h"
 #include "log.h"
 #include "vhandle.h"
+#include "vhandle_batchappender.h"
 #include "console.h"
 #include "mem.h"
 #include "gc.h"
@@ -22,7 +23,7 @@ EpochClient *EpochClient::g_workload_client = nullptr;
 
 void EpochCallback::operator()(unsigned long cnt)
 {
-  auto p = phase;
+  auto p = static_cast<int>(phase);
 
   trace(TRACE_COMPLETION "callback cnt {} on core {}",
         cnt, go::Scheduler::CurrentThreadPoolId() - 1);
@@ -41,11 +42,23 @@ void EpochCallback::operator()(unsigned long cnt)
       &EpochClient::OnInitializeComplete,
       &EpochClient::OnExecuteComplete,
     };
-
     abort_if(go::Scheduler::Current()->current_routine() == &client->control,
              "Cannot call control thread from itself");
-    client->control.Reset(phase_mem_funcs[static_cast<int>(phase)]);
+    if (Options::kVHandleBatchAppend)
+      util::Instance<BatchAppender>().Reset();
+
+    client->control.Reset(phase_mem_funcs[p]);
     go::Scheduler::Current()->WakeUp(&client->control);
+  }
+}
+
+void EpochCallback::PreComplete()
+{
+  if (Options::kVHandleBatchAppend) {
+    if (phase == EpochPhase::Initialize || phase == EpochPhase::Insert) {
+      util::Instance<BatchAppender>().FinalizeFlush(
+          util::Instance<EpochManager>().current_epoch_nr());
+    }
   }
 }
 

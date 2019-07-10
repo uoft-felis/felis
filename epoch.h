@@ -95,6 +95,7 @@ class EpochCallback {
  public:
   EpochCallback(EpochClient *client) : client(client), label(nullptr) {}
   void operator()(unsigned long cnt);
+  void PreComplete();
 };
 
 struct EpochTxnSet {

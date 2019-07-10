@@ -61,6 +61,7 @@ struct Options {
   static inline const auto kNrEpoch = Option("NrEpoch");
   static inline const auto kEpochQueueLength = Option("EpochQueueLength");
   static inline const auto kVHandleLockElision = Option("VHandleLockElision");
+  static inline const auto kVHandleBatchAppend = Option("VHandleBatchAppend");
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");
 
