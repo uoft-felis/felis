@@ -18,8 +18,10 @@ static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer 
 class VHandleSyncService {
  public:
   static bool g_lock_elision;
-  virtual void Notify(uint64_t bitmap) = 0;
-  virtual bool IsPendingVal(uintptr_t val) = 0;
+  virtual void ClearWaitCountStats() = 0;
+  virtual long GetWaitCountStat(int core) = 0;
+  // virtual void Notify(uint64_t bitmap) = 0;
+  // virtual bool IsPendingVal(uintptr_t val) = 0;
   virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;
   virtual void OfferData(volatile uintptr_t *addr, uintptr_t obj) = 0;
 };
@@ -44,6 +46,7 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class RowEntity;
   friend class SliceManager;
   friend class GC;
+  friend class VHandleContentionMetric;
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
 
@@ -82,6 +85,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   const size_t nr_versions() const { return size; }
   uint64_t first_version() const { return versions[0]; }
+  short region_id() const { return alloc_by_regionid; }
  private:
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
   void EnsureSpace();

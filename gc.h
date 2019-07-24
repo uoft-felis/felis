@@ -11,7 +11,6 @@ class GC : public VHandleCollectionHandler<GC> {
   static mem::ParallelPool g_block_pool;
   uint64_t cur_epoch_nr;
  public:
-  // Hame hiding.
   void AddVHandle(VHandle *vhandle);
 
   void Process(VHandle *handle);

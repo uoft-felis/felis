@@ -1,6 +1,7 @@
 #include <sys/mman.h>
 #include <algorithm>
 #include <map>
+#include <sys/time.h>
 #include <fstream>
 
 #include "epoch.h"
@@ -70,6 +71,10 @@ EpochClient::EpochClient()
       conf(util::Instance<NodeConfiguration>())
 {
   callback.perf.End();
+
+  best_core = std::numeric_limits<int>::max();
+  best_duration = std::numeric_limits<int>::max();
+  core_limit = conf.g_nr_threads;
 
   auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
   unsigned long *cnt_mem = nullptr;
@@ -181,12 +186,27 @@ void CallTxnsWorker::Run()
 
   auto pq = client->cur_txns.load()->per_core_txns[t];
 
+  // Try to assign a default partition scheme if nothing has been
+  // assigned. Because transactions are already round-robinned, there is no
+  // imbalanced here.
+
+  long extra_offset = 0;
+  for (auto i = client->core_limit; i < t; i++) {
+    extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
+  }
+  extra_offset %= client->core_limit;
+
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
-    // Try to assign a default partition scheme if nothing has been
-    // assigned. Because transactions are already round-robinned, there is no
-    // imbalanced here.
-    txn->root_promise()->AssignAffinity(t);
+    auto aff = t;
+
+    if (client->callback.phase == EpochPhase::Execute
+        && t >= client->core_limit) {
+      // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
+      // auto zone = t % avail_nr_zones;
+      aff = (i + extra_offset) % client->core_limit;
+    }
+    txn->root_promise()->AssignAffinity(aff);
     txn->root_promise()->Complete(VarStr());
   }
   set_urgent(false);
@@ -252,6 +272,7 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::OnInsertComplete()
 {
+  stats.insert_time_ms += callback.perf.duration_ms();
   callback.phase = EpochPhase::Initialize;
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
@@ -261,6 +282,7 @@ void EpochClient::OnInsertComplete()
 
 void EpochClient::OnInitializeComplete()
 {
+  stats.initialize_time_ms += callback.perf.duration_ms();
   callback.phase = EpochPhase::Execute;
 
   if (NodeConfiguration::g_data_migration && util::Instance<EpochManager>().current_epoch_nr() == 1) {
@@ -270,6 +292,10 @@ void EpochClient::OnInitializeComplete()
       new felis::RowScannerRoutine());
   }
 
+  util::Impl<VHandleSyncService>().ClearWaitCountStats();
+
+  auto &mgr = util::Instance<EpochManager>();
+
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
       &BaseTxn::RunAndAssignSchedulingKey,
@@ -278,13 +304,54 @@ void EpochClient::OnInitializeComplete()
 
 void EpochClient::OnExecuteComplete()
 {
-  if (util::Instance<EpochManager>().current_epoch_nr() + 1 < g_max_epoch) {
+  stats.execution_time_ms += callback.perf.duration_ms();
+  fmt::memory_buffer buf;
+  long ctt = 0;
+  auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+    auto c = util::Impl<VHandleSyncService>().GetWaitCountStat(i);
+    ctt += c / core_limit;
+    fmt::format_to(buf, "{} ", c);
+  }
+  logger->info("W() {}", std::string_view(buf.begin(), buf.size()));
+  if (Options::kCongestionControl && cur_epoch_nr > 1) {
+    auto ctt_rate = (callback.perf.duration_ms() << 24) / ctt;
+    logger->info("duration {} vs last_duration {}, ctt_rate {}",
+                 callback.perf.duration_ms(), best_duration, ctt_rate);
+    if (best_core == std::numeric_limits<int>::max() && ctt_rate > 1000) {
+      best_core = core_limit;
+    }
+
+    if (core_limit < best_core) {
+      if (callback.perf.duration_ms() * 1.05 < best_duration) {
+        best_duration = callback.perf.duration_ms();
+        best_core = core_limit;
+        sample_count = 1;
+      }
+
+      if (callback.perf.duration_ms() / 1.15 > best_duration) {
+        sample_count = 1;
+      }
+
+      if (--sample_count == 0) {
+        core_limit -= 8;
+        sample_count = 3;
+      }
+      if (core_limit == 0)
+        core_limit = best_core;
+    }
+    logger->info("Contention Control new core_limit {}", core_limit);
+  }
+
+  if (cur_epoch_nr + 1 < g_max_epoch) {
     InitializeEpoch();
   } else {
     // End of the experiment.
     perf.Show("All epochs done in");
     auto thr = NumberOfTxns() * 1000 * (g_max_epoch - 1) / perf.duration_ms();
     logger->info("Throughput {} txn/s", thr);
+    logger->info("Insert / Initialize / Execute {} ms {} ms {} ms",
+                 stats.insert_time_ms, stats.initialize_time_ms, stats.execution_time_ms);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
 
@@ -293,6 +360,9 @@ void EpochClient::OnExecuteComplete()
         {"cpu", static_cast<int>(NodeConfiguration::g_nr_threads)},
         {"duration", static_cast<int>(perf.duration_ms())},
         {"throughput", static_cast<int>(thr)},
+        {"insert_time", stats.insert_time_ms},
+        {"initialize_time", stats.initialize_time_ms},
+        {"execution_time", stats.execution_time_ms},
       };
       auto node_name = util::Instance<NodeConfiguration>().config().name;
       time_t tm;
@@ -431,7 +501,7 @@ again:
   if (pdelta)
     pq.end.fetch_add(pdelta, std::memory_order_release);
   lock.Unlock();
-  util::Impl<VHandleSyncService>().Notify(1 << core_id);
+  // util::Impl<VHandleSyncService>().Notify(1 << core_id);
 }
 
 bool
@@ -485,6 +555,13 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
   }
   if (plen)
     q.pending.start.fetch_add(plen);
+}
+
+static long __SystemTime()
+{
+  timeval tv;
+  gettimeofday(&tv, nullptr);
+  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
 bool
@@ -591,9 +668,11 @@ done:
   return new_routine;
 }
 
+
 void EpochExecutionDispatchService::Complete(int core_id)
 {
-  auto &c = queues[core_id]->state.complete_counter;
+  auto &state = queues[core_id]->state;
+  auto &c = state.complete_counter;
   c.completed++;
 }
 

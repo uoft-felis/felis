@@ -14,21 +14,40 @@ namespace felis {
 // count. This limits us to *63 cores* at maximum though. Exceeding this limit
 // might lead us to use share spinner slots.
 
+struct SpinnerSlotData;
+
 class SpinnerSlot : public VHandleSyncService {
- public:
-  static constexpr int kNrSpinners = 32;
- private:
-  std::atomic_bool *slots[kNrSpinners];
+  SpinnerSlotData *buffer;
  public:
   SpinnerSlot();
 
+  SpinnerSlotData *slot(int idx);
+
+  void ClearWaitCountStats() final override;
+  long GetWaitCountStat(int core) final override;
   bool Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uintptr_t *ptr);
-  void Notify(uint64_t bitmap) final override;
-  bool IsPendingVal(uintptr_t val)  final override {
+  void Notify(uint64_t bitmap);
+  bool IsPendingVal(uintptr_t val)  {
     return (val >> 32) == (kPendingValue >> 32);
   }
   void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) final override;
   void OfferData(volatile uintptr_t *addr, uintptr_t obj) final override;
+};
+
+struct SimpleSyncData;
+
+class SimpleSync : public VHandleSyncService {
+  SimpleSyncData *buffer;
+ public:
+  SimpleSync();
+
+  void ClearWaitCountStats() final override;
+  long GetWaitCountStat(int core) final override;
+  void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) final override;
+  void OfferData(volatile uintptr_t *addr, uintptr_t obj) final override;
+  bool IsPendingVal(uintptr_t val) {
+    return val == kPendingValue;
+  }
 };
 
 }
@@ -38,8 +57,15 @@ namespace util {
 template <>
 struct InstanceInit<felis::SpinnerSlot> {
   static constexpr bool kHasInstance = true;
-  static felis::SpinnerSlot *instance;
-  InstanceInit();
+  static inline felis::SpinnerSlot *instance;
+  InstanceInit() { instance = new felis::SpinnerSlot(); }
+};
+
+template <>
+struct InstanceInit<felis::SimpleSync> {
+  static constexpr bool kHasInstance = true;
+  static inline felis::SimpleSync *instance;
+  InstanceInit() { instance = new felis::SimpleSync(); }
 };
 
 }

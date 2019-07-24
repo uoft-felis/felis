@@ -4,9 +4,7 @@
 #include <cassert>
 #include <cstring>
 
-#ifndef DISABLE_NUMA
 #include <syscall.h>
-#endif
 
 #include <fstream>
 
@@ -682,7 +680,6 @@ void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node)
   void *data = MemMap(alloc_type, nullptr, length,
                       PROT_READ | PROT_WRITE, flags, -1, 0);
 
-#ifndef DISABLE_NUMA
   unsigned long nodemask = 0;
 
   if (numa_node == -1) {
@@ -706,8 +703,6 @@ void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node)
       std::abort();
     }
   }
-
-#endif
 
   if (mlock(data, length) < 0) {
     fprintf(stderr, "WARNING: mlock() failed\n");

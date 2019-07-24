@@ -114,6 +114,19 @@ class EpochClient {
   friend class RunTxnPromiseWorker;
   friend class CallTxnsWorker;
   friend class AllocStateTxnWorker;
+  friend class EpochExecutionDispatchService;
+
+  int core_limit;
+  int best_core;
+  int best_duration;
+  int sample_count = 3;
+
+  struct {
+    int insert_time_ms = 0;
+    int initialize_time_ms = 0;
+    int execution_time_ms = 0;
+  } stats;
+
   PerfLog perf;
   EpochControl control;
   EpochWorkers *workers[NodeConfiguration::kMaxNrThreads];
@@ -123,6 +136,7 @@ class EpochClient {
   EpochClient();
   virtual ~EpochClient() {}
 
+  uint64_t GenerateSerialId(uint64_t epoch_nr, uint64_t sequence);
   void GenerateBenchmarks();
   void Start();
 
@@ -144,8 +158,6 @@ class EpochClient {
 
   void InitializeEpoch();
   void ExecuteEpoch();
-
-  uint64_t GenerateSerialId(uint64_t epoch_nr, uint64_t sequence);
 
   virtual BaseTxn *CreateTxn(uint64_t serial_id) = 0;
 

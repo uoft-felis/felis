@@ -15,6 +15,7 @@ using namespace felis;
 IMPL(PromiseRoutineTransportService, NodeConfiguration);
 IMPL(PromiseRoutineDispatchService, EpochExecutionDispatchService);
 IMPL(VHandleSyncService, SpinnerSlot);
+// IMPL(VHandleSyncService, SimpleSync);
 IMPL(PromiseAllocationService, EpochPromiseAllocationService);
 
 }

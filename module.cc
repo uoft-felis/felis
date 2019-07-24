@@ -97,6 +97,7 @@ class AllocatorModule : public Module<CoreModule> {
           util::InstanceInit<EpochManager>();
           util::InstanceInit<SliceMappingTable>();
           util::InstanceInit<SpinnerSlot>();
+          util::InstanceInit<SimpleSync>();
           if (Options::kVHandleBatchAppend)
             util::InstanceInit<BatchAppender>();
         });
