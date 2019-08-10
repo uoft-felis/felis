@@ -65,10 +65,15 @@ struct Options {
   static inline const auto kCongestionControl = Option("CongestionControl");
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");
+  static inline const auto kTpccHotWarehouseBitmap = Option("TpccHotWarehouseBitmap");
+  static inline const auto kTpccHotWarehouseLoad = Option("TpccHotWarehouseLoad");
 
   static inline const auto kYcsbTableSize = Option("YcsbTableSize");
   static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");
   static inline const auto kYcsbEnablePartition = Option("YcsbEnablePartition");
+  static inline const auto kYcsbReadOnly = Option("YcsbReadOnly");
+
+  static inline const auto kEnableGranola = Option("EnableGranola");
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

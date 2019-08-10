@@ -32,12 +32,16 @@ class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
         client(client)
   {}
 
-  void Prepare() override final;
+  void Prepare() override final {
+    if (!Client::g_enable_granola)
+      PrepareImpl();
+  }
   void Run() override final;
   void PrepareInsert() override final {}
+  void PrepareImpl();
 };
 
-void PaymentTxn::Prepare()
+void PaymentTxn::PrepareImpl()
 {
   INIT_ROUTINE_BRK(4096);
 
@@ -56,42 +60,62 @@ void PaymentTxn::Prepare()
 
 void PaymentTxn::Run()
 {
+  if (Client::g_enable_granola)
+    PrepareImpl();
+
   for (auto &p: state->nodes) {
     auto [node, bitmap] = p;
-    proc
-        | TxnProc(
-            node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto &[state, index_handle, bitmap, payment_amount] = ctx;
-              if (bitmap & 0x01) {
-                // Warehouse
-                TxnVHandle vhandle = index_handle(state->warehouse);
-                auto w = vhandle.Read<Warehouse::Value>();
-                w.w_ytd += payment_amount;
-                vhandle.Write(w);
-                ClientBase::OnUpdateRow(state->warehouse);
-              }
-              if (bitmap & 0x02) {
-                // District
-                TxnVHandle vhandle = index_handle(state->district);
-                auto d = vhandle.Read<District::Value>();
-                d.d_ytd += payment_amount;
-                vhandle.Write(d);
-                ClientBase::OnUpdateRow(state->district);
-              }
-              if (bitmap & 0x04) {
-                // Customer
-                TxnVHandle vhandle = index_handle(state->customer);
-                auto c = vhandle.Read<Customer::Value>();
-                c.c_balance -= payment_amount;
-                c.c_ytd_payment += payment_amount;
-                c.c_payment_cnt++;
-                vhandle.Write(c);
-                ClientBase::OnUpdateRow(state->customer);
-              }
-              return nullopt;
-            },
-            bitmap, payment_amount);
+    auto root = root_promise();
+    std::array<int, 2> filters;
+
+    if (!Client::g_enable_granola) {
+      filters = {0x03, 0};
+    } else {
+      filters = {0x01, 0x02};
+    }
+
+    for (auto filter: filters) {
+      if (filter == 0) continue;
+      auto aff = std::numeric_limits<uint64_t>::max();
+      if (filter == 0x01) {
+        aff = warehouse_id - 1;
+      } else if (filter == 0x02) {
+        aff = customer_warehouse_id - 1;
+      }
+      root->Then(
+          MakeContext(bitmap, payment_amount, filter), node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle, bitmap, payment_amount, filter] = ctx;
+            if ((bitmap & 0x01) && (filter & 0x01)) {
+              // Warehouse
+              TxnVHandle vhandle = index_handle(state->warehouse);
+              auto w = vhandle.Read<Warehouse::Value>();
+              w.w_ytd += payment_amount;
+              vhandle.Write(w);
+              ClientBase::OnUpdateRow(state->warehouse);
+            }
+            if ((bitmap & 0x02) && (filter & 0x01)) {
+              // District
+              TxnVHandle vhandle = index_handle(state->district);
+              auto d = vhandle.Read<District::Value>();
+              d.d_ytd += payment_amount;
+              vhandle.Write(d);
+              ClientBase::OnUpdateRow(state->district);
+            }
+            if ((bitmap & 0x04) && (filter & 0x02)) {
+              // Customer
+              TxnVHandle vhandle = index_handle(state->customer);
+              auto c = vhandle.Read<Customer::Value>();
+              c.c_balance -= payment_amount;
+              c.c_ytd_payment += payment_amount;
+              c.c_payment_cnt++;
+              vhandle.Write(c);
+              ClientBase::OnUpdateRow(state->customer);
+            }
+            return nullopt;
+          },
+          aff);
+    }
   }
 }
 

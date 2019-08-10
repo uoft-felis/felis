@@ -80,6 +80,17 @@ void InitializeTPCC()
   if (felis::Options::kTpccWarehouses)
     kTPCCConfig.nr_warehouses = felis::Options::kTpccWarehouses.ToInt();
 
+  if (felis::Options::kTpccHotWarehouseBitmap)
+    kTPCCConfig.hotspot_warehouse_bitmap = felis::Options::kTpccHotWarehouseBitmap.ToLargeNumber();
+
+  if (felis::Options::kTpccHotWarehouseLoad)
+    kTPCCConfig.hotspot_load_percentage = felis::Options::kTpccHotWarehouseLoad.ToInt();
+
+  logger->info("Hot Warehouses are {:x} (bitmap), load {} %",
+               kTPCCConfig.hotspot_warehouse_bitmap,
+               kTPCCConfig.hotspot_load_percentage);
+
+  /*
   auto conf = Instance<Console>().FindConfigSection("tpcc").object_items();
   auto it = conf.find("hot_warehouses");
   if (it != conf.end()) {
@@ -101,6 +112,7 @@ void InitializeTPCC()
       kTPCCConfig.offload_nodes.push_back(node);
     }
   }
+  */
 
   logger->info("data migration mode {}", NodeConfiguration::g_data_migration);
 

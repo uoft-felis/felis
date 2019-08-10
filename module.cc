@@ -83,6 +83,8 @@ class AllocatorModule : public Module<CoreModule> {
     if (Options::kNrEpoch)
       EpochClient::g_max_epoch = Options::kNrEpoch.ToInt();
 
+    EpochClient::g_enable_granola = Options::kEnableGranola;
+
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     tasks.emplace_back(VHandle::InitPool);

@@ -309,7 +309,10 @@ void RowShipmentReceiver::Run()
               bool exist = true;
               auto handle = rel.SearchOrDefault(k, [&exist]() { exist = false; return new VHandle(); });
               if (exist) {
-                handle->WriteNewVersion(util::Instance<EpochManager>().current_epoch_nr(), v);
+                auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+                auto sid = handle->last_version() + 1;
+                handle->AppendNewVersion(sid, epoch_nr);
+                handle->WriteWithVersion(sid, v, epoch_nr);
               } else {
                 InitVersion(handle, v);
               }

@@ -77,14 +77,15 @@ class SortedArrayVHandle : public BaseVHandle {
 
   void AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
   VarStr *ReadWithVersion(uint64_t sid);
-  VarStr *ReadExactVersion(uint64_t version_idx);
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run = false);
-  void WriteNewVersion(uint64_t epoch_nr, VarStr *obj);
+  VarStr *ReadExactVersion(unsigned int version_idx);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
+  bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
   void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
 
   const size_t nr_versions() const { return size; }
   uint64_t first_version() const { return versions[0]; }
+  uint64_t last_version() const { return versions[size - 1]; }
   short region_id() const { return alloc_by_regionid; }
  private:
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);

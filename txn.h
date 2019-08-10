@@ -28,6 +28,7 @@ class BaseTxn {
   using BrkType = std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads / mem::kNrCorePerNode>;
   static BrkType g_brk;
   static int g_cur_numa_node;
+
  public:
   BaseTxn(uint64_t serial_id)
       : epoch(nullptr), sid(serial_id) {}
@@ -297,12 +298,14 @@ class Txn : public BaseTxn {
 
   template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, Types...>;
 
+  template <typename ...Types> ContextType<Types...> MakeContext(Types... params) {
+    return ContextType<Types...>(state, index_handle(), params...);
+  }
+
   template <typename Func, typename ...Types>
-  std::tuple<ContextType<Types...>,
-             int,
-             Func>
+  std::tuple<ContextType<Types...>, int, Func>
   TxnProc(int node, Func func, Types... params) {
-    return std::make_tuple(ContextType<Types...>(state, index_handle(), params...),
+    return std::make_tuple(MakeContext(params...),
                            node,
                            func);
   }
@@ -353,27 +356,44 @@ class Txn : public BaseTxn {
           op_ctx.set_extra(*pp);
         }
 
-      proc
-          | std::make_tuple(
-              op_ctx,
-              node,
-              [](auto &ctx, auto _) -> Optional<VoidValue> {
-                auto completion = OnComplete();
-                if constexpr (!std::is_void<OnCompleteParam>()) {
+      if (!EpochClient::g_enable_granola) {
+        proc
+            | std::make_tuple(
+                op_ctx,
+                node,
+                [](auto &ctx, auto _) -> Optional<VoidValue> {
+                  auto completion = OnComplete();
+                  if constexpr (!std::is_void<OnCompleteParam>()) {
                     completion.args = (OnCompleteParam) ctx;
                   }
 
-                completion.handle = ctx.handle;
-                completion.state = State(ctx.state);
+                  completion.handle = ctx.handle;
+                  completion.state = State(ctx.state);
 
-                TxnIndexOpContext::ForEachWithBitmap(
-                    ctx.keys_bitmap,
-                    [&ctx, &completion](int j, int i) {
-                      auto op = IndexOp(ctx, j);
-                      completion(i, op.result);
-                    });
-                return nullopt;
-              });
+                  TxnIndexOpContext::ForEachWithBitmap(
+                      ctx.keys_bitmap,
+                      [&ctx, &completion](int j, int i) {
+                        auto op = IndexOp(ctx, j);
+                        completion(i, op.result);
+                      });
+                  return nullopt;
+                });
+      } else {
+        auto completion = OnComplete();
+        if constexpr (!std::is_void<OnCompleteParam>()) {
+          completion.args = (OnCompleteParam) op_ctx;
+        }
+
+        completion.handle = op_ctx.handle;
+        completion.state = State(op_ctx.state);
+
+        TxnIndexOpContext::ForEachWithBitmap(
+            op_ctx.keys_bitmap,
+            [&op_ctx, &completion](int j, int i) {
+              auto op = IndexOp(op_ctx, j);
+              completion(i, op.result);
+            });
+      }
     }
     return nodes_bitmap;
   }

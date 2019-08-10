@@ -11,7 +11,7 @@ int BaseTxn::g_cur_numa_node = 0;
 void BaseTxn::InitBrk(long nr_epochs)
 {
   auto nr_numa_nodes = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
-  auto lmt = 18_M * nr_epochs / nr_numa_nodes;
+  auto lmt = 24_M * nr_epochs / nr_numa_nodes;
   for (auto n = 0; n < nr_numa_nodes; n++) {
     auto numa_node = n + NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
     g_brk[n] = mem::Brk::New(mem::MemMapAlloc(mem::Txn, lmt, numa_node), lmt);
@@ -20,7 +20,14 @@ void BaseTxn::InitBrk(long nr_epochs)
 
 void BaseTxn::TxnVHandle::AppendNewVersion()
 {
-  api->AppendNewVersion(sid, epoch_nr);
+  if (!EpochClient::g_enable_granola) {
+    api->AppendNewVersion(sid, epoch_nr);
+  } else {
+    if (api->nr_versions() == 0) {
+      api->AppendNewVersion(sid, epoch_nr);
+      api->WriteExactVersion(0, nullptr, epoch_nr);
+    }
+  }
 }
 
 VarStr *BaseTxn::TxnVHandle::ReadVarStr()
@@ -30,7 +37,12 @@ VarStr *BaseTxn::TxnVHandle::ReadVarStr()
 
 bool BaseTxn::TxnVHandle::WriteVarStr(VarStr *obj)
 {
-  return api->WriteWithVersion(sid, obj, epoch_nr);
+  if (!EpochClient::g_enable_granola) {
+    return api->WriteWithVersion(sid, obj, epoch_nr);
+  } else {
+    delete api->ReadExactVersion(0);
+    return api->WriteExactVersion(0, obj, epoch_nr);
+  }
 }
 
 BaseTxn::TxnIndexOpContext::TxnIndexOpContext(

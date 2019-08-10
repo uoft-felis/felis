@@ -46,11 +46,20 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
         client(client)
   {}
   void Run() override final;
-  void Prepare() override final;
-  void PrepareInsert() override final;
+  void Prepare() override final {
+    if (!Client::g_enable_granola)
+      PrepareImpl();
+  }
+  void PrepareInsert() override final {
+    if (!Client::g_enable_granola)
+      PrepareInsertImpl();
+  }
+
+  void PrepareImpl();
+  void PrepareInsertImpl();
 };
 
-void NewOrderTxn::PrepareInsert()
+void NewOrderTxn::PrepareInsertImpl()
 {
   auto auto_inc_zone = warehouse_id * 10 + district_id;
   auto oorder_id = client->relation(OOrder::kTable).AutoIncrement(auto_inc_zone);
@@ -76,9 +85,8 @@ void NewOrderTxn::PrepareInsert()
           KeyParam<NewOrder>(neworder_key));
 }
 
-void NewOrderTxn::Prepare()
+void NewOrderTxn::PrepareImpl()
 {
-
   Stock::Key stock_keys[kNewOrderMaxItems];
   Item::Key item_keys[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
@@ -104,55 +112,92 @@ void NewOrderTxn::Prepare()
 
 void NewOrderTxn::Run()
 {
+  if (Client::g_enable_granola) {
+    // Search the index. AppendNewVersion() is automatically Nop when
+    // g_enable_granola is on.
+    PrepareInsertImpl();
+    PrepareImpl();
+  }
+
   int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
 
   struct {
     unsigned int quantities[NewOrderStruct::kNewOrderMaxItems];
-    unsigned int remote_bitmap;
+    unsigned int supplier_warehouses[NewOrderStruct::kNewOrderMaxItems];
+    int warehouse;
   } params;
 
-  params.remote_bitmap = 0;
-  // We want to compare all supplier_warehouses to warehouse. If they are all
-  // equal, then remote_bitmap should be 0.
+  params.warehouse = warehouse_id;
+  bool all_local = true;
   for (auto i = 0; i < nr_items; i++) {
     params.quantities[i] = detail.order_quantities[i];
-    int remote = (detail.supplier_warehouse_id[i] == warehouse_id) ? 0 : 1;
-    params.remote_bitmap |= (remote << i);
+    params.supplier_warehouses[i] = detail.supplier_warehouse_id[i];
+    if (detail.supplier_warehouse_id[i] != warehouse_id)
+      all_local = false;
   }
 
   for (auto &p: state->stocks_nodes) {
     auto [node, bitmap] = p;
-    proc
-        | TxnProc(
-            node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto &[state, index_handle, bitmap, params] = ctx;
 
-              for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
-                if ((bitmap & (1 << i)) == 0) continue;
+    // Granola needs partitioning, that's why we need to split this into
+    // multiple pieces even if this piece could totally be executed on the same
+    // node.
+    std::array<int, NewOrderStruct::kNewOrderMaxItems> warehouse_filters;
+    int nr_warehouse_filters = 0;
+    warehouse_filters.fill(0);
 
-                debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
-                      index_handle.serial_id(), i, (void *) state->stocks[i]);
+    if (!Client::g_enable_granola) {
+      warehouse_filters[nr_warehouse_filters++] = -1; // Don't filter
+    } else {
+      for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+        if ((bitmap & (1 << i)) == 0) continue;
 
-                TxnVHandle vhandle = index_handle(state->stocks[i]);
-                auto stock = vhandle.Read<Stock::Value>();
-                if (stock.s_quantity - params.quantities[i] < 10) {
-                  stock.s_quantity += 91;
-                }
-                stock.s_quantity -= params.quantities[i];
-                stock.s_ytd += params.quantities[i];
-                stock.s_remote_cnt += (params.remote_bitmap & (1 << i)) ? 1 : 0;
+        auto supp_warehouse = detail.supplier_warehouse_id[i];
+        if (std::find(warehouse_filters.begin(), warehouse_filters.begin() + nr_warehouse_filters,
+                      supp_warehouse) == warehouse_filters.begin() + nr_warehouse_filters) {
+          warehouse_filters[nr_warehouse_filters++] = supp_warehouse;
+        }
+      }
+    }
 
-                vhandle.Write(stock);
-                ClientBase::OnUpdateRow(state->stocks[i]);
-                debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
-                      index_handle.serial_id(), i,
-                      (void *)state->stocks[i]);
+    auto root = proc.promise();
+    for (int f = 0; f < nr_warehouse_filters; f++) {
+      auto filter = warehouse_filters[f];
+      auto aff = std::numeric_limits<uint64_t>::max();
+
+      if (filter > 0) aff = filter - 1;
+
+      root->Then(
+          MakeContext(bitmap, params, filter), node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle, bitmap, params, filter] = ctx;
+            for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+              if ((bitmap & (1 << i)) == 0) continue;
+              if (filter > 0 && params.supplier_warehouses[i] != filter) continue;
+
+              debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
+                    index_handle.serial_id(), i, (void *) state->stocks[i]);
+
+              TxnVHandle vhandle = index_handle(state->stocks[i]);
+              auto stock = vhandle.Read<Stock::Value>();
+              if (stock.s_quantity - params.quantities[i] < 10) {
+                stock.s_quantity += 91;
               }
-              return nullopt;
-            }, bitmap, params);
-  }
+              stock.s_quantity -= params.quantities[i];
+              stock.s_ytd += params.quantities[i];
+              stock.s_remote_cnt += (params.supplier_warehouses[i] != params.warehouse);
 
+              vhandle.Write(stock);
+              ClientBase::OnUpdateRow(state->stocks[i]);
+              debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
+                    index_handle.serial_id(), i,
+                    (void *)state->stocks[i]);
+            }
+            return nullopt;
+          },
+          aff);
+    }
+  }
 
   for (auto &p: state->other_inserts_nodes) {
     auto [node, bitmap] = p;
@@ -176,7 +221,7 @@ void NewOrderTxn::Run()
 
                   return nullopt;
                 },
-                bitmap, customer_id, nr_items, ts_now, params.remote_bitmap == 0);
+                bitmap, customer_id, nr_items, ts_now, all_local);
   }
 
   for (auto &p: state->orderlines_nodes) {
@@ -205,6 +250,8 @@ void NewOrderTxn::Run()
             },
             bitmap, detail);
   }
+  if (Client::g_enable_granola)
+    root_promise()->AssignAffinity(warehouse_id - 1);
 }
 
 }

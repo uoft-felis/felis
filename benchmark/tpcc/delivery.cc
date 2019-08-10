@@ -151,7 +151,11 @@ void DeliveryTxn::Run()
 #endif
     }
   }
-  root_promise()->AssignAffinity(NodeConfiguration::g_nr_threads);
+  if (Client::g_enable_granola) {
+    root_promise()->AssignAffinity(warehouse_id - 1);
+  } else {
+    root_promise()->AssignAffinity(NodeConfiguration::g_nr_threads);
+  }
 }
 
 } // namespace tpcc

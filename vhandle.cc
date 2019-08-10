@@ -159,7 +159,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 }
 
 // Read the exact version. version_idx is the version offset in the array, not serial id
-VarStr *SortedArrayVHandle::ReadExactVersion(uint64_t version_idx)
+VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
 {
   assert(size > 0);
   assert(size < capacity);
@@ -172,12 +172,11 @@ VarStr *SortedArrayVHandle::ReadExactVersion(uint64_t version_idx)
   return (VarStr *) *addr;
 }
 
-bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr, bool dry_run)
+bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
-  assert(this);
   // Finding the exact location
   auto it = std::lower_bound(versions, versions + size, sid);
-  if (it == versions + size || *it != sid) {
+  if (unlikely(it == versions + size || *it != sid)) {
     // sid is greater than all the versions, or the located lower_bound isn't sid version
     logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
                      sid, it - versions, size);
@@ -191,8 +190,6 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     return false;
   }
 
-  if (dry_run) return true;
-
   auto objects = versions + capacity;
   volatile uintptr_t *addr = &objects[it - versions];
 
@@ -205,16 +202,23 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     if (latest_version.compare_exchange_strong(ver, latest))
       break;
   }
-
   return true;
 }
 
-// just append a version, with sid = last sid + 1, and with value.
-// therefore this sid makes no sense when it comes to transaction serial id.
-void SortedArrayVHandle::WriteNewVersion(uint64_t epoch_nr, VarStr *obj) {
-  uint64_t sid = versions[size - 1] + 1;
-  AppendNewVersion(sid, epoch_nr);
-  WriteWithVersion(sid, obj, epoch_nr);
+bool SortedArrayVHandle::WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr)
+{
+  abort_if(version_idx >= size, "WriteExactVersion overflowed {} >= {}", version_idx, size);
+
+  volatile uintptr_t *addr = versions + capacity + version_idx;
+  // sync().OfferData(addr, (uintptr_t) obj);
+  *addr = (uintptr_t) obj;
+
+  unsigned int ver = latest_version.load();
+  while (version_idx > ver) {
+    if (latest_version.compare_exchange_strong(ver, version_idx))
+      break;
+  }
+  return true;
 }
 
 void SortedArrayVHandle::GarbageCollect()

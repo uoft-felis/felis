@@ -21,6 +21,7 @@
 namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
+bool EpochClient::g_enable_granola = false;
 
 void EpochCallback::operator()(unsigned long cnt)
 {
@@ -166,8 +167,10 @@ void CallTxnsWorker::Run()
   set_urgent(true);
   util::Instance<NodeConfiguration>().ContinueInboundPhase();
 
-  for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
-    auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
+  auto pq = client->cur_txns.load()->per_core_txns[t];
+
+  for (auto i = 0; i < pq->nr; i++) {
+    auto txn = pq->txns[i];
     txn->ResetRoot();
     std::invoke(mem_func, txn);
     client->conf.CollectBufferPlan(txn->root_promise(), cnt);
@@ -183,8 +186,6 @@ void CallTxnsWorker::Run()
   } else if (client->callback.phase == EpochPhase::Initialize) {
     util::Instance<GC>().RunGC();
   }
-
-  auto pq = client->cur_txns.load()->per_core_txns[t];
 
   // Try to assign a default partition scheme if nothing has been
   // assigned. Because transactions are already round-robinned, there is no
@@ -212,8 +213,19 @@ void CallTxnsWorker::Run()
   set_urgent(false);
 
   util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
-  // client->completion.Complete();
 
+
+  // Granola doesn't support out of order scheduling. In the original paper,
+  // Granola uses a single thread to issue. We use multiple threads, so here we
+  // have to barrier.
+  if (EpochClient::g_enable_granola && client->callback.phase == EpochPhase::Execute) {
+    g_finished.fetch_add(1);
+
+    while (g_finished.load() != NodeConfiguration::g_nr_threads)
+      _mm_pause();
+  }
+
+  client->completion.Complete();
   if (node_finished) {
     client->completion.Complete();
   }
@@ -233,7 +245,11 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   // phase. Therefore, we pretend all other nodes are going to send the maximum
   // pieces in this phase, and adjust this value when the counter arrives
   // eventually.
-  completion.Increment((conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1);
+
+  if (EpochClient::g_enable_granola && callback.phase == EpochPhase::Execute)
+    CallTxnsWorker::g_finished = 0;
+
+  completion.Increment((conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->call_worker;
     r->Reset();

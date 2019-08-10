@@ -30,6 +30,8 @@ class Client : public felis::EpochClient {
   static double g_theta;
   static size_t g_table_size;
   static bool g_enable_partition;
+  static bool g_enable_lock_elision;
+  static int g_extra_read;
 
   Client() noexcept;
   unsigned int LoadPercentage() final override { return 100; }

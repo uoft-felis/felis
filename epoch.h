@@ -60,6 +60,7 @@ class EpochClientBaseWorker : public go::Routine {
 class CallTxnsWorker : public EpochClientBaseWorker {
   TxnMemberFunc mem_func;
  public:
+  static inline std::atomic_int g_finished = 0;
   using EpochClientBaseWorker::EpochClientBaseWorker;
   void Run() override final;
   void set_function(TxnMemberFunc func) { mem_func = func; }
@@ -132,6 +133,7 @@ class EpochClient {
   EpochWorkers *workers[NodeConfiguration::kMaxNrThreads];
  public:
   static EpochClient *g_workload_client;
+  static bool g_enable_granola;
 
   EpochClient();
   virtual ~EpochClient() {}
@@ -145,7 +147,8 @@ class EpochClient {
 
   virtual unsigned int LoadPercentage() = 0;
   unsigned long NumberOfTxns() {
-    return LoadPercentage() * kTxnPerEpoch / 100;
+    // return LoadPercentage() * kTxnPerEpoch / 100;
+    return kTxnPerEpoch;
   };
 
   static constexpr size_t kTxnPerEpoch = 100000;
