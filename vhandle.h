@@ -57,13 +57,13 @@ class SortedArrayVHandle : public BaseVHandle {
   unsigned int size;
   // unsigned int value_mark;
   std::atomic_uint latest_version; // the latest written version's offset in *versions
+  short contention_dice = -1;
   // versions: ptr to the version array.
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
   util::OwnPtr<RowEntity> row_entity;
-
- public:
   std::atomic_long buf_pos = -1;
+ public:
 
   static void *operator new(size_t nr_bytes);
 

@@ -583,6 +583,8 @@ class SchemasImpl : public AllFields {
 template <typename AllFields> using Schemas = Object<SchemasImpl<AllFields>>;
 template <typename ...Types> using Tuple = Object<TupleImpl<Types...>>;
 
+template <typename ...Types> Tuple<Types...> MakeTuple(Types... params) { return Tuple<Types...>(params...); }
+
 }
 
 namespace felis {

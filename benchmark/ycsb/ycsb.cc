@@ -110,22 +110,19 @@ void RMWTxn::Prepare()
 void RMWTxn::Run()
 {
   if (!Client::g_enable_partition) {
-    proc
-        | TxnProc(
-            1, // Always on node 1
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto &[state, index_handle] = ctx;
-              for (int i = 0; i < kTotal; i++) {
-                TxnVHandle vhandle = index_handle(state->rows[i]);
-                auto dbv = vhandle.Read<Ycsb::Value>();
-
-                if (i < kTotal - Client::g_extra_read) {
-                  dbv.v.resize_junk(90);
-                  vhandle.Write(dbv);
-                }
-              }
-              return nullopt;
-            });
+    TxnHotKeys(
+        1, // Always on node 1
+        &state->rows[0], &state->rows[kTotal - Client::g_extra_read],
+        [](const auto &ctx, VHandle **row_ptr) -> void {
+          auto &[state, index_handle] = ctx;
+          auto row = *row_ptr;
+          TxnVHandle vhandle = index_handle(row);
+          auto dbv = vhandle.Read<Ycsb::Value>();
+          if (row_ptr < &state->rows[kTotal - Client::g_extra_read]) {
+            dbv.v.resize_junk(90);
+            vhandle.Write(dbv);
+          }
+        });
   } else {
     state->signal = 0;
     RunOnPartition(

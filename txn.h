@@ -305,9 +305,28 @@ class Txn : public BaseTxn {
   template <typename Func, typename ...Types>
   std::tuple<ContextType<Types...>, int, Func>
   TxnProc(int node, Func func, Types... params) {
-    return std::make_tuple(MakeContext(params...),
-                           node,
-                           func);
+    return std::make_tuple(
+        MakeContext(params...),
+        node,
+        func);
+  }
+
+  template <typename RowFunc, typename ...Types>
+  void TxnHotKeys(int node, VHandle** hot_begin, VHandle **hot_end,
+                  RowFunc rowfunc, Types... params) {
+    using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
+    proc
+        | std::tuple(
+            sql::MakeTuple(hot_begin, hot_end, (RowFuncPtr) rowfunc, MakeContext(params...)),
+            node,
+            [](const sql::Tuple<VHandle **, VHandle **, RowFuncPtr, ContextType<Types...>> &ctx, DummyValue _)
+            -> Optional<VoidValue> {
+              auto &[hot_begin, hot_end, rowfunc, real_ctx] = ctx;
+              for (auto p = hot_begin; p != hot_end; p++) {
+                rowfunc(real_ctx, p);
+              }
+              return nullopt;
+            });
   }
 
  private:

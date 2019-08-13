@@ -87,7 +87,8 @@ struct VersionBufferHead {
 
   // Scan on [from, to) version_buffers in the prealloc. Since BufferHead is
   // per-core, so we don't need to worry about locks inside the buffer.
-  static void ScanAndFinalize(int owner_core, long from, long to, VHandle **backrefs, uint64_t epoch_nr);
+  static void ScanAndFinalize(int owner_core, long from, long to, VHandle **backrefs,
+                              uint64_t epoch_nr, bool reset);
 };
 
 VersionBufferHead *VersionBufferHeadAllocation::AllocHead(int owner_core)
@@ -158,7 +159,8 @@ long VersionBufferHead::GetOrInstallBufferPos(BatchAppender *appender, VHandle *
 }
 
 void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
-                                        VHandle **backrefs, uint64_t epoch_nr)
+                                        VHandle **backrefs, uint64_t epoch_nr,
+                                        bool reset)
 {
   VersionPrealloc prealloc(g_preallocs[owner_core].ptr);
   auto bitmap = prealloc.bitmap();
@@ -172,7 +174,10 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
     vhandle->lock.Acquire(&qnode);
     buf_handle.FlushIntoNoLock(vhandle, epoch_nr);
     vhandle->lock.Release(&qnode);
-    vhandle->buf_pos.store(-1, std::memory_order_release);
+    if (reset) {
+      vhandle->buf_pos.store(-1, std::memory_order_release);
+      vhandle->contention_dice = (p - from) % NodeConfiguration::g_nr_threads;
+    }
   }
 }
 
@@ -223,7 +228,7 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
     for (auto p = buffer_heads[i]; p; p = p->next_buffer_head) {
       long from = p->base_pos;
       long to = from + p->pos.load(std::memory_order_acquire);
-      VersionBufferHead::ScanAndFinalize(core, from, to, p->backrefs, epoch_nr);
+      VersionBufferHead::ScanAndFinalize(core, from, to, p->backrefs, epoch_nr, i == core);
     }
   }
 }
