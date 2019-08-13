@@ -18,6 +18,7 @@ struct RMWStruct {
 
 struct RMWState {
   VHandle *rows[kTotal];
+  unsigned long signal; // Used only in Granola
 
   struct LookupCompletion : public TxnStateCompletion<RMWState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
@@ -126,12 +127,20 @@ void RMWTxn::Run()
               return nullopt;
             });
   } else {
+    state->signal = 0;
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->Then(
               t, 1,
               [](auto &ctx, auto _) -> Optional<VoidValue> {
                 auto [k, i, state, handle] = ctx;
+
+                if (Client::g_enable_granola && Client::g_granola_dependency
+                    && i == kTotal - Client::g_extra_read - 1) {
+                  while (state->signal != i) {
+                    _mm_pause();
+                  }
+                }
 
                 if (Client::g_enable_granola) {
                   auto &rel = util::Instance<RelationManager>()[static_cast<int>(Ycsb::kTable)];
@@ -149,6 +158,10 @@ void RMWTxn::Run()
                 if (i < kTotal - Client::g_extra_read) {
                   dbv.v.resize_junk(90);
                   vhandle.Write(dbv);
+                  if (Client::g_enable_granola && Client::g_granola_dependency
+                      && i < kTotal - Client::g_extra_read - 1) {
+                    __sync_fetch_and_add(&state->signal, 1);
+                  }
                 }
                 return nullopt;
               },
@@ -202,6 +215,7 @@ double Client::g_theta = 0.00;
 bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;
 int Client::g_extra_read = 0;
+bool Client::g_granola_dependency = false;
 
 Client::Client() noexcept
 {

@@ -28,6 +28,8 @@ class YcsbModule : public Module<WorkloadModule> {
     if (Options::kYcsbReadOnly)
       ycsb::Client::g_extra_read = Options::kYcsbReadOnly.ToInt();
 
+    ycsb::Client::g_granola_dependency = Options::kYcsbGranolaDependency;
+
     auto loader = new ycsb::YcsbLoader();
     go::GetSchedulerFromPool(1)->WakeUp(loader);
     loader->Wait();

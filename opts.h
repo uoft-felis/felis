@@ -72,6 +72,7 @@ struct Options {
   static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");
   static inline const auto kYcsbEnablePartition = Option("YcsbEnablePartition");
   static inline const auto kYcsbReadOnly = Option("YcsbReadOnly");
+  static inline const auto kYcsbGranolaDependency = Option("YcsbGranolaDependency");
 
   static inline const auto kEnableGranola = Option("EnableGranola");
 
