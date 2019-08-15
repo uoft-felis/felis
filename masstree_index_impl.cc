@@ -114,6 +114,11 @@ threadinfo *MasstreeIndex::GetThreadInfo()
   return TLSThreadInfo;
 }
 
+void MasstreeIndex::ResetThreadInfo()
+{
+  TLSThreadInfo = nullptr;
+}
+
 MasstreeIndex::Iterator MasstreeIndex::IndexSearchIterator(const VarStr *start, const VarStr *end)
 {
   auto p = map->find_iterator<MasstreeMapForwardScanIteratorImpl>(

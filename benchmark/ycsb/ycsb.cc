@@ -112,7 +112,7 @@ void RMWTxn::Run()
   if (!Client::g_enable_partition) {
     TxnHotKeys(
         1, // Always on node 1
-        &state->rows[0], &state->rows[kTotal - Client::g_extra_read],
+        &state->rows[0], &state->rows[kTotal],
         [](const auto &ctx, VHandle **row_ptr) -> void {
           auto &[state, index_handle] = ctx;
           auto row = *row_ptr;
@@ -177,9 +177,16 @@ void YcsbLoader::Run()
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
   for (auto t = 0; t < nr_threads; t++) {
+    printf("t = %d\n", t);
+    MasstreeIndex::ResetThreadInfo();
+
     mem::ParallelPool::SetCurrentAffinity(t);
     util::PinToCPU(t + NodeConfiguration::g_core_shifting);
-    for (unsigned long i = t; i < Client::g_table_size; i += nr_threads) {
+
+    unsigned long start = t * Client::g_table_size / nr_threads;
+    unsigned long end = (t + 1) * Client::g_table_size / nr_threads;
+
+    for (unsigned long i = start; i < end; i++) {
       Ycsb::Key dbk;
       Ycsb::Value dbv;
       dbk.k = i;
@@ -191,6 +198,8 @@ void YcsbLoader::Run()
   }
   util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
   mem::ParallelPool::SetCurrentAffinity(-1);
+  MasstreeIndex::ResetThreadInfo();
+
   finish.unlock();
 
   // Generate a random permutation
@@ -207,7 +216,7 @@ void YcsbLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 400;
+size_t Client::g_table_size = 480;
 double Client::g_theta = 0.00;
 bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;

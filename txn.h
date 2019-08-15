@@ -315,6 +315,26 @@ class Txn : public BaseTxn {
   void TxnHotKeys(int node, VHandle** hot_begin, VHandle **hot_end,
                   RowFunc rowfunc, Types... params) {
     using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
+
+    auto splitted = 0;
+    for (auto p = hot_begin; p != hot_end; p++) {
+      if ((*p)->contention_affinity_hint() == -1 || (*p)->nr_versions() <= 1024) continue;
+      splitted++;
+      root_promise()->Then(
+          sql::MakeTuple(p, (RowFuncPtr) rowfunc, MakeContext(params...)),
+          node,
+          [](const sql::Tuple<VHandle **, RowFuncPtr, ContextType<Types...>> &ctx, DummyValue _)
+          -> Optional<VoidValue> {
+            auto &[p, rowfunc, real_ctx] = ctx;
+            rowfunc(real_ctx, p);
+            return nullopt;
+          },
+          (*p)->contention_affinity_hint());
+    }
+
+    if (splitted == hot_end - hot_begin)
+      return;
+
     proc
         | std::tuple(
             sql::MakeTuple(hot_begin, hot_end, (RowFuncPtr) rowfunc, MakeContext(params...)),
@@ -323,6 +343,8 @@ class Txn : public BaseTxn {
             -> Optional<VoidValue> {
               auto &[hot_begin, hot_end, rowfunc, real_ctx] = ctx;
               for (auto p = hot_begin; p != hot_end; p++) {
+                if ((*p)->contention_affinity_hint() != -1 && (*p)->nr_versions() > 1024) continue;
+
                 rowfunc(real_ctx, p);
               }
               return nullopt;

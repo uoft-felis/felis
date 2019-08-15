@@ -35,6 +35,8 @@ void EpochCallback::operator()(unsigned long cnt)
     perf.Show(label);
     printf("\n");
 
+    if (phase == EpochPhase::Initialize)
+      logger->info("Callback handler on core {}", go::Scheduler::CurrentThreadPoolId() - 1);
     // TODO: We might Reset() the PromiseAllocationService, which would free the
     // current go::Routine. Is it necessary to run some function in the another
     // go::Routine?
@@ -213,7 +215,6 @@ void CallTxnsWorker::Run()
   set_urgent(false);
 
   util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
-
 
   // Granola doesn't support out of order scheduling. In the original paper,
   // Granola uses a single thread to issue. We use multiple threads, so here we

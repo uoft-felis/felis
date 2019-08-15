@@ -49,6 +49,7 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class VHandleContentionMetric;
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
+  friend class BatchAppender;
 
   util::MCSSpinLock lock;
   short alloc_by_regionid;
@@ -57,7 +58,7 @@ class SortedArrayVHandle : public BaseVHandle {
   unsigned int size;
   // unsigned int value_mark;
   std::atomic_uint latest_version; // the latest written version's offset in *versions
-  short contention_dice = -1;
+  short contention_hint = -1;
   // versions: ptr to the version array.
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
@@ -87,6 +88,7 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t first_version() const { return versions[0]; }
   uint64_t last_version() const { return versions[size - 1]; }
   short region_id() const { return alloc_by_regionid; }
+  short contention_affinity_hint() const { return contention_hint; }
  private:
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
   void EnsureSpace();

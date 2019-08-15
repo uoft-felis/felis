@@ -22,6 +22,7 @@ class MasstreeIndex {
   MasstreeMap *map;
   static threadinfo *GetThreadInfo();
  public:
+  static void ResetThreadInfo();
 
   struct Iterator {
     const VarStr *end_key;

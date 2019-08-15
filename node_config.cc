@@ -810,8 +810,8 @@ void NodeConfiguration::FinishPromiseFromQueue(PromiseRoutine *routine)
     auto idx = BatchBufferIndex(level, src_node, dst_node);
     auto target_cnt = total_batch_counters[idx].load();
     auto cnt = transport_meta.Merge(level, meta, dst_node);
-    if (cnt == target_cnt && cnt > 0) {
-      printf("cnt %lu, target %lu\n", cnt, target_cnt);
+    if (routine == nullptr || (cnt == target_cnt && cnt > 0)) {
+      // printf("cnt %lu, target %lu\n", cnt, target_cnt);
       // Flush channels to this route
       if (dst_node != src_node) {
         GetOutputChannel(dst_node)->Flush();

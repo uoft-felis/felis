@@ -165,19 +165,19 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
   VersionPrealloc prealloc(g_preallocs[owner_core].ptr);
   auto bitmap = prealloc.bitmap();
   for (long p = from; p < to; p++) {
+    auto vhandle = backrefs[p - from];
+    if (reset) {
+      vhandle->buf_pos.store(-1, std::memory_order_release);
+    }
+
     if ((bitmap[p / 64] & (1ULL << (p % 64))) == 0)
       continue;
 
     VersionBufferHandle buf_handle{g_preallocs[owner_core].ptr, p};
-    auto vhandle = backrefs[p - from];
     util::MCSSpinLock::QNode qnode;
     vhandle->lock.Acquire(&qnode);
     buf_handle.FlushIntoNoLock(vhandle, epoch_nr);
     vhandle->lock.Release(&qnode);
-    if (reset) {
-      vhandle->buf_pos.store(-1, std::memory_order_release);
-      vhandle->contention_dice = (p - from) % NodeConfiguration::g_nr_threads;
-    }
   }
 }
 
@@ -228,7 +228,10 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
     for (auto p = buffer_heads[i]; p; p = p->next_buffer_head) {
       long from = p->base_pos;
       long to = from + p->pos.load(std::memory_order_acquire);
-      VersionBufferHead::ScanAndFinalize(core, from, to, p->backrefs, epoch_nr, i == core);
+
+      // We used to set reset to true to early end the batch appender. It seems
+      // a bit slower than reset in a single thread in Reset().
+      VersionBufferHead::ScanAndFinalize(core, from, to, p->backrefs, epoch_nr, false);
     }
   }
 }
@@ -236,11 +239,30 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
 void BatchAppender::Reset()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
+  std::array<long, NodeConfiguration::kMaxNrThreads> weights;
+
+  weights.fill(0);
+
   for (int core = 0; core < nr_threads; core++) {
     auto numa_zone = core / mem::kNrCorePerNode;
     auto p = buffer_heads[core];
     for (auto next = p; p; p = next) {
       next = p->next_buffer_head;
+
+      // Contention management
+      for (long i = 0; i < p->pos.load(std::memory_order_acquire); i++) {
+        auto row = p->backrefs[i];
+        row->buf_pos.store(-1, std::memory_order_release);
+
+        if (row->size <= 1024) continue;
+
+        long *min_w = weights.data();
+        for (long *w = weights.data() + 1; w != weights.data() + nr_threads; w++)
+          if (*w < *min_w) min_w = w;
+        row->contention_hint = min_w - weights.data();
+        *min_w += row->nr_versions();
+      }
+
       g_alloc[numa_zone].pool.Free(p);
     }
   }
