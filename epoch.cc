@@ -168,7 +168,6 @@ void CallTxnsWorker::Run()
 
   set_urgent(true);
   util::Instance<NodeConfiguration>().ContinueInboundPhase();
-
   auto pq = client->cur_txns.load()->per_core_txns[t];
 
   for (auto i = 0; i < pq->nr; i++) {
@@ -179,15 +178,6 @@ void CallTxnsWorker::Run()
   }
 
   bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
-
-  if (client->callback.phase == EpochPhase::Execute) {
-    VHandle::Quiescence();
-    RowEntity::Quiescence();
-
-    mem::GetDataRegion().Quiescence();
-  } else if (client->callback.phase == EpochPhase::Initialize) {
-    util::Instance<GC>().RunGC();
-  }
 
   // Try to assign a default partition scheme if nothing has been
   // assigned. Because transactions are already round-robinned, there is no
@@ -224,6 +214,21 @@ void CallTxnsWorker::Run()
 
     while (g_finished.load() != NodeConfiguration::g_nr_threads)
       _mm_pause();
+  }
+
+  if ((util::Instance<EpochManager>().current_epoch_nr() & 0x07) == 0) {
+    if (client->callback.phase == EpochPhase::Execute) {
+      util::Instance<GC>().FinalizeGC();
+
+      VHandle::Quiescence();
+      RowEntity::Quiescence();
+
+      mem::GetDataRegion().Quiescence();
+    } else if (client->callback.phase == EpochPhase::Initialize) {
+      util::Instance<GC>().RunGC();
+    } else if (client->callback.phase == EpochPhase::Insert) {
+      util::Instance<GC>().PrepareGC();
+    }
   }
 
   client->completion.Complete();
@@ -330,7 +335,7 @@ void EpochClient::OnExecuteComplete()
     ctt += c / core_limit;
     fmt::format_to(buf, "{} ", c);
   }
-  logger->info("W() {}", std::string_view(buf.begin(), buf.size()));
+  logger->info("Wait Counts {}", std::string_view(buf.begin(), buf.size()));
   if (Options::kCongestionControl && cur_epoch_nr > 1) {
     auto ctt_rate = (callback.perf.duration_ms() << 24) / ctt;
     logger->info("duration {} vs last_duration {}, ctt_rate {}",

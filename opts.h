@@ -63,6 +63,7 @@ struct Options {
   static inline const auto kVHandleLockElision = Option("VHandleLockElision");
   static inline const auto kVHandleBatchAppend = Option("VHandleBatchAppend");
   static inline const auto kCongestionControl = Option("CongestionControl");
+  static inline const auto kVHandleParallel = Option("VHandleParallel");
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");
   static inline const auto kTpccHotWarehouseBitmap = Option("TpccHotWarehouseBitmap");

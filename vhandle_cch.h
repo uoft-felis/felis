@@ -16,7 +16,7 @@ template <typename T>
 class VHandleCollectionHandler {
  protected:
   struct Block {
-    static constexpr size_t kBlockSize = 4096;
+    static constexpr size_t kBlockSize = 64;
     static constexpr int kMaxNrBlocks = kBlockSize / 8 - 2;
     std::array<VHandle *, kMaxNrBlocks> handles;
     int alloc_core;
@@ -30,7 +30,6 @@ class VHandleCollectionHandler {
       for (int i = 0; i < nr_handles; i++) {
         __builtin_prefetch(handles[i]);
       }
-      __builtin_prefetch(next);
     }
 
     static void *operator new(size_t) {
@@ -43,40 +42,65 @@ class VHandleCollectionHandler {
   };
   static_assert(sizeof(Block) == Block::kBlockSize, "Block doesn't match block size?");
 
-  std::array<Block *, NodeConfiguration::kMaxNrThreads> blocks_heads;
+  std::array<Block *, NodeConfiguration::kMaxNrThreads> heads_buffer;
+  util::MCSSpinLock head_lock;
+  Block *head;
  public:
   static void InitPool();
 
   VHandleCollectionHandler() {
-    blocks_heads.fill(nullptr);
+    head = nullptr;
+    heads_buffer.fill(nullptr);
   }
 
   void AddVHandle(VHandle *vhandle) {
     auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    auto &blocks_head = blocks_heads[core_id];
-    if (blocks_head == nullptr || blocks_head->nr_handles == Block::kMaxNrBlocks) {
-      auto b = new Block();
-      b->next = blocks_head;
-      blocks_head = b;
+    auto &block_head = heads_buffer[core_id];
+    if (block_head == nullptr)
+      block_head = new Block();
+
+    if (block_head->nr_handles == Block::kMaxNrBlocks) {
+      util::MCSSpinLock::QNode qnode;
+      head_lock.Acquire(&qnode);
+      block_head->next = head;
+      head = block_head;
+      head_lock.Release(&qnode);
+
+      block_head = new Block();
     }
-    blocks_head->handles[blocks_head->nr_handles++] = vhandle;
+    block_head->handles[block_head->nr_handles++] = vhandle;
   }
 
   void RunHandler() {
     auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    auto &blocks_head = blocks_heads[core_id];
     auto nrb = 0, nr = 0;
-    while (blocks_head) {
-      blocks_head->Prefetch();
-      for (int i = 0; i < blocks_head->nr_handles; i++) {
-        ProcessVHandle(blocks_head->handles[i]);
+
+    auto block_head = heads_buffer[core_id];
+    if (!block_head) {
+      block_head = new Block();
+    }
+
+    do {
+      block_head->Prefetch();
+      for (int i = 0; i < block_head->nr_handles; i++) {
+        ProcessVHandle(block_head->handles[i]);
       }
       nrb++;
-      nr += blocks_head->nr_handles;
-      auto n = blocks_head->next;
-      delete blocks_head;
-      blocks_head = n;
-    }
+      nr += block_head->nr_handles;
+
+      if (block_head != heads_buffer[core_id])
+        delete block_head;
+      else
+        block_head->nr_handles = 0;
+
+      util::MCSSpinLock::QNode qnode;
+      head_lock.Acquire(&qnode);
+      block_head = head;
+      if (head) head = head->next;
+      head_lock.Release(&qnode);
+    } while (block_head);
+
+    logger->info("Processed {} rows {} blks", nr, nrb);
   }
 
   void ProcessVHandle(VHandle *vhandle) {

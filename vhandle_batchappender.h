@@ -10,7 +10,7 @@ struct VersionBufferHandle {
   long pos;
 
   void Append(VHandle *handle, uint64_t sid, uint64_t epoch_nr);
-  void FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr);
+  void FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, unsigned int end);
 };
 
 struct VersionBufferHead;

@@ -14,32 +14,92 @@ mem::ParallelPool GC::g_block_pool;
 
 void GC::InitPool()
 {
-  g_block_pool = mem::ParallelPool(mem::VhandlePool, Block::kBlockSize, 4096);
+  g_block_pool = mem::ParallelPool(
+      mem::VhandlePool, GarbageBlock::kBlockSize, 32_M / GarbageBlock::kBlockSize);
 }
 
-void GC::AddVHandle(VHandle *handle)
+GC::LocalCollector &GC::local_collector()
 {
-  // Either there's nothing to collect, or it's already in the GC queue.
-  if (handle->size != 2)
+  return local_cls[go::Scheduler::CurrentThreadPoolId() - 1];
+}
+
+void GC::AddVHandle(VHandle *handle, uint64_t epoch_nr)
+{
+  if (epoch_nr == 0)
     return;
-  VHandleCollectionHandler<GC>::AddVHandle(handle);
+
+  // Either there's nothing to collect, or it's already in the GC queue.
+  if (handle->last_gc_mark_epoch != 0 &&
+      (handle->last_gc_mark_epoch >> 3) == (epoch_nr >> 3))
+    return;
+  handle->last_gc_mark_epoch = epoch_nr;
+
+  auto &cls = local_collector();
+  if (cls.pending == nullptr || cls.pending->nr_handles == GarbageBlock::kMaxNrBlocks) {
+    auto b = new GarbageBlock();
+    b->processing_next = b->next = cls.pending;
+    cls.pending = b;
+  }
+  cls.pending->handles[cls.pending->nr_handles++] = handle;
+}
+
+void GC::PrepareGC()
+{
+  auto &cls = local_collector();
+  GarbageBlock *tail = cls.pending;
+  if (!tail) return;
+  while (tail->next) tail = tail->next;
+
+  tail->next = cls.processing;
+  cls.processing = cls.pending;
+
+  tail->processing_next = processing_queue.load();
+  while (!processing_queue.compare_exchange_strong(tail->processing_next, cls.pending))
+    _mm_pause();
+
+  cls.pending = nullptr;
+}
+
+void GC::FinalizeGC()
+{
+  auto &cls = local_collector();
+  GarbageBlock *next = nullptr;
+  for (auto b = cls.processing; b != nullptr; b = next) {
+    next = b->next;
+    delete b;
+  }
+  cls.processing = nullptr;
 }
 
 void GC::RunGC()
 {
-  cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
-  VHandleCollectionHandler<GC>::RunHandler();
+  auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+
+  GarbageBlock *b = processing_queue.load();
+  size_t nr = 0, nrb = 0;
+  while (b) {
+    while (!processing_queue.compare_exchange_strong(b, b->processing_next)) {
+      if (!b) return;
+
+      _mm_pause();
+    }
+
+    for (auto i = 0; i < b->nr_handles; i++) Process(b->handles[i], cur_epoch_nr);
+    nrb++;
+    nr += b->nr_handles;
+    b = b->processing_next;
+  }
 }
 
-void GC::Process(VHandle *handle)
+void GC::Process(VHandle *handle, uint64_t cur_epoch_nr)
 {
   util::MCSSpinLock::QNode qnode;
   handle->lock.Lock(&qnode);
-  Collect(handle);
+  Collect(handle, cur_epoch_nr);
   handle->lock.Unlock(&qnode);
 }
 
-void GC::Collect(VHandle *handle)
+void GC::Collect(VHandle *handle, uint64_t cur_epoch_nr)
 {
   auto *versions = handle->versions;
   uintptr_t *objects = handle->versions + handle->capacity;
@@ -56,13 +116,12 @@ void GC::Collect(VHandle *handle)
   handle->latest_version.fetch_sub(i);
 
   if (is_trace_enabled(TRACE_GC)) {
-    std::stringstream ss;
+    fmt::memory_buffer buf;
     for (auto j = 0; j < handle->size; j++) {
-      ss << versions[j] << "->0x"
-         << std::hex << objects[j] << " ";
+      fmt::format_to(buf, "{}->0x{:x} ", versions[j], objects[j]);
     }
-
-    trace(TRACE_GC "GC on row {} {}", (void *) handle, ss.str());
+    trace(TRACE_GC "GC on row {} {}", (void *) handle,
+          std::string_view(buf.begin(), buf.size()));
   }
 }
 

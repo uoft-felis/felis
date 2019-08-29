@@ -245,6 +245,7 @@ class Promise : public BasePromise {
     routine->node_id = placement;
     routine->level = 0;
     routine->affinity = affinity;
+    routine->sched_key = 0;
     auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
     routine->next = next_promise;
     return next_promise;

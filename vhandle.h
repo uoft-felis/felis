@@ -64,6 +64,7 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t *versions;
   util::OwnPtr<RowEntity> row_entity;
   std::atomic_long buf_pos = -1;
+  uint64_t last_gc_mark_epoch = 0;
  public:
 
   static void *operator new(size_t nr_bytes);
@@ -87,11 +88,23 @@ class SortedArrayVHandle : public BaseVHandle {
   const size_t nr_versions() const { return size; }
   uint64_t first_version() const { return versions[0]; }
   uint64_t last_version() const { return versions[size - 1]; }
+  unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed); }
   short region_id() const { return alloc_by_regionid; }
   short contention_affinity_hint() const { return contention_hint; }
  private:
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
+  unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
+  void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
+    versions[pos] = sid;
+  }
   void EnsureSpace();
+  void IncreaseSize(int delta) {
+    size += delta;
+    EnsureSpace();
+
+    std::fill(versions + capacity + size - delta, versions + capacity + size,
+              kPendingValue);
+  }
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 

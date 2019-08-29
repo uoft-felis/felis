@@ -332,7 +332,7 @@ class ParallelRegion {
   static int SizeToClass(size_t sz) {
     int idx = 64 - __builtin_clzl(sz - 1) - 5;
     if (__builtin_expect(idx >= kMaxPools, 0)) {
-      fprintf(stderr, "Requested invalid size class %d\n", idx);
+      fprintf(stderr, "Requested invalid size class %d %lu\n", idx, sz);
       std::abort();
     }
     return idx < 0 ? 0 : idx;

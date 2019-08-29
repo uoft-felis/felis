@@ -2,17 +2,19 @@
 #include <thread>
 
 #include "vhandle_batchappender.h"
+#include "gc.h"
 #include "node_config.h"
+#include "opts.h"
 
 namespace felis {
 
 struct VersionBuffer {
-  static constexpr size_t kMaxBatch = 15;
+  static constexpr size_t kMaxBatch = 63;
   size_t buf_cnt;
   uint64_t versions[kMaxBatch];
 };
 
-static_assert(sizeof(VersionBuffer) == 16 * 8);
+static_assert(sizeof(VersionBuffer) % 64 == 0);
 
 static constexpr size_t kPreAllocCount = 256_K;
 
@@ -108,9 +110,13 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
   if (buf->buf_cnt == VersionBuffer::kMaxBatch) {
     util::MCSSpinLock::QNode qnode;
     handle->lock.Acquire(&qnode);
+    auto end = handle->size;
+    handle->IncreaseSize(VersionBuffer::kMaxBatch + 1);
+    handle->BookNewVersionNoLock(sid, end);
 
-    FlushIntoNoLock(handle, epoch_nr);
-    handle->AppendNewVersionNoLock(sid, epoch_nr);
+    end = handle->AbsorbNewVersionNoLock(end, VersionBuffer::kMaxBatch);
+
+    FlushIntoNoLock(handle, epoch_nr, end);
 
     handle->lock.Release(&qnode);
 
@@ -122,13 +128,16 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
   buf->versions[buf->buf_cnt++] = sid;
 }
 
-void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr)
+void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, unsigned int end)
 {
   VersionPrealloc prealloc(prealloc_ptr);
   auto buf = prealloc.version_buffers() + pos;
-  for (auto i = 0; i < buf->buf_cnt; i++) {
-    handle->AppendNewVersionNoLock(buf->versions[i], epoch_nr);
+  for (int i = buf->buf_cnt - 1; i >= 0; i--) {
+    handle->BookNewVersionNoLock(buf->versions[i], end);
+    // printf("absorb %d %d\n", end, i);
+    end = handle->AbsorbNewVersionNoLock(end, i);
   }
+  util::Instance<GC>().AddVHandle(handle, epoch_nr);
   buf->buf_cnt = 0;
   prealloc.bitmap()[pos / 64] &= ~(1ULL << (pos % 64));
 }
@@ -175,8 +184,11 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
 
     VersionBufferHandle buf_handle{g_preallocs[owner_core].ptr, p};
     util::MCSSpinLock::QNode qnode;
+    auto buf = prealloc.version_buffers() + p;
+
     vhandle->lock.Acquire(&qnode);
-    buf_handle.FlushIntoNoLock(vhandle, epoch_nr);
+    vhandle->IncreaseSize(buf->buf_cnt);
+    buf_handle.FlushIntoNoLock(vhandle, epoch_nr, vhandle->size - buf->buf_cnt);
     vhandle->lock.Release(&qnode);
   }
 }
@@ -254,13 +266,15 @@ void BatchAppender::Reset()
         auto row = p->backrefs[i];
         row->buf_pos.store(-1, std::memory_order_release);
 
-        if (row->size <= 1024) continue;
+        if (!Options::kVHandleParallel) continue;
+
+        if (row->size - row->nr_updated() <= 1024) continue;
 
         long *min_w = weights.data();
         for (long *w = weights.data() + 1; w != weights.data() + nr_threads; w++)
           if (*w < *min_w) min_w = w;
         row->contention_hint = min_w - weights.data();
-        *min_w += row->nr_versions();
+        *min_w += row->nr_versions() - row->nr_updated();
       }
 
       g_alloc[numa_zone].pool.Free(p);
@@ -271,6 +285,12 @@ void BatchAppender::Reset()
   }
   for (int core = 0; core < nr_threads; core++) {
     buffer_heads[core] = g_alloc[core / mem::kNrCorePerNode].AllocHead(core);
+  }
+  if (Options::kVHandleParallel) {
+    fmt::memory_buffer buf;
+    for (auto i = 0; i < nr_threads; i++)
+      fmt::format_to(buf, " {}", weights[i]);
+    logger->info("Parallel Exec weight assigned {}", std::string_view(buf.begin(), buf.size()));
   }
 }
 

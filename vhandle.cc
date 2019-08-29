@@ -32,25 +32,28 @@ SortedArrayVHandle::SortedArrayVHandle()
   latest_version.store(0);
 }
 
-static void EnlargePair64Array(uint64_t *old_p, uint old_cap, int old_regionid,
-			       uint64_t *&new_p, uint &new_cap)
+static uint64_t *EnlargePair64Array(uint64_t *old_p, unsigned int old_cap, int old_regionid,
+                                    unsigned int new_cap)
 {
-  new_cap = 2 * old_cap;
   const size_t old_len = old_cap * sizeof(uint64_t);
   const size_t new_len = new_cap * sizeof(uint64_t);
 
-  new_p = (uint64_t *) mem::GetDataRegion().Alloc(2 * new_len);
-  memcpy(new_p, old_p, old_cap * sizeof(uint64_t));
-  memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
+  auto new_p = (uint64_t *) mem::GetDataRegion().Alloc(2 * new_len);
+  // memcpy(new_p, old_p, old_cap * sizeof(uint64_t));
+  std::copy(old_p, old_p + old_cap, new_p);
+  // memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
+  std::copy(old_p + old_cap, old_p + 2 * old_cap, new_p + new_cap);
   mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
+  return new_p;
 }
 
 void SortedArrayVHandle::EnsureSpace()
 {
-  if (unlikely(size == capacity)) {
+  if (unlikely(size >= capacity)) {
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
-    EnlargePair64Array(versions, capacity, alloc_by_regionid,
-		       versions, capacity);
+    auto new_cap = 1U << (32 - __builtin_clz((unsigned int) size));
+    versions = EnlargePair64Array(versions, capacity, alloc_by_regionid, new_cap);
+    capacity = new_cap;
     alloc_by_regionid = current_regionid;
   }
 }
@@ -58,12 +61,10 @@ void SortedArrayVHandle::EnsureSpace()
 void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr)
 {
   // append this version at the end of version array
-  size++;
-  EnsureSpace();
-  versions[size - 1] = sid;
-  auto objects = versions + capacity;
-  objects[size - 1] = kPendingValue;
+  IncreaseSize(1);
+  BookNewVersionNoLock(sid, size - 1);
 
+#if 0
   // find the location this version is supposed to be
   uint64_t last = versions[size - 1];
   int i = std::lower_bound(versions, versions + size - 1, last) - versions;
@@ -71,14 +72,36 @@ void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr)
   // move versions by 1 to make room, and put this version back
   memmove(&versions[i + 1], &versions[i], sizeof(uint64_t) * (size - i - 1));
   versions[i] = last;
+#endif
 
+  AbsorbNewVersionNoLock(size - 1, 0);
 
   // We don't need to move the values, because they are all kPendingValue in
   // this epoch anyway. Of course, this is assuming sid will never smaller than
   // the minimum sid of this epoch. In felis, we can assume this. However if we
   // were to replay Ermia, we couldn't.
 
-  util::Instance<GC>().AddVHandle((VHandle *) this);
+  util::Instance<GC>().AddVHandle((VHandle *) this, epoch_nr);
+}
+
+unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift)
+{
+  if (end == 0) {
+    versions[extra_shift] = versions[0];
+    return 0;
+  }
+
+  uint64_t last = versions[end];
+  unsigned int mark = (end - 1) & ~(0x03FF);
+  // int i = std::lower_bound(versions + mark, versions + end, last) - versions;
+  int i = util::FastLowerBound(versions + mark, versions + end, last) - versions;
+  if (i == mark)
+    i = std::lower_bound(versions, versions + mark, last) - versions;
+
+  std::move(versions + i, versions + end, versions + i + 1 + extra_shift);
+  versions[i + extra_shift] = last;
+
+  return i;
 }
 
 // Insert a new version into the version array, with value pending.

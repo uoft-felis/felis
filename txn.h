@@ -315,36 +315,45 @@ class Txn : public BaseTxn {
   void TxnHotKeys(int node, VHandle** hot_begin, VHandle **hot_end,
                   RowFunc rowfunc, Types... params) {
     using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
+    uint64_t splitted_bitmap = 0;
 
-    auto splitted = 0;
+    abort_if(hot_end - hot_begin > 63, "TxnHotKeys does not support > 63 keys");
+
     for (auto p = hot_begin; p != hot_end; p++) {
-      if ((*p)->contention_affinity_hint() == -1 || (*p)->nr_versions() <= 1024) continue;
-      splitted++;
-      root_promise()->Then(
+      if ((*p)->contention_affinity_hint() == -1
+          || (*p)->nr_versions() - (*p)->nr_updated() <= 1024)
+        continue;
+
+      splitted_bitmap |= 1ULL << (p - hot_begin);
+      auto routine = root_promise()->AttachRoutine(
           sql::MakeTuple(p, (RowFuncPtr) rowfunc, MakeContext(params...)),
-          node,
           [](const sql::Tuple<VHandle **, RowFuncPtr, ContextType<Types...>> &ctx, DummyValue _)
           -> Optional<VoidValue> {
             auto &[p, rowfunc, real_ctx] = ctx;
             rowfunc(real_ctx, p);
             return nullopt;
-          },
-          (*p)->contention_affinity_hint());
+          });
+      auto seq = (serial_id() >> 8) & 0xFFFFFFFFULL;
+      routine->affinity = (*p)->contention_affinity_hint();
+      // routine->affinity = seq % NodeConfiguration::g_nr_threads;
+      routine->level = 0;
+      routine->node_id = node;
+      routine->next = nullptr;
+      routine->sched_key = serial_id() & 0x00FFFFFFFFFF;
     }
 
-    if (splitted == hot_end - hot_begin)
+    if (__builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
       return;
 
     proc
         | std::tuple(
-            sql::MakeTuple(hot_begin, hot_end, (RowFuncPtr) rowfunc, MakeContext(params...)),
+            sql::MakeTuple(hot_begin, hot_end, (RowFuncPtr) rowfunc, splitted_bitmap, MakeContext(params...)),
             node,
-            [](const sql::Tuple<VHandle **, VHandle **, RowFuncPtr, ContextType<Types...>> &ctx, DummyValue _)
+            [](const sql::Tuple<VHandle **, VHandle **, RowFuncPtr, uint64_t, ContextType<Types...>> &ctx, DummyValue _)
             -> Optional<VoidValue> {
-              auto &[hot_begin, hot_end, rowfunc, real_ctx] = ctx;
+              auto &[hot_begin, hot_end, rowfunc, splitted_bitmap, real_ctx] = ctx;
               for (auto p = hot_begin; p != hot_end; p++) {
-                if ((*p)->contention_affinity_hint() != -1 && (*p)->nr_versions() > 1024) continue;
-
+                if (splitted_bitmap & (1ULL << (p - hot_begin))) continue;
                 rowfunc(real_ctx, p);
               }
               return nullopt;
@@ -352,7 +361,6 @@ class Txn : public BaseTxn {
   }
 
  private:
-
   template <typename KParam, typename ...KParams>
   void KeyParamsToBitmap(SliceRoute router, uint16_t bitmap_per_node[],
                          int bitshift, KParam param, KParams ...rest) {
