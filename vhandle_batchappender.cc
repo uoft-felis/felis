@@ -194,6 +194,7 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
 }
 
 BatchAppender::BatchAppender()
+    : cw_begin(0), cw_end(0)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
   auto nr_slots = kPreAllocCount / nr_threads;
@@ -251,9 +252,7 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
 void BatchAppender::Reset()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  std::array<long, NodeConfiguration::kMaxNrThreads> weights;
-
-  weights.fill(0);
+  cw_begin = cw_end;
 
   for (int core = 0; core < nr_threads; core++) {
     auto numa_zone = core / mem::kNrCorePerNode;
@@ -268,18 +267,21 @@ void BatchAppender::Reset()
 
         if (!Options::kVHandleParallel) continue;
 
-        if (row->size - row->nr_updated() <= 1024) continue;
+        auto w = row->size - row->nr_updated();
+        if (w <= 1024) continue;
 
-        long *min_w = weights.data();
-        for (long *w = weights.data() + 1; w != weights.data() + nr_threads; w++)
-          if (*w < *min_w) min_w = w;
-        row->contention_hint = min_w - weights.data();
-        *min_w += row->nr_versions() - row->nr_updated();
+        row->contention = cw_end;
+        cw_end += w;
       }
 
       g_alloc[numa_zone].pool.Free(p);
     }
   }
+
+  if (cw_end - cw_begin < NodeConfiguration::g_nr_threads) {
+    cw_end = cw_begin;
+  }
+
   for (int n = 0; n < nr_threads / mem::kNrCorePerNode; n++) {
     g_alloc[n].pos = 0;
   }
@@ -287,10 +289,7 @@ void BatchAppender::Reset()
     buffer_heads[core] = g_alloc[core / mem::kNrCorePerNode].AllocHead(core);
   }
   if (Options::kVHandleParallel) {
-    fmt::memory_buffer buf;
-    for (auto i = 0; i < nr_threads; i++)
-      fmt::format_to(buf, " {}", weights[i]);
-    logger->info("Parallel Exec weight assigned {}", std::string_view(buf.begin(), buf.size()));
+    logger->info("Contention Weight {} {} ", cw_begin, cw_end);
   }
 }
 

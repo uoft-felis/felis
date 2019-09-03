@@ -9,6 +9,7 @@
 #include "sqltypes.h"
 #include "promise.h"
 #include "slice.h"
+#include "vhandle_batchappender.h"
 
 namespace felis {
 
@@ -316,34 +317,57 @@ class Txn : public BaseTxn {
                   RowFunc rowfunc, Types... params) {
     using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
     uint64_t splitted_bitmap = 0;
+    auto &appender = util::Instance<BatchAppender>();
+    auto total_scale = appender.contention_weight_end() - appender.contention_weight_begin();
 
     abort_if(hot_end - hot_begin > 63, "TxnHotKeys does not support > 63 keys");
 
-    for (auto p = hot_begin; p != hot_end; p++) {
-      if ((*p)->contention_affinity_hint() == -1
-          || (*p)->nr_versions() - (*p)->nr_updated() <= 1024)
-        continue;
+    if (total_scale > 0) {
+      for (auto p = hot_begin; p != hot_end; p++) {
+        auto w = (*p)->nr_versions() - (*p)->nr_updated();
+        if ((*p)->contention_weight() < appender.contention_weight_begin()
+            || w <= 1024)
+          continue;
 
-      splitted_bitmap |= 1ULL << (p - hot_begin);
-      auto routine = root_promise()->AttachRoutine(
-          sql::MakeTuple(p, (RowFuncPtr) rowfunc, MakeContext(params...)),
-          [](const sql::Tuple<VHandle **, RowFuncPtr, ContextType<Types...>> &ctx, DummyValue _)
-          -> Optional<VoidValue> {
-            auto &[p, rowfunc, real_ctx] = ctx;
-            rowfunc(real_ctx, p);
-            return nullopt;
-          });
-      auto seq = (serial_id() >> 8) & 0xFFFFFFFFULL;
-      routine->affinity = (*p)->contention_affinity_hint();
-      // routine->affinity = seq % NodeConfiguration::g_nr_threads;
-      routine->level = 0;
-      routine->node_id = node;
-      routine->next = nullptr;
-      routine->sched_key = serial_id() & 0x00FFFFFFFFFF;
+        splitted_bitmap |= 1ULL << (p - hot_begin);
+        auto routine = root_promise()->AttachRoutine(
+            sql::MakeTuple(p, (RowFuncPtr) rowfunc, MakeContext(params...)),
+            [](const sql::Tuple<VHandle **, RowFuncPtr, ContextType<Types...>> &ctx, DummyValue _)
+            -> Optional<VoidValue> {
+              auto &[p, rowfunc, real_ctx] = ctx;
+              rowfunc(real_ctx, p);
+              return nullopt;
+            });
+        static thread_local util::XORRandom64 local_rand;
+        auto lower = (*p)->contention_weight() - appender.contention_weight_begin();
+        auto upper = lower + w;
+        auto aff = lower * NodeConfiguration::g_nr_threads / total_scale;
+        auto upper_aff = (upper - 1) * NodeConfiguration::g_nr_threads / total_scale;
+        if (aff != upper_aff) {
+          if (aff / mem::kNrCorePerNode != upper_aff / mem::kNrCorePerNode) {
+            // They belong to different sockets
+            auto numa_node = (lower + upper - 1) * NodeConfiguration::g_nr_threads
+                             / 2 / total_scale / mem::kNrCorePerNode;
+            if (aff / mem::kNrCorePerNode != numa_node) {
+              lower = numa_node * mem::kNrCorePerNode * total_scale / NodeConfiguration::g_nr_threads;
+            }
+            if (upper_aff / mem::kNrCorePerNode != numa_node) {
+              upper = ((numa_node + 1) * mem::kNrCorePerNode) * total_scale / NodeConfiguration::g_nr_threads;
+            }
+          }
+          aff = local_rand.NextRange(lower, upper) * NodeConfiguration::g_nr_threads / total_scale;
+        }
+        // auto seq = (serial_id() >> 8) & 0x00FFFFFFULL;
+        routine->affinity = aff;
+        routine->level = 0;
+        routine->node_id = node;
+        routine->next = nullptr;
+        routine->sched_key = serial_id() & 0x00FFFFFFFF;
+      }
+
+      if (__builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
+        return;
     }
-
-    if (__builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
-      return;
 
     proc
         | std::tuple(

@@ -18,7 +18,7 @@ class GC {
   void FinalizeGC();
 
   struct GarbageBlock {
-    static constexpr size_t kBlockSize = 64;
+    static constexpr size_t kBlockSize = 128;
     static constexpr int kMaxNrBlocks = kBlockSize / 8 - 3;
     std::array<VHandle *, kMaxNrBlocks> handles;
     int alloc_core;

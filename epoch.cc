@@ -216,19 +216,17 @@ void CallTxnsWorker::Run()
       _mm_pause();
   }
 
-  if ((util::Instance<EpochManager>().current_epoch_nr() & 0x07) == 0) {
-    if (client->callback.phase == EpochPhase::Execute) {
-      util::Instance<GC>().FinalizeGC();
+  if (client->callback.phase == EpochPhase::Execute) {
+    util::Instance<GC>().FinalizeGC();
 
-      VHandle::Quiescence();
-      RowEntity::Quiescence();
+    VHandle::Quiescence();
+    RowEntity::Quiescence();
 
-      mem::GetDataRegion().Quiescence();
-    } else if (client->callback.phase == EpochPhase::Initialize) {
-      util::Instance<GC>().RunGC();
-    } else if (client->callback.phase == EpochPhase::Insert) {
-      util::Instance<GC>().PrepareGC();
-    }
+    mem::GetDataRegion().Quiescence();
+  } else if (client->callback.phase == EpochPhase::Initialize) {
+    util::Instance<GC>().RunGC();
+  } else if (client->callback.phase == EpochPhase::Insert) {
+    util::Instance<GC>().PrepareGC();
   }
 
   client->completion.Complete();

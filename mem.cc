@@ -439,23 +439,30 @@ ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t to
        node++) {
     tasks.emplace_back(
         [alloc_type, chunk_size, cap, this, node]() {
-          constexpr auto kHeaderSize = CACHE_LINE_SIZE + kMaxNrPools * sizeof(uintptr_t);
-
           fprintf(stderr, "allocating %lu on node %d\n",
                   (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
           auto mem = (uint8_t *) MemMapAlloc(
               alloc_type, (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
           int offset = node * kNrCorePerNode - g_core_shifting;
           for (int i = offset; i < offset + kNrCorePerNode; i++) {
-            auto pool_ptr = mem + (i - offset) * (kHeaderSize + chunk_size * cap);
-            auto pool_mem = pool_ptr + kHeaderSize;
+            auto p = mem + (i - offset) * (kHeaderSize + chunk_size * cap);
+            auto pool_mem = p + kHeaderSize;
 
-            pools[i] = new (pool_ptr) BasicPool(
+            pools[i] = new (p) BasicPool(
                 alloc_type, chunk_size, cap,
                 pool_mem);
 
-            free_nodes[i] = (uintptr_t *) (pool_ptr + CACHE_LINE_SIZE);
-            std::fill(free_nodes[i], free_nodes[i] + g_nr_cores, 0);
+            p += sizeof(BasicPool);
+            free_lists[i] = (uintptr_t *) p;
+
+            p += kMaxNrPools * sizeof(uintptr_t);
+            free_tails[i] = (uintptr_t *) p;
+
+            p += kMaxNrPools * sizeof(uintptr_t);
+            csld_free_lists[i] = new (p) ConsolidateFreeList();
+
+            std::fill(free_lists[i], free_lists[i] + kMaxNrPools, 0);
+            std::fill(free_tails[i], free_tails[i] + kMaxNrPools, 0);
           }
         });
   }
@@ -484,16 +491,27 @@ ParallelSlabPool::ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, u
 
   uint8_t *mem = nullptr;
   for (int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
-    constexpr auto kHeaderSize = sizeof(SlabPool) + kMaxNrPools * sizeof(uintptr_t);
     auto d = std::div(i + g_core_shifting, kNrCorePerNode);
     auto numa_node = d.quot;
     auto numa_offset = d.rem;
     if (numa_offset == 0) {
       mem = (uint8_t *) MemMapAlloc(alloc_type, kHeaderSize * kNrCorePerNode);
     }
-    pools[i] = new (mem + numa_offset * kHeaderSize)
-               SlabPool(alloc_type, chunk_size, buffer, numa_node);
-    free_nodes[i] = (uintptr_t *) (mem + numa_offset * kHeaderSize + sizeof(SlabPool));
+
+    auto p = mem + numa_offset * kHeaderSize;
+    pools[i] = new (p) SlabPool(alloc_type, chunk_size, buffer, numa_node);
+
+    p += sizeof(SlabPool);
+    free_lists[i] = (uintptr_t *) p;
+
+    p += kMaxNrPools * sizeof(uintptr_t);
+    free_tails[i] = (uintptr_t *) p;
+
+    p += kMaxNrPools * sizeof(uintptr_t);
+    csld_free_lists[i] = new (p) ConsolidateFreeList();
+
+    std::fill(free_lists[i], free_lists[i] + kMaxNrPools, 0);
+    std::fill(free_tails[i], free_tails[i] + kMaxNrPools, 0);
   }
 }
 

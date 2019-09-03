@@ -32,6 +32,7 @@ class Client : public felis::EpochClient {
   static bool g_enable_partition;
   static bool g_enable_lock_elision;
   static int g_extra_read;
+  static int g_contention_key;
   static bool g_granola_dependency;
 
   Client() noexcept;

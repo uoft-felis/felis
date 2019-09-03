@@ -15,13 +15,15 @@ mem::ParallelPool GC::g_block_pool;
 void GC::InitPool()
 {
   g_block_pool = mem::ParallelPool(
-      mem::VhandlePool, GarbageBlock::kBlockSize, 32_M / GarbageBlock::kBlockSize);
+      mem::VhandlePool, GarbageBlock::kBlockSize, 64_M / GarbageBlock::kBlockSize);
 }
 
 GC::LocalCollector &GC::local_collector()
 {
   return local_cls[go::Scheduler::CurrentThreadPoolId() - 1];
 }
+
+static const int kGCEveryEpoch = 8;
 
 void GC::AddVHandle(VHandle *handle, uint64_t epoch_nr)
 {
@@ -30,7 +32,7 @@ void GC::AddVHandle(VHandle *handle, uint64_t epoch_nr)
 
   // Either there's nothing to collect, or it's already in the GC queue.
   if (handle->last_gc_mark_epoch != 0 &&
-      (handle->last_gc_mark_epoch >> 3) == (epoch_nr >> 3))
+      (handle->last_gc_mark_epoch / kGCEveryEpoch) == (epoch_nr / kGCEveryEpoch))
     return;
   handle->last_gc_mark_epoch = epoch_nr;
 
@@ -45,6 +47,9 @@ void GC::AddVHandle(VHandle *handle, uint64_t epoch_nr)
 
 void GC::PrepareGC()
 {
+  if (util::Instance<EpochManager>().current_epoch_nr() % kGCEveryEpoch != 0)
+    return;
+
   auto &cls = local_collector();
   GarbageBlock *tail = cls.pending;
   if (!tail) return;
@@ -62,6 +67,9 @@ void GC::PrepareGC()
 
 void GC::FinalizeGC()
 {
+  if (util::Instance<EpochManager>().current_epoch_nr() % kGCEveryEpoch != 0)
+    return;
+
   auto &cls = local_collector();
   GarbageBlock *next = nullptr;
   for (auto b = cls.processing; b != nullptr; b = next) {
@@ -74,12 +82,17 @@ void GC::FinalizeGC()
 void GC::RunGC()
 {
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+  if (cur_epoch_nr % kGCEveryEpoch != 0)
+    return;
 
   GarbageBlock *b = processing_queue.load();
   size_t nr = 0, nrb = 0;
-  while (b) {
-    while (!processing_queue.compare_exchange_strong(b, b->processing_next)) {
-      if (!b) return;
+  while (true) {
+    while (!b || !processing_queue.compare_exchange_strong(b, b->processing_next)) {
+      if (!b) {
+        // logger->info("GC done {} rows {} blks", nr, nrb);
+        return;
+      }
 
       _mm_pause();
     }

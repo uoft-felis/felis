@@ -69,7 +69,7 @@ struct Options {
   static inline const auto kTpccHotWarehouseBitmap = Option("TpccHotWarehouseBitmap");
   static inline const auto kTpccHotWarehouseLoad = Option("TpccHotWarehouseLoad");
 
-  static inline const auto kYcsbTableSize = Option("YcsbTableSize");
+  static inline const auto kYcsbContentionKey = Option("YcsbContentionKey");
   static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");
   static inline const auto kYcsbEnablePartition = Option("YcsbEnablePartition");
   static inline const auto kYcsbReadOnly = Option("YcsbReadOnly");

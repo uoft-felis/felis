@@ -38,6 +38,9 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
  again:
     // s.keys[i] = g_permutation_map[rand.next() % g_table_size];
     s.keys[i] = rand.next() % g_table_size;
+    if (i < g_contention_key) {
+      s.keys[i] &= ~0x07FFF;
+    }
     for (int j = 0; j < i; j++)
       if (s.keys[i] == s.keys[j])
         goto again;
@@ -227,11 +230,12 @@ void YcsbLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 480;
+size_t Client::g_table_size = 1048576;
 double Client::g_theta = 0.00;
 bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;
 int Client::g_extra_read = 0;
+int Client::g_contention_key = 0;
 bool Client::g_granola_dependency = false;
 
 Client::Client() noexcept

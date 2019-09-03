@@ -58,7 +58,7 @@ class SortedArrayVHandle : public BaseVHandle {
   unsigned int size;
   // unsigned int value_mark;
   std::atomic_uint latest_version; // the latest written version's offset in *versions
-  short contention_hint = -1;
+  uint64_t contention = 0;
   // versions: ptr to the version array.
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
@@ -90,7 +90,7 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t last_version() const { return versions[size - 1]; }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed); }
   short region_id() const { return alloc_by_regionid; }
-  short contention_affinity_hint() const { return contention_hint; }
+  uint64_t contention_weight() const { return contention; }
  private:
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
   unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);

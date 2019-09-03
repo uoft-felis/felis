@@ -16,8 +16,8 @@ class YcsbModule : public Module<WorkloadModule> {
     Module<CoreModule>::InitModule("node-server");
     Module<CoreModule>::InitModule("allocator");
 
-    if (Options::kYcsbTableSize) {
-      ycsb::Client::g_table_size = Options::kYcsbTableSize.ToLargeNumber();
+    if (Options::kYcsbContentionKey) {
+      ycsb::Client::g_contention_key = Options::kYcsbContentionKey.ToInt();
     }
     if (Options::kYcsbSkewFactor) {
       ycsb::Client::g_theta = 0.01 * Options::kYcsbSkewFactor.ToInt();

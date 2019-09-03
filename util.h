@@ -139,6 +139,35 @@ class FastRandom {
   unsigned long seed;
 };
 
+template <typename T>
+class XORRandom {
+  T state;
+ public:
+  XORRandom(T state) : state(state) {}
+  T Next() {
+    auto x = state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    state = x;
+    return x;
+  }
+
+  T NextRange(T begin, T end) {
+    return Next() % (end - begin) + begin;
+  }
+};
+
+class XORRandom32 : public XORRandom<uint32_t> {
+ public:
+  XORRandom32() : XORRandom<uint32_t>(0x25F16D1D) {}
+};
+
+class XORRandom64 : public XORRandom<uint64_t> {
+ public:
+  XORRandom64() : XORRandom<uint64_t>(0x2545F4914F6CDD1D) {}
+};
+
 // link list headers. STL is too slow
 template <typename T>
 struct GenericListNode {

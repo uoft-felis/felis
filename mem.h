@@ -216,27 +216,44 @@ class ParallelAllocationPolicy {
 template <typename PoolType>
 class ParallelAllocator : public ParallelAllocationPolicy {
  protected:
+  struct ConsolidateFreeList {
+    uint64_t dice = 0;
+    uint64_t bitmap = 0;
+    std::array<uintptr_t, kMaxNrPools> heads = {};
+  };
   std::array<PoolType *, kMaxNrPools> pools;
-  std::array<uintptr_t *, kMaxNrPools> free_nodes;
+  std::array<uintptr_t *, kMaxNrPools> free_lists;
+  std::array<uintptr_t *, kMaxNrPools> free_tails;
+  std::array<ConsolidateFreeList *, kMaxNrPools> csld_free_lists;
   size_t chunk_size;
   size_t total_cap;
   MemAllocType alloc_type;
+
+  static const size_t kHeaderSize = sizeof(PoolType)
+                                    + 2 * kMaxNrPools * sizeof(uintptr_t)
+                                    + sizeof(ConsolidateFreeList);
  public:
   ParallelAllocator() : total_cap(0) {
     pools.fill(nullptr);
-    free_nodes.fill(nullptr);
+    free_lists.fill(nullptr);
+    free_tails.fill(nullptr);
+    csld_free_lists.fill(nullptr);
   }
   ParallelAllocator(const ParallelAllocator<PoolType>& rhs) = delete;
   ParallelAllocator(ParallelAllocator<PoolType> &&rhs) {
     pools = rhs.pools;
-    free_nodes = rhs.free_nodes;
+    free_lists = rhs.free_lists;
+    free_tails = rhs.free_tails;
+    csld_free_lists = rhs.csld_free_lists;
     chunk_size = rhs.chunk_size;
     total_cap = rhs.total_cap;
     alloc_type = rhs.alloc_type;
 
-    rhs.total_cap = 0;
+    rhs.total_cap = -1;
     rhs.pools.fill(nullptr);
-    rhs.free_nodes.fill(nullptr);
+    rhs.free_lists.fill(nullptr);
+    rhs.free_tails.fill(nullptr);
+    rhs.csld_free_lists.fill(nullptr);
   }
 
   size_t capacity() const { return total_cap; }
@@ -247,6 +264,21 @@ class ParallelAllocator : public ParallelAllocationPolicy {
   }
   void *Alloc() {
     auto cur = CurrentAffinity();
+    auto csld = csld_free_lists[cur];
+    auto &dice = csld->dice;
+    if (csld->bitmap != 0) {
+      auto n = csld->bitmap >> dice;
+      dice = (n == 0) ? __builtin_ctzll(csld->bitmap) : __builtin_ctzll(n) + dice;
+
+      auto &head = csld->heads[dice];
+      auto p = (void *) head;
+      head = *(uintptr_t *) head;
+
+      if (head == 0) csld->bitmap &= ~(1 << dice);
+      __builtin_prefetch((void *) head);
+      return p;
+    }
+
     return pools[cur]->Alloc();
   }
   void Free(void *ptr, int alloc_core) {
@@ -264,23 +296,25 @@ class ParallelAllocator : public ParallelAllocationPolicy {
     if (cur == alloc_core) {
       pools[cur]->Free(ptr);
     } else {
-      *(uintptr_t *) ptr = free_nodes[cur][alloc_core];
-      free_nodes[cur][alloc_core] = (uintptr_t)ptr;
+      if (free_lists[cur][alloc_core] == 0)
+        free_tails[cur][alloc_core] = (uintptr_t) ptr;
+      *(uintptr_t *) ptr = free_lists[cur][alloc_core];
+      free_lists[cur][alloc_core] = (uintptr_t) ptr;
     }
   }
   void Quiescence() {
     auto cur = CurrentAffinity();
-    auto pool = pools[cur];
-    if (!pool) return;
-
+    // We do not want to free them back to the pool right now, because the
+    // objects in the list are cold now.
+    auto csld = csld_free_lists[cur];
     for (int i = 0; i < g_nr_cores; i++) {
-      uintptr_t head = free_nodes[i][cur];
-      while (head) {
-        uintptr_t *ptr = (uintptr_t *) head;
-        head = *ptr;
-        pool->Free(ptr);
+      uintptr_t tail = free_tails[i][cur];
+      if (tail) {
+        *(uintptr_t *) tail = csld->heads[i];
+        csld->heads[i] = free_lists[i][cur];
+        free_lists[i][cur] = free_tails[i][cur] = 0;
+        csld->bitmap |= 1 << i;
       }
-      free_nodes[i][cur] = 0;
     }
   }
 };
