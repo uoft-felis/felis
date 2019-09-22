@@ -10,6 +10,7 @@
 #include "promise.h"
 #include "slice.h"
 #include "vhandle_batchappender.h"
+#include "opts.h"
 
 namespace felis {
 
@@ -317,12 +318,18 @@ class Txn : public BaseTxn {
                   RowFunc rowfunc, Types... params) {
     using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
     uint64_t splitted_bitmap = 0;
-    auto &appender = util::Instance<BatchAppender>();
-    auto total_scale = appender.contention_weight_end() - appender.contention_weight_begin();
 
-    abort_if(hot_end - hot_begin > 63, "TxnHotKeys does not support > 63 keys");
+    if (!Options::kVHandleBatchAppend) {
+      goto main_piece;
+    } else {
+      auto &appender = util::Instance<BatchAppender>();
+      auto total_scale = appender.contention_weight_end() - appender.contention_weight_begin();
 
-    if (total_scale > 0) {
+      abort_if(hot_end - hot_begin > 63, "TxnHotKeys does not support > 63 keys");
+
+      if (total_scale == 0)
+        goto main_piece;
+
       for (auto p = hot_begin; p != hot_end; p++) {
         auto w = (*p)->nr_versions() - (*p)->nr_updated();
         if ((*p)->contention_weight() < appender.contention_weight_begin()
@@ -364,10 +371,12 @@ class Txn : public BaseTxn {
         routine->next = nullptr;
         routine->sched_key = serial_id() & 0x00FFFFFFFF;
       }
-
-      if (__builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
-        return;
     }
+
+    if (__builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
+      return;
+
+ main_piece:
 
     proc
         | std::tuple(
