@@ -336,9 +336,11 @@ void EpochClient::OnExecuteComplete()
   logger->info("Wait Counts {}", std::string_view(buf.begin(), buf.size()));
   if (Options::kCoreScaling && cur_epoch_nr > 1) {
     auto ctt_rate = (callback.perf.duration_ms() << 24) / ctt;
+    auto threshold = kTxnPerEpoch * Options::kCoreScaling.ToInt() / 1000;
+
     logger->info("duration {} vs last_duration {}, ctt_rate {}",
                  callback.perf.duration_ms(), best_duration, ctt_rate);
-    if (best_core == std::numeric_limits<int>::max() && ctt_rate > 1000) {
+    if (best_core == std::numeric_limits<int>::max() && ctt_rate > threshold) {
       best_core = core_limit;
     }
 
@@ -354,7 +356,7 @@ void EpochClient::OnExecuteComplete()
       }
 
       if (--sample_count == 0) {
-        core_limit -= 8;
+        core_limit -= mem::kNrCorePerNode;
         sample_count = 3;
       }
       if (core_limit == 0)

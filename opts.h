@@ -62,6 +62,8 @@ struct Options {
   static inline const auto kEpochQueueLength = Option("EpochQueueLength");
   static inline const auto kVHandleLockElision = Option("VHandleLockElision");
   static inline const auto kVHandleBatchAppend = Option("VHandleBatchAppend");
+
+  // In 0.001 of txns per-epoch
   static inline const auto kCoreScaling = Option("CoreScaling");
   static inline const auto kVHandleParallel = Option("VHandleParallel");
 

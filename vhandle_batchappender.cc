@@ -5,6 +5,7 @@
 #include "gc.h"
 #include "node_config.h"
 #include "opts.h"
+#include "epoch.h"
 
 namespace felis {
 
@@ -268,7 +269,8 @@ void BatchAppender::Reset()
         if (!Options::kVHandleParallel) continue;
 
         auto w = row->size - row->nr_updated();
-        if (w <= 1024) continue;
+        auto threshold = EpochClient::kTxnPerEpoch * Options::kVHandleParallel.ToInt() / 1000;
+        if (w <= threshold) continue;
 
         row->contention = cw_end;
         cw_end += w;

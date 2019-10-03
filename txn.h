@@ -319,7 +319,7 @@ class Txn : public BaseTxn {
     using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
     uint64_t splitted_bitmap = 0;
 
-    if (!Options::kVHandleBatchAppend) {
+    if (!Options::kVHandleBatchAppend || !Options::kVHandleParallel) {
       goto main_piece;
     } else {
       auto &appender = util::Instance<BatchAppender>();
@@ -333,7 +333,7 @@ class Txn : public BaseTxn {
       for (auto p = hot_begin; p != hot_end; p++) {
         auto w = (*p)->nr_versions() - (*p)->nr_updated();
         if ((*p)->contention_weight() < appender.contention_weight_begin()
-            || w <= 1024)
+            || w <= Options::kVHandleParallel.ToInt() * EpochClient::kTxnPerEpoch / 1000)
           continue;
 
         splitted_bitmap |= 1ULL << (p - hot_begin);
