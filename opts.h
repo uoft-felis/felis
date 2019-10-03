@@ -62,7 +62,7 @@ struct Options {
   static inline const auto kEpochQueueLength = Option("EpochQueueLength");
   static inline const auto kVHandleLockElision = Option("VHandleLockElision");
   static inline const auto kVHandleBatchAppend = Option("VHandleBatchAppend");
-  static inline const auto kCongestionControl = Option("CongestionControl");
+  static inline const auto kCoreScaling = Option("CoreScaling");
   static inline const auto kVHandleParallel = Option("VHandleParallel");
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");
@@ -73,7 +73,7 @@ struct Options {
   static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");
   static inline const auto kYcsbEnablePartition = Option("YcsbEnablePartition");
   static inline const auto kYcsbReadOnly = Option("YcsbReadOnly");
-  static inline const auto kYcsbGranolaDependency = Option("YcsbGranolaDependency");
+  static inline const auto kYcsbDependency = Option("YcsbDependency");
 
   static inline const auto kEnableGranola = Option("EnableGranola");
 

@@ -18,7 +18,7 @@ struct RMWStruct {
 
 struct RMWState {
   VHandle *rows[kTotal];
-  unsigned long signal; // Used only in Granola
+  unsigned long signal; // Used only if g_dependency
 
   struct LookupCompletion : public TxnStateCompletion<RMWState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
@@ -112,6 +112,10 @@ void RMWTxn::Prepare()
 
 void RMWTxn::Run()
 {
+
+  if (Client::g_dependency)
+    state->signal = 0;
+
   if (!Client::g_enable_partition) {
     TxnHotKeys(
         1, // Always on node 1
@@ -119,10 +123,20 @@ void RMWTxn::Run()
         [](const auto &ctx, VHandle **row_ptr) -> void {
           auto &[state, index_handle] = ctx;
           auto row = *row_ptr;
+
+          if (Client::g_dependency
+              && row_ptr - state->rows == kTotal - Client::g_extra_read - 1) {
+            while (state->signal != kTotal - Client::g_extra_read - 1)
+              _mm_pause();
+          }
+
           TxnVHandle vhandle = index_handle(row);
           auto dbv = vhandle.Read<Ycsb::Value>();
           dbv.v.resize_junk(90);
           vhandle.Write(dbv);
+          if (Client::g_dependency) {
+            __sync_fetch_and_add(&state->signal, 1);
+          }
         });
     if (Client::g_extra_read > 0) {
       proc
@@ -138,7 +152,6 @@ void RMWTxn::Run()
               });
     }
   } else {
-    state->signal = 0;
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->Then(
@@ -146,7 +159,7 @@ void RMWTxn::Run()
               [](auto &ctx, auto _) -> Optional<VoidValue> {
                 auto [k, i, state, handle] = ctx;
 
-                if (Client::g_enable_granola && Client::g_granola_dependency
+                if (Client::g_enable_granola && Client::g_dependency
                     && i == kTotal - Client::g_extra_read - 1) {
                   while (state->signal != i) {
                     _mm_pause();
@@ -169,7 +182,7 @@ void RMWTxn::Run()
                 if (i < kTotal - Client::g_extra_read) {
                   dbv.v.resize_junk(90);
                   vhandle.Write(dbv);
-                  if (Client::g_enable_granola && Client::g_granola_dependency
+                  if (Client::g_enable_granola && Client::g_dependency
                       && i < kTotal - Client::g_extra_read - 1) {
                     __sync_fetch_and_add(&state->signal, 1);
                   }
@@ -236,7 +249,7 @@ bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;
-bool Client::g_granola_dependency = false;
+bool Client::g_dependency = false;
 
 Client::Client() noexcept
 {

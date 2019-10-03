@@ -334,7 +334,7 @@ void EpochClient::OnExecuteComplete()
     fmt::format_to(buf, "{} ", c);
   }
   logger->info("Wait Counts {}", std::string_view(buf.begin(), buf.size()));
-  if (Options::kCongestionControl && cur_epoch_nr > 1) {
+  if (Options::kCoreScaling && cur_epoch_nr > 1) {
     auto ctt_rate = (callback.perf.duration_ms() << 24) / ctt;
     logger->info("duration {} vs last_duration {}, ctt_rate {}",
                  callback.perf.duration_ms(), best_duration, ctt_rate);
