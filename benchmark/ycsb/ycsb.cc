@@ -153,8 +153,14 @@ void RMWTxn::Run()
           },
           [](const auto &ctx) -> void {
             auto &[state, index_handle] = ctx;
-            while (state->signal != kTotal - Client::g_extra_read - 1)
+            long cnt = 0;
+            while (state->signal != kTotal - Client::g_extra_read - 1) {
+              if (((++cnt) & 0x0FFF) == 0) {
+                auto routine = go::Scheduler::Current()->current_routine();
+                ((BasePromise::ExecutionRoutine *) routine)->Preempt();
+              }
               _mm_pause();
+            }
             WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
           });
     }
