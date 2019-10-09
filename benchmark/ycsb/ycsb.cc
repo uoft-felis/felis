@@ -56,6 +56,8 @@ class RMWTxn : public Txn<RMWState>, public RMWStruct {
   void Run() override final;
   void Prepare() override final;
   void PrepareInsert() override final {}
+  static void WriteRow(TxnVHandle vhandle);
+  static void ReadRow(TxnVHandle vhandle);
 
   template <typename Func>
   void RunOnPartition(Func f) {
@@ -110,6 +112,18 @@ void RMWTxn::Prepare()
   }
 }
 
+void RMWTxn::WriteRow(TxnVHandle vhandle)
+{
+  auto dbv = vhandle.Read<Ycsb::Value>();
+  dbv.v.resize_junk(90);
+  vhandle.Write(dbv);
+}
+
+void RMWTxn::ReadRow(TxnVHandle vhandle)
+{
+  vhandle.Read<Ycsb::Value>();
+}
+
 void RMWTxn::Run()
 {
 
@@ -117,27 +131,34 @@ void RMWTxn::Run()
     state->signal = 0;
 
   if (!Client::g_enable_partition) {
-    TxnHotKeys(
-        1, // Always on node 1
-        &state->rows[0], &state->rows[kTotal - Client::g_extra_read],
-        [](const auto &ctx, VHandle **row_ptr) -> void {
-          auto &[state, index_handle] = ctx;
-          auto row = *row_ptr;
-
-          if (Client::g_dependency
-              && row_ptr - state->rows == kTotal - Client::g_extra_read - 1) {
+    if (!Client::g_dependency) {
+      TxnHotKeys(
+          1, // Always on node 1
+          &state->rows[0], &state->rows[kTotal - Client::g_extra_read],
+          [](const auto &ctx, VHandle **row_ptr) -> void {
+            auto &[state, index_handle] = ctx;
+            auto row = *row_ptr;
+            WriteRow(index_handle(row));
+          },
+          nullptr);
+    } else {
+      TxnHotKeys(
+          1,
+          &state->rows[0], &state->rows[kTotal - Client::g_extra_read - 1],
+          [](const auto &ctx, VHandle **row_ptr) -> void {
+            auto &[state, index_handle] = ctx;
+            auto row = *row_ptr;
+            WriteRow(index_handle(row));
+            __sync_fetch_and_add(&state->signal, 1);
+          },
+          [](const auto &ctx) -> void {
+            auto &[state, index_handle] = ctx;
             while (state->signal != kTotal - Client::g_extra_read - 1)
               _mm_pause();
-          }
+            WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
+          });
+    }
 
-          TxnVHandle vhandle = index_handle(row);
-          auto dbv = vhandle.Read<Ycsb::Value>();
-          dbv.v.resize_junk(90);
-          vhandle.Write(dbv);
-          if (Client::g_dependency) {
-            __sync_fetch_and_add(&state->signal, 1);
-          }
-        });
     if (Client::g_extra_read > 0) {
       proc
           | TxnProc(
@@ -145,8 +166,7 @@ void RMWTxn::Run()
               [](const auto &ctx, auto _) -> Optional<VoidValue> {
                 auto &[state, index_handle] = ctx;
                 for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
-                  TxnVHandle vhandle = index_handle(state->rows[i]);
-                  auto dbv = vhandle.Read<Ycsb::Value>();
+                  ReadRow(index_handle(state->rows[i]));
                 }
                 return nullopt;
               });

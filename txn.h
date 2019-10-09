@@ -313,11 +313,14 @@ class Txn : public BaseTxn {
         func);
   }
 
-  template <typename RowFunc, typename ...Types>
+  template <typename RowFunc, typename LastFunc, typename ...Types>
   void TxnHotKeys(int node, VHandle** hot_begin, VHandle **hot_end,
-                  RowFunc rowfunc, Types... params) {
+                  RowFunc rowfunc, LastFunc lastfunc, Types... params) {
     using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
+    using LastFuncPtr = void (*)(const ContextType<Types...> &);
+
     uint64_t splitted_bitmap = 0;
+    LastFuncPtr lastfunc_ptr = (LastFuncPtr) lastfunc;
 
     if (!Options::kVHandleBatchAppend || !Options::kVHandleParallel) {
       goto main_piece;
@@ -364,31 +367,37 @@ class Txn : public BaseTxn {
           }
           aff = local_rand.NextRange(lower, upper) * NodeConfiguration::g_nr_threads / total_scale;
         }
-        // auto seq = (serial_id() >> 8) & 0x00FFFFFFULL;
         routine->affinity = aff;
         routine->level = 0;
         routine->node_id = node;
         routine->next = nullptr;
-        routine->sched_key = serial_id() & 0x00FFFFFFFF;
+
+        // put routine at the beginning of execution turns out isn't a good idea
+        // routine->sched_key = serial_id() & 0x00FFFFFFFF;
+        routine->sched_key = serial_id();
       }
     }
 
-    if (__builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
+    // There is nothing in the main_piece. Both lastfunc and the main piece have
+    // to be none.
+    if (lastfunc_ptr == nullptr && __builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
       return;
 
  main_piece:
 
     proc
         | std::tuple(
-            sql::MakeTuple(hot_begin, hot_end, (RowFuncPtr) rowfunc, splitted_bitmap, MakeContext(params...)),
+            sql::MakeTuple(hot_begin, hot_end, (RowFuncPtr) rowfunc, lastfunc_ptr, splitted_bitmap, MakeContext(params...)),
             node,
-            [](const sql::Tuple<VHandle **, VHandle **, RowFuncPtr, uint64_t, ContextType<Types...>> &ctx, DummyValue _)
+            [](const sql::Tuple<VHandle **, VHandle **, RowFuncPtr, LastFuncPtr, uint64_t, ContextType<Types...>> &ctx, DummyValue _)
             -> Optional<VoidValue> {
-              auto &[hot_begin, hot_end, rowfunc, splitted_bitmap, real_ctx] = ctx;
+              auto &[hot_begin, hot_end, rowfunc, lastfunc, splitted_bitmap, real_ctx] = ctx;
               for (auto p = hot_begin; p != hot_end; p++) {
                 if (splitted_bitmap & (1ULL << (p - hot_begin))) continue;
                 rowfunc(real_ctx, p);
               }
+              if (lastfunc)
+                lastfunc(real_ctx);
               return nullopt;
             });
   }
