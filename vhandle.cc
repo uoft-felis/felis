@@ -94,6 +94,7 @@ unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsign
   uint64_t last = versions[end];
   unsigned int mark = (end - 1) & ~(0x03FF);
   // int i = std::lower_bound(versions + mark, versions + end, last) - versions;
+
   int i = util::FastLowerBound(versions + mark, versions + end, last) - versions;
   if (i == mark)
     i = std::lower_bound(versions, versions + mark, last) - versions;

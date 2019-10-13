@@ -22,6 +22,7 @@ namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
 bool EpochClient::g_enable_granola = false;
+long EpochClient::g_corescaling_threshold = 0;
 
 void EpochCallback::operator()(unsigned long cnt)
 {
@@ -66,6 +67,51 @@ void EpochCallback::PreComplete()
   }
 }
 
+volatile std::atomic_bool __g_l1_measurement = false;
+
+static double GetCpuMHz()
+{
+  // Read frequencies from /proc/cpuinfo
+  double freq_mhz = 0.0;
+  std::ifstream fin("/proc/cpuinfo");
+  while (!fin.eof()) {
+    std::string line;
+    std::getline(fin, line);
+    if (line.substr(0, 7) == "cpu MHz") {
+      freq_mhz = std::max(freq_mhz, std::stod(line.substr(line.find(": ") + 2)));
+    }
+  }
+  logger->info("found CPU Frequency {} MHz", freq_mhz);
+  return freq_mhz;
+}
+
+long EpochClient::WaitCountPerMS()
+{
+  volatile long s = 0;
+  unsigned long long before, after;
+  long wait_cnt = 0;
+
+  before = __rdtsc();
+  while (!__g_l1_measurement.load()) {
+    wait_cnt++;
+    if ((wait_cnt & 0x0FFFF) == 0) {
+      // 4 extra cycles
+      volatile int k = 4;
+      while(--k);
+      if (++s == 20000) {
+        __g_l1_measurement = true;
+      }
+    }
+    if (unlikely((wait_cnt & 0x7FFFFFFF) == 0)) {
+      __g_l1_measurement = true;
+    }
+  }
+  after = __rdtsc();
+  double freq_mhz = GetCpuMHz();
+  long dur = (after - before) / (freq_mhz * 1000);
+  return wait_cnt / dur;
+}
+
 EpochClient::EpochClient()
     : control(this),
       callback(EpochCallback(this)),
@@ -99,6 +145,13 @@ EpochClient::EpochClient()
     }
     per_core_cnts[t] = cnt_mem + cnt_len * numa_offset;
     workers[t] = new (workers_mem + numa_offset) EpochWorkers(t, this);
+  }
+
+  if (Options::kCoreScaling) {
+    long wc = WaitCountPerMS();
+    g_corescaling_threshold = Options::kCoreScaling.ToInt() * wc / 100;
+    logger->info("WaitCount per ms {} , calculated CoreScaling threshold {}",
+                 wc, g_corescaling_threshold);
   }
 }
 
@@ -335,12 +388,11 @@ void EpochClient::OnExecuteComplete()
   }
   logger->info("Wait Counts {}", std::string_view(buf.begin(), buf.size()));
   if (Options::kCoreScaling && cur_epoch_nr > 1) {
-    auto ctt_rate = (callback.perf.duration_ms() << 24) / ctt;
-    auto threshold = kTxnPerEpoch * Options::kCoreScaling.ToInt() / 1000;
+    auto ctt_rate = ctt / callback.perf.duration_ms();
 
     logger->info("duration {} vs last_duration {}, ctt_rate {}",
                  callback.perf.duration_ms(), best_duration, ctt_rate);
-    if (best_core == std::numeric_limits<int>::max() && ctt_rate > threshold) {
+    if (best_core == std::numeric_limits<int>::max() && ctt_rate < g_corescaling_threshold) {
       best_core = core_limit;
     }
 

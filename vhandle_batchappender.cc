@@ -252,6 +252,11 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
 
 void BatchAppender::Reset()
 {
+  long threshold = 0;
+
+  if (Options::kVHandleParallel)
+    threshold = EpochClient::kTxnPerEpoch * Options::kVHandleParallel.ToInt() / 1000;
+
   auto nr_threads = NodeConfiguration::g_nr_threads;
   cw_begin = cw_end;
 
@@ -269,7 +274,6 @@ void BatchAppender::Reset()
         if (!Options::kVHandleParallel) continue;
 
         auto w = row->size - row->nr_updated();
-        auto threshold = EpochClient::kTxnPerEpoch * Options::kVHandleParallel.ToInt() / 1000;
         if (w <= threshold) continue;
 
         row->contention = cw_end;

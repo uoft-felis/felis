@@ -117,6 +117,7 @@ class EpochClient {
   friend class AllocStateTxnWorker;
   friend class EpochExecutionDispatchService;
 
+  static long g_corescaling_threshold;
   int core_limit;
   int best_core;
   int best_duration;
@@ -165,6 +166,8 @@ class EpochClient {
   virtual BaseTxn *CreateTxn(uint64_t serial_id) = 0;
 
  private:
+  long WaitCountPerMS();
+
   void RunTxnPromises(const char *label);
   void CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *label);
 

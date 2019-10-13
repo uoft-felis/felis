@@ -282,6 +282,28 @@ class NodeBitmap {
   }
 };
 
+template <typename T, size_t ClosureSize = 32>
+class FutureValue {
+  std::atomic_bool ready = false;
+  T value;
+  void (*fp)(void *) = nullptr;
+  uint8_t closure_data[ClosureSize];
+ public:
+  using ValueType = T;
+  void Signal(T v) { value = v; ready = true; }
+  T &Wait() { while (!ready) _mm_pause(); return value; }
+
+  template <typename G>
+  void Attach(void (*func)(void *), G closure) {
+    __builtin_memcpy(closure_data, closure, sizeof(G));
+    fp = func;
+  }
+
+  void Invoke() {
+    fp(closure_data);
+  }
+};
+
 template <typename TxnState>
 class Txn : public BaseTxn {
  public:
@@ -300,7 +322,8 @@ class Txn : public BaseTxn {
 
   template <typename ...Types> using ContextType = sql::Tuple<State, TxnHandle, Types...>;
 
-  template <typename ...Types> ContextType<Types...> MakeContext(Types... params) {
+  template <typename ...Types>
+  ContextType<Types...> MakeContext(Types... params) {
     return ContextType<Types...>(state, index_handle(), params...);
   }
 
@@ -311,6 +334,47 @@ class Txn : public BaseTxn {
         MakeContext(params...),
         node,
         func);
+  }
+
+  template <typename FutureType, typename RowFunc, typename ...Types>
+  void UpdateForKey(FutureType *future,
+                    int placement,
+                    VHandle *row, RowFunc rowfunc, Types... params) {
+    auto &appender = util::Instance<BatchAppender>();
+    auto total_scale = appender.contention_weight_end() - appender.contention_weight_begin();
+
+    static thread_local util::XORRandom64 local_rand;
+    auto lower = row->contention_weight() - appender.contention_weight_begin();
+    auto w = row->nr_versions() - row->nr_updated();
+    auto upper = lower + w;
+    auto aff = lower * NodeConfiguration::g_nr_threads / total_scale;
+    auto upper_aff = (upper - 1) * NodeConfiguration::g_nr_threads / total_scale;
+    if (aff != upper_aff) {
+      if (aff / mem::kNrCorePerNode != upper_aff / mem::kNrCorePerNode) {
+        // They belong to different sockets
+        auto numa_node = (lower + upper - 1) * NodeConfiguration::g_nr_threads
+                         / 2 / total_scale / mem::kNrCorePerNode;
+        if (aff / mem::kNrCorePerNode != numa_node) {
+          lower = numa_node * mem::kNrCorePerNode * total_scale / NodeConfiguration::g_nr_threads;
+        }
+        if (upper_aff / mem::kNrCorePerNode != numa_node) {
+          upper = ((numa_node + 1) * mem::kNrCorePerNode) * total_scale / NodeConfiguration::g_nr_threads;
+        }
+      }
+      aff = local_rand.NextRange(lower, upper) * NodeConfiguration::g_nr_threads / total_scale;
+    }
+
+    using RowFuncPtr = typename FutureType::ValueType (*)(ContextType<Types...>, VHandle *);
+
+    new (future) FutureType;
+    root_promise()->Then(
+        sql::MakeTuple(future, (RowFuncPtr) rowfunc, row, MakeContext(params...)),
+        placement,
+        [](const auto &t, auto _) -> Optional<VoidValue> {
+          auto &[future, rowfunc, row, ctx] = t;
+          future.Signal(rowfunc(ctx, row));
+        },
+        aff);
   }
 
   template <typename RowFunc, typename LastFunc, typename ...Types>
