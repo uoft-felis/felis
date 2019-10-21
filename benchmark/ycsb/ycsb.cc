@@ -19,6 +19,7 @@ struct RMWStruct {
 struct RMWState {
   VHandle *rows[kTotal];
   unsigned long signal; // Used only if g_dependency
+  FutureValue<VHandle *> futures[kTotal];
 
   struct LookupCompletion : public TxnStateCompletion<RMWState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
@@ -40,6 +41,9 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
     s.keys[i] = rand.next() % g_table_size;
     if (i < g_contention_key) {
       s.keys[i] &= ~0x07FFF;
+    } else {
+      if ((s.keys[i] & 0x07FFF) == 0)
+        goto again;
     }
     for (int j = 0; j < i; j++)
       if (s.keys[i] == s.keys[j])
@@ -126,58 +130,41 @@ void RMWTxn::ReadRow(TxnVHandle vhandle)
 
 void RMWTxn::Run()
 {
-
-  if (Client::g_dependency)
-    state->signal = 0;
-
   if (!Client::g_enable_partition) {
-    if (!Client::g_dependency) {
-      TxnHotKeys(
-          1, // Always on node 1
-          &state->rows[0], &state->rows[kTotal - Client::g_extra_read],
-          [](const auto &ctx, VHandle **row_ptr) -> void {
+    for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+      UpdateForKey(
+          &state->futures[i], 1, state->rows[i],
+          [](const auto &ctx, VHandle *row) -> VHandle * {
             auto &[state, index_handle] = ctx;
-            auto row = *row_ptr;
             WriteRow(index_handle(row));
-          },
-          nullptr);
-    } else {
-      TxnHotKeys(
-          1,
-          &state->rows[0], &state->rows[kTotal - Client::g_extra_read - 1],
-          [](const auto &ctx, VHandle **row_ptr) -> void {
-            auto &[state, index_handle] = ctx;
-            auto row = *row_ptr;
-            WriteRow(index_handle(row));
-            __sync_fetch_and_add(&state->signal, 1);
-          },
-          [](const auto &ctx) -> void {
-            auto &[state, index_handle] = ctx;
-            long cnt = 0;
-            while (state->signal != kTotal - Client::g_extra_read - 1) {
-              if (((++cnt) & 0x0FFF) == 0) {
-                auto routine = go::Scheduler::Current()->current_routine();
-                ((BasePromise::ExecutionRoutine *) routine)->Preempt();
-              }
-              _mm_pause();
-            }
-            WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
+            return row;
           });
     }
 
-    if (Client::g_extra_read > 0) {
-      proc
-          | TxnProc(
-              1,
-              [](const auto &ctx, auto _) -> Optional<VoidValue> {
-                auto &[state, index_handle] = ctx;
-                for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
-                  ReadRow(index_handle(state->rows[i]));
+    proc
+        | TxnProc(
+            1,
+            [](const auto &ctx, auto _) -> Optional<VoidValue> {
+              auto &[state, index_handle] = ctx;
+              for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+                state->futures[i].Invoke(&state, index_handle);
+              }
+              if (Client::g_dependency) {
+                for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+                  state->futures[i].Wait();
                 }
-                return nullopt;
-              });
-    }
+              }
+              WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
+              for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
+                ReadRow(index_handle(state->rows[i]));
+              }
+              return nullopt;
+            });
+
   } else {
+    if (Client::g_dependency)
+      state->signal = 0;
+
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->Then(

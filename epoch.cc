@@ -23,6 +23,7 @@ namespace felis {
 EpochClient *EpochClient::g_workload_client = nullptr;
 bool EpochClient::g_enable_granola = false;
 long EpochClient::g_corescaling_threshold = 0;
+long EpochClient::g_vhandle_parallel_threshold = 0;
 
 void EpochCallback::operator()(unsigned long cnt)
 {
@@ -152,6 +153,10 @@ EpochClient::EpochClient()
     g_corescaling_threshold = Options::kCoreScaling.ToInt() * wc / 100;
     logger->info("WaitCount per ms {} , calculated CoreScaling threshold {}",
                  wc, g_corescaling_threshold);
+  }
+
+  if (Options::kVHandleParallel) {
+    g_vhandle_parallel_threshold = Options::kVHandleParallel.ToInt();
   }
 }
 

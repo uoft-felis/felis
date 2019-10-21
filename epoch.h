@@ -117,7 +117,6 @@ class EpochClient {
   friend class AllocStateTxnWorker;
   friend class EpochExecutionDispatchService;
 
-  static long g_corescaling_threshold;
   int core_limit;
   int best_core;
   int best_duration;
@@ -135,6 +134,9 @@ class EpochClient {
  public:
   static EpochClient *g_workload_client;
   static bool g_enable_granola;
+
+  static long g_corescaling_threshold;
+  static long g_vhandle_parallel_threshold;
 
   EpochClient();
   virtual ~EpochClient() {}

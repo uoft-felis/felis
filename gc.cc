@@ -15,7 +15,7 @@ mem::ParallelPool GC::g_block_pool;
 void GC::InitPool()
 {
   g_block_pool = mem::ParallelPool(
-      mem::VhandlePool, GarbageBlock::kBlockSize, 64_M / GarbageBlock::kBlockSize);
+      mem::VhandlePool, GarbageBlock::kBlockSize, 128_M / GarbageBlock::kBlockSize);
 }
 
 GC::LocalCollector &GC::local_collector()
