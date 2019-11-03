@@ -24,6 +24,7 @@ EpochClient *EpochClient::g_workload_client = nullptr;
 bool EpochClient::g_enable_granola = false;
 long EpochClient::g_corescaling_threshold = 0;
 long EpochClient::g_vhandle_parallel_threshold = 0;
+size_t EpochClient::g_txn_per_epoch = 100000;
 
 void EpochCallback::operator()(unsigned long cnt)
 {
@@ -163,7 +164,7 @@ EpochClient::EpochClient()
 EpochTxnSet::EpochTxnSet()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  auto d = std::div((int) EpochClient::kTxnPerEpoch, nr_threads);
+  auto d = std::div((int) EpochClient::g_txn_per_epoch, nr_threads);
   for (auto t = 0; t < nr_threads; t++) {
     size_t nr = d.quot;
     if (t < d.rem) nr++;

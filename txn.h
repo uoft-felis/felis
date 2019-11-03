@@ -445,7 +445,7 @@ class Txn : public BaseTxn {
       for (auto p = hot_begin; p != hot_end; p++) {
         auto w = (*p)->nr_versions() - (*p)->nr_updated();
         if ((*p)->contention_weight() < appender.contention_weight_begin()
-            || w <= Options::kVHandleParallel.ToInt() * EpochClient::kTxnPerEpoch / 1000)
+            || w <= Options::kVHandleParallel.ToInt() * EpochClient::g_txn_per_epoch / 1000)
           continue;
 
         splitted_bitmap |= 1ULL << (p - hot_begin);

@@ -79,6 +79,8 @@ int main(int argc, char *argv[])
     NodeConfiguration::g_core_shifting = Options::kCoreShifting.ToInt();
   }
   NodeConfiguration::g_data_migration = Options::kDataMigration;
+  if (Options::kEpochSize)
+    EpochClient::g_txn_per_epoch = Options::kEpochSize.ToInt();
 
   Module<CoreModule>::ShowAllModules();
   Module<WorkloadModule>::ShowAllModules();

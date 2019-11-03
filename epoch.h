@@ -151,11 +151,11 @@ class EpochClient {
   virtual unsigned int LoadPercentage() = 0;
   unsigned long NumberOfTxns() {
     // return LoadPercentage() * kTxnPerEpoch / 100;
-    return kTxnPerEpoch;
+    return g_txn_per_epoch;
   };
 
-  static constexpr size_t kTxnPerEpoch = 100000;
-  static constexpr size_t kMaxPiecesPerPhase = 128 * kTxnPerEpoch;
+  static size_t g_txn_per_epoch;
+  static constexpr size_t kMaxPiecesPerPhase = 12800000;
 
   static inline size_t g_max_epoch = 50;
  protected:
