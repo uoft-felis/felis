@@ -537,7 +537,10 @@ ParallelRegion::ParallelRegion()
 
 void *ParallelRegion::Alloc(size_t sz)
 {
-  auto &p = pools[SizeToClass(sz)];
+  int k = SizeToClass(sz);
+  if (k < 0) return nullptr;
+
+  auto &p = pools[k];
   void *r = nullptr;
 
   r = p.Alloc();
@@ -551,7 +554,9 @@ error:
 void ParallelRegion::Free(void *ptr, int alloc_core, size_t sz)
 {
   if (ptr == nullptr) return;
-  pools[SizeToClass(sz)].Free(ptr, alloc_core);
+  int k = SizeToClass(sz);
+  if (k < 0) std::abort();
+  pools[k].Free(ptr, alloc_core);
 }
 
 void ParallelRegion::ApplyFromConf(json11::Json conf_doc)

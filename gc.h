@@ -18,7 +18,7 @@ class GC {
   void FinalizeGC();
 
   struct GarbageBlock {
-    static constexpr size_t kBlockSize = 128;
+    static constexpr size_t kBlockSize = 512;
     static constexpr int kMaxNrBlocks = kBlockSize / 8 - 3;
     std::array<VHandle *, kMaxNrBlocks> handles;
     int alloc_core;
@@ -49,17 +49,19 @@ class GC {
   static void FreeBlock(GarbageBlock *b) { return g_block_pool.Free(b, b->alloc_core); }
   static void InitPool();
  private:
-  void Collect(VHandle *handle, uint64_t cur_epoch_nr);
-  void Process(VHandle *handle, uint64_t cur_epoch_nr);
+  size_t Collect(VHandle *handle, uint64_t cur_epoch_nr);
+  size_t Process(VHandle *handle, uint64_t cur_epoch_nr);
 
   struct LocalCollector {
     GarbageBlock *pending = nullptr;
     GarbageBlock *processing = nullptr;
+    GarbageBlock *left_over = nullptr;
   };
   std::array<LocalCollector, NodeConfiguration::kMaxNrThreads> local_cls;
 
   LocalCollector &local_collector();
   std::atomic<GarbageBlock *> processing_queue = nullptr;
+  static unsigned int g_gc_every_epoch;
 };
 
 }

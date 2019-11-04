@@ -39,6 +39,9 @@ static uint64_t *EnlargePair64Array(uint64_t *old_p, unsigned int old_cap, int o
   const size_t new_len = new_cap * sizeof(uint64_t);
 
   auto new_p = (uint64_t *) mem::GetDataRegion().Alloc(2 * new_len);
+  if (!new_p) {
+    return nullptr;
+  }
   // memcpy(new_p, old_p, old_cap * sizeof(uint64_t));
   std::copy(old_p, old_p + old_cap, new_p);
   // memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
@@ -52,7 +55,12 @@ void SortedArrayVHandle::EnsureSpace()
   if (unlikely(size >= capacity)) {
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
     auto new_cap = 1U << (32 - __builtin_clz((unsigned int) size));
-    versions = EnlargePair64Array(versions, capacity, alloc_by_regionid, new_cap);
+    auto new_versions = EnlargePair64Array(versions, capacity, alloc_by_regionid, new_cap);
+    if (new_versions == nullptr) {
+      logger->critical("Memory allocation failure, last GC {}, second ver epoch {}", last_gc_mark_epoch, versions[1] >> 32);
+      std::abort();
+    }
+    versions = new_versions;
     capacity = new_cap;
     alloc_by_regionid = current_regionid;
   }
