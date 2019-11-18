@@ -52,7 +52,7 @@ db_srcs = [
 	('masstree/straccum.cc', ['-include', 'masstree/build/config.h']),
     ]
 
-libs = ['-pthread', '-lrt', '-ldl', '-lc++']
+libs = ['-pthread', '-lrt', '-ldl']
 #test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
 test_srcs = ['test/xnode_measure_test.cc']
 
