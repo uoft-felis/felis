@@ -167,7 +167,6 @@ class CoroutineModule : public Module<CoreModule> {
     required = true;
   }
   ~CoroutineModule() {
-    go::WaitThreadPool();
   }
   void Init() override {
     // By default, gopp will create kNrThreads + 1 threads. Thread 0 is for
