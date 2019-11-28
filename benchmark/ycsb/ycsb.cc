@@ -8,7 +8,11 @@ using namespace felis;
 
 static constexpr int kTotal = 10;
 
-static int DummySliceRouter(int16_t slice_id) { return 1; } // Always on node 1
+class DummySliceRouter {
+ public:
+  static int SliceToNodeId(int16_t slice_id) { return 1; } // Always on node 1
+};
+
 
 // static uint64_t *g_permutation_map;
 
@@ -91,8 +95,7 @@ void RMWTxn::Prepare()
     INIT_ROUTINE_BRK(8192);
 
     // Omit the return value because this workload is totally single node
-    TxnIndexLookup<RMWState::LookupCompletion, void>(
-        DummySliceRouter,
+    TxnIndexLookup<DummySliceRouter, RMWState::LookupCompletion, void>(
         nullptr,
         KeyParam<Ycsb>(dbk, kTotal));
   } else {

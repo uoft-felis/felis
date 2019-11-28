@@ -189,8 +189,6 @@ static constexpr int16_t kReadOnlySliceId = std::numeric_limits<int16_t>::min();
 #define READ_ONLY_TABLE(Table)                          \
   SHARD_TABLE(Table) { return kReadOnlySliceId; }       \
 
-using SliceRoute = int (*)(int16_t slice_id);
-
 }
 
 namespace util {

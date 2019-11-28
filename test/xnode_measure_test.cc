@@ -57,8 +57,8 @@ int DetermineStock(uint home_w_id, uint supply_w_id, uint item_id, int min_w, in
 
 TEST_F(XnodeMeasureTest, SimpleTest) {
   const int nr_nodes = 2;
-  const int nr_warehouses =  tpcc::kTPCCConfig.nr_warehouses;
-  tpcc::kTPCCConfig.hotspot_warehouse_bitmap = 0x00000010; // warehouse 5
+  const int nr_warehouses =  tpcc::g_tpcc_config.nr_warehouses;
+  tpcc::g_tpcc_config.hotspot_warehouse_bitmap = 0x00000010; // warehouse 5
 
   int txn_count[nr_nodes+1] = {0, 300000, 600000};
   int local_txn_count[nr_nodes + 1];
@@ -74,7 +74,7 @@ TEST_F(XnodeMeasureTest, SimpleTest) {
   for (int node_id = 1; node_id <= nr_nodes; node_id++) {
     static constexpr unsigned long kClientSeed = 0xfeedcabe;
     tpcc::ClientBase *clientBase = new tpcc::ClientBase(kClientSeed, node_id, nr_nodes);
-    
+
     int min_warehouse = nr_warehouses * (node_id - 1) / nr_nodes + 1;
     int max_warehouse = nr_warehouses * node_id / nr_nodes;
 
@@ -85,7 +85,7 @@ TEST_F(XnodeMeasureTest, SimpleTest) {
       int execute_node_id = node_id; // which node this txn is executed on, 1 or 2
 
       for (int j = 0; j < input.nr_items; j++) {
-        // determine supplier_warehouse_id  
+        // determine supplier_warehouse_id
         int l = DetermineStock(input.warehouse_id, input.supplier_warehouse_id[j],
           input.item_id[j], min_warehouse, max_warehouse, node_id, input.district_id);
         ASSERT_NE(-1, l);

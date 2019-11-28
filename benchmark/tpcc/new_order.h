@@ -18,8 +18,6 @@ struct NewOrderStruct {
   uint customer_id;
   uint nr_items;
 
-  ulong new_order_id;
-
   uint ts_now;
 
   struct OrderDetail {

@@ -15,7 +15,7 @@ DeliveryStruct ClientBase::GenerateTransactionInput<DeliveryStruct>()
   s.ts = GetCurrentTime();
   auto &conf = util::Instance<NodeConfiguration>();
 
-  for (int i = 0; i < kTPCCConfig.districts_per_warehouse; i++) {
+  for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
     s.last_no_o_ids[i] = (g_last_no_o_ids[i] << 8) + (conf.node_id() & 0x00FF);
     g_last_no_o_ids[i]++;
   }
@@ -38,7 +38,7 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
 void DeliveryTxn::Prepare()
 {
   INIT_ROUTINE_BRK(16384);
-  for (int i = 0; i < kTPCCConfig.districts_per_warehouse; i++) {
+  for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
     auto district_id = i + 1;
     auto oid = last_no_o_ids[i];
     auto &mgr = util::Instance<RelationManager>();
@@ -68,8 +68,7 @@ void DeliveryTxn::Prepare()
 
     auto args = Tuple<int>(i);
     state->nodes[i] =
-        TxnIndexLookup<DeliveryState::Completion, Tuple<int>>(
-            tpcc::SliceRouter,
+        TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
             &args,
             RangeParam<OrderLine>(orderline_start, orderline_end),
             KeyParam<OOrder>(oorder_key),

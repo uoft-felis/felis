@@ -11,7 +11,6 @@ NewOrderStruct ClientBase::GenerateTransactionInput<NewOrderStruct>()
   s.district_id = PickDistrict();
   s.customer_id = GetCustomerId();
   s.nr_items = RandomNumber(5, NewOrderStruct::kNewOrderMaxItems);
-  s.new_order_id = PickNewOrderId(s.warehouse_id, s.district_id);
 
   for (int i = 0; i < s.nr_items; i++) {
  again:
@@ -74,13 +73,13 @@ void NewOrderTxn::PrepareInsertImpl()
   INIT_ROUTINE_BRK(8192);
 
   state->orderlines_nodes =
-      TxnIndexInsert<NewOrderState::OrderLinesInsertCompletion, void>(
-          tpcc::SliceRouter, nullptr,
+      TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, void>(
+          nullptr,
           KeyParam<OrderLine>(orderline_keys, nr_items));
 
   state->other_inserts_nodes =
-      TxnIndexInsert<NewOrderState::OtherInsertCompletion, void>(
-          tpcc::SliceRouter, nullptr,
+      TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, void>(
+          nullptr,
           KeyParam<OOrder>(oorder_key),
           KeyParam<NewOrder>(neworder_key));
 }
@@ -97,16 +96,16 @@ void NewOrderTxn::PrepareImpl()
 
   INIT_ROUTINE_BRK(8192);
 
-  abort_if(nr_items < 5, "WTF {}", nr_items);
+  // abort_if(nr_items < 5, "WTF {}", nr_items);
 
   state->stocks_nodes =
-      TxnIndexLookup<NewOrderState::StocksLookupCompletion, void>(
-          tpcc::SliceRouter, nullptr,
+      TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
+          nullptr,
           KeyParam<Stock>(stock_keys, nr_items));
 
   state->items_nodes =
-      TxnIndexLookup<NewOrderState::ItemsLookupCompletion, void>(
-          state->orderlines_nodes, nullptr,
+      TxnIndexLookup<TpccSliceRouter, NewOrderState::ItemsLookupCompletion, void>(
+          nullptr,
           KeyParam<Item>(item_keys, nr_items));
 }
 

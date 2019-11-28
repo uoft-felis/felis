@@ -20,6 +20,10 @@
 
 namespace tpcc {
 
+using util::Instance;
+using felis::NodeConfiguration;
+template <typename TableType> using SliceLocator = felis::SliceLocator<TableType>;
+
 struct Config {
   bool uniform_item_distribution;
 
@@ -34,10 +38,12 @@ struct Config {
   uint hotspot_load_percentage;
   size_t max_supported_warehouse;
 
+  bool shard_by_warehouse;
+
   Config();
 };
 
-extern Config kTPCCConfig;
+extern Config g_tpcc_config;
 
 enum class TableType : int {
   TPCCBase = 100,
@@ -140,9 +146,6 @@ class ClientBase {
   uint min_warehouse;
   uint max_warehouse;
 
-  // TPC-C NewOrder FastIdGen optimization
-  util::OwnPtr<ulong[]> new_order_id_counters;
-
  protected:
   static constexpr double kWarehouseSpread = 0.0;
   static constexpr double kNewOrderRemoteItem = 0.01;
@@ -157,7 +160,6 @@ class ClientBase {
   size_t nr_warehouses() const;
   uint PickWarehouse();
   uint PickDistrict();
-  ulong PickNewOrderId(uint warehouse_id, uint district_id);
 
   uint LoadPercentageByWarehouse();
 
@@ -223,11 +225,16 @@ class ClientBase {
   }
   ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes);
   static felis::Relation &relation(TableType table);
-  static int warehouse_to_node_id(uint wid);
-
   static bool is_warehouse_hotspot(uint wid);
 
   template <class T> T GenerateTransactionInput();
+};
+
+
+class TpccSliceRouter {
+ public:
+  static int SliceToNodeId(int16_t slice_id);
+  static int SliceToCoreId(int16_t slice_id);
 };
 
 // loaders for each table
@@ -237,7 +244,10 @@ enum LoaderType { Warehouse, Item, Stock, District, Customer, Order };
 
 class BaseLoader : public tpcc::ClientBase {
  public:
-  void SetAllocAffinity(int w);
+
+  static void SetAllocAffinity(int aff) {
+    mem::ParallelPool::SetCurrentAffinity(aff);
+  }
   static void RestoreAllocAffinity() {
     mem::ParallelPool::SetCurrentAffinity(-1);
   }
@@ -253,14 +263,25 @@ class Loader : public go::Routine, public BaseLoader {
   Loader(unsigned long seed, std::mutex *w, std::atomic_int *c)
       : m(w), count_down(c),
         BaseLoader(util::FastRandom(seed),
-                   util::Instance<felis::NodeConfiguration>().node_id(),
-                   util::Instance<felis::NodeConfiguration>().nr_nodes()) {}
+                   Instance<NodeConfiguration>().node_id(),
+                   Instance<NodeConfiguration>().nr_nodes()) {}
 
   void DoLoad();
   virtual void Run() {
     DoLoad();
     if (count_down->fetch_sub(1) == 1)
       m->unlock();
+  }
+
+  template <typename TableType, typename F>
+  void DoOnSlice(const typename TableType::Key &k, F func) {
+    auto slice_id = util::Instance<SliceLocator<TableType>>().Locate(k);
+    if (TpccSliceRouter::SliceToNodeId(slice_id) == node_id) {
+      auto core_id = TpccSliceRouter::SliceToCoreId(slice_id);
+      // util::PinToCPU(core_id);
+      func(slice_id, core_id);
+      RestoreAllocAffinity();
+    }
   }
 };
 
@@ -291,8 +312,6 @@ class Client : public felis::EpochClient, public ClientBase {
     return LoadPercentageByWarehouse();
   }
 
-  uint warehouse_to_lookup_node_id(uint warehouse_id);
-
   // XXX: hack for delivery transaction
   int last_no_o_ids[10];
 
@@ -301,20 +320,15 @@ class Client : public felis::EpochClient, public ClientBase {
 };
 
 using TxnFactory =
-    util::Factory<felis::BaseTxn, static_cast<int>(TxnType::AllTxn), Client *,
-                  uint64_t>;
+    util::Factory <felis::BaseTxn, int(TxnType::AllTxn), Client *, uint64_t>;
 
-int SliceRouter(int16_t slice_id);
-
-} // namespace tpcc
+}
 
 #define ROW_SLICE_MAPPING_DIRECT
 
 namespace felis {
 
 using namespace tpcc;
-
-#ifdef ROW_SLICE_MAPPING_DIRECT
 
 SHARD_TABLE(Customer) { return key.c_w_id - 1; }
 SHARD_TABLE(CustomerNameIdx) { return key.c_w_id - 1; }
@@ -328,11 +342,6 @@ READ_ONLY_TABLE(Item);
 SHARD_TABLE(Stock) { return key.s_w_id - 1; }
 SHARD_TABLE(StockData) { return key.s_w_id - 1; }
 SHARD_TABLE(Warehouse) { return key.w_id - 1; }
-
-#elif ROW_SLICE_MAPPING_2
-// TODO:
-
-#endif
 
 } // namespace felis
 
