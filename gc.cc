@@ -30,6 +30,15 @@ void GC::AddVHandle(VHandle *handle, uint64_t epoch_nr)
   if (epoch_nr == 0)
     return;
 
+  // Because our GC is sloppy, in the extreme case, the row can run out of
+  // versions if it's too long. We need to force a garbage collection in this
+  // case.
+  if (handle->nr_versions() >= 1_M - 64) {
+    // We limit the collect to 16K because we are still holding a lock!
+    if (Collect(handle, epoch_nr, 16_K) < 16_K)
+      return;
+  }
+
   // Either there's nothing to collect, or it's already in the GC queue.
   if (handle->last_gc_mark_epoch != 0 &&
       (handle->last_gc_mark_epoch / g_gc_every_epoch) == (epoch_nr / g_gc_every_epoch))
@@ -104,11 +113,12 @@ void GC::RunGC()
     return;
 
   size_t nr = 0, nrb = 0;
-
+  nr_gc_collecting.fetch_add(1);
   GarbageBlock *b = processing_queue.load();
   while (true) {
     while (!b || !processing_queue.compare_exchange_strong(b, b->processing_next)) {
       if (!b) {
+        nr_gc_collecting.fetch_sub(1);
         logger->info("GC done {} rows {} blks", nr, nrb);
         return;
       }
@@ -117,20 +127,29 @@ void GC::RunGC()
     }
 
     size_t last = 0;
-    for (size_t i = 0; i < b->nr_handles; i++) {
-      last += Process(b->handles[i], cur_epoch_nr);
+    size_t i = 0;
+    while (i < b->nr_handles) {
+      auto nr_processed = Process(b->handles[i], cur_epoch_nr, 16_K);
+      if (nr_processed < 16_K) {
+        i++;
+        continue;
+      }
 
+      last += nr_processed;
       // Too much work for this block, am I the straggler?
-      if (last < 4096) continue;
-      last = 0;
+      if (last < 16_K) continue;
       if (processing_queue.load() == nullptr) {
         // Fuck you are the straggler
-        logger->info("GC unfinished {} rows {} blks", nr + i + 1, nrb + 1);
-        std::move(b->handles.begin() + i + 1, b->handles.begin() + b->nr_handles, b->handles.begin());
-        b->nr_handles -= i + 1;
+        logger->info("GC unfinished {} rows {} blks, last {}", nr + i, nrb, last);
+        std::move(b->handles.begin() + i, b->handles.begin() + b->nr_handles, b->handles.begin());
+        b->nr_handles -= i;
+
+        nr_gc_collecting.fetch_sub(1);
         return;
       }
+      last = 0;
     }
+
     nrb++;
     nr += b->nr_handles;
     b->nr_handles = 0;
@@ -138,23 +157,25 @@ void GC::RunGC()
   }
 }
 
-size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr)
+size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 {
   util::MCSSpinLock::QNode qnode;
   handle->lock.Lock(&qnode);
-  size_t n = Collect(handle, cur_epoch_nr);
+  size_t n = Collect(handle, cur_epoch_nr, limit);
   handle->lock.Unlock(&qnode);
   return n;
 }
 
-size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr)
+size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 {
   auto *versions = handle->versions;
   uintptr_t *objects = handle->versions + handle->capacity;
   int i = 0;
-  while (i < handle->size - 1 && (versions[i + 1] >> 32) < cur_epoch_nr) {
+  while (i < handle->size - 1 && i <= limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
     i++;
   }
+  if (i == 0) return 0;
+
   for (auto j = 0; j < i; j++) {
     delete (VarStr *) objects[j];
   }

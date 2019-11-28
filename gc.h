@@ -49,8 +49,8 @@ class GC {
   static void FreeBlock(GarbageBlock *b) { return g_block_pool.Free(b, b->alloc_core); }
   static void InitPool();
  private:
-  size_t Collect(VHandle *handle, uint64_t cur_epoch_nr);
-  size_t Process(VHandle *handle, uint64_t cur_epoch_nr);
+  size_t Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
+  size_t Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
 
   struct LocalCollector {
     GarbageBlock *pending = nullptr;
@@ -61,6 +61,7 @@ class GC {
 
   LocalCollector &local_collector();
   std::atomic<GarbageBlock *> processing_queue = nullptr;
+  std::atomic_ulong nr_gc_collecting = 0;
   static unsigned int g_gc_every_epoch;
 };
 
