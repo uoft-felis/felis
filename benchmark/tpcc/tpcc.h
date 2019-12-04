@@ -143,8 +143,6 @@ class ClientBase {
  protected:
   util::FastRandom r;
   int node_id;
-  uint min_warehouse;
-  uint max_warehouse;
 
  protected:
   static constexpr double kWarehouseSpread = 0.0;
@@ -178,8 +176,6 @@ class ClientBase {
 
   int GetItemId();
   int GetCustomerId();
-
-  int GetOrderLinesPerCustomer();
 
   size_t GetCustomerLastName(uint8_t *buf, int num);
   size_t GetCustomerLastName(char *buf, int num) {

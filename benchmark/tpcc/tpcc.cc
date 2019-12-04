@@ -177,10 +177,6 @@ int ClientBase::NonUniformRandom(int A, int C, int min, int max)
   return (((RandomNumber(0, A) | RandomNumber(min, max)) + C) % (max - min + 1)) + min;
 }
 
-int ClientBase::GetOrderLinesPerCustomer()
-{
-  return RandomNumber(5, 15);
-}
 
 int ClientBase::GetItemId()
 {
@@ -257,36 +253,57 @@ size_t ClientBase::nr_warehouses() const
   return g_tpcc_config.nr_warehouses;
 }
 
+/*
+ * 1. Randomly generate a warehouse key, using the hotspot configuration.
+ * 2. Is this key belong to this node according to our sharding plan, unless Spread is On.
+ */
 uint ClientBase::PickWarehouse()
 {
-  if (kWarehouseSpread == 0 || r.next_uniform() >= kWarehouseSpread) {
+  long selw = -1;
+  do {
     // Some warehouses are the hotspot, we need to extend such range for random
     // number generation.
-    ulong rand_max = 0;
-    for (auto w = min_warehouse; w <= max_warehouse; w++) {
+    long rand_max = 0;
+    for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
       if (ClientBase::is_warehouse_hotspot(w)) rand_max += g_tpcc_config.hotspot_load_percentage;
       else rand_max += 100;
     }
+
     auto rand = long(r.next_uniform() * rand_max);
-    for (auto w = min_warehouse; w <= max_warehouse; w++) {
+    for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
       if (ClientBase::is_warehouse_hotspot(w)) rand -= g_tpcc_config.hotspot_load_percentage;
       else rand -= 100;
-      if (rand < 0)
-        return w;
+
+      if (rand < 0) {
+        selw = w;
+        break;
+      }
     }
-    return max_warehouse;
-  }
-  return r.next() % g_tpcc_config.nr_warehouses + 1;
+
+    if (kWarehouseSpread == 0 || r.next_uniform() >= kWarehouseSpread) {
+      // Do we own this warehouse?
+      auto wk = Warehouse::Key::New(selw);
+      if (TpccSliceRouter::SliceToNodeId(Instance<SliceLocator<Warehouse>>().Locate(wk)) != node_id)
+        selw = -1;
+    }
+  } while (selw == -1);
+  return selw;
 }
 
-uint ClientBase::LoadPercentageByWarehouse()
+unsigned int ClientBase::LoadPercentageByWarehouse()
 {
-  uint load = 0;
-  for (int w = min_warehouse; w <= max_warehouse; w++) {
+  unsigned int load = 0;
+  unsigned int n = 0;
+  for (int w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
+    auto wk = Warehouse::Key::New(w);
+    if (TpccSliceRouter::SliceToNodeId(Instance<SliceLocator<Warehouse>>().Locate(wk) != node_id))
+      continue;
+
+    n++;
     if (ClientBase::is_warehouse_hotspot(w)) load += g_tpcc_config.hotspot_load_percentage;
     else load += 100;
   }
-  return load / (max_warehouse - min_warehouse + 1);
+  return load / n;
 }
 
 uint ClientBase::PickDistrict()

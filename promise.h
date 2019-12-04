@@ -123,7 +123,7 @@ class BasePromise {
 
 static_assert(sizeof(BasePromise) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");
 
-class PromiseRoutineTransportService {;
+class PromiseRoutineTransportService {
  public:
   static constexpr size_t kPromiseMaxLevels = 16;
 
