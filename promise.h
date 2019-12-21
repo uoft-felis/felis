@@ -131,7 +131,7 @@ class PromiseRoutineTransportService {
   virtual void ForceFlushPromiseRoutine() {}
   virtual void PreparePromisesToQueue(int core, int level, unsigned long nr) {}
   virtual void FinishPromiseFromQueue(PromiseRoutine *routine) {}
-  virtual long UrgencyCount(int core_id) { return -1; }
+  // virtual long UrgencyCount(int core_id) { return -1; }
 };
 
 class PromiseRoutineDispatchService {
@@ -205,8 +205,10 @@ class Promise : public BasePromise {
   PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
     auto static_func =
         [](PromiseRoutine *routine, VarStr input) {
-          auto native_func = (typename Next<Func, Closure>::OptType(*)(
-              const Closure &, T))routine->callback_native_func;
+          auto native_func =
+              (typename Next<Func, Closure>::OptType (*)(const Closure &, T))
+              routine->callback_native_func;
+
           Closure capture;
           T t;
           capture.DecodeFrom(routine->capture_data);
@@ -306,91 +308,6 @@ class PromiseProc : public PromiseStream<DummyValue> {
 
   void Reset() {
     p = new Promise<DummyValue>();
-  }
-};
-
-struct BaseCombinerState {
-  std::atomic<long> finished_states;
-  BaseCombinerState() : finished_states(0) {}
-
-  long Finish() { return finished_states.fetch_add(1) + 1; }
-};
-
-template <typename ...Types>
-class CombinerState : public BaseCombinerState, public sql::TupleField<Types...> {
- public:
-  typedef sql::Tuple<Types...> TupleType;
-  typedef Promise<TupleType> PromiseType;
-  static constexpr size_t kNrFields = sizeof...(Types);
-};
-
-template <typename CombinerStatePtr, typename CombinerStateType, typename T, typename ...Types>
-static void CombineImplInstall(int node_id, CombinerStatePtr state_ptr,
-                               typename CombinerStateType::PromiseType *next_promise, Promise<T> *p) {
-  auto routine = p->AttachRoutine(
-      sql::Tuple<CombinerStatePtr>(state_ptr),
-      [](auto ctx, T result) -> Optional<typename CombinerStateType::TupleType> {
-        // We only set the first item in the tuple because of this cast!
-        CombinerStatePtr state_ptr;
-        ctx.Unpack(state_ptr);
-
-        auto *raw_state_ptr = (CombinerStateType *) state_ptr;
-        sql::TupleField<T, Types...> *tuple = raw_state_ptr;
-        tuple->value = result;
-
-        if (state_ptr->Finish() < CombinerStateType::kNrFields) {
-          return nullopt;
-        }
-
-        typename CombinerStateType::TupleType final_result(*raw_state_ptr);
-        return final_result;
-      });
-  routine->node_id = node_id;
-  routine->next = next_promise->Ref();
-}
-
-template <typename CombinerStatePtr, typename CombinerStateType, typename T, typename ...Types>
-class CombineImpl : public CombineImpl<CombinerStatePtr, CombinerStateType, Types...> {
- public:
-  void Install(int node_id, CombinerStatePtr state_ptr,
-               typename CombinerStateType::PromiseType *next_promise,
-               Promise<T> *p, Promise<Types>*... rest) {
-    CombineImplInstall<CombinerStatePtr, CombinerStateType, T, Types...>(node_id, state_ptr, next_promise, p);
-    CombineImpl<CombinerStatePtr, CombinerStateType, Types...>::Install(node_id, state_ptr, next_promise, rest...);
-  }
-};
-
-template <typename CombinerStatePtr, typename CombinerStateType, typename T>
-class CombineImpl<CombinerStatePtr, CombinerStateType, T> {
- public:
-  void Install(int node_id, CombinerStatePtr state_ptr,
-               typename CombinerStateType::PromiseType *next_promise,
-               Promise<T> *p) {
-    CombineImplInstall<CombinerStatePtr, CombinerStateType, T>(node_id, state_ptr, next_promise, p);
-  }
-};
-
-template <typename CombinerStatePtr, typename ...Types>
-class Combine {
-  typedef typename CombinerState<Types...>::PromiseType PromiseType;
-  CombineImpl<CombinerStatePtr, CombinerState<Types...>, Types...> impl;
-  PromiseType *next_promise = new PromiseType();
- public:
-  Combine(int node_id, CombinerStatePtr state_ptr, Promise<Types>*... args) {
-    impl.Install(node_id, state_ptr, next_promise, args...);
-    next_promise->UnRef();
-  }
-  PromiseType *operator->() const {
-    return next_promise;
-  }
-  PromiseType *promise() const {
-    return next_promise;
-  }
-  PromiseStream<typename PromiseType::Type> stream() const {
-    return PromiseStream<typename PromiseType::Type>(promise());
-  }
-  operator PromiseType*() const {
-    return next_promise;
   }
 };
 

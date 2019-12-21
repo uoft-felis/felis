@@ -17,6 +17,7 @@
 #include "util.h"
 
 #include "slice.h"
+#include "xxHash/xxhash.h"
 
 namespace tpcc {
 

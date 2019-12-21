@@ -99,6 +99,9 @@ void InitializeTPCC()
   if (felis::Options::kTpccHotWarehouseLoad)
     g_tpcc_config.hotspot_load_percentage = felis::Options::kTpccHotWarehouseLoad.ToInt();
 
+  if (felis::Options::kTpccHashShard)
+    g_tpcc_config.shard_by_warehouse = false;
+
   logger->info("Hot Warehouses are {:x} (bitmap), load {} %",
                g_tpcc_config.hotspot_warehouse_bitmap,
                g_tpcc_config.hotspot_load_percentage);
@@ -696,31 +699,27 @@ template <>
 void Loader<LoaderType::Order>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  auto c_ids_bitmap_len = (g_tpcc_config.customers_per_district + 7) / 8;
-  auto c_ids_bitmap = new uint8_t[c_ids_bitmap_len];
+  // a random permutation of customer IDs
   auto c_ids = new uint32_t[g_tpcc_config.customers_per_district];
 
   logger->info("Order Loader starts.");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
     logger->info("Order Loader on warehouse {}", w);
     for (auto d = 1; d <= g_tpcc_config.districts_per_warehouse; d++) {
-      memset(c_ids_bitmap, 0, c_ids_bitmap_len);
-      for (auto c = 0; c <= g_tpcc_config.customers_per_district; c++) {
-        unsigned int x = 0;
-        do {
-          x = r.next() % g_tpcc_config.customers_per_district;
-        } while ((c_ids_bitmap[x / 8] & (1 << (x % 8))) != 0);
-        c_ids[c] = x + 1;
+      // Random shuffle
+      for (auto c = 1; c <= g_tpcc_config.customers_per_district; c++) {
+        auto j = RandomNumber(0, c - 1);
+        if (j != c - 1)
+          c_ids[c - 1] = c_ids[j];
+        c_ids[j] = c;
       }
-
-      auto auto_inc_zone = w * 10 + d;
 
       for (auto c = 1; c <= g_tpcc_config.customers_per_district; c++) {
         auto ts_now = w * g_tpcc_config.customers_per_district * g_tpcc_config.districts_per_warehouse
                       + d * g_tpcc_config.customers_per_district + c;
         auto ol_cnt = ts_now % 11 + 5;
-        const auto k_oo = OOrder::Key::New(
-            w, d, relation(TableType::OOrder).AutoIncrement(auto_inc_zone));
+        auto order_id = c << 8;
+        const auto k_oo = OOrder::Key::New(w, d, order_id);
 
         DoOnSlice<tpcc::OOrder>(
             k_oo,
@@ -804,10 +803,12 @@ void Loader<LoaderType::Order>::DoLoad()
               });
         }
       }
+      auto auto_inc_zone = w * 10 + d;
+      relation(TableType::OOrder).ResetAutoIncrement(
+          auto_inc_zone, g_tpcc_config.customers_per_district + 1);
     }
   }
 
-  delete [] c_ids_bitmap;
   delete [] c_ids;
 
   relation(TableType::OOrder).set_key_length(sizeof(OOrder::Key));
