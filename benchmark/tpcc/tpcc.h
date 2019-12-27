@@ -42,6 +42,17 @@ struct Config {
   bool shard_by_warehouse;
 
   Config();
+
+  unsigned int max_slice_id() const;
+  unsigned int WarehouseToSliceId(int w) const {
+    return w - 1;
+  }
+
+  template <typename T, int Suffix = 0>
+  unsigned int HashKeyToSliceId(const T &k) const {
+    static_assert(sizeof(T) > Suffix);
+    return XXH32(&k, sizeof(T) - Suffix, 0x10cc) % max_slice_id();
+  }
 };
 
 extern Config g_tpcc_config;
@@ -327,18 +338,81 @@ namespace felis {
 
 using namespace tpcc;
 
-SHARD_TABLE(Customer) { return key.c_w_id - 1; }
-SHARD_TABLE(CustomerNameIdx) { return key.c_w_id - 1; }
-SHARD_TABLE(District) { return key.d_w_id - 1; }
-SHARD_TABLE(History) { return key.h_w_id - 1; }
-SHARD_TABLE(NewOrder) { return key.no_w_id - 1; }
-SHARD_TABLE(OOrder) { return key.o_w_id - 1; }
-SHARD_TABLE(OOrderCIdIdx) { return key.o_w_id - 1; }
-SHARD_TABLE(OrderLine) { return key.ol_w_id - 1; }
+SHARD_TABLE(Customer) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.c_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+SHARD_TABLE(CustomerNameIdx) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.c_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+SHARD_TABLE(District) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.d_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+
+SHARD_TABLE(History) { std::abort(); } // we don't use this.
+SHARD_TABLE(NewOrder) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.no_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+
+SHARD_TABLE(OOrder) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.o_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+SHARD_TABLE(OOrderCIdIdx) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.o_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+SHARD_TABLE(OrderLine) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.ol_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId<OrderLine::Key, 4>(key);
+  }
+}
 READ_ONLY_TABLE(Item);
-SHARD_TABLE(Stock) { return key.s_w_id - 1; }
-SHARD_TABLE(StockData) { return key.s_w_id - 1; }
-SHARD_TABLE(Warehouse) { return key.w_id - 1; }
+SHARD_TABLE(Stock) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.s_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+SHARD_TABLE(StockData) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.s_w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
+
+SHARD_TABLE(Warehouse) {
+  if (g_tpcc_config.shard_by_warehouse) {
+    return g_tpcc_config.WarehouseToSliceId(key.w_id);
+  } else {
+    return g_tpcc_config.HashKeyToSliceId(key);
+  }
+}
 
 } // namespace felis
 

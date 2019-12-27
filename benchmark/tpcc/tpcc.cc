@@ -45,10 +45,10 @@ Config g_tpcc_config;
 
 static constexpr unsigned int kRandomShardingMaxSliceId = 101;
 
-static unsigned int MaxSliceId()
+unsigned int Config::max_slice_id() const
 {
-  if (g_tpcc_config.shard_by_warehouse)
-    return g_tpcc_config.nr_warehouses;
+  if (shard_by_warehouse)
+    return nr_warehouses;
   else
     return kRandomShardingMaxSliceId;
 }
@@ -62,7 +62,7 @@ void InitializeSliceManager()
   manager.Initialize(g_tpcc_config.nr_warehouses);
 
   if (NodeConfiguration::g_data_migration) {
-    for (int slc = 0; slc < MaxSliceId(); slc++) {
+    for (int slc = 0; slc < g_tpcc_config.max_slice_id(); slc++) {
       // You, as node_id, should not touch these slices at all!
       if (TpccSliceRouter::SliceToNodeId(slc) != conf.node_id()) {
         continue;
@@ -661,7 +661,7 @@ void Loader<LoaderType::Customer>::DoLoad()
         slice_id = util::Instance<SliceLocator<tpcc::CustomerNameIdx>>().Locate(k_idx);
         OnNewRow(slice_id, TableType::CustomerNameIdx, k_idx, handle);
         felis::InitVersion(handle, v_idx.Encode());
-#endif
+
         History::Key k_hist;
 
         k_hist.h_c_id = c;
@@ -685,6 +685,7 @@ void Loader<LoaderType::Customer>::DoLoad()
               OnNewRow(slice_id, TableType::History, k_hist, hist_handle);
               felis::InitVersion(hist_handle, v_hist.Encode());
             });
+#endif
       }
     }
   }
@@ -845,13 +846,13 @@ using namespace felis;
 int TpccSliceRouter::SliceToNodeId(int16_t slice_id)
 {
   auto &conf = util::Instance<NodeConfiguration>();
-  return 1 + slice_id * conf.nr_nodes() / MaxSliceId(); // Because node starts from 1
+  return 1 + slice_id * conf.nr_nodes() / g_tpcc_config.max_slice_id(); // Because node starts from 1
 }
 
 int TpccSliceRouter::SliceToCoreId(int16_t slice_id)
 {
   auto &conf = util::Instance<NodeConfiguration>();
-  return (uint16_t) (slice_id * conf.nr_nodes() * conf.g_nr_threads / MaxSliceId()) % conf.g_nr_threads;
+  return (uint16_t) (slice_id * conf.nr_nodes() * conf.g_nr_threads / g_tpcc_config.max_slice_id()) % conf.g_nr_threads;
 }
 
 }
