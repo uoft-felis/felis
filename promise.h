@@ -38,7 +38,6 @@ struct PromiseRoutine {
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 
   void (*callback)(PromiseRoutine *, VarStr input);
-  void *callback_native_func;
 
   size_t NodeSize() const;
   uint8_t *EncodeNode(uint8_t *p);
@@ -51,7 +50,7 @@ struct PromiseRoutine {
   static constexpr long kBubblePointer = 0xdeadbeef;
 
   BasePromise *next;
-  uint8_t __padding__[8];
+  uint8_t __padding__[16];
 
   static PromiseRoutine *CreateFromCapture(size_t capture_len);
   static std::tuple<PromiseRoutine *, VarStr> CreateFromPacket(go::TcpInputChannel *in,
@@ -203,12 +202,11 @@ class Promise : public BasePromise {
 
   template <typename Func, typename Closure>
   PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
+    // C++17 allows converting from a non-capture lambda to a constexpr function pointer! Cool!
+    constexpr typename Next<Func, Closure>::OptType (*native_func)(const Closure &, T) = func;
+
     auto static_func =
         [](PromiseRoutine *routine, VarStr input) {
-          auto native_func =
-              (typename Next<Func, Closure>::OptType (*)(const Closure &, T))
-              routine->callback_native_func;
-
           Closure capture;
           T t;
           capture.DecodeFrom(routine->capture_data);
@@ -230,7 +228,6 @@ class Promise : public BasePromise {
         };
     auto routine = PromiseRoutine::CreateFromCapture(capture.EncodeSize());
     routine->callback = (void (*)(PromiseRoutine *, VarStr)) static_func;
-    routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
     capture.EncodeTo(routine->capture_data);
 
     Add(routine);
