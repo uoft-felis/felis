@@ -21,6 +21,9 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   r->capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
   r->sched_key = 0;
   r->affinity = std::numeric_limits<uint64_t>::max();
+
+  r->callback = nullptr;
+  r->node_func = nullptr;
   r->next = nullptr;
   return r;
 }

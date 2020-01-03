@@ -16,7 +16,7 @@ class NodeServerRoutine;
 class NodeServerThreadRoutine;
 struct PromiseRoutine;
 
-class TransportImpl;
+class LocalDispatcherImpl;
 class SendChannel;
 
 // TODO: Clean these constant up. They are all over the place.
@@ -62,14 +62,24 @@ class TransportBatchMetadata {
   unsigned long Merge(int level, LocalMetadata &local, int node);
 };
 
+class LocalTransport : public PromiseRoutineTransportService {
+  LocalDispatcherImpl *lb;
+ public:
+  LocalTransport();
+  ~LocalTransport();
+  LocalTransport(const LocalTransport &rhs) = delete;
+
+  void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) final override;
+  void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
+};
+
 class NodeConfiguration : public PromiseRoutineTransportService {
   NodeConfiguration();
 
   template <typename T> friend struct util::InstanceInit;
 
   int id;
-  // Round Robin for local transport
-  TransportImpl *lb;
+  LocalTransport ltp;
  public:
 
   static size_t g_nr_threads;

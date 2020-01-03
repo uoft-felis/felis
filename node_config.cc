@@ -90,7 +90,7 @@ class Flushable {
   }
 };
 
-class TransportImpl : public Flushable<TransportImpl> {
+class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
   static constexpr size_t kBufferSize = 16383;
   struct Queue {
     // Putting these per-core task buffer simply because it's too large and we
@@ -112,7 +112,7 @@ class TransportImpl : public Flushable<TransportImpl> {
   int idx;
 
  public:
-  TransportImpl(int idx);
+  LocalDispatcherImpl(int idx);
   void QueueRoutine(PromiseRoutine *routine, const VarStr &in);
   void QueueBubble();
 
@@ -194,7 +194,7 @@ class SendChannel : public Flushable<SendChannel> {
   }
 };
 
-TransportImpl::TransportImpl(int idx)
+LocalDispatcherImpl::LocalDispatcherImpl(int idx)
     : idx(idx), dice(0)
 {
   auto mem =
@@ -214,7 +214,7 @@ TransportImpl::TransportImpl(int idx)
   }
 }
 
-void TransportImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
+void LocalDispatcherImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
 {
   int tid = go::Scheduler::CurrentThreadPoolId();
   auto q = queues[tid];
@@ -235,25 +235,25 @@ void TransportImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
   }
 }
 
-void TransportImpl::QueueBubble()
+void LocalDispatcherImpl::QueueBubble()
 {
   // Currently we don't batch the bubbles, and we consider bubbles are rare.
   util::Impl<PromiseRoutineDispatchService>().AddBubble();
 }
 
-void TransportImpl::DoFlush()
+void LocalDispatcherImpl::DoFlush()
 {
   BasePromise::FlushScheduler();
 }
 
-bool TransportImpl::PushRelease(int tid, unsigned int start, unsigned int end)
+bool LocalDispatcherImpl::PushRelease(int tid, unsigned int start, unsigned int end)
 {
   FlushOnCore(tid, start, end);
   Unlock(tid);
   return end > start;
 }
 
-void TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
+void LocalDispatcherImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
 {
   if (start == end) return;
 
@@ -285,7 +285,7 @@ void TransportImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
   }
 }
 
-void TransportImpl::SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int start, unsigned int end, int thread)
+void LocalDispatcherImpl::SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int start, unsigned int end, int thread)
 {
   if (start == end) return;
 
@@ -396,6 +396,23 @@ long SendChannel::PendingFlush(int core_id)
   return 0;
 }
 
+LocalTransport::LocalTransport() : lb(new LocalDispatcherImpl(0)) {}
+LocalTransport::~LocalTransport() { delete lb; }
+
+void LocalTransport::TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input)
+{
+  if (input.data == (uint8_t *) PromiseRoutine::kBubblePointer) {
+    lb->QueueBubble();
+  } else {
+    lb->QueueRoutine(routine, input);
+  }
+}
+
+void LocalTransport::FinishPromiseFromQueue(PromiseRoutine *routine)
+{
+  lb->Flush();
+}
+
 size_t NodeConfiguration::g_nr_threads = 8;
 int NodeConfiguration::g_core_shifting = 0;
 bool NodeConfiguration::g_data_migration = false;
@@ -426,7 +443,6 @@ size_t NodeConfiguration::BatchBufferIndex(int level, int src_node, int dst_node
 }
 
 NodeConfiguration::NodeConfiguration()
-    : lb(new TransportImpl(0))
 {
   auto &console = util::Instance<Console>();
 
@@ -473,7 +489,7 @@ class NodeServerThreadRoutine : public go::Routine {
   int idx;
   ulong src_node_id;
   std::atomic<long> tid;
-  TransportImpl lb;
+  LocalDispatcherImpl lb;
   NodeConfiguration &conf;
   go::BufferChannel ctrl_chn;
  public:
@@ -778,11 +794,7 @@ void NodeConfiguration::TransportPromiseRoutine(PromiseRoutine *routine, const V
       out->Finish(8);
     }
   } else {
-    if (!bubble) {
-      lb->QueueRoutine(routine, in);
-    } else {
-      lb->QueueBubble();
-    }
+    ltp.TransportPromiseRoutine(routine, in);
   }
   meta.AddRoute(dst_node);
 }
@@ -816,7 +828,7 @@ void NodeConfiguration::FinishPromiseFromQueue(PromiseRoutine *routine)
       if (dst_node != src_node) {
         GetOutputChannel(dst_node)->Flush();
       } else {
-        lb->Flush();
+        ltp.FinishPromiseFromQueue(routine);
       }
     }
   }
@@ -831,7 +843,7 @@ void NodeConfiguration::ForceFlushPromiseRoutine()
     if (i == node_id()) continue;
     GetOutputChannel(i)->Flush();
   }
-  lb->Flush();
+  ltp.FinishPromiseFromQueue(nullptr);
 }
 
 void NodeConfiguration::ResetBufferPlan()

@@ -38,6 +38,7 @@ struct PromiseRoutine {
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 
   void (*callback)(PromiseRoutine *, VarStr input);
+  uint8_t(*node_func)(PromiseRoutine *, VarStr input);
 
   size_t NodeSize() const;
   uint8_t *EncodeNode(uint8_t *p);
@@ -50,7 +51,7 @@ struct PromiseRoutine {
   static constexpr long kBubblePointer = 0xdeadbeef;
 
   BasePromise *next;
-  uint8_t __padding__[16];
+  uint8_t __padding__[8];
 
   static PromiseRoutine *CreateFromCapture(size_t capture_len);
   static std::tuple<PromiseRoutine *, VarStr> CreateFromPacket(go::TcpInputChannel *in,
