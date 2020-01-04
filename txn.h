@@ -25,7 +25,7 @@ class BaseTxn {
   Epoch *epoch;
   uint64_t sid;
 
-  PromiseProc proc;
+  Promise<DummyValue> *root;
 
   using BrkType = std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads / mem::kNrCorePerNode>;
   static BrkType g_brk;
@@ -52,11 +52,11 @@ class BaseTxn {
   }
 
   Promise<DummyValue> *root_promise() {
-    return proc.promise();
+    return root;
   }
 
   void ResetRoot() {
-    proc.Reset();
+    root = new Promise<DummyValue>();
   }
 
   uint64_t serial_id() const { return sid; }
@@ -559,27 +559,25 @@ class Txn : public BaseTxn {
         }
 
       if (!EpochClient::g_enable_granola) {
-        proc
-            | std::make_tuple(
-                op_ctx,
-                node,
-                [](auto &ctx, auto _) -> Optional<VoidValue> {
-                  auto completion = OnComplete();
-                  if constexpr (!std::is_void<OnCompleteParam>()) {
-                    completion.args = (OnCompleteParam) ctx;
-                  }
+        root->Then(
+            op_ctx, node,
+            [](auto &ctx, auto _) -> Optional<VoidValue> {
+              auto completion = OnComplete();
+              if constexpr (!std::is_void<OnCompleteParam>()) {
+                  completion.args = (OnCompleteParam) ctx;
+                }
 
-                  completion.handle = ctx.handle;
-                  completion.state = State(ctx.state);
+              completion.handle = ctx.handle;
+              completion.state = State(ctx.state);
 
-                  TxnIndexOpContext::ForEachWithBitmap(
-                      ctx.keys_bitmap,
-                      [&ctx, &completion](int j, int i) {
-                        auto op = IndexOp(ctx, j);
-                        completion(i, op.result);
-                      });
-                  return nullopt;
-                });
+              TxnIndexOpContext::ForEachWithBitmap(
+                  ctx.keys_bitmap,
+                  [&ctx, &completion](int j, int i) {
+                    auto op = IndexOp(ctx, j);
+                    completion(i, op.result);
+                  });
+              return nullopt;
+            });
       } else {
         auto completion = OnComplete();
         if constexpr (!std::is_void<OnCompleteParam>()) {

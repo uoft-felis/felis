@@ -65,7 +65,6 @@ void PaymentTxn::Run()
 
   for (auto &p: state->nodes) {
     auto [node, bitmap] = p;
-    auto root = root_promise();
     std::array<int, 2> filters;
 
     if (!Client::g_enable_granola) {

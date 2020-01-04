@@ -90,62 +90,59 @@ void DeliveryTxn::Run()
       auto [node, bitmap] = p;
       // if (bitmap == 0x08) continue;
 
-      auto next =
-          proc
-          | TxnProc(
-              node,
-              [](const auto &ctx, auto args) -> Optional<VoidValue> {
-                auto &[state, index_handle, bitmap, district_id, carrier_id, ts] = ctx;
-                int i = district_id - 1;
+      auto next = root->Then(
+          MakeContext(bitmap, i + 1, o_carrier_id, ts), node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle, bitmap, district_id, carrier_id, ts] = ctx;
+            int i = district_id - 1;
 
-                if (bitmap & 0x10) {
-                  index_handle(state->new_orders[i]).Delete();
-                  ClientBase::OnUpdateRow(state->new_orders[i]);
-                }
+            if (bitmap & 0x10) {
+              index_handle(state->new_orders[i]).Delete();
+              ClientBase::OnUpdateRow(state->new_orders[i]);
+            }
 
-                if (bitmap & 0x04) {
-                  auto oorder = index_handle(state->oorders[i]).template Read<OOrder::Value>();
-                  oorder.o_carrier_id = carrier_id;
-                  index_handle(state->oorders[i]).Write(oorder);
-                  ClientBase::OnUpdateRow(state->oorders[i]);
-                }
+            if (bitmap & 0x04) {
+              auto oorder = index_handle(state->oorders[i]).template Read<OOrder::Value>();
+              oorder.o_carrier_id = carrier_id;
+              index_handle(state->oorders[i]).Write(oorder);
+              ClientBase::OnUpdateRow(state->oorders[i]);
+            }
 
-                if (bitmap & 0x01) {
-                  int sum = 0;
-                  for (int j = 0; j < 15; j++) {
-                    if (state->order_lines[i][j] == nullptr) break;
-                    auto handle = index_handle(state->order_lines[i][j]);
-                    auto ol = handle.template Read<OrderLine::Value>();
-                    sum += ol.ol_amount;
-                    ol.ol_delivery_d = ts;
-                    handle.Write(ol);
-                    ClientBase::OnUpdateRow(state->order_lines[i][j]);
-                  }
+            if (bitmap & 0x01) {
+              int sum = 0;
+              for (int j = 0; j < 15; j++) {
+                if (state->order_lines[i][j] == nullptr) break;
+                auto handle = index_handle(state->order_lines[i][j]);
+                auto ol = handle.template Read<OrderLine::Value>();
+                sum += ol.ol_amount;
+                ol.ol_delivery_d = ts;
+                handle.Write(ol);
+                ClientBase::OnUpdateRow(state->order_lines[i][j]);
+              }
 
-                  auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
-                  customer.c_balance = sum;
-                  index_handle(state->customers[i]).Write(customer);
-                  ClientBase::OnUpdateRow(state->customers[i]);
-                }
+              auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
+              customer.c_balance = sum;
+              index_handle(state->customers[i]).Write(customer);
+              ClientBase::OnUpdateRow(state->customers[i]);
+            }
 
-                return nullopt;
-              }, bitmap, i + 1, o_carrier_id, ts);
+            return nullopt;
+          });
 #if 0
       if (node == sum_node) {
-        next
-            | TxnProc(
-                customer_node,
-                [](const auto &ctx, auto args) -> Optional<VoidValue> {
-                  auto [sum] = args;
-                  auto &[state, index_handle, i] = ctx;
+        next->Then(
+            MakeContext(i), customer_node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto [sum] = args;
+              auto &[state, index_handle, i] = ctx;
 
-                  auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
-                  customer.c_balance = sum;
-                  index_handle(state->customers[i]).Write(customer);
-                  ClientBase::OnUpdateRow(state->customers[i]);
+              auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
+              customer.c_balance = sum;
+              index_handle(state->customers[i]).Write(customer);
+              ClientBase::OnUpdateRow(state->customers[i]);
 
-                  return nullopt;
-                }, i);
+              return nullopt;
+            });
       }
 #endif
     }

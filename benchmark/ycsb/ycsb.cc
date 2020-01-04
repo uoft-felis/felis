@@ -69,7 +69,6 @@ class RMWTxn : public Txn<RMWState>, public RMWStruct {
 
   template <typename Func>
   void RunOnPartition(Func f) {
-    auto root = proc.promise();
     auto handle = index_handle();
     for (int i = 0; i < kTotal; i++) {
       auto part = (keys[i] * NodeConfiguration::g_nr_threads) / Client::g_table_size;
@@ -143,26 +142,24 @@ void RMWTxn::Run()
             return row;
           });
     }
-
-    proc
-        | TxnProc(
-            1,
-            [](const auto &ctx, auto _) -> Optional<VoidValue> {
-              auto &[state, index_handle] = ctx;
-              for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-                state->futures[i].Invoke(&state, index_handle);
-              }
-              if (Client::g_dependency) {
-                for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-                  state->futures[i].Wait();
-                }
-              }
-              WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
-              for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
-                ReadRow(index_handle(state->rows[i]));
-              }
-              return nullopt;
-            });
+    root->Then(
+        MakeContext(), 1,
+        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+          auto &[state, index_handle] = ctx;
+          for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+            state->futures[i].Invoke(&state, index_handle);
+          }
+          if (Client::g_dependency) {
+            for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+              state->futures[i].Wait();
+            }
+          }
+          WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
+          for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
+            ReadRow(index_handle(state->rows[i]));
+          }
+          return nullopt;
+        });
 
   } else {
     if (Client::g_dependency)

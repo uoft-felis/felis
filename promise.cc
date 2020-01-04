@@ -116,10 +116,6 @@ void PromiseRoutine::DecodeNode(go::TcpInputChannel *in)
   }
 }
 
-PromiseProc::~PromiseProc()
-{
-}
-
 size_t BasePromise::g_nr_threads = 0;
 
 BasePromise::BasePromise(int limit)
