@@ -261,16 +261,17 @@ void BasePromise::ExecutionRoutine::Run()
       });
 
 
-  long cnt = 0x03FFF;
+  long cnt = 0x0FFF;
   while (svc.Peek(core_id, should_pop)) {
     cnt++;
-    if ((cnt & 0x03FFF) == 0) {
+    if ((cnt & 0x0FFF) == 0) {
       transport.PeriodicFlushPromiseRoutine(core_id);
     }
 
     auto [rt, in] = next_r;
     if (rt->sched_key != 0)
       debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+
     RunPromiseRoutine(rt, in);
     svc.Complete(core_id);
   }
