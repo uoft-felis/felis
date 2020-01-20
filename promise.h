@@ -14,6 +14,8 @@ namespace felis {
 
 using sql::VarStr;
 
+// TODO: I need to update this doc.
+
 // Distributed Promise system. We can use promise to define the intra
 // transaction dependencies. The dependencies have to be acyclic.
 
@@ -38,7 +40,7 @@ struct PromiseRoutine {
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 
   void (*callback)(PromiseRoutine *, VarStr input);
-  uint8_t(*node_func)(PromiseRoutine *, VarStr input);
+  uint8_t (*node_func)(PromiseRoutine *, VarStr input);
 
   size_t NodeSize() const;
   uint8_t *EncodeNode(uint8_t *p);
@@ -128,9 +130,10 @@ class PromiseRoutineTransportService {
   static constexpr size_t kPromiseMaxLevels = 16;
 
   virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
-  virtual void ForceFlushPromiseRoutine() {}
+  virtual void PeriodicFlushPromiseRoutine(int core) {}
   virtual void PreparePromisesToQueue(int core, int level, unsigned long nr) {}
   virtual void FinishPromiseFromQueue(PromiseRoutine *routine) {}
+  virtual uint8_t GetNumberOfNodes() { return 0; }
   // virtual long UrgencyCount(int core_id) { return -1; }
 };
 
@@ -195,6 +198,10 @@ class Promise : public BasePromise {
  public:
   typedef T Type;
 
+  Promise(PromiseRoutine *routine = nullptr) : BasePromise() {
+    if (routine) routine->next = this;
+  }
+
   template <typename Func, typename Closure>
   struct Next {
     typedef typename std::result_of<Func (const Closure &, T)>::type OptType;
@@ -202,7 +209,8 @@ class Promise : public BasePromise {
   };
 
   template <typename Func, typename Closure>
-  PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
+  PromiseRoutine *AttachRoutine(const Closure &capture, Func func,
+                                uint64_t affinity = std::numeric_limits<uint64_t>::max()) {
     // C++17 allows converting from a non-capture lambda to a constexpr function pointer! Cool!
     constexpr typename Next<Func, Closure>::OptType (*native_func)(const Closure &, T) = func;
 
@@ -228,7 +236,8 @@ class Promise : public BasePromise {
           util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(routine);
         };
     auto routine = PromiseRoutine::CreateFromCapture(capture.EncodeSize());
-    routine->callback = (void (*)(PromiseRoutine *, VarStr)) static_func;
+    routine->callback = static_func;
+    routine->affinity = affinity;
     capture.EncodeTo(routine->capture_data);
 
     Add(routine);
@@ -241,14 +250,30 @@ class Promise : public BasePromise {
   Promise<typename Next<Func, Closure>::Type> *Then(
       const Closure &capture, int placement, Func func,
       uint64_t affinity = std::numeric_limits<uint64_t>::max()) {
-    auto routine = AttachRoutine(capture, func);
+    auto routine = AttachRoutine(capture, func, affinity);
     routine->node_id = placement;
-    routine->level = 0;
-    routine->affinity = affinity;
-    routine->sched_key = 0;
-    auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
-    routine->next = next_promise;
-    return next_promise;
+    return new Promise<typename Next<Func, Closure>::Type>(routine);
+  }
+
+  template <typename Func, typename Closure, typename PlacementFunc>
+  Promise<typename Next<Func, Closure>::Type> *ThenDynamic(
+      const Closure &capture, PlacementFunc placement_func, Func func,
+      uint64_t affinity = std::numeric_limits<uint64_t>::max()) {
+    constexpr uint8_t (*native_placement_func)(const Closure&, T) = placement_func;
+    auto static_func =
+        [](PromiseRoutine *routine, VarStr input) -> uint8_t {
+          Closure capture;
+          T t;
+          capture.DecodeFrom(routine->capture_data);
+          t.Decode(&input);
+
+          return native_placement_func(capture, t);
+        };
+
+    auto routine = AttachRoutine(capture, func, affinity);
+    routine->node_id = 255;
+    routine->node_func = static_func;
+    return new Promise<typename Next<Func, Closure>::Type>(routine);
   }
 
 };
@@ -257,7 +282,7 @@ template <>
 class Promise<VoidValue> : public BasePromise {
  public:
 
-  Promise() {
+  Promise(PromiseRoutine *routine = nullptr) {
     std::abort();
   }
   static void *operator new(size_t size) noexcept {

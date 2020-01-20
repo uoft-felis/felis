@@ -71,6 +71,7 @@ class LocalTransport : public PromiseRoutineTransportService {
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) final override;
   void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
+
 };
 
 class NodeConfiguration : public PromiseRoutineTransportService {
@@ -115,7 +116,10 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
   void PreparePromisesToQueue(int core, int level, unsigned long nr) final override;
   void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
-  void ForceFlushPromiseRoutine() final override;
+  void PeriodicFlushPromiseRoutine(int core) final override;
+  uint8_t GetNumberOfNodes() final override {
+    return nr_nodes();
+  }
 
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root, unsigned long *cnts);

@@ -20,6 +20,7 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   r->capture_len = capture_len;
   r->capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
   r->sched_key = 0;
+  r->level = 0;
   r->affinity = std::numeric_limits<uint64_t>::max();
 
   r->callback = nullptr;
@@ -171,8 +172,25 @@ void BasePromise::Complete(const VarStr &in)
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   for (size_t i = 0; i < nr_handlers; i++) {
     auto r = routine(i);
-    transport.TransportPromiseRoutine(r, in);
+
+    // This is a dynamically dispatched piece.
+    if (r->node_id == 255) {
+      auto real_node = r->node_func(r, in);
+      auto max_node = transport.GetNumberOfNodes();
+      VarStr bubble(0, 0, (uint8_t *) PromiseRoutine::kBubblePointer);
+      for (r->node_id = 1; r->node_id <= max_node; r->node_id++) {
+        if (r->node_id == real_node) {
+          transport.TransportPromiseRoutine(r, in);
+        } else {
+          transport.TransportPromiseRoutine(r, bubble);
+        }
+      }
+    } else {
+      transport.TransportPromiseRoutine(r, in);
+    }
   }
+
+  // Recursively complete all bubbles.
   if (in.data == (uint8_t *) PromiseRoutine::kBubblePointer) {
     for (size_t i = 0; i < nr_handlers; i++) {
       auto r = routine(i);
@@ -212,6 +230,8 @@ void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, boo
 void BasePromise::ExecutionRoutine::Run()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
+
   int core_id = scheduler()->thread_pool_id() - 1;
   if (!svc.IsReady(core_id))
     return;
@@ -240,7 +260,14 @@ void BasePromise::ExecutionRoutine::Run()
         return true;
       });
 
+
+  long cnt = 0x03FFF;
   while (svc.Peek(core_id, should_pop)) {
+    cnt++;
+    if ((cnt & 0x03FFF) == 0) {
+      transport.PeriodicFlushPromiseRoutine(core_id);
+    }
+
     auto [rt, in] = next_r;
     if (rt->sched_key != 0)
       debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);

@@ -137,7 +137,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
     }
 
     if ((wait_cnt & 0x0FFFF) == 0) {
-      transport.ForceFlushPromiseRoutine();
+      transport.PeriodicFlushPromiseRoutine(core_id);
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         // logger->info("Preempt back");
         return true;
@@ -193,7 +193,7 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
     }
 
     if ((wait_cnt & 0x0FFFF) == 0) {
-      transport.ForceFlushPromiseRoutine();
+      transport.PeriodicFlushPromiseRoutine(core_id);
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         continue;
       }

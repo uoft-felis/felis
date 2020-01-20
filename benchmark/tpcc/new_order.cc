@@ -87,11 +87,9 @@ void NewOrderTxn::PrepareInsertImpl()
 void NewOrderTxn::PrepareImpl()
 {
   Stock::Key stock_keys[kNewOrderMaxItems];
-  Item::Key item_keys[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
     stock_keys[i] =
         Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
-    item_keys[i] = Item::Key::New(detail.item_id[i]);
   }
 
   INIT_ROUTINE_BRK(8192);
@@ -102,11 +100,6 @@ void NewOrderTxn::PrepareImpl()
       TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
           nullptr,
           KeyParam<Stock>(stock_keys, nr_items));
-
-  state->items_nodes =
-      TxnIndexLookup<TpccSliceRouter, NewOrderState::ItemsLookupCompletion, void>(
-          nullptr,
-          KeyParam<Item>(item_keys, nr_items));
 }
 
 void NewOrderTxn::Run()
@@ -226,12 +219,15 @@ void NewOrderTxn::Run()
         MakeContext(bitmap, detail), node,
         [](const auto &ctx, auto args) -> Optional<VoidValue> {
           auto &[state, index_handle, bitmap, detail] = ctx;
+          auto &mgr = util::Instance<RelationManager>();
+
+          INIT_ROUTINE_BRK(4096);
 
           for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
             if ((bitmap & (1 << i)) == 0) continue;
 
-            auto item_value = index_handle(state->items[i])
-                              .template Read<Item::Value>();
+            auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeFromRoutine());
+            auto item_value = index_handle(item).template Read<Item::Value>();
             auto amount = item_value.i_price * detail.order_quantities[i];
 
             index_handle(state->orderlines[i])

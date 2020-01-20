@@ -32,6 +32,18 @@ SortedArrayVHandle::SortedArrayVHandle()
   latest_version.store(0);
 }
 
+bool SortedArrayVHandle::ShouldScanSkip(uint64_t sid)
+{
+  auto epoch_of_txn = sid >> 32;
+  if (last_gc_mark_epoch > 0 && last_gc_mark_epoch < epoch_of_txn)
+    return false;
+  util::MCSSpinLock::QNode qnode;
+  lock.Acquire(&qnode);
+  bool skip = (first_version() >= sid);
+  lock.Release(&qnode);
+  return skip;
+}
+
 static uint64_t *EnlargePair64Array(uint64_t *old_p, unsigned int old_cap, int old_regionid,
                                     unsigned int new_cap)
 {
@@ -166,7 +178,8 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 
   p = std::lower_bound(start, end, sid);
   if (p == versions) {
-    logger->critical("cannot found for sid {} start is {} begin is {}", sid, *start, *versions);
+    logger->critical("ReadWithVersion() {} cannot found for sid {} start is {} begin is {}",
+                     (void *) this, sid, *start, *versions);
     return nullptr;
   }
 found:

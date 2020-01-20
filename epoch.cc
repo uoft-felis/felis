@@ -288,6 +288,8 @@ void CallTxnsWorker::Run()
     util::Instance<GC>().PrepareGC();
   }
 
+  trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
+
   client->completion.Complete();
   if (node_finished) {
     client->completion.Complete();
@@ -704,8 +706,8 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
 
   if (n + nr_bubbles > 0) {
-    // logger->info("DispatchService on core {} notifies {} completions",
-    //             core_id, n + nr_bubbles);
+    trace(TRACE_COMPLETION "DispatchService on core {} notifies {}+{} completions",
+          core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
   }
   return false;

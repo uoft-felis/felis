@@ -295,6 +295,8 @@ uint ClientBase::PickWarehouse()
 
 unsigned int ClientBase::LoadPercentageByWarehouse()
 {
+  if (!g_tpcc_config.shard_by_warehouse)
+    return 100;
   unsigned int load = 0;
   unsigned int n = 0;
   for (int w = 1; w <= g_tpcc_config.nr_warehouses; w++) {

@@ -56,6 +56,7 @@ class SortedArrayVHandle : public BaseVHandle {
   short this_coreid;
   unsigned int capacity;
   unsigned int size;
+
   // unsigned int value_mark;
   std::atomic_uint latest_version; // the latest written version's offset in *versions
   uint64_t contention = 0;
@@ -77,6 +78,7 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle();
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
+  bool ShouldScanSkip(uint64_t sid);
   void AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
@@ -85,6 +87,7 @@ class SortedArrayVHandle : public BaseVHandle {
   void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
 
+  // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   const size_t nr_versions() const { return size; }
   uint64_t first_version() const { return versions[0]; }
   uint64_t last_version() const { return versions[size - 1]; }

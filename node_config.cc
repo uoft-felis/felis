@@ -63,6 +63,13 @@ class Flushable {
 
  public:
 
+  std::tuple<bool, bool> TryFlushForThread(int i) {
+    if (!self()->TryLock(i)) return std::make_tuple(false, false);
+    auto [start, end] = self()->GetFlushRange(i);
+    self()->UpdateFlushStart(i, end);
+    return std::make_tuple(true, self()->PushRelease(i, start, end));
+  }
+
   void Flush() {
     std::bitset<NodeConfiguration::kMaxNrThreads + 1> flushed;
     bool need_do_flush = false;
@@ -72,16 +79,11 @@ class Flushable {
     while (flushed.count() < nr_threads) {
       int i = 0;
       for (auto i = 0; i < nr_threads; i++) {
-        if (!flushed[i]) {
-          if (self()->TryLock(i)) {
-            auto [start, end] = self()->GetFlushRange(i);
-            self()->UpdateFlushStart(i, end);
-
-            if (self()->PushRelease(i, start, end)) {
-              need_do_flush = true;
-            }
-            flushed.set(i);
-          }
+        if (flushed[i]) continue;
+        auto [success, did_flush] = TryFlushForThread(i);
+        if (success) {
+          if (did_flush) need_do_flush = true;
+          flushed.set(i);
         }
       }
     }
@@ -184,7 +186,7 @@ class SendChannel : public Flushable<SendChannel> {
     channels[tid]->flusher_start = flush_start;
   }
   bool PushRelease(int thr, unsigned int start, unsigned int end);
-  void DoFlush();
+  void DoFlush(bool async = false);
   bool TryLock(int i) {
     bool locked = false;
     return channels[i]->lock.compare_exchange_strong(locked, true);
@@ -367,13 +369,18 @@ bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
   }
 }
 
-void SendChannel::DoFlush()
+void SendChannel::DoFlush(bool async)
 {
+  if (async) {
+    out->Flush(true);
+    return;
+  }
+
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto &chn = channels[core_id];
 
   uint8_t signal = 0;
-  // logger->info("SendChannel signaling flusher");
+  logger->info("SendChannel signaling flusher");
   flusher_channel->Write(&signal, 1);
 
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
@@ -387,6 +394,7 @@ void SendChannel::FlusherRoutine::Run()
     uint8_t signal = 0;
     flusher_channel->Read(&signal, 1);
     out->Flush();
+    logger->info("FlusherRoutine done flushing SendChannel, next round");
   }
 }
 
@@ -532,6 +540,7 @@ void NodeServerThreadRoutine::Run()
 
   std::array<ulong, NodeConfiguration::kPromiseMaxLevels> nr_recv;
   nr_recv.fill(0);
+  bool expect_next_epoch = true;
 
   while (true) {
     auto in = sock->input_channel();
@@ -554,13 +563,21 @@ void NodeServerThreadRoutine::Run()
 
       UpdateSliceMappingTables(nr_ops);
 
-      logger->info("Sleeping src node {}", src_node_id);
+      logger->info("Sleeping src node {} because next phase isn't ready to start",
+                   src_node_id);
       // Waiting for the signal to start
-      if (!ctrl_chn.Read(&all_present, conf.g_nr_threads))
+      if (!ctrl_chn.Read(&all_present, conf.g_nr_threads)) {
+        logger->critical("EOF???");
+        std::abort();
         break;
+      }
 
-      logger->info("Receiving from {} wakes up", src_node_id);
+      logger->info("Receiving from {} continues", src_node_id);
+      expect_next_epoch = false;
       continue;
+    } else if (expect_next_epoch) {
+      logger->critical("Expecting a new epoch, but does not receive one!");
+      std::abort();
     }
 
     if (promise_size == PromiseRoutine::kUpdateBatchCounter) {
@@ -592,6 +609,7 @@ void NodeServerThreadRoutine::Run()
                    src_node_id, level, cnt);
       nr_recv[level] = 0;
       Flush();
+      expect_next_epoch = true;
     }
   }
 }
@@ -609,9 +627,10 @@ void NodeServerThreadRoutine::UpdateBatchCounters()
   in->Read(counters, buffer_size);
   src_node_id = counters[0];
 
-  logger->info("from node {}", src_node_id);
-
   for (int i = 0; i < NodeConfiguration::kPromiseMaxLevels; i++) {
+    fmt::memory_buffer buffer;
+    fmt::format_to(buffer, "from node {} ", src_node_id);
+
     bool all_zero = true;
     for (int src = 0; src < nr_nodes; src++) {
       for (int dst = 0; dst < nr_nodes; dst++) {
@@ -630,19 +649,19 @@ void NodeServerThreadRoutine::UpdateBatchCounters()
     if (all_zero) continue;
 
     // Print out debugging information
-    printf("update: \t%d\t", i);
+    fmt::format_to(buffer, "update: {}", i);
     for (int src = 0; src < nr_nodes; src++) {
       for (int dst = 0; dst < nr_nodes; dst++) {
         auto idx = conf.BatchBufferIndex(i, src + 1, dst + 1);
         auto cnt = counters[1 + idx];
 
-        printf(" %d->%d=%lu", src + 1, dst + 1,
-               conf.total_batch_counters[idx].load());
+        fmt::format_to(buffer, " {}->{}={}", src + 1, dst + 1,
+                       conf.total_batch_counters[idx].load());
       }
     }
-    puts("");
+    logger->info("{}", std::string_view(buffer.begin(), buffer.size()));
   }
-
+  logger->info("total_cnt {} from {}", total_cnt, src_node_id);
   // We now have the counter. We need to adjust the completion count with the
   // real counter.
   cmp->Complete(EpochClient::kMaxPiecesPerPhase - total_cnt);
@@ -807,23 +826,23 @@ void NodeConfiguration::PreparePromisesToQueue(int core, int level, unsigned lon
 
 void NodeConfiguration::FinishPromiseFromQueue(PromiseRoutine *routine)
 {
+  if (routine == nullptr) {
+    ltp.FinishPromiseFromQueue(nullptr);
+    return;
+  }
   auto src_node = node_id();
   auto core = go::Scheduler::CurrentThreadPoolId() - 1;
-  int level = routine ? routine->level : -1;
-  if (level >= 0) {
-    auto &meta = transport_meta.GetLocalData(level, core);
-    if (!meta.Finish())
-      return;
-  }
-
-  level++;
+  int level = routine->level;
   auto &meta = transport_meta.GetLocalData(level, core);
+  if (!meta.Finish())
+    return;
+
   for (auto dst_node = 1; dst_node <= nr_nodes(); dst_node++) {
     auto idx = BatchBufferIndex(level, src_node, dst_node);
     auto target_cnt = total_batch_counters[idx].load();
     auto cnt = transport_meta.Merge(level, meta, dst_node);
-    if (routine == nullptr || (cnt == target_cnt && cnt > 0)) {
-      // printf("cnt %lu, target %lu\n", cnt, target_cnt);
+    // printf("cnt %lu, target %lu\n", cnt, target_cnt);
+    if (cnt == target_cnt && cnt > 0) {
       // Flush channels to this route
       if (dst_node != src_node) {
         GetOutputChannel(dst_node)->Flush();
@@ -834,15 +853,20 @@ void NodeConfiguration::FinishPromiseFromQueue(PromiseRoutine *routine)
   }
 }
 
-void NodeConfiguration::ForceFlushPromiseRoutine()
+void NodeConfiguration::PeriodicFlushPromiseRoutine(int core)
 {
   for (int i = 1; i < nr_nodes(); i++) {
     all_in_routines[i - 1]->Flush();
   }
+
   for (int i = 1; i <= nr_nodes(); i++) {
     if (i == node_id()) continue;
-    GetOutputChannel(i)->Flush();
+    auto chn = GetOutputChannel(i);
+    chn->TryFlushForThread(core + 1);
+    chn->TryFlushForThread(0);
+    chn->DoFlush(true);
   }
+
   ltp.FinishPromiseFromQueue(nullptr);
 }
 
@@ -877,7 +901,14 @@ void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, unsigned 
   auto dst_node = routine->node_id;
   if (dst_node == 0)
     dst_node = src_node;
-  cnts[BatchBufferIndex(level, src_node, dst_node)] += 1;
+  if (dst_node < 255) {
+    cnts[BatchBufferIndex(level, src_node, dst_node)]++;
+  } else {
+    // Dynamic piece. We need to increment for all dst node.
+    for (auto d = 1; d <= nr_nodes(); d++) {
+      cnts[BatchBufferIndex(level, src_node, d)]++;
+    }
+  }
 
   if (routine->next == nullptr)
     return;
