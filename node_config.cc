@@ -540,7 +540,6 @@ void NodeServerThreadRoutine::Run()
 
   std::array<ulong, NodeConfiguration::kPromiseMaxLevels> nr_recv;
   nr_recv.fill(0);
-  bool expect_next_epoch = true;
 
   while (true) {
     auto in = sock->input_channel();
@@ -573,11 +572,7 @@ void NodeServerThreadRoutine::Run()
       }
 
       logger->info("Receiving from {} continues", src_node_id);
-      expect_next_epoch = false;
       continue;
-    } else if (expect_next_epoch) {
-      logger->critical("Expecting a new epoch, but does not receive one!");
-      std::abort();
     }
 
     if (promise_size == PromiseRoutine::kUpdateBatchCounter) {
@@ -609,7 +604,6 @@ void NodeServerThreadRoutine::Run()
                    src_node_id, level, cnt);
       nr_recv[level] = 0;
       Flush();
-      expect_next_epoch = true;
     }
   }
 }
