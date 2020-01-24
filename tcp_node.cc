@@ -435,7 +435,8 @@ TcpNodeTransport::TcpNodeTransport()
         new tcp::NodeRowShipmentReceiverRoutine(peer.host, peer.port));
   }
   logger->info("Starting node server with id {}", node_config().node_id());
-  go::GetSchedulerFromPool(0)->WakeUp(new tcp::NodeServerRoutine());
+  serv = new tcp::NodeServerRoutine();
+  go::GetSchedulerFromPool(0)->WakeUp(serv);
 }
 
 void TcpNodeTransport::TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in)

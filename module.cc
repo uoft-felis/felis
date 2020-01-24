@@ -5,8 +5,6 @@
 #include "opts.h"
 
 #include "node_config.h"
-#include "tcp_node.h"
-
 #include "epoch.h"
 #include "console.h"
 #include "index.h"
@@ -37,15 +35,15 @@ class LoggingModule : public Module<CoreModule> {
     auto &console = util::Instance<Console>();
     InitializeLogger(console.server_node_name());
 
-    fmt::memory_buffer buffer;
     std::string pid_filename;
 
     auto username = getenv("USER");
     if (username) {
-      fmt::format(pid_filename, "/tmp/{}-felis-{}.pid", username, console.server_node_name());
+      pid_filename = fmt::format("/tmp/{}-felis-{}.pid", username, console.server_node_name());
     } else {
-      fmt::format(pid_filename, "/tmp/felis-{}.pid", username, console.server_node_name());
+      pid_filename = fmt::format("/tmp/felis-{}.pid", username, console.server_node_name());
     }
+
     FILE *fp = fopen(pid_filename.c_str(), "w");
     fprintf(fp, "%d", getpid());
     fclose(fp);
@@ -217,8 +215,6 @@ class NodeServerModule : public Module<CoreModule> {
   void Init() final override {
     Module<CoreModule>::InitModule("config");
     Module<CoreModule>::InitModule("coroutine");
-
-    util::InstanceInit<TcpNodeTransport>();
   }
 };
 
