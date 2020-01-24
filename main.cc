@@ -102,7 +102,6 @@ int main(int argc, char *argv[])
   Module<CoreModule>::InitRequiredModules();
 
   util::InstanceInit<NodeConfiguration>();
-
   util::Instance<NodeConfiguration>().SetupNodeName(node_name);
 
   // init tables from the workload module

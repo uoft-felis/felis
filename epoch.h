@@ -265,7 +265,7 @@ class EpochMemory {
   struct {
     uint8_t *mmap_buf;
     std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads> brks; // per-core brks
-  } node_mem[NodeConfiguration::kMaxNrNode];
+  } node_mem[kMaxNrNode];
 
   friend class EpochManager;
  public:

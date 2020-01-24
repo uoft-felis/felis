@@ -1,8 +1,9 @@
-#include <sys/mman.h>
 #include <algorithm>
-#include <map>
-#include <sys/time.h>
 #include <fstream>
+#include <sys/time.h>
+#include <sys/mman.h>
+
+#include <syscall.h>
 
 #include "epoch.h"
 #include "txn.h"
@@ -127,7 +128,7 @@ EpochClient::EpochClient()
   best_duration = std::numeric_limits<int>::max();
   core_limit = conf.g_nr_threads;
 
-  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * NodeConfiguration::kPromiseMaxLevels;
+  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * PromiseRoutineTransportService::kPromiseMaxLevels;
   unsigned long *cnt_mem = nullptr;
   EpochWorkers *workers_mem = nullptr;
 
@@ -222,7 +223,7 @@ void CallTxnsWorker::Run()
 {
   auto nr_nodes = client->conf.nr_nodes();
   auto cnt = client->per_core_cnts[t];
-  auto cnt_len = nr_nodes * nr_nodes * NodeConfiguration::kPromiseMaxLevels;
+  auto cnt_len = nr_nodes * nr_nodes * PromiseRoutineTransportService::kPromiseMaxLevels;
   std::fill(cnt, cnt + cnt_len, 0);
 
   set_urgent(true);

@@ -144,9 +144,9 @@ class SliceMappingTable {
   struct {
     int id;
     std::bitset<kNrMaxSlices> owned[NumOwnerTypes];
-  } slice_owners[NodeConfiguration::kMaxNrNode];
+  } slice_owners[kMaxNrNode];
   // Mapping of real node id into an index for |slice_owners|.
-  int node_compress[NodeConfiguration::kMaxNrNode];
+  int node_compress[kMaxNrNode];
   int nr_nodes;
   std::atomic<int> next_node;
 

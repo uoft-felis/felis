@@ -2,13 +2,16 @@
 #define NODE_CONFIG_H
 
 #include <string>
-#include <vector>
 #include <array>
 #include <atomic>
+#include <bitset>
 #include "util.h"
 #include "log.h"
-#include "gopp/channels.h"
 #include "promise.h"
+
+namespace go {
+class OutputChannel;
+}
 
 namespace felis {
 
@@ -19,14 +22,13 @@ struct PromiseRoutine;
 class LocalDispatcherImpl;
 class SendChannel;
 
-// TODO: Clean these constant up. They are all over the place.
 static constexpr size_t kMaxNrNode = 254;
 
-class TransportBatchMetadata {
+class TransportBatcher {
  public:
   // Thread local information
   class LocalMetadata {
-    friend class TransportBatchMetadata;
+    friend class TransportBatcher;
     // How many pieces should we expect on this core?
     std::atomic_ulong expect;
     unsigned long finish;
@@ -54,7 +56,7 @@ class TransportBatchMetadata {
   std::array<LocalMetadata *, 32> thread_local_data;
   friend class NodeConfiguration;
  public:
-  TransportBatchMetadata() {}
+  TransportBatcher() {}
 
   void Init(int nr_nodes, int nr_cores);
   void Reset(int nr_nodes, int nr_cores);
@@ -71,18 +73,14 @@ class LocalTransport : public PromiseRoutineTransportService {
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) final override;
   void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
-
 };
 
-class NodeConfiguration : public PromiseRoutineTransportService {
+class NodeConfiguration {
   NodeConfiguration();
 
   template <typename T> friend struct util::InstanceInit;
-
   int id;
-  LocalTransport ltp;
  public:
-
   static size_t g_nr_threads;
   static int g_core_shifting; // Starting to use from which core. Useful for debugging on a single node.
   static constexpr size_t kMaxNrThreads = 32;
@@ -111,16 +109,6 @@ class NodeConfiguration : public PromiseRoutineTransportService {
     return all_config[idx].value();
   }
 
-  void RunAllServers();
-
-  void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
-  void PreparePromisesToQueue(int core, int level, unsigned long nr) final override;
-  void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
-  void PeriodicFlushPromiseRoutine(int core) final override;
-  uint8_t GetNumberOfNodes() final override {
-    return nr_nodes();
-  }
-
   void ResetBufferPlan();
   void CollectBufferPlan(BasePromise *root, unsigned long *cnts);
   bool FlushBufferPlan(unsigned long *per_core_cnts);
@@ -135,21 +123,29 @@ class NodeConfiguration : public PromiseRoutineTransportService {
     return local_batch->counters;
   };
 
-  static constexpr size_t kMaxNrNode = 254;
+  std::array<util::Optional<NodeConfig>, kMaxNrNode> all_configurations() const {
+    return all_config;
+  }
+
+  TransportBatcher &batcher() { return transport_batcher; }
+
+  size_t BatchBufferIndex(int level, int src_node, int dst_node);
+  std::atomic_ulong &TotalBatchCounter(int idx) { return total_batch_counters[idx]; }
+
+  void RegisterOutgoingControlChannel(int idx, go::OutputChannel *chn) {
+    outgoing_control_channels[idx] = chn;
+  }
+  void RegisterIncomingControlChannel(int idx, go::OutputChannel *chn) {
+    incoming_control_channels[idx] = chn;
+  }
 
  private:
-  SendChannel *GetOutputChannel(int node_id);
-
-  std::vector<go::TcpSocket *> clients;
-
- private:
-  friend class NodeServerRoutine;
-  friend class NodeServerThreadRoutine;
   std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;
-  std::array<go::TcpSocket *, kMaxNrNode> all_nodes;
-  std::array<NodeServerThreadRoutine *, kMaxNrNode> all_in_routines;
-  std::array<SendChannel *, kMaxNrNode> all_out_channels;
   size_t max_node_id;
+  std::array<go::OutputChannel *, kMaxNrNode> outgoing_control_channels;
+  std::array<go::OutputChannel *, kMaxNrNode> incoming_control_channels;
+
+  TransportBatcher transport_batcher;
 
   // The BufferRootPromise is going to run an analysis on the root promise to
   // keep track of how many handlers needs to be sent.
@@ -164,11 +160,96 @@ class NodeConfiguration : public PromiseRoutineTransportService {
     std::atomic_ulong counters[];
   } *local_batch;
   std::atomic_ulong local_batch_completed;
-
-  TransportBatchMetadata transport_meta;
  private:
   void CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts, int level, int src);
-  size_t BatchBufferIndex(int level, int src_node, int dst_node);
+};
+
+template <typename T>
+class Flushable {
+ protected:
+ private:
+  T *self() { return (T *) this; }
+
+ public:
+
+  std::tuple<bool, bool> TryFlushForThread(int i) {
+    if (!self()->TryLock(i)) return std::make_tuple(false, false);
+    auto [start, end] = self()->GetFlushRange(i);
+    self()->UpdateFlushStart(i, end);
+    return std::make_tuple(true, self()->PushRelease(i, start, end));
+  }
+
+  void Flush() {
+    std::bitset<NodeConfiguration::kMaxNrThreads + 1> flushed;
+    bool need_do_flush = false;
+    // Also flush the main go-routine
+    auto nr_threads = NodeConfiguration::g_nr_threads + 1;
+
+    while (flushed.count() < nr_threads) {
+      int i = 0;
+      for (auto i = 0; i < nr_threads; i++) {
+        if (flushed[i]) continue;
+        auto [success, did_flush] = TryFlushForThread(i);
+        if (success) {
+          if (did_flush) need_do_flush = true;
+          flushed.set(i);
+        }
+      }
+    }
+    if (need_do_flush)
+      self()->DoFlush();
+  }
+};
+
+class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
+  static constexpr size_t kBufferSize = 16383;
+  struct Queue {
+    // Putting these per-core task buffer simply because it's too large and we
+    // can't put them on the stack!
+    struct {
+      std::array<PromiseRoutineWithInput, kBufferSize> routines;
+      size_t nr;
+    } task_buffer[NodeConfiguration::kMaxNrThreads];
+
+    std::array<PromiseRoutineWithInput, kBufferSize> routines;
+    std::atomic_uint append_start = 0;
+    unsigned int flusher_start = 0;
+    std::atomic_bool need_scan = false;
+    util::SpinLock lock;
+  };
+
+  std::array<Queue *, NodeConfiguration::kMaxNrThreads + 1> queues;
+  std::atomic_ulong dice;
+  int idx;
+
+ public:
+  LocalDispatcherImpl(int idx);
+  void QueueRoutine(PromiseRoutine *routine, const VarStr &in);
+  void QueueBubble();
+
+  std::tuple<uint, uint> GetFlushRange(int tid) {
+    return {
+      queues[tid]->flusher_start,
+      queues[tid]->append_start.load(std::memory_order_acquire),
+    };
+  }
+  void UpdateFlushStart(int tid, unsigned int flush_start) {
+    queues[tid]->flusher_start = flush_start;
+  }
+
+  bool PushRelease(int tid, unsigned int start, unsigned int end);
+  void DoFlush();
+
+  bool TryLock(int i) {
+    return queues[i]->lock.TryLock();
+  }
+  void Unlock(int i) {
+    queues[i]->lock.Unlock();
+  }
+
+ private:
+  void FlushOnCore(int thread, unsigned int start, unsigned int end);
+  void SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int start, unsigned int end, int thread);
 };
 
 }
@@ -178,8 +259,7 @@ namespace util {
 template <>
 struct InstanceInit<felis::NodeConfiguration> {
   static constexpr bool kHasInstance = true;
-  static felis::NodeConfiguration *instance;
-
+  static inline felis::NodeConfiguration *instance;
   InstanceInit() {
     instance = new felis::NodeConfiguration();
   }

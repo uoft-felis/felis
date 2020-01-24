@@ -1,11 +1,12 @@
-#include <iostream>
-#include <fstream>
+#include <thread>
 #include <sys/mman.h>
 
 #include "module.h"
 #include "opts.h"
 
 #include "node_config.h"
+#include "tcp_node.h"
+
 #include "epoch.h"
 #include "console.h"
 #include "index.h"
@@ -36,16 +37,18 @@ class LoggingModule : public Module<CoreModule> {
     auto &console = util::Instance<Console>();
     InitializeLogger(console.server_node_name());
 
-    std::stringstream ss;
-    ss << "/tmp/";
+    fmt::memory_buffer buffer;
+    std::string pid_filename;
 
     auto username = getenv("USER");
-    if (username)
-      ss << username << "-";
-    ss << "felis-" << console.server_node_name() << ".pid";
-
-    std::ofstream pid_fout(ss.str());
-    pid_fout << (unsigned long) getpid();
+    if (username) {
+      fmt::format(pid_filename, "/tmp/{}-felis-{}.pid", username, console.server_node_name());
+    } else {
+      fmt::format(pid_filename, "/tmp/felis-{}.pid", username, console.server_node_name());
+    }
+    FILE *fp = fopen(pid_filename.c_str(), "w");
+    fprintf(fp, "%d", getpid());
+    fclose(fp);
   }
 };
 
@@ -215,7 +218,7 @@ class NodeServerModule : public Module<CoreModule> {
     Module<CoreModule>::InitModule("config");
     Module<CoreModule>::InitModule("coroutine");
 
-    util::Instance<NodeConfiguration>().RunAllServers();
+    util::InstanceInit<TcpNodeTransport>();
   }
 };
 
