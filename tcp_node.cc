@@ -8,6 +8,8 @@
 #include "epoch.h"
 #include "log.h"
 
+#include <sched.h>
+
 namespace felis {
 namespace tcp {
 
@@ -118,6 +120,7 @@ bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
     channels[tid]->dirty.store(true, std::memory_order_release);
     Unlock(tid);
     out->Write(buf, end - start);
+    out->Flush(true);
     return true;
   } else {
     Unlock(tid);
@@ -183,6 +186,7 @@ void NodeRowShipmentReceiverRoutine::Run()
   }
 }
 
+// Background receive coroutine
 class NodeConnectionRoutine : public go::Routine {
   go::TcpSocket *sock;
   int idx;
@@ -509,16 +513,28 @@ void TcpNodeTransport::FinishPromiseFromQueue(PromiseRoutine *routine)
 void TcpNodeTransport::PeriodicFlushPromiseRoutine(int core)
 {
   auto &conf = node_config();
-  for (int i = 1; i < conf.nr_nodes(); i++) {
-    serv->incoming_connection_routines[i - 1]->Flush();
-  }
+
+#if BG_RECEIVER
+    // We don't need to flush from the background receiver thread's load
+    // balancer buffer under cooperative IO. This is one of the reasons why
+    // background receiver thread is a horrible idea. We should disable this
+    // completely!
+    for (int i = 1; i < conf.nr_nodes(); i++) {
+      serv->incoming_connection_routines[i - 1]->Flush();
+    }
+#endif
 
   for (int i = 1; i <= conf.nr_nodes(); i++) {
     if (i == conf.node_id()) continue;
     auto chn = serv->outgoing_channels.at(i);
-    chn->TryFlushForThread(core + 1);
-    chn->TryFlushForThread(0);
-    chn->DoFlush(true);
+    if (core == -1) {
+      chn->Flush();
+    } else {
+      auto [success, did_flush] = chn->TryFlushForThread(core + 1);
+      // chn->TryFlushForThread(0);
+      if (success && did_flush)
+        chn->DoFlush(true);
+    }
   }
 
   ltp.FinishPromiseFromQueue(nullptr);

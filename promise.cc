@@ -2,8 +2,10 @@
 #include "epoch.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
+
 #include <queue>
 #include "util.h"
+#include "opts.h"
 #include "mem.h"
 
 using util::Instance;
@@ -261,11 +263,18 @@ void BasePromise::ExecutionRoutine::Run()
       });
 
 
-  long cnt = 0x0FFF;
+  unsigned long cnt = 0x0FF;
+  unsigned long last_io = 0;
   while (svc.Peek(core_id, should_pop)) {
+
+    // Periodic flush
     cnt++;
-    if ((cnt & 0x0FFF) == 0) {
-      transport.PeriodicFlushPromiseRoutine(core_id);
+    if ((cnt & 0x0FF) == 0) {
+      unsigned long now = __rdtsc();
+      if (now - last_io > 60000) {
+        last_io = now;
+        transport.PeriodicFlushPromiseRoutine(core_id);
+      }
     }
 
     auto [rt, in] = next_r;

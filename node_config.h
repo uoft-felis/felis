@@ -139,6 +139,8 @@ class NodeConfiguration {
     incoming_control_channels[idx] = chn;
   }
 
+  void UpdateBatchCountersFromReceiver();
+
  private:
   std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;
   size_t max_node_id;
