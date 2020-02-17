@@ -172,6 +172,13 @@ class SliceMappingTable {
                    int node = -1, bool broadcast = true) {
     SetEntry(slice_id, false, type, node, broadcast);
   }
+
+  void UpdateSliceMappingTablesFromReceiver(int nr_ops, uint32_t *data) {
+    for (int i = 0; i < nr_ops; i++) {
+      uint32_t op = data[i];
+      ReplayUpdate(op);
+    }
+  }
 };
 
 template <typename TableType>

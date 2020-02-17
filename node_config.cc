@@ -351,6 +351,52 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
   return true;
 }
 
+void NodeConfiguration::UpdateBatchCountersFromReceiver(unsigned long *data)
+{
+  auto src_node_id = data[0];
+  constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
+  auto total_cnt = 0;
+
+  for (int i = 0; i < max_level; i++) {
+    bool all_zero = true;
+    for (int src = 0; src < nr_nodes(); src++) {
+      for (int dst = 0; dst < nr_nodes(); dst++) {
+        auto idx = BatchBufferIndex(i, src + 1, dst + 1);
+        auto cnt = data[1 + idx];
+        if (cnt == 0) continue;
+
+        TotalBatchCounter(idx).fetch_add(cnt);
+        all_zero = false;
+
+        if (dst + 1 == node_id())
+          total_cnt += cnt;
+      }
+    }
+
+    if (all_zero) continue;
+
+    // Print out debugging information
+    fmt::memory_buffer buffer;
+    fmt::format_to(buffer, "from node {} update level {}: ", src_node_id, i);
+    for (int src = 0; src < nr_nodes(); src++) {
+      for (int dst = 0; dst < nr_nodes(); dst++) {
+        auto idx = BatchBufferIndex(i, src + 1, dst + 1);
+        auto cnt = data[1 + idx];
+
+        fmt::format_to(buffer, " {}->{}={}", src + 1, dst + 1, TotalBatchCounter(idx).load());
+      }
+    }
+    logger->info("{}", std::string_view(buffer.begin(), buffer.size()));
+  }
+
+  logger->info("total_cnt {} from {}, adjusting the completion counter",
+               total_cnt, src_node_id);
+  // We now have the counter. We need to adjust the completion count with the
+  // real counter.
+  EpochClient::g_workload_client->completion_object()->Complete(
+      EpochClient::kMaxPiecesPerPhase - total_cnt);
+}
+
 void NodeConfiguration::SendStartPhase()
 {
   auto &broadcast_buffer = util::Instance<SliceMappingTable>().broadcast_buffer;
@@ -365,9 +411,8 @@ void NodeConfiguration::SendStartPhase()
   // Write out all the slice mapping table update commands.
   for (int i = 1; i <= nr_nodes(); i++) {
     if (i == node_id()) continue;
-    auto out = outgoing_control_channels[i];
-    out->Write(buf, buf_cnt);
-    out->Flush();
+    auto out = outgoing[i];
+    out->WriteToNetwork(buf, buf_cnt);
   }
 
   broadcast_buffer.clear();
@@ -376,17 +421,20 @@ void NodeConfiguration::SendStartPhase()
 void NodeConfiguration::ContinueInboundPhase()
 {
   uint8_t one = 1;
-  for (auto ch: incoming_control_channels) {
-    if (ch == nullptr) continue;
-    ch->Write(&one, 1);
+  for (auto t: incoming) {
+    if (t == nullptr) continue;
+    abort_if(t->current_status() != IncomingTraffic::Status::Waiting,
+             "Cannot tell the incoming traffic to start polling the next phase,"
+             " the current phase has not finished!");
+    t->AdvanceStatus();
   }
 }
 
 void NodeConfiguration::CloseAndShutdown()
 {
-  for (auto ch: incoming_control_channels) {
-    if (ch == nullptr) continue;
-    ch->Close();
+  // TODO:
+  for (auto t: incoming) {
+    if (t == nullptr) continue;
   }
 }
 

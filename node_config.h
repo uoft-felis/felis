@@ -75,6 +75,28 @@ class LocalTransport : public PromiseRoutineTransportService {
   void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
 };
 
+class IncomingTraffic {
+ protected:
+  std::atomic_ulong state = 0;
+  int src_node_id = 0;
+ public:
+  enum class Status {
+    Waiting, MappingTableUpdated, CounterUpdated,
+  };
+  void AdvanceStatus() { state.fetch_add(1); }
+  Status current_status() const {
+    static constexpr Status all_status[] = {
+      Status::Waiting, Status::MappingTableUpdated, Status::CounterUpdated,
+    };
+    return all_status[state.load() % 3];
+  }
+};
+
+class OutgoingTraffic {
+ public:
+  virtual void WriteToNetwork(void *data, size_t cnt) = 0;
+};
+
 class NodeConfiguration {
   NodeConfiguration();
 
@@ -132,20 +154,20 @@ class NodeConfiguration {
   size_t BatchBufferIndex(int level, int src_node, int dst_node);
   std::atomic_ulong &TotalBatchCounter(int idx) { return total_batch_counters[idx]; }
 
-  void RegisterOutgoingControlChannel(int idx, go::OutputChannel *chn) {
-    outgoing_control_channels[idx] = chn;
+  void RegisterOutgoing(int idx, OutgoingTraffic *t) {
+    outgoing[idx] = t;
   }
-  void RegisterIncomingControlChannel(int idx, go::OutputChannel *chn) {
-    incoming_control_channels[idx] = chn;
+  void RegisterIncoming(int idx, IncomingTraffic *t) {
+    incoming[idx] = t;
   }
 
-  void UpdateBatchCountersFromReceiver();
+  void UpdateBatchCountersFromReceiver(unsigned long *data);
 
  private:
   std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;
   size_t max_node_id;
-  std::array<go::OutputChannel *, kMaxNrNode> outgoing_control_channels;
-  std::array<go::OutputChannel *, kMaxNrNode> incoming_control_channels;
+  std::array<OutgoingTraffic *, kMaxNrNode> outgoing;
+  std::array<IncomingTraffic *, kMaxNrNode> incoming;
 
   TransportBatcher transport_batcher;
 

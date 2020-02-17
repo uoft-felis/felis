@@ -8,12 +8,10 @@
 #include "epoch.h"
 #include "log.h"
 
-#include <sched.h>
-
 namespace felis {
 namespace tcp {
 
-class SendChannel : public Flushable<SendChannel> {
+class SendChannel : public Flushable<SendChannel>, public OutgoingTraffic {
   go::TcpOutputChannel *out;
   go::BufferChannel *flusher_channel;
 
@@ -63,6 +61,11 @@ class SendChannel : public Flushable<SendChannel> {
   }
   void Unlock(int i) {
     channels[i]->lock.store(false);
+  }
+
+  void WriteToNetwork(void *data, size_t cnt) final override {
+    out->Write(data, cnt);
+    out->Flush(true);
   }
 };
 
@@ -119,8 +122,7 @@ bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
     memcpy(buf, mem + start, end - start);
     channels[tid]->dirty.store(true, std::memory_order_release);
     Unlock(tid);
-    out->Write(buf, end - start);
-    out->Flush(true);
+    WriteToNetwork(buf, end - start);
     return true;
   } else {
     Unlock(tid);
@@ -186,6 +188,7 @@ void NodeRowShipmentReceiverRoutine::Run()
   }
 }
 
+#if BG_RECEIVER
 // Background receive coroutine
 class NodeConnectionRoutine : public go::Routine {
   go::TcpSocket *sock;
@@ -356,13 +359,110 @@ void NodeConnectionRoutine::UpdateSliceMappingTables(int nr_ops)
   }
 }
 
+#endif
+
+class ReceiverChannel : public IncomingTraffic {
+  go::TcpInputChannel *in;
+ public:
+  ReceiverChannel(go::TcpSocket *sock) : IncomingTraffic(), in(sock->input_channel()) {}
+  size_t Poll(PromiseRoutineWithInput *routines, size_t cnt);
+ private:
+  size_t PollRoutines(PromiseRoutineWithInput *routines, size_t cnt);
+  bool PollMappingTable();
+  bool PollCounter();
+};
+
+size_t ReceiverChannel::Poll(PromiseRoutineWithInput *routines, size_t cnt)
+{
+  // TODO: call PollXXX() according to the current state.
+  //
+  // TODO: should we do busy looping? If we do, can we also remove the
+  // background flush thread?
+  return 0;
+}
+
+size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t cnt)
+{
+  uint64_t header;
+  size_t i = 0;
+  while (i < cnt) {
+    if (in->Peek(&header, 8) < 8)
+      break;
+
+    abort_if((header >> 56) & 0xFF == 0xFF || header == PromiseRoutine::kUpdateBatchCounter,
+             "header isn't right for piece size {:x}", header);
+
+    if (header & PromiseRoutine::kBubble) {
+      in->Skip(8);
+    } else {
+      auto buflen = 8 + header;
+      auto buf = (uint8_t *) alloca(8 + header);
+      if (in->Peek(buf, buflen) < buflen)
+        break;
+      routines[i++] = PromiseRoutine::CreateFromPacket(buf + 8, header);
+      in->Skip(buflen);
+    }
+  }
+  return i;
+}
+
+bool ReceiverChannel::PollMappingTable()
+{
+  uint64_t header;
+  if (in->Peek(&header, 8) < 8)
+    return false;
+  abort_if((header >> 56) & 0xFF != 0xFF,
+           "header isn't right for mappingtable update {:x}", header);
+  unsigned int nr_ops = header & std::numeric_limits<int32_t>::max();
+  auto len = 4 + 4 * nr_ops;
+  auto buflen = 8 + len;
+  auto buf = (uint8_t *) alloca(buflen);
+
+  if (in->Peek(buf, buflen) < buflen)
+    return false;
+
+  auto data = (uint32_t *) (buf + 8);
+  src_node_id = data[0];
+  util::Instance<SliceMappingTable>()
+      .UpdateSliceMappingTablesFromReceiver(nr_ops, data + 1);
+  AdvanceStatus();
+
+  in->Skip(buflen);
+  return true;
+}
+
+bool ReceiverChannel::PollCounter()
+{
+  uint64_t header;
+  if (in->Peek(&header, 8) < 8)
+    return false;
+  abort_if(header != PromiseRoutine::kUpdateBatchCounter,
+           "header isn't right for batchcounter update {:x}", header);
+
+  auto &conf = util::Instance<NodeConfiguration>();
+  constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
+  auto nr_nodes = conf.nr_nodes();
+  auto buffer_size = 8 + max_level * nr_nodes * nr_nodes * sizeof(ulong);
+  auto buflen = 8 + buffer_size;
+  auto buf = (uint8_t *) alloca(buflen);
+
+  if (in->Peek(buf, buflen) < buflen)
+    return false;
+
+  util::Instance<NodeConfiguration>().
+      UpdateBatchCountersFromReceiver((unsigned long *) (buf + 8));
+  in->Skip(buflen);
+
+  return true;
+}
+
 class NodeServerRoutine : public go::Routine {
   friend class felis::TcpNodeTransport;
   std::array<go::TcpSocket *, kMaxNrNode> incoming_socks;
   std::array<go::TcpSocket *, kMaxNrNode> outgoing_socks;
 
   std::array<SendChannel *, kMaxNrNode> outgoing_channels;
-  std::array<NodeConnectionRoutine *, kMaxNrNode> incoming_connection_routines;
+  std::array<ReceiverChannel *, kMaxNrNode> incoming_connection;
  public:
   virtual void Run() final;
 };
@@ -406,7 +506,7 @@ void NodeServerRoutine::Run()
     abort_if(!rs, "Cannot connect to {}:{}", peer.host, peer.port);
     outgoing_socks[config->id] = remote_sock;
     outgoing_channels[config->id] = new SendChannel(remote_sock);
-    conf.RegisterOutgoingControlChannel(config->id, remote_sock->output_channel());
+    conf.RegisterOutgoing(config->id, outgoing_channels[config->id]);
   }
 
   // Now we can begining to accept. Each client sock is a source for our Promise.
@@ -419,12 +519,15 @@ void NodeServerRoutine::Run()
     if (client_sock == nullptr) continue;
     logger->info("New worker peer connection");
     incoming_socks[i - 1]= client_sock;
+
+#if BG_RECEIVER
     auto *routine = new NodeConnectionRoutine(client_sock, i);
     incoming_connection_routines[i - 1] = routine;
     conf.RegisterIncomingControlChannel(i - 1, routine->control_channel());
 
-    // go::GetSchedulerFromPool(1)->WakeUp(routine);
     sched->WakeUp(routine);
+#endif
+
   }
   console.UpdateServerStatus(Console::ServerStatus::Running);
 }

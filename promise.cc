@@ -31,18 +31,23 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   return r;
 }
 
-std::tuple<PromiseRoutine *, VarStr>
-PromiseRoutine::CreateFromPacket(go::TcpInputChannel *in, size_t packet_len)
+PromiseRoutineWithInput
+PromiseRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
 {
   uint16_t len;
-  in->Read(&len, 2);
+  memcpy(&len, p, 2);
 
   uint16_t aligned_len = util::Align(2 + len);
   auto *input_ptr = (uint8_t *) BasePromise::Alloc(aligned_len);
-  in->Read(input_ptr, aligned_len - 2);
+  memcpy(input_ptr, p + 2, aligned_len - 2);
+
+  p += aligned_len;
 
   auto r = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
-  r->DecodeNode(in);
+  auto result_len = r->DecodeNode(p, packet_len - aligned_len);
+  abort_if(result_len != packet_len - aligned_len,
+           "DecodeNode() consumes {} but passed in {} bytes",
+           result_len, packet_len - aligned_len);
   VarStr input(len, 0, input_ptr);
   return std::make_tuple(r, input);
 }
@@ -97,26 +102,34 @@ uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
   return p;
 }
 
-void PromiseRoutine::DecodeNode(go::TcpInputChannel *in)
+size_t PromiseRoutine::DecodeNode(uint8_t *p, size_t len)
 {
-  in->Read(this, util::Align(sizeof(PromiseRoutine)));
+  uint8_t *orig_p = p;
+  size_t off = util::Align(sizeof(PromiseRoutine));
+  memcpy(this, p, off);
+  p += off;
 
-  capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
-  in->Read(capture_data, util::Align(capture_len));
+  off = util::Align(capture_len);
+  capture_data = (uint8_t *) BasePromise::Alloc(off);
+  memcpy(capture_data, p, off);
+  p += off;
 
   next = nullptr;
 
   size_t nr_children = 0;
-  in->Read(&nr_children, 8);
+  memcpy(&nr_children, p, 8);
+  p += 8;
 
   if (nr_children > 0) {
     next = new BasePromise(nr_children);
     for (int i = 0; i < nr_children; i++) {
       auto child = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
-      child->DecodeNode(in);
+      off = child->DecodeNode(p, len - (p - orig_p));
+      p += off;
       next->Add(child);
     }
   }
+  return p - orig_p;
 }
 
 size_t BasePromise::g_nr_threads = 0;

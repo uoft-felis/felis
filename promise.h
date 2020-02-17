@@ -29,7 +29,9 @@ using sql::VarStr;
 // nodes.
 
 class BasePromise;
+class PromiseRoutine;
 
+using PromiseRoutineWithInput = std::tuple<PromiseRoutine *, VarStr>;
 // Performance: It seems critical to keep this struct one cache line!
 struct PromiseRoutine {
   uint8_t *capture_data;
@@ -45,7 +47,7 @@ struct PromiseRoutine {
   size_t NodeSize() const;
   uint8_t *EncodeNode(uint8_t *p);
 
-  void DecodeNode(go::TcpInputChannel *in);
+  size_t DecodeNode(uint8_t *p, size_t len);
 
   size_t TreeSize(const VarStr &input) const;
   void EncodeTree(uint8_t *p, const VarStr &input);
@@ -56,16 +58,13 @@ struct PromiseRoutine {
   uint8_t __padding__[8];
 
   static PromiseRoutine *CreateFromCapture(size_t capture_len);
-  static std::tuple<PromiseRoutine *, VarStr> CreateFromPacket(go::TcpInputChannel *in,
-                                                               size_t packet_len);
+  static PromiseRoutineWithInput CreateFromPacket(uint8_t *p, size_t packet_len);
 
   static constexpr size_t kUpdateBatchCounter = std::numeric_limits<uint64_t>::max() - (1ULL << 56);
   static constexpr size_t kBubble = std::numeric_limits<uint64_t>::max() - (1ULL << 56) - 0x00FFFFFF;
 };
 
 static_assert(sizeof(PromiseRoutine) == CACHE_LINE_SIZE);
-
-using PromiseRoutineWithInput = std::tuple<PromiseRoutine *, VarStr>;
 
 class EpochClient;
 
