@@ -1,12 +1,9 @@
 #ifndef PRIORITY_H
 #define PRIORITY_H
 
-#include "txn.h"
 #include "masstree_index_impl.h"
 
 namespace felis {
-
-static std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> g_exec_progress;
 
 class PriorityTxn {
  public:
@@ -57,6 +54,46 @@ class PriorityTxn {
     if (!initialized)
       std::abort();
     return true;
+  }
+};
+
+class PriorityTxnService {
+ public:
+  PriorityTxnService();
+
+  inline bool UpdateProgress(int core_id, uint64_t progress) {
+    abort_if(exec_progress[core_id] == nullptr, "priority service init failure");
+    if (progress > *exec_progress[core_id])
+      *exec_progress[core_id] = progress;
+    return true;
+  }
+
+  void PrintProgress(void) {
+    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+      printf("progress on core %d: node_id %lu, epoch %lu, txn sequence %lu\n",
+             i,
+             *exec_progress[i] & 0x000000FF,
+             *exec_progress[i] >> 32,
+             *exec_progress[i] >> 8 & 0xFFFFFF);
+    }
+  }
+
+ private:
+  // per-core progress, the maximum piece sid each core has started executing
+  std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> exec_progress;
+};
+
+} // namespace felis
+
+namespace util {
+
+template <>
+struct InstanceInit<felis::PriorityTxnService> {
+  static constexpr bool kHasInstance = true;
+  static inline felis::PriorityTxnService *instance;
+
+  InstanceInit() {
+    instance = new felis::PriorityTxnService();
   }
 };
 

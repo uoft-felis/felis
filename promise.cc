@@ -5,6 +5,7 @@
 #include <queue>
 #include "util.h"
 #include "mem.h"
+#include "priority.h"
 
 using util::Instance;
 using util::Impl;
@@ -245,6 +246,11 @@ void BasePromise::ExecutionRoutine::Run()
     auto [rt, in] = next_r;
     if (rt->sched_key != 0)
       debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+
+    if (NodeConfiguration::g_priority_txn) {
+      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
+    }
+
     RunPromiseRoutine(rt, in);
     svc.Complete(core_id);
   }

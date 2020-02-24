@@ -76,6 +76,7 @@ class NodeConfiguration : public PromiseRoutineTransportService {
   static int g_core_shifting; // Starting to use from which core. Useful for debugging on a single node.
   static constexpr size_t kMaxNrThreads = 32;
   static bool g_data_migration;
+  static bool g_priority_txn;
 
   struct NodePeerConfig {
     std::string host;

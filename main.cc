@@ -4,6 +4,7 @@
 
 #include "module.h"
 #include "node_config.h"
+#include "priority.h"
 #include "console.h"
 #include "log.h"
 #include "epoch.h"
@@ -104,6 +105,12 @@ int main(int argc, char *argv[])
   util::InstanceInit<NodeConfiguration>();
 
   util::Instance<NodeConfiguration>().SetupNodeName(node_name);
+
+  logger->info("Priority Txn sercive status {}", Options::kPriorityTxn);
+  if (Options::kPriorityTxn) {
+    NodeConfiguration::g_priority_txn = true;
+    util::InstanceInit<PriorityTxnService>();
+  }
 
   // init tables from the workload module
   Module<WorkloadModule>::InitModule(workload_name);

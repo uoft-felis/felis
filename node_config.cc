@@ -399,6 +399,7 @@ long SendChannel::PendingFlush(int core_id)
 size_t NodeConfiguration::g_nr_threads = 8;
 int NodeConfiguration::g_core_shifting = 0;
 bool NodeConfiguration::g_data_migration = false;
+bool NodeConfiguration::g_priority_txn = false;
 
 static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, std::string name)
 {

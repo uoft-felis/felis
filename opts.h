@@ -80,6 +80,8 @@ struct Options {
 
   static inline const auto kEnableGranola = Option("EnableGranola");
 
+  static inline const auto kPriorityTxn = Option("PriorityTxn");
+
   static inline bool ParseExtentedOptions(std::string arg)
   {
     for (auto o: Option::g_options) {

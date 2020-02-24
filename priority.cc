@@ -45,8 +45,19 @@ bool PriorityTxn::InitRegisterUpdate(std::vector<typename Table::Key> keys,
 // maybe we shouldn't expose the VHandle* to the workload programmer?
 bool PriorityTxn::Init()
 {
-
+  // TODO: bunch of stuff
   this->initialized = true;
   return true;
 }
+
+PriorityTxnService::PriorityTxnService() {
+  for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+    auto r = go::Make([this, i] {
+      exec_progress[i] = new uint64_t(0);
+    });
+    r->set_urgent(true);
+    go::GetSchedulerFromPool(i + 1)->WakeUp(r);
+  }
 }
+
+} // namespace felis
