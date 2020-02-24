@@ -9,6 +9,7 @@ tpcc_headers = [
     'benchmark/tpcc/new_order.h',
     'benchmark/tpcc/payment.h',
     'benchmark/tpcc/delivery.h',
+    'benchmark/tpcc/tpcc_priority.h',
 ]
 
 tpcc_srcs = [
@@ -17,6 +18,7 @@ tpcc_srcs = [
     'benchmark/tpcc/new_order.cc',
     'benchmark/tpcc/payment.cc',
     'benchmark/tpcc/delivery.cc',
+    'benchmark/tpcc/tpcc_priority.cc',
 ]
 
 ycsb_headers = [
@@ -34,7 +36,7 @@ db_headers = [
     'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
     'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'vhandle_batchappender.h',
     'shipping.h', 'completion.h', 'entity.h',
-    'slice.h', 'vhandle_cch.h',
+    'slice.h', 'vhandle_cch.h', 'priority.h',
 ]
 
 db_srcs = [
@@ -43,6 +45,7 @@ db_srcs = [
     'promise.cc', 'masstree_index_impl.cc', 'node_config.cc', 'console.cc', 'console_client.cc',
     'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc',
     'felis_probes.cc',
+    'priority.cc',
     'json11/json11.cpp',
     'xxHash/xxhash.c',
     'gopp/gopp.cc', 'gopp/channels.cc',

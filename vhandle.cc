@@ -181,6 +181,7 @@ found:
 //   but if sid = 4, then we don't have the value for it to read, then returns nullptr
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
+  abort_if(sid == -1, "sid == -1");
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
