@@ -14,6 +14,7 @@
 namespace felis {
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
+const uintptr_t kIgnoreValue = 0xFE19C02EFFFFFFFF;
 
 class VHandleSyncService {
  public:

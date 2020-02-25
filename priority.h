@@ -5,24 +5,63 @@
 
 namespace felis {
 
+class PriorityTxnService {
+ private:
+  // per-core progress, the maximum piece sid each core has started executing
+  std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> exec_progress;
+
+ public:
+  PriorityTxnService();
+
+  inline bool UpdateProgress(int core_id, uint64_t progress) {
+    abort_if(exec_progress[core_id] == nullptr, "priority service init failure");
+    if (progress > *exec_progress[core_id])
+      *exec_progress[core_id] = progress;
+    return true;
+  }
+
+  uint64_t GetMaxProgress(void) {
+    uint64_t max = 0;
+    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i)
+      max = (*exec_progress[i] > max) ? *exec_progress[i] : max;
+    return max;
+  }
+
+  bool HasProgressPassed(uint64_t sid) {
+    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+      if (*exec_progress[i] > sid)
+        return true;
+    }
+    return false;
+  }
+
+  void PrintProgress(void) {
+    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+      printf("progress on core %2d: node_id %lu, epoch %lu, txn sequence %lu\n",
+             i, *exec_progress[i] & 0x000000FF, *exec_progress[i] >> 32,
+             *exec_progress[i] >> 8 & 0xFFFFFF);
+    }
+  }
+
+ private:
+  uint64_t GetSIDLowerBound();
+ public:
+  uint64_t GetAvailableSID();
+};
+
+
 class PriorityTxn {
  public:
-  PriorityTxn() : sid(-1), epoch_nr(-1), initialized(false) {}
+  PriorityTxn() : sid(-1), initialized(false) {}
   virtual bool Run() = 0;
 
  private:
-  bool initialized;
+  bool initialized; // meaning the registered VHandles would be valid
   std::vector<VHandle*> update_handles;
-
- protected: // in principal these two could be private
-  uint64_t epoch_nr;
   uint64_t sid;
 
- private:
-  static uint64_t GetDistance(bool backoff = false);
-  bool FindAvailableSID();
-
  protected: // APIs for subclass txn to implement the workload
+  uint64_t serial_id() { return sid; }
   template <typename Table>
   bool InitRegisterUpdate(std::vector<typename Table::Key> keys,
                           std::vector<VHandle*>& handles);
@@ -45,7 +84,7 @@ class PriorityTxn {
   bool Write(VHandle* handle, const T &o) {
     if (!initialized)
       std::abort();
-    return handle->WriteWithVersion(sid, o.Encode(), epoch_nr);
+    return handle->WriteWithVersion(sid, o.Encode(), sid >> 32);
   }
 
 
@@ -55,32 +94,6 @@ class PriorityTxn {
       std::abort();
     return true;
   }
-};
-
-class PriorityTxnService {
- public:
-  PriorityTxnService();
-
-  inline bool UpdateProgress(int core_id, uint64_t progress) {
-    abort_if(exec_progress[core_id] == nullptr, "priority service init failure");
-    if (progress > *exec_progress[core_id])
-      *exec_progress[core_id] = progress;
-    return true;
-  }
-
-  void PrintProgress(void) {
-    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
-      printf("progress on core %d: node_id %lu, epoch %lu, txn sequence %lu\n",
-             i,
-             *exec_progress[i] & 0x000000FF,
-             *exec_progress[i] >> 32,
-             *exec_progress[i] >> 8 & 0xFFFFFF);
-    }
-  }
-
- private:
-  // per-core progress, the maximum piece sid each core has started executing
-  std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> exec_progress;
 };
 
 } // namespace felis

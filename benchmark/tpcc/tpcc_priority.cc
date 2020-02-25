@@ -37,7 +37,7 @@ bool StockTxn::Run()
 
   for (int i = 0; i < this->nr_items; ++i) {
     debug(DBG_WORKLOAD "Priority Txn {} updating its {} row {}",
-          sid, i, (void *) stock_rows[i]);
+          serial_id(), i, (void *) stock_rows[i]);
 
     auto stock = Read<Stock::Value>(stock_rows[i]);
     stock.s_quantity += this->detail.stock_quantities[i];
@@ -45,7 +45,7 @@ bool StockTxn::Run()
     ClientBase::OnUpdateRow(stock_rows[i]);
 
     debug(DBG_WORKLOAD "Priority Txn {} updated its {} row {}",
-          sid, i, (void *)stock_rows[i]);
+          serial_id(), i, (void *)stock_rows[i]);
   }
   return Commit();
 }
