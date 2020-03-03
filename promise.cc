@@ -214,17 +214,6 @@ void BasePromise::Complete(const VarStr &in)
   }
 }
 
-static std::unique_ptr<util::CacheAligned<std::atomic_ulong>[]> batch_counts;
-
-void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
-{
-  g_nr_threads = nr_threads;
-  batch_counts.reset(new util::CacheAligned<std::atomic_ulong>[g_nr_threads + 1]);
-  for (int i = 0; i < g_nr_threads; i++) {
-    batch_counts[i].elem = 0;
-  }
-}
-
 void BasePromise::ExecutionRoutine::RunPromiseRoutine(PromiseRoutine *r, const VarStr &in)
 {
   INIT_ROUTINE_BRK(8192);
@@ -286,7 +275,7 @@ void BasePromise::ExecutionRoutine::Run()
       unsigned long now = __rdtsc();
       if (now - last_io > 60000) {
         last_io = now;
-        transport.PeriodicFlushPromiseRoutine(core_id);
+        transport.PeriodicIO(core_id);
       }
     }
 
@@ -313,11 +302,11 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
   bool spawn = !force;
 
   if (svc.Preempt(core_id, force, this)) {
-    trace(TRACE_EXEC_ROUTINE "Initial sleep. Spawning a new coroutine. force = {}", force);
  sleep:
     if (spawn) {
       sched->WakeUp(new ExecutionRoutine());
     }
+    trace(TRACE_EXEC_ROUTINE "Sleep. Spawning a new coroutine = {}. force = {}", spawn, force);
     sched->RunNext(go::Scheduler::SleepState);
 
     spawn = true;

@@ -17,17 +17,19 @@ class TcpNodeTransport : public PromiseRoutineTransportService {
   // std::array<tcp::SendChannel *, kMaxNrNode> out_channels;
   tcp::NodeServerRoutine *serv;
   LocalTransport ltp;
-
+  std::atomic_int counters = 0;
  public:
   TcpNodeTransport();
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
   void PreparePromisesToQueue(int core, int level, unsigned long nr) final override;
   void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
-  void PeriodicFlushPromiseRoutine(int core) final override;
+  bool PeriodicIO(int core) final override;
   uint8_t GetNumberOfNodes() final override {
     return node_config().nr_nodes();
   }
+
+  void OnCounterReceived();
 };
 
 }

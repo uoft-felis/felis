@@ -227,7 +227,6 @@ void CallTxnsWorker::Run()
   std::fill(cnt, cnt + cnt_len, 0);
 
   set_urgent(true);
-  util::Instance<NodeConfiguration>().ContinueInboundPhase();
   auto pq = client->cur_txns.load()->per_core_txns[t];
 
   for (auto i = 0; i < pq->nr; i++) {
@@ -315,6 +314,7 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   if (EpochClient::g_enable_granola && callback.phase == EpochPhase::Execute)
     CallTxnsWorker::g_finished = 0;
 
+  conf.ContinueInboundPhase();
   completion.Increment((conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->call_worker;
@@ -654,7 +654,10 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto &q = queues[core_id]->pq;
   auto &lock = queues[core_id]->lock;
   auto &state = queues[core_id]->state;
-  auto zstart = zq.start.load(std::memory_order_acquire);
+  uint64_t zstart = 0;
+
+again:
+  zstart = zq.start.load(std::memory_order_acquire);
   if (zstart < zq.end.load(std::memory_order_acquire)) {
     state.running.store(true, std::memory_order_release);
     auto r = zq.q[zstart];
@@ -693,6 +696,15 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
     }
     return false;
   }
+
+  if (IsReady(core_id)) {
+    _mm_pause();
+    if (util::Impl<PromiseRoutineTransportService>().PeriodicIO(core_id)) {
+      goto again;
+    }
+  }
+  if (q.pending.start.load() < q.pending.end.load())
+    logger->info("pending start {} end {}", q.pending.start.load(), q.pending.end.load());
 
   state.running.store(false, std::memory_order_relaxed);
 

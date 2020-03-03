@@ -301,7 +301,7 @@ unsigned int ClientBase::LoadPercentageByWarehouse()
   unsigned int n = 0;
   for (int w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
     auto wk = Warehouse::Key::New(w);
-    if (TpccSliceRouter::SliceToNodeId(Instance<SliceLocator<Warehouse>>().Locate(wk) != node_id))
+    if (TpccSliceRouter::SliceToNodeId(Instance<SliceLocator<Warehouse>>().Locate(wk)) != node_id)
       continue;
 
     n++;

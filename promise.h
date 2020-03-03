@@ -109,7 +109,6 @@ class BasePromise {
 
   static void *operator new(std::size_t size);
   static void *Alloc(size_t size);
-  static void InitializeSourceCount(int nr_sources, size_t nr_threads);
   static void QueueRoutine(PromiseRoutineWithInput *routines, size_t nr_routines, int source_idx, int thread, bool batch = true);
   static void FlushScheduler();
 
@@ -129,7 +128,7 @@ class PromiseRoutineTransportService {
   static constexpr size_t kPromiseMaxLevels = 16;
 
   virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
-  virtual void PeriodicFlushPromiseRoutine(int core) {}
+  virtual bool PeriodicIO(int core) { return false; }
   virtual void PreparePromisesToQueue(int core, int level, unsigned long nr) {}
   virtual void FinishPromiseFromQueue(PromiseRoutine *routine) {}
   virtual uint8_t GetNumberOfNodes() { return 0; }

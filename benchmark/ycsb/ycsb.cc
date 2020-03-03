@@ -7,6 +7,7 @@ namespace ycsb {
 using namespace felis;
 
 static constexpr int kTotal = 10;
+static constexpr int kNrMSBContentionKey = 6;
 
 class DummySliceRouter {
  public:
@@ -39,14 +40,18 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
 {
   RMWStruct s;
 
+  int nr_lsb = 63 - __builtin_clzll(g_table_size) - kNrMSBContentionKey;
+  size_t mask = 0;
+  if (nr_lsb > 0) mask = (1 << nr_lsb) - 1;
+
   for (int i = 0; i < kTotal; i++) {
  again:
     // s.keys[i] = g_permutation_map[rand.next() % g_table_size];
     s.keys[i] = rand.next() % g_table_size;
     if (i < g_contention_key) {
-      s.keys[i] &= ~0x07FFF;
+      s.keys[i] &= ~mask;
     } else {
-      if ((s.keys[i] & 0x07FFF) == 0)
+      if ((s.keys[i] & mask) == 0)
         goto again;
     }
     for (int j = 0; j < i; j++)
@@ -256,7 +261,7 @@ void YcsbLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 1048576;
+size_t Client::g_table_size = 1048576 * 32;
 double Client::g_theta = 0.00;
 bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;

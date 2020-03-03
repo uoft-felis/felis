@@ -362,23 +362,77 @@ void NodeConnectionRoutine::UpdateSliceMappingTables(int nr_ops)
 #endif
 
 class ReceiverChannel : public IncomingTraffic {
+  friend class felis::TcpNodeTransport;
+  static constexpr auto kMaxMappingTableBuffer = 1024;
   go::TcpInputChannel *in;
+  // We don't use the tcp socket lock, we use our own lock
+  std::atomic_bool lock;
+  felis::TcpNodeTransport *transport;
+  std::atomic_long nr_left;
  public:
-  ReceiverChannel(go::TcpSocket *sock) : IncomingTraffic(), in(sock->input_channel()) {}
+  ReceiverChannel(go::TcpSocket *sock, felis::TcpNodeTransport *transport)
+      : IncomingTraffic(), in(sock->input_channel()), transport(transport) {
+    sock->OmitReadLock();
+    sock->OmitWriteLock();
+    lock = false;
+    nr_left = 0;
+  }
+
   size_t Poll(PromiseRoutineWithInput *routines, size_t cnt);
  private:
+  void Reset() {
+    long expect = 0;
+    if (!nr_left.compare_exchange_strong(expect, EpochClient::kMaxPiecesPerPhase)) {
+      logger->info("Reset() failed, nr_left is {}", expect);
+      std::abort();
+    }
+  }
   size_t PollRoutines(PromiseRoutineWithInput *routines, size_t cnt);
   bool PollMappingTable();
-  bool PollCounter();
+  void Complete(size_t n);
 };
+
+void ReceiverChannel::Complete(size_t n)
+{
+  if (n == 0) return;
+  auto left = nr_left.fetch_sub(n) - n;
+  abort_if(left < 0, "left {} < 0!", left);
+  if (left == 0) {
+    logger->info("Compelte {}", n);
+    AdvanceStatus();
+    abort_if(current_status() != Status::EndOfPhase, "Bogus current state! {}", (int) current_status());
+  }
+}
 
 size_t ReceiverChannel::Poll(PromiseRoutineWithInput *routines, size_t cnt)
 {
-  // TODO: call PollXXX() according to the current state.
-  //
-  // TODO: should we do busy looping? If we do, can we also remove the
-  // background flush thread?
-  return 0;
+  bool keep_polling = false;
+  size_t nr = 0;
+
+  bool old = false;
+  if (current_status() == Status::EndOfPhase
+      || !lock.compare_exchange_strong(old, true))
+    return 0;
+
+  in->BeginPeek();
+  do {
+    auto s = current_status();
+    switch (s) {
+      case Status::PollMappingTable:
+        keep_polling = PollMappingTable();
+        break;
+      case Status::PollRoutines:
+        nr = PollRoutines(routines, cnt);
+        keep_polling = false;
+        break;
+      case Status::EndOfPhase:
+        break;
+    }
+  } while (keep_polling);
+  in->EndPeek();
+
+  lock = false;
+  return nr;
 }
 
 size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t cnt)
@@ -389,20 +443,42 @@ size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t c
     if (in->Peek(&header, 8) < 8)
       break;
 
-    abort_if((header >> 56) & 0xFF == 0xFF || header == PromiseRoutine::kUpdateBatchCounter,
-             "header isn't right for piece size {:x}", header);
+    if (((header >> 56) & 0xFF) == 0xFF) {
+      abort_if (i == 0 && nr_left.load() > 0,
+                "why there's a mapping table request??? nr_left {}",
+                nr_left.load());
+      // logger->info("Next phase comming up...");
+      break;
+    } else if (header == PromiseRoutine::kUpdateBatchCounter) {
+      auto &conf = util::Instance<NodeConfiguration>();
+      constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
+      auto nr_nodes = conf.nr_nodes();
+      auto buffer_size = 8 + max_level * nr_nodes * nr_nodes * sizeof(ulong);
+      auto buflen = 8 + buffer_size;
+      auto buf = (uint8_t *) alloca(buflen);
 
-    if (header & PromiseRoutine::kBubble) {
+      if (in->Peek(buf, buflen) < buflen)
+        break;
+
+      src_node_id = util::Instance<NodeConfiguration>().
+                    UpdateBatchCountersFromReceiver((unsigned long *) (buf + 8));
+      in->Skip(buflen);
+
+      transport->OnCounterReceived();
+    } else if (header & PromiseRoutine::kBubble) {
+      // TODO:
       in->Skip(8);
     } else {
+      abort_if(header % 8 != 0, "header isn't aligned {}", header);
       auto buflen = 8 + header;
-      auto buf = (uint8_t *) alloca(8 + header);
+      auto buf = (uint8_t *) alloca(buflen);
       if (in->Peek(buf, buflen) < buflen)
         break;
       routines[i++] = PromiseRoutine::CreateFromPacket(buf + 8, header);
       in->Skip(buflen);
     }
   }
+  Complete(i);
   return i;
 }
 
@@ -411,46 +487,28 @@ bool ReceiverChannel::PollMappingTable()
   uint64_t header;
   if (in->Peek(&header, 8) < 8)
     return false;
-  abort_if((header >> 56) & 0xFF != 0xFF,
-           "header isn't right for mappingtable update {:x}", header);
+  abort_if(((header >> 56) & 0xFF) != 0xFF,
+           "header isn't right for mappingtable update 0x{:x}", header);
   unsigned int nr_ops = header & std::numeric_limits<int32_t>::max();
   auto len = 4 + 4 * nr_ops;
   auto buflen = 8 + len;
   auto buf = (uint8_t *) alloca(buflen);
+  abort_if(buflen > kMaxMappingTableBuffer,
+           "MappingTable request is {}, larger than maximum {}",
+           buflen, kMaxMappingTableBuffer);
 
   if (in->Peek(buf, buflen) < buflen)
     return false;
 
+  Reset();
   auto data = (uint32_t *) (buf + 8);
   src_node_id = data[0];
   util::Instance<SliceMappingTable>()
       .UpdateSliceMappingTablesFromReceiver(nr_ops, data + 1);
+
+  logger->info("Mapping table applied");
   AdvanceStatus();
 
-  in->Skip(buflen);
-  return true;
-}
-
-bool ReceiverChannel::PollCounter()
-{
-  uint64_t header;
-  if (in->Peek(&header, 8) < 8)
-    return false;
-  abort_if(header != PromiseRoutine::kUpdateBatchCounter,
-           "header isn't right for batchcounter update {:x}", header);
-
-  auto &conf = util::Instance<NodeConfiguration>();
-  constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
-  auto nr_nodes = conf.nr_nodes();
-  auto buffer_size = 8 + max_level * nr_nodes * nr_nodes * sizeof(ulong);
-  auto buflen = 8 + buffer_size;
-  auto buf = (uint8_t *) alloca(buflen);
-
-  if (in->Peek(buf, buflen) < buflen)
-    return false;
-
-  util::Instance<NodeConfiguration>().
-      UpdateBatchCountersFromReceiver((unsigned long *) (buf + 8));
   in->Skip(buflen);
 
   return true;
@@ -463,7 +521,9 @@ class NodeServerRoutine : public go::Routine {
 
   std::array<SendChannel *, kMaxNrNode> outgoing_channels;
   std::array<ReceiverChannel *, kMaxNrNode> incoming_connection;
+  felis::TcpNodeTransport *transport;
  public:
+  NodeServerRoutine(felis::TcpNodeTransport *transport) : transport(transport) {}
   virtual void Run() final;
 };
 
@@ -476,7 +536,6 @@ void NodeServerRoutine::Run()
   auto &node_conf = conf.config();
 
   auto nr_nodes = conf.nr_nodes();
-  BasePromise::InitializeSourceCount(nr_nodes, conf.g_nr_threads);
 
   // Reuse addr just for debugging
   int enable = 1;
@@ -486,7 +545,6 @@ void NodeServerRoutine::Run()
            "Cannot bind peer address");
   abort_if(!server_sock->Listen(kMaxNrNode),
            "Cannot listen");
-
   console.WaitForServerStatus(Console::ServerStatus::Connecting);
   // Now if anybody else tries to connect to us, it should be in the listener
   // queue. We are safe to call connect at this point. It shouldn't lead to
@@ -517,8 +575,9 @@ void NodeServerRoutine::Run()
   for (size_t i = 1; i < nr_nodes; i++) {
     auto *client_sock = server_sock->Accept();
     if (client_sock == nullptr) continue;
+
     logger->info("New worker peer connection");
-    incoming_socks[i - 1]= client_sock;
+    incoming_socks[i - 1] = client_sock;
 
 #if BG_RECEIVER
     auto *routine = new NodeConnectionRoutine(client_sock, i);
@@ -527,7 +586,10 @@ void NodeServerRoutine::Run()
 
     sched->WakeUp(routine);
 #endif
-
+    auto chn = new ReceiverChannel(client_sock, transport);
+    logger->info("Incoming connection {}", (void *) chn);
+    incoming_connection[i - 1] = chn;
+    conf.RegisterIncoming(i - 1, chn);
   }
   console.UpdateServerStatus(Console::ServerStatus::Running);
 }
@@ -542,8 +604,22 @@ TcpNodeTransport::TcpNodeTransport()
         new tcp::NodeRowShipmentReceiverRoutine(peer.host, peer.port));
   }
   logger->info("Starting node server with id {}", node_config().node_id());
-  serv = new tcp::NodeServerRoutine();
+  serv = new tcp::NodeServerRoutine(this);
   go::GetSchedulerFromPool(0)->WakeUp(serv);
+}
+
+void TcpNodeTransport::OnCounterReceived()
+{
+  auto &conf = util::Instance<NodeConfiguration>();
+  if (counters.fetch_add(1) + 2 == conf.nr_nodes()) {
+    for (int i = 0; i < conf.nr_nodes() - 1; i++) {
+      auto r = serv->incoming_connection[i];
+      auto s = conf.CalculateIncomingFromNode(r->src_node_id);
+      logger->info("Counter stablized: src {} expecting {} pieces", r->src_node_id, s);
+      r->Complete(EpochClient::kMaxPiecesPerPhase - s);
+    }
+    counters = 0;
+  }
 }
 
 void TcpNodeTransport::TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in)
@@ -605,7 +681,8 @@ void TcpNodeTransport::FinishPromiseFromQueue(PromiseRoutine *routine)
     if (cnt == target_cnt && cnt > 0) {
       // Flush channels to this route
       if (dst_node != src_node) {
-        serv->outgoing_channels.at(dst_node)->Flush();
+        auto chn = serv->outgoing_channels.at(dst_node);
+        chn->Flush();
       } else {
         ltp.FinishPromiseFromQueue(routine);
       }
@@ -613,20 +690,21 @@ void TcpNodeTransport::FinishPromiseFromQueue(PromiseRoutine *routine)
   }
 }
 
-void TcpNodeTransport::PeriodicFlushPromiseRoutine(int core)
+bool TcpNodeTransport::PeriodicIO(int core)
 {
   auto &conf = node_config();
 
 #if BG_RECEIVER
-    // We don't need to flush from the background receiver thread's load
-    // balancer buffer under cooperative IO. This is one of the reasons why
-    // background receiver thread is a horrible idea. We should disable this
-    // completely!
-    for (int i = 1; i < conf.nr_nodes(); i++) {
-      serv->incoming_connection_routines[i - 1]->Flush();
-    }
+  // We don't need to flush from the background receiver thread's load
+  // balancer buffer under cooperative IO. This is one of the reasons why
+  // background receiver thread is a horrible idea. We should disable this
+  // completely!
+  for (int i = 1; i < conf.nr_nodes(); i++) {
+    serv->incoming_connection_routines[i - 1]->Flush();
+  }
 #endif
 
+  bool cont_io = false;
   for (int i = 1; i <= conf.nr_nodes(); i++) {
     if (i == conf.node_id()) continue;
     auto chn = serv->outgoing_channels.at(i);
@@ -640,7 +718,24 @@ void TcpNodeTransport::PeriodicFlushPromiseRoutine(int core)
     }
   }
 
+  for (int i = 0; i < conf.nr_nodes() - 1; i++) {
+    auto recv = serv->incoming_connection.at(i);
+    if (recv->current_status() == IncomingTraffic::Status::EndOfPhase) {
+      continue;
+    }
+
+    cont_io = true;
+    PromiseRoutineWithInput routines[128];
+    auto nr_recv = recv->Poll(routines, 128);
+    if (nr_recv > 0) {
+      // We do not need to flush, because we are adding pieces to ourself!
+      util::Impl<PromiseRoutineDispatchService>().Add(
+          core, routines, nr_recv);
+    }
+  }
+
   ltp.FinishPromiseFromQueue(nullptr);
+  return cont_io;
 }
 
 

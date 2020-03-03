@@ -243,9 +243,10 @@ NodeConfiguration::NodeConfiguration()
   std::fill(local_batch->counters, local_batch->counters + nr, 0);
   local_batch->magic = PromiseRoutine::kUpdateBatchCounter;
 
-  outgoing_control_channels.fill(nullptr);
-  incoming_control_channels.fill(nullptr);
+  outgoing.fill(nullptr);
+  incoming.fill(nullptr);
 
+  BasePromise::g_nr_threads = g_nr_threads;
 
   transport_batcher.Init(nr_nodes(), g_nr_threads);
   ResetBufferPlan();
@@ -340,18 +341,16 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
 
   for (int id = 1; id <= nr_nodes(); id++) {
     if (id == node_id()) continue;
-
-    auto out = outgoing_control_channels[id];
-    out->Write(
+    auto out = outgoing[id];
+    out->WriteToNetwork(
         local_batch,
         16 + max_level * nr_nodes() * nr_nodes() * sizeof(unsigned long));
-    out->Flush();
   }
 
   return true;
 }
 
-void NodeConfiguration::UpdateBatchCountersFromReceiver(unsigned long *data)
+int NodeConfiguration::UpdateBatchCountersFromReceiver(unsigned long *data)
 {
   auto src_node_id = data[0];
   constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
@@ -395,6 +394,19 @@ void NodeConfiguration::UpdateBatchCountersFromReceiver(unsigned long *data)
   // real counter.
   EpochClient::g_workload_client->completion_object()->Complete(
       EpochClient::kMaxPiecesPerPhase - total_cnt);
+  return src_node_id;
+}
+
+size_t NodeConfiguration::CalculateIncomingFromNode(int src)
+{
+  int dst = node_id();
+  size_t s = 0;
+  constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
+  for (int i = 0; i < max_level; i++) {
+    auto idx = BatchBufferIndex(i, src, dst);
+    s += TotalBatchCounter(idx).load();
+  }
+  return s;
 }
 
 void NodeConfiguration::SendStartPhase()
@@ -423,9 +435,10 @@ void NodeConfiguration::ContinueInboundPhase()
   uint8_t one = 1;
   for (auto t: incoming) {
     if (t == nullptr) continue;
-    abort_if(t->current_status() != IncomingTraffic::Status::Waiting,
+    abort_if(t->current_status() != IncomingTraffic::Status::EndOfPhase,
              "Cannot tell the incoming traffic to start polling the next phase,"
              " the current phase has not finished!");
+    logger->info("ContinueInbound");
     t->AdvanceStatus();
   }
 }

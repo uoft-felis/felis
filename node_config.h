@@ -77,18 +77,23 @@ class LocalTransport : public PromiseRoutineTransportService {
 
 class IncomingTraffic {
  protected:
-  std::atomic_ulong state = 0;
+  static constexpr int kTotalStates = 3;
+  std::atomic_ulong state = kTotalStates - 1;
   int src_node_id = 0;
  public:
   enum class Status {
-    Waiting, MappingTableUpdated, CounterUpdated,
+    PollMappingTable, PollRoutines, EndOfPhase,
   };
-  void AdvanceStatus() { state.fetch_add(1); }
+  void AdvanceStatus() {
+    auto old_state = state.fetch_add(1);
+    logger->info("Incoming traffic status changed {} -> {}",
+                 old_state % kTotalStates, (old_state + 1) % kTotalStates);
+  }
   Status current_status() const {
     static constexpr Status all_status[] = {
-      Status::Waiting, Status::MappingTableUpdated, Status::CounterUpdated,
+      Status::PollMappingTable, Status::PollRoutines, Status::EndOfPhase,
     };
-    return all_status[state.load() % 3];
+    return all_status[state.load() % kTotalStates];
   }
 };
 
@@ -161,7 +166,8 @@ class NodeConfiguration {
     incoming[idx] = t;
   }
 
-  void UpdateBatchCountersFromReceiver(unsigned long *data);
+  int UpdateBatchCountersFromReceiver(unsigned long *data);
+  size_t CalculateIncomingFromNode(int src);
 
  private:
   std::array<util::Optional<NodeConfig>, kMaxNrNode> all_config;

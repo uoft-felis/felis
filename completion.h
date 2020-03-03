@@ -12,7 +12,9 @@ class CompletionObject {
   T callback;
  public:
   CompletionObject(unsigned long count, T callback)
-      : comp_count(count), callback(callback) {}
+      : comp_count(count), callback(callback) {
+    logger->info("Completion object at {}", (void *) this);
+  }
 
   void Complete(long dec = 1) {
     callback.PreComplete();
