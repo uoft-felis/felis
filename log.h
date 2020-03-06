@@ -72,7 +72,7 @@ static void debug(std::string_view fmt, T... args)
 }
 
 // Trace tags
-#define TRACE_EXEC_ROUTINE "\x7f" "Trace ExecRoutine: "
+#define TRACE_EXEC_ROUTINE // "\x7f" "Trace ExecRoutine: "
 #define TRACE_GC // "\x7f" "Trace GC: "
 #define TRACE_COMPLETION // "\x7f" "Trace Completion: "
 

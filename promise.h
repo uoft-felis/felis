@@ -94,7 +94,7 @@ class BasePromise {
     void Run() final override;
     void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready = false) final override;
 
-    bool Preempt(bool force = false);
+    bool Preempt();
    private:
     void RunPromiseRoutine(PromiseRoutine *r, const VarStr &in);
   };
@@ -109,7 +109,7 @@ class BasePromise {
 
   static void *operator new(std::size_t size);
   static void *Alloc(size_t size);
-  static void QueueRoutine(PromiseRoutineWithInput *routines, size_t nr_routines, int source_idx, int thread, bool batch = true);
+  static void QueueRoutine(PromiseRoutineWithInput *routines, size_t nr_routines, int core_id);
   static void FlushScheduler();
 
   size_t nr_routines() const { return nr_handlers; }
@@ -129,10 +129,9 @@ class PromiseRoutineTransportService {
 
   virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
   virtual bool PeriodicIO(int core) { return false; }
-  virtual void PreparePromisesToQueue(int core, int level, unsigned long nr) {}
-  virtual void FinishPromiseFromQueue(PromiseRoutine *routine) {}
+  virtual void PrefetchInbound() {};
+  virtual void FinishCompletion(int level) {}
   virtual uint8_t GetNumberOfNodes() { return 0; }
-  // virtual long UrgencyCount(int core_id) { return -1; }
 };
 
 class PromiseRoutineDispatchService {
@@ -155,7 +154,7 @@ class PromiseRoutineDispatchService {
 
   virtual void Add(int core_id, PromiseRoutineWithInput *r, size_t nr_routines) = 0;
   virtual void AddBubble() = 0;
-  virtual bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) = 0;
+  virtual bool Preempt(int core_id, BasePromise::ExecutionRoutine *state) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;
@@ -222,6 +221,9 @@ class Promise : public BasePromise {
           auto next = routine->next;
           auto output = native_func(capture, t);
           if (next && next->nr_routines() > 0) {
+            auto &transport = util::Impl<PromiseRoutineTransportService>();
+            auto l = routine->level + 1;
+
             if (output) {
               void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
               VarStr *output_str = output->EncodeFromAlloca(buffer);
@@ -230,8 +232,9 @@ class Promise : public BasePromise {
               VarStr bubble(0, 0, (uint8_t *)PromiseRoutine::kBubblePointer);
               next->Complete(bubble);
             }
+
+            transport.FinishCompletion(l);
           }
-          util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(routine);
         };
     auto routine = PromiseRoutine::CreateFromCapture(capture.EncodeSize());
     routine->callback = static_func;

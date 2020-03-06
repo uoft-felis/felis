@@ -20,7 +20,6 @@ class NodeServerThreadRoutine;
 struct PromiseRoutine;
 
 class LocalDispatcherImpl;
-class SendChannel;
 
 static constexpr size_t kMaxNrNode = 254;
 
@@ -29,9 +28,6 @@ class TransportBatcher {
   // Thread local information
   class LocalMetadata {
     friend class TransportBatcher;
-    // How many pieces should we expect on this core?
-    std::atomic_ulong expect;
-    unsigned long finish;
     // For each level, we had been accumulating increment to global counters.
     std::array<unsigned long, kMaxNrNode> delta; // for each destinations
 
@@ -39,13 +35,9 @@ class TransportBatcher {
 
     void Init(int nr_nodes) { Reset(nr_nodes); }
     void Reset(int nr_nodes) {
-      expect = 0;
-      finish = 0;
       std::fill(delta.begin(), delta.begin() + nr_nodes, 0);
     }
    public:
-    void IncrementExpected(unsigned long d = 1) { expect.fetch_add(d); }
-    bool Finish() { return (++finish) == expect.load(); }
     void AddRoute(int dst) { delta[dst - 1]++; }
   };
  private:
@@ -72,7 +64,7 @@ class LocalTransport : public PromiseRoutineTransportService {
   LocalTransport(const LocalTransport &rhs) = delete;
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) final override;
-  void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
+  void Flush();
 };
 
 class IncomingTraffic {

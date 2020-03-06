@@ -140,8 +140,6 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
       // Because periodic flush will run on all cores, we just have to flush our
       // own per-core buffer.
       transport.PeriodicIO(core_id);
-      // Otherwise if we don't have periodic flush, we will need to do the following:
-      // transport.PeriodicFlushPromiseRoutine(-1);
 
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         // logger->info("Preempt back");

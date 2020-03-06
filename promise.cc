@@ -237,17 +237,15 @@ void BasePromise::ExecutionRoutine::Run()
   auto &transport = util::Impl<PromiseRoutineTransportService>();
 
   int core_id = scheduler()->thread_pool_id() - 1;
-  if (!svc.IsReady(core_id))
-    return;
-
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PromiseRoutineWithInput next_r;
+  bool give_up = false;
   // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-      [&next_r, sched]
+      [&next_r, &give_up, sched]
       (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
@@ -257,56 +255,50 @@ void BasePromise::ExecutionRoutine::Run()
           } else {
             trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
           }
+          give_up = true;
           return false;
         }
+        give_up = false;
         next_r = r;
         // next_state = state;
         return true;
       });
 
 
-  unsigned long cnt = 0x0FF;
-  unsigned long last_io = 0;
-  while (svc.Peek(core_id, should_pop)) {
+  unsigned long cnt = 0x01F;
 
-    // Periodic flush
-    cnt++;
-    if ((cnt & 0x0FF) == 0) {
-      unsigned long now = __rdtsc();
-      if (now - last_io > 60000) {
-        last_io = now;
+  do {
+    while (svc.Peek(core_id, should_pop)) {
+      // Periodic flush
+      cnt++;
+      if ((cnt & 0x01F) == 0) {
         transport.PeriodicIO(core_id);
       }
+
+      auto [rt, in] = next_r;
+      if (rt->sched_key != 0)
+        debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+
+      RunPromiseRoutine(rt, in);
+      svc.Complete(core_id);
     }
+  } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 
-    auto [rt, in] = next_r;
-    if (rt->sched_key != 0)
-      debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
-
-    RunPromiseRoutine(rt, in);
-    svc.Complete(core_id);
-  }
   trace(TRACE_EXEC_ROUTINE "Coroutine Exit");
 }
 
-bool BasePromise::ExecutionRoutine::Preempt(bool force)
+bool BasePromise::ExecutionRoutine::Preempt()
 {
-  // TODO:
-  //
-  // `force` should be deprecated? It means I'll preempt no matter what, even if
-  // the scheduler tell me not to. This is why, under this setting, no matter
-  // what we'll always need to spawn a new routine. However, I doubt if we ever
-  // need anything like this?
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
-  bool spawn = !force;
+  bool spawn = true;
 
-  if (svc.Preempt(core_id, force, this)) {
+  if (svc.Preempt(core_id, this)) {
  sleep:
     if (spawn) {
       sched->WakeUp(new ExecutionRoutine());
     }
-    trace(TRACE_EXEC_ROUTINE "Sleep. Spawning a new coroutine = {}. force = {}", spawn, force);
+    trace(TRACE_EXEC_ROUTINE "Sleep. Spawning a new coroutine = {}.", spawn);
     sched->RunNext(go::Scheduler::SleepState);
 
     spawn = true;
@@ -338,18 +330,18 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
   return false;
 }
 
-void BasePromise::QueueRoutine(felis::PromiseRoutineWithInput *routines, size_t nr_routines,
-                               int source_idx, int thread, bool batch)
+void BasePromise::QueueRoutine(felis::PromiseRoutineWithInput *routines, size_t nr_routines, int core_id)
 {
-  util::Impl<PromiseRoutineDispatchService>().Add(thread - 1, routines, nr_routines);
+  util::Impl<PromiseRoutineDispatchService>().Add(core_id, routines, nr_routines);
 }
 
 void BasePromise::FlushScheduler()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
-  for (int i = 1; i <= g_nr_threads; i++) {
-    if (!svc.IsRunning(i - 1))
-      go::GetSchedulerFromPool(i)->WakeUp(new ExecutionRoutine());
+  for (int i = 0; i < g_nr_threads; i++) {
+    if (!svc.IsRunning(i)) {
+      go::GetSchedulerFromPool(i + 1)->WakeUp(new ExecutionRoutine());
+    }
   }
 }
 

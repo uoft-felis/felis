@@ -248,7 +248,8 @@ void CallTxnsWorker::Run()
   }
   extra_offset %= client->core_limit;
 
-  for (auto i = 0; i < pq->nr; i++) {
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
+  for (size_t i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
     auto aff = t;
 
@@ -258,12 +259,20 @@ void CallTxnsWorker::Run()
       // auto zone = t % avail_nr_zones;
       aff = (i + extra_offset) % client->core_limit;
     }
-    txn->root_promise()->AssignAffinity(aff);
-    txn->root_promise()->Complete(VarStr());
+    auto root = txn->root_promise();
+    root->AssignAffinity(aff);
+    root->Complete(VarStr());
+
+    // Doesn't seems to work that well, but just in case it works well for some
+    // workloads. For example, issuing takes a longer time.
+    if ((i & 0xFF) == 0) transport.PrefetchInbound();
   }
   set_urgent(false);
 
-  util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(nullptr);
+  // Here we set the finished flag a bit earlier, so that FinishCompletion()
+  // could create the ExecutionRoutine a bit earlier.
+  finished = true;
+  transport.FinishCompletion(0);
 
   // Granola doesn't support out of order scheduling. In the original paper,
   // Granola uses a single thread to issue. We use multiple threads, so here we
@@ -305,21 +314,36 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   callback.perf.Clear();
   callback.perf.Start();
 
+  if (EpochClient::g_enable_granola && callback.phase == EpochPhase::Execute)
+    CallTxnsWorker::g_finished = 0;
+
   // When another node sends its counter to us, it will not send pieces
   // first. This makes it hard to esitmate when we are about to finish all in a
   // phase. Therefore, we pretend all other nodes are going to send the maximum
   // pieces in this phase, and adjust this value when the counter arrives
   // eventually.
-
-  if (EpochClient::g_enable_granola && callback.phase == EpochPhase::Execute)
-    CallTxnsWorker::g_finished = 0;
-
-  conf.ContinueInboundPhase();
   completion.Increment((conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
+
+  // The order here is very very important. First, we reset all issue
+  // workers. After this step, the scheduler's IsReady() would return false.
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->call_worker;
     r->Reset();
     r->set_function(func);
+  }
+
+  // Second, we kick everyone out if they are inside the scheduler (Peek()
+  // function), and reset the scheduler queue.
+  util::Impl<PromiseRoutineDispatchService>().Reset();
+
+  // Third, We can now absorb pieces from the network. Notice if any
+  // ExecutionRoutine has just been kicked out, IsReady() would make sure it's
+  // not going to exit.
+  conf.ContinueInboundPhase();
+
+  // Last, let's start issuing txns.
+  for (auto t = 0; t < nr_threads; t++) {
+    auto r = &workers[t]->call_worker;
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
 }
@@ -331,7 +355,6 @@ void EpochClient::InitializeEpoch()
   auto epoch_nr = mgr.current_epoch_nr();
 
   util::Impl<PromiseAllocationService>().Reset();
-  util::Impl<PromiseRoutineDispatchService>().Reset();
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
@@ -527,6 +550,7 @@ void EpochExecutionDispatchService::Reset()
 {
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &q = queues[i];
+    while (q->state.running == State::kDeciding) _mm_pause();
     q->zq.end.store(0);
     q->zq.start.store(0);
     // q->pq.len = 0;
@@ -656,10 +680,17 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto &state = queues[core_id]->state;
   uint64_t zstart = 0;
 
+  state.running = State::kDeciding;
+
+  if (!IsReady(core_id)) {
+    state.running = State::kSleeping;
+    return false;
+  }
+
 again:
   zstart = zq.start.load(std::memory_order_acquire);
   if (zstart < zq.end.load(std::memory_order_acquire)) {
-    state.running.store(true, std::memory_order_release);
+    state.running = State::kRunning;
     auto r = zq.q[zstart];
     if (should_pop(r, nullptr)) {
       zq.start.store(zstart + 1, std::memory_order_relaxed);
@@ -669,11 +700,20 @@ again:
     return false;
   }
 
+  if (q.len == 0) {
+    if (q.pending.end.load() == q.pending.start.load()) {
+      state.running = State::kSleeping;
+    } else {
+      state.running = State::kRunning;
+    }
+  } else {
+    state.running = State::kRunning;
+  }
+
   ProcessPending(q);
 
   if (q.len > 0) {
     auto node = q.q[0].ent->values.next;
-
     auto promise_routine = node->object()->promise_routine;
 
     state.running.store(true, std::memory_order_relaxed);
@@ -697,16 +737,12 @@ again:
     return false;
   }
 
-  if (IsReady(core_id)) {
-    _mm_pause();
-    if (util::Impl<PromiseRoutineTransportService>().PeriodicIO(core_id)) {
-      goto again;
-    }
-  }
-  if (q.pending.start.load() < q.pending.end.load())
-    logger->info("pending start {} end {}", q.pending.start.load(), q.pending.end.load());
-
-  state.running.store(false, std::memory_order_relaxed);
+  /*
+  logger->info("pending start {} end {}, zstart {} zend {}, running {}, completed {}",
+               q.pending.start.load(), q.pending.end.load(),
+               zq.start.load(), zq.end.load(),
+               state.running.load(), state.complete_counter.completed);
+  */
 
   // We do not need locks to protect completion counters. There can only be MT
   // access on Pop() and Add(), the counters are per-core anyway.
@@ -731,10 +767,10 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
-bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *routine_state)
+bool EpochExecutionDispatchService::Preempt(int core_id, BasePromise::ExecutionRoutine *routine_state)
 {
   auto &lock = queues[core_id]->lock;
-  bool new_routine = true;
+  bool can_preempt = true;
   auto &zq = queues[core_id]->zq;
   auto &q = queues[core_id]->pq;
   auto &state = queues[core_id]->state;
@@ -744,9 +780,9 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise
   auto &r = state.current;
   auto key = std::get<0>(r)->sched_key;
 
-  if (!force && zq.end.load(std::memory_order_acquire) == zq.start.load(std::memory_order_acquire)) {
+  if (zq.end.load(std::memory_order_acquire) == zq.start.load(std::memory_order_acquire)) {
     if (q.len == 0 || key < q.q[0].key) {
-      new_routine = false;
+      can_preempt = false;
       goto done;
     }
   }
@@ -757,10 +793,9 @@ bool EpochExecutionDispatchService::Preempt(int core_id, bool force, BasePromise
   } else  {
     AddToPriorityQueue(q, r, routine_state);
   }
-  state.running.store(false, std::memory_order_relaxed);
 
 done:
-  return new_routine;
+  return can_preempt;
 }
 
 

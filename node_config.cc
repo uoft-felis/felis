@@ -113,7 +113,6 @@ bool LocalDispatcherImpl::PushRelease(int tid, unsigned int start, unsigned int 
 void LocalDispatcherImpl::FlushOnCore(int tid, unsigned int start, unsigned int end)
 {
   if (start == end) return;
-
   auto q = queues[tid];
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
@@ -147,21 +146,10 @@ void LocalDispatcherImpl::SubmitOnCore(PromiseRoutineWithInput *routines, unsign
   if (start == end) return;
 
   constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
-  auto &transport = util::Impl<PromiseRoutineTransportService>();
-  std::array<unsigned long, max_level> cnts;
-  cnts.fill(0);
-  for (int j = start; j < end; j++) {
-    auto [r, _] = routines[j];
-    cnts[r->level]++;
-  }
   abort_if(thread == 0 || thread > NodeConfiguration::g_nr_threads,
            "{} is invalid, start {} end {}", thread, start, end);
-  for (auto i = 0; i < max_level; i++) {
-    if (cnts[i] == 0) continue;
-    transport.PreparePromisesToQueue(thread - 1, i, cnts[i]);
-  }
-  // TODO: refact this into core_id instead of thread_id?
-  BasePromise::QueueRoutine(routines + start, end - start, idx, thread, false);
+
+  BasePromise::QueueRoutine(routines + start, end - start, thread - 1);
 }
 
 
@@ -177,10 +165,7 @@ void LocalTransport::TransportPromiseRoutine(PromiseRoutine *routine, const VarS
   }
 }
 
-void LocalTransport::FinishPromiseFromQueue(PromiseRoutine *routine)
-{
-  lb->Flush();
-}
+void LocalTransport::Flush() { lb->Flush(); }
 
 size_t NodeConfiguration::g_nr_threads = 8;
 int NodeConfiguration::g_core_shifting = 0;
@@ -326,7 +311,7 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
         if (counter == 0) continue;
 
         if (dst + 1 == node_id()) {
-          trace(TRACE_COMPLETION "Increment {} of pieces", counter);
+          trace(TRACE_COMPLETION "Increment {} of pieces from local counters", counter);
           EpochClient::g_workload_client->completion_object()->Increment(counter);
         }
       }
@@ -382,7 +367,7 @@ int NodeConfiguration::UpdateBatchCountersFromReceiver(unsigned long *data)
         auto idx = BatchBufferIndex(i, src + 1, dst + 1);
         auto cnt = data[1 + idx];
 
-        fmt::format_to(buffer, " {}->{}={}", src + 1, dst + 1, TotalBatchCounter(idx).load());
+        fmt::format_to(buffer, " {}->{}={}({})", src + 1, dst + 1, cnt, TotalBatchCounter(idx).load());
       }
     }
     logger->info("{}", std::string_view(buffer.begin(), buffer.size()));
@@ -432,9 +417,8 @@ void NodeConfiguration::SendStartPhase()
 
 void NodeConfiguration::ContinueInboundPhase()
 {
-  uint8_t one = 1;
   for (auto t: incoming) {
-    if (t == nullptr) continue;
+    if (t == nullptr) break;
     abort_if(t->current_status() != IncomingTraffic::Status::EndOfPhase,
              "Cannot tell the incoming traffic to start polling the next phase,"
              " the current phase has not finished!");

@@ -182,184 +182,11 @@ void NodeRowShipmentReceiverRoutine::Run()
   server->Listen();
 
   while (true) {
-    auto *client_sock = server->Accept();
+    auto *client_sock = server->Accept(8192, 1024);
     auto receiver = new RowShipmentReceiver(client_sock);
     go::Scheduler::Current()->WakeUp(receiver);
   }
 }
-
-#if BG_RECEIVER
-// Background receive coroutine
-class NodeConnectionRoutine : public go::Routine {
-  go::TcpSocket *sock;
-  int idx;
-  ulong src_node_id;
-  std::atomic<long> tid;
-  LocalDispatcherImpl lb;
-  NodeConfiguration &conf;
-  go::BufferChannel ctrl_chn;
- public:
-  NodeConnectionRoutine(go::TcpSocket *client_sock, int idx)
-      : sock(client_sock),
-        idx(idx), src_node_id(0),
-        tid(1),
-        lb(idx),
-        conf(util::Instance<NodeConfiguration>()),
-        ctrl_chn(go::BufferChannel(128)) {
-    set_reuse(true);
-    client_sock->OmitReadLock();
-  }
-  void Flush() {
-    lb.Flush();
-  }
-  int thread_pool_id() const { return tid.load(std::memory_order_relaxed); }
-  virtual void Run() final;
-  go::BufferChannel *control_channel() { return &ctrl_chn; }
-
- private:
-  void UpdateBatchCounters();
-  void UpdateSliceMappingTables(int nr_ops);
-};
-
-void NodeConnectionRoutine::Run()
-{
-  auto &conf = util::Instance<NodeConfiguration>();
-  std::array<ulong, PromiseRoutineTransportService::kPromiseMaxLevels> nr_recv;
-  nr_recv.fill(0);
-
-  while (true) {
-    auto in = sock->input_channel();
-    size_t promise_size = 0;
-    in->Read(&promise_size, 8);
-
-    if (promise_size == 0) {
-      break;
-    }
-
-    uint8_t mode = 0xFF & (promise_size >> 56);
-
-    if (mode == 0xFF) {
-      // Begining of the epoch
-      uint8_t all_present[conf.g_nr_threads];
-      int nr_ops = promise_size & std::numeric_limits<int32_t>::max();
-      int node_id;
-      in->Read(&node_id, 4);
-      src_node_id = node_id;
-
-      UpdateSliceMappingTables(nr_ops);
-
-      logger->info("Sleeping src node {} because next phase isn't ready to start",
-                   src_node_id);
-      // Waiting for the signal to start
-      if (!ctrl_chn.Read(&all_present, conf.g_nr_threads)) {
-        logger->critical("EOF???");
-        std::abort();
-        break;
-      }
-
-      logger->info("Receiving from {} continues", src_node_id);
-      continue;
-    }
-
-    if (promise_size == PromiseRoutine::kUpdateBatchCounter) {
-      UpdateBatchCounters();
-      continue;
-    }
-
-    abort_if(src_node_id == 0,
-             "Protocol error. Should always send the node id first");
-
-    uint8_t level = 0;
-
-    if (promise_size & PromiseRoutine::kBubble) {
-      level = (promise_size & 0x00FF);
-      util::Impl<PromiseRoutineDispatchService>().AddBubble();
-    } else {
-      auto [r, input] = PromiseRoutine::CreateFromPacket(in, promise_size);
-      level = r->level;
-
-      lb.QueueRoutine(r, input);
-      // nr_recv_bytes += 8 + promise_size;
-    }
-
-    auto cnt = ++nr_recv[level];
-    auto idx = conf.BatchBufferIndex(level, src_node_id, conf.node_id());
-
-    if (cnt == conf.TotalBatchCounter(idx).load()) {
-      logger->info("Flush from node {}, level = {}, cnt = {}",
-                   src_node_id, level, cnt);
-      nr_recv[level] = 0;
-      Flush();
-    }
-  }
-}
-
-void NodeConnectionRoutine::UpdateBatchCounters()
-{
-  auto &conf = util::Instance<NodeConfiguration>();
-  constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
-  auto nr_nodes = conf.nr_nodes();
-  auto cmp = EpochClient::g_workload_client->completion_object();
-  auto buffer_size = 8 + max_level * nr_nodes * nr_nodes * sizeof(ulong);
-  auto *counters = (ulong *) alloca(buffer_size);
-  auto in = sock->input_channel();
-  auto total_cnt = 0;
-
-  in->Read(counters, buffer_size);
-  src_node_id = counters[0];
-
-  for (int i = 0; i < max_level; i++) {
-    fmt::memory_buffer buffer;
-    fmt::format_to(buffer, "from node {} ", src_node_id);
-
-    bool all_zero = true;
-    for (int src = 0; src < nr_nodes; src++) {
-      for (int dst = 0; dst < nr_nodes; dst++) {
-        auto idx = conf.BatchBufferIndex(i, src + 1, dst + 1);
-        auto cnt = counters[1 + idx];
-        if (cnt == 0) continue;
-
-        conf.TotalBatchCounter(idx).fetch_add(cnt);
-        all_zero = false;
-
-        if (dst + 1 == conf.node_id())
-          total_cnt += cnt;
-      }
-    }
-
-    if (all_zero) continue;
-
-    // Print out debugging information
-    fmt::format_to(buffer, "update: {}", i);
-    for (int src = 0; src < nr_nodes; src++) {
-      for (int dst = 0; dst < nr_nodes; dst++) {
-        auto idx = conf.BatchBufferIndex(i, src + 1, dst + 1);
-        auto cnt = counters[1 + idx];
-
-        fmt::format_to(buffer, " {}->{}={}", src + 1, dst + 1,
-                       conf.TotalBatchCounter(idx).load());
-      }
-    }
-    logger->info("{}", std::string_view(buffer.begin(), buffer.size()));
-  }
-  logger->info("total_cnt {} from {}", total_cnt, src_node_id);
-  // We now have the counter. We need to adjust the completion count with the
-  // real counter.
-  cmp->Complete(EpochClient::kMaxPiecesPerPhase - total_cnt);
-}
-
-void NodeConnectionRoutine::UpdateSliceMappingTables(int nr_ops)
-{
-  auto in = sock->input_channel();
-  auto &table = util::Instance<SliceMappingTable>();
-  uint32_t op;
-  for (int i = 0; i < nr_ops; i++) {
-    in->Read(&op, 4);
-    table.ReplayUpdate(op);
-  }
-}
-
-#endif
 
 class ReceiverChannel : public IncomingTraffic {
   friend class felis::TcpNodeTransport;
@@ -380,6 +207,13 @@ class ReceiverChannel : public IncomingTraffic {
 
   size_t Poll(PromiseRoutineWithInput *routines, size_t cnt);
  private:
+  bool TryLock() {
+    bool old = false;
+    return lock.compare_exchange_strong(old, true);
+  }
+  void Unlock() {
+    lock = false;
+  }
   void Reset() {
     long expect = 0;
     if (!nr_left.compare_exchange_strong(expect, EpochClient::kMaxPiecesPerPhase)) {
@@ -409,9 +243,8 @@ size_t ReceiverChannel::Poll(PromiseRoutineWithInput *routines, size_t cnt)
   bool keep_polling = false;
   size_t nr = 0;
 
-  bool old = false;
   if (current_status() == Status::EndOfPhase
-      || !lock.compare_exchange_strong(old, true))
+      || !TryLock())
     return 0;
 
   in->BeginPeek();
@@ -431,7 +264,7 @@ size_t ReceiverChannel::Poll(PromiseRoutineWithInput *routines, size_t cnt)
   } while (keep_polling);
   in->EndPeek();
 
-  lock = false;
+  Unlock();
   return nr;
 }
 
@@ -516,11 +349,6 @@ bool ReceiverChannel::PollMappingTable()
 
 class NodeServerRoutine : public go::Routine {
   friend class felis::TcpNodeTransport;
-  std::array<go::TcpSocket *, kMaxNrNode> incoming_socks;
-  std::array<go::TcpSocket *, kMaxNrNode> outgoing_socks;
-
-  std::array<SendChannel *, kMaxNrNode> outgoing_channels;
-  std::array<ReceiverChannel *, kMaxNrNode> incoming_connection;
   felis::TcpNodeTransport *transport;
  public:
   NodeServerRoutine(felis::TcpNodeTransport *transport) : transport(transport) {}
@@ -562,9 +390,9 @@ void NodeServerRoutine::Run()
     auto &peer = config->worker_peer;
     bool rs = remote_sock->Connect(peer.host, peer.port);
     abort_if(!rs, "Cannot connect to {}:{}", peer.host, peer.port);
-    outgoing_socks[config->id] = remote_sock;
-    outgoing_channels[config->id] = new SendChannel(remote_sock);
-    conf.RegisterOutgoing(config->id, outgoing_channels[config->id]);
+    transport->outgoing_socks[config->id] = remote_sock;
+    transport->outgoing_channels[config->id] = new SendChannel(remote_sock);
+    conf.RegisterOutgoing(config->id, transport->outgoing_channels[config->id]);
   }
 
   // Now we can begining to accept. Each client sock is a source for our Promise.
@@ -573,22 +401,15 @@ void NodeServerRoutine::Run()
   // The sources are different from nodes, and their orders are certainly
   // different from nodes too.
   for (size_t i = 1; i < nr_nodes; i++) {
-    auto *client_sock = server_sock->Accept();
+    auto *client_sock = server_sock->Accept(8 << 10, 1024);
     if (client_sock == nullptr) continue;
 
     logger->info("New worker peer connection");
-    incoming_socks[i - 1] = client_sock;
+    transport->incoming_socks[i - 1] = client_sock;
 
-#if BG_RECEIVER
-    auto *routine = new NodeConnectionRoutine(client_sock, i);
-    incoming_connection_routines[i - 1] = routine;
-    conf.RegisterIncomingControlChannel(i - 1, routine->control_channel());
-
-    sched->WakeUp(routine);
-#endif
     auto chn = new ReceiverChannel(client_sock, transport);
     logger->info("Incoming connection {}", (void *) chn);
-    incoming_connection[i - 1] = chn;
+    transport->incoming_connection[i - 1] = chn;
     conf.RegisterIncoming(i - 1, chn);
   }
   console.UpdateServerStatus(Console::ServerStatus::Running);
@@ -613,7 +434,7 @@ void TcpNodeTransport::OnCounterReceived()
   auto &conf = util::Instance<NodeConfiguration>();
   if (counters.fetch_add(1) + 2 == conf.nr_nodes()) {
     for (int i = 0; i < conf.nr_nodes() - 1; i++) {
-      auto r = serv->incoming_connection[i];
+      auto r = incoming_connection[i];
       auto s = conf.CalculateIncomingFromNode(r->src_node_id);
       logger->info("Counter stablized: src {} expecting {} pieces", r->src_node_id, s);
       r->Complete(EpochClient::kMaxPiecesPerPhase - s);
@@ -633,7 +454,7 @@ void TcpNodeTransport::TransportPromiseRoutine(PromiseRoutine *routine, const Va
   bool bubble = (in.data == (uint8_t *) PromiseRoutine::kBubblePointer);
 
   if (src_node != dst_node) {
-    auto out = serv->outgoing_channels.at(dst_node);
+    auto out = outgoing_channels.at(dst_node);
     if (!bubble) {
       uint64_t buffer_size = routine->TreeSize(in);
       auto *buffer = (uint8_t *) out->Alloc(8 + buffer_size);
@@ -652,39 +473,28 @@ void TcpNodeTransport::TransportPromiseRoutine(PromiseRoutine *routine, const Va
   meta.AddRoute(dst_node);
 }
 
-void TcpNodeTransport::PreparePromisesToQueue(int core, int level, unsigned long nr)
+void TcpNodeTransport::FinishCompletion(int level)
 {
-  auto &conf = node_config();
-  auto &meta = conf.batcher().GetLocalData(level, core);
-  meta.IncrementExpected(nr);
-}
-
-void TcpNodeTransport::FinishPromiseFromQueue(PromiseRoutine *routine)
-{
-  if (routine == nullptr) {
-    ltp.FinishPromiseFromQueue(nullptr);
-    return;
-  }
   auto &conf = node_config();
   auto src_node = conf.node_id();
-  auto core = go::Scheduler::CurrentThreadPoolId() - 1;
-  int level = routine->level;
-  auto &meta = conf.batcher().GetLocalData(level, core);
-  if (!meta.Finish())
-    return;
+  auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  auto &meta = conf.batcher().GetLocalData(level, core_id);
+
+  // Optimistically flush the scheduler so that we can start earlier.
+  ltp.Flush();
 
   for (auto dst_node = 1; dst_node <= conf.nr_nodes(); dst_node++) {
+    if (dst_node == src_node) continue;
+
     auto idx = conf.BatchBufferIndex(level, src_node, dst_node);
     auto target_cnt = conf.TotalBatchCounter(idx).load();
     auto cnt = conf.batcher().Merge(level, meta, dst_node);
     // printf("cnt %lu, target %lu\n", cnt, target_cnt);
+    auto chn = outgoing_channels.at(dst_node);
     if (cnt == target_cnt && cnt > 0) {
       // Flush channels to this route
       if (dst_node != src_node) {
-        auto chn = serv->outgoing_channels.at(dst_node);
         chn->Flush();
-      } else {
-        ltp.FinishPromiseFromQueue(routine);
       }
     }
   }
@@ -694,32 +504,21 @@ bool TcpNodeTransport::PeriodicIO(int core)
 {
   auto &conf = node_config();
 
-#if BG_RECEIVER
-  // We don't need to flush from the background receiver thread's load
-  // balancer buffer under cooperative IO. This is one of the reasons why
-  // background receiver thread is a horrible idea. We should disable this
-  // completely!
-  for (int i = 1; i < conf.nr_nodes(); i++) {
-    serv->incoming_connection_routines[i - 1]->Flush();
-  }
-#endif
-
   bool cont_io = false;
   for (int i = 1; i <= conf.nr_nodes(); i++) {
     if (i == conf.node_id()) continue;
-    auto chn = serv->outgoing_channels.at(i);
+    auto chn = outgoing_channels.at(i);
     if (core == -1) {
       chn->Flush();
     } else {
       auto [success, did_flush] = chn->TryFlushForThread(core + 1);
-      // chn->TryFlushForThread(0);
       if (success && did_flush)
         chn->DoFlush(true);
     }
   }
 
   for (int i = 0; i < conf.nr_nodes() - 1; i++) {
-    auto recv = serv->incoming_connection.at(i);
+    auto recv = incoming_connection.at(i);
     if (recv->current_status() == IncomingTraffic::Status::EndOfPhase) {
       continue;
     }
@@ -734,9 +533,21 @@ bool TcpNodeTransport::PeriodicIO(int core)
     }
   }
 
-  ltp.FinishPromiseFromQueue(nullptr);
+  // We constantly flush the issuing buffer as well. This is because the core
+  // needs to poll from this in case it has some pieces it needs.
+  ltp.Flush();
   return cont_io;
 }
 
+void TcpNodeTransport::PrefetchInbound()
+{
+  auto &conf = node_config();
+  for (int i = 0; i < conf.nr_nodes() - 1; i++) {
+    auto recv = incoming_connection.at(i);
+    if (!recv->TryLock()) continue;
+    recv->in->OpportunisticReadFromNetwork();
+    recv->Unlock();
+  }
+}
 
 }

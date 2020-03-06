@@ -7,24 +7,33 @@
 namespace felis {
 namespace tcp {
 class NodeServerRoutine;
+class ReceiverChannel;
+class SendChannel;
 }
 
 class TcpNodeTransport : public PromiseRoutineTransportService {
   static NodeConfiguration &node_config() {
     return util::Instance<NodeConfiguration>();
   }
-  // std::array<tcp::NodeConnectionRoutine *, kMaxNrNode> connection_routines;
-  // std::array<tcp::SendChannel *, kMaxNrNode> out_channels;
+  friend class tcp::NodeServerRoutine;
+
   tcp::NodeServerRoutine *serv;
+
+  std::array<go::TcpSocket *, kMaxNrNode> incoming_socks;
+  std::array<go::TcpSocket *, kMaxNrNode> outgoing_socks;
+
+  std::array<tcp::SendChannel *, kMaxNrNode> outgoing_channels;
+  std::array<tcp::ReceiverChannel *, kMaxNrNode> incoming_connection;
+
   LocalTransport ltp;
   std::atomic_int counters = 0;
  public:
   TcpNodeTransport();
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
-  void PreparePromisesToQueue(int core, int level, unsigned long nr) final override;
-  void FinishPromiseFromQueue(PromiseRoutine *routine) final override;
+  void FinishCompletion(int level) final override;
   bool PeriodicIO(int core) final override;
+  void PrefetchInbound() final override;
   uint8_t GetNumberOfNodes() final override {
     return node_config().nr_nodes();
   }
