@@ -261,7 +261,7 @@ void YcsbLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 1048576 * 32;
+size_t Client::g_table_size = 1048576 * 16;
 double Client::g_theta = 0.00;
 bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;

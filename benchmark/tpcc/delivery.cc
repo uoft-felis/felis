@@ -88,7 +88,7 @@ void DeliveryTxn::Prepare()
   }
 }
 
-#define SPLIT_CUSTOMER_PIECE
+// #define SPLIT_CUSTOMER_PIECE
 
 void DeliveryTxn::Run()
 {
