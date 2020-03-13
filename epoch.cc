@@ -464,6 +464,7 @@ const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
   auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
+  auto max_txn_percore = PriorityTxnService::g_queue_length / NodeConfiguration::g_nr_threads;
   Queue *qmem = nullptr;
 
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
@@ -502,6 +503,16 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
                              numa_node);
     queue->pq.pending.start = 0;
     queue->pq.pending.end = 0;
+
+    queue->tq.start = queue->tq.end = 0;
+    queue->tq.q = nullptr;
+    if (NodeConfiguration::g_priority_txn) {
+      queue->tq.q = (PriorityTxn *)
+                   mem::MemMapAlloc(
+                       mem::EpochQueueItem,
+                       max_txn_percore * sizeof(PriorityTxn),
+                       numa_node);
+    }
 
     for (size_t t = 0; t < kHashTableSize; t++) {
       queue->pq.ht[t].Initialize();
@@ -582,6 +593,25 @@ again:
     pq.end.fetch_add(pdelta, std::memory_order_release);
   lock.Unlock();
   // util::Impl<VHandleSyncService>().Notify(1 << core_id);
+}
+
+void EpochExecutionDispatchService::Add(int core_id, PriorityTxn *txn)
+{
+  auto &lock = queues[core_id]->lock;
+  lock.Lock();
+
+  auto &tq = queues[core_id]->tq;
+
+  size_t tlimit = PriorityTxnService::g_queue_length / NodeConfiguration::g_nr_threads,
+            pos = tq.end.load(std::memory_order_acquire);
+  abort_if(pos >= tlimit,
+           "Preallocation of priority txn queue is too small. {} < {}", pos, tlimit);
+
+  tq.q[pos] = *txn;
+  tq.end.fetch_add(1, std::memory_order_release);
+  lock.Unlock();
+
+  printf("[pri] scheduler added txn %p on core %d at pos %zu !!!!!!\n", txn, core_id, pos);
 }
 
 bool
@@ -707,6 +737,21 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
     // logger->info("DispatchService on core {} notifies {} completions",
     //             core_id, n + nr_bubbles);
     comp->Complete(n + nr_bubbles);
+  }
+  return false;
+}
+
+bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn &txn)
+{
+  if (!NodeConfiguration::g_priority_txn)
+    return false;
+
+  auto &tq = queues[core_id]->tq;
+  auto tstart = tq.start.load(std::memory_order_acquire);
+  if (tstart < tq.end.load(std::memory_order_acquire)) {
+    tq.start.store(tstart + 1, std::memory_order_relaxed);
+    txn = tq.q[tstart];
+    return true;
   }
   return false;
 }

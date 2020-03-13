@@ -9,6 +9,7 @@
 #include "mem.h"
 #include "completion.h"
 #include "shipping.h"
+#include "priority.h"
 
 namespace felis {
 
@@ -368,6 +369,13 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     std::atomic_ulong start;
   };
 
+  // q for priority txns
+  struct TxnQueue {
+    PriorityTxn* q;
+    std::atomic_ulong end;
+    std::atomic_ulong start;
+  };
+
   struct State {
     PromiseRoutineWithInput current;
     CompleteCounter complete_counter;
@@ -379,6 +387,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   struct Queue {
     PriorityQueue pq;
     ZeroQueue zq;
+    TxnQueue tq;
     util::SpinLock lock;
     State state;
   };
@@ -399,8 +408,10 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
 
  public:
   void Add(int core_id, PromiseRoutineWithInput *routines, size_t nr_routines) final override;
+  void Add(int core_id, PriorityTxn *txn) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
+  bool Peek(int core_id, PriorityTxn &txn) final override;
   bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id) final override;

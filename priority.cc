@@ -1,9 +1,15 @@
 #include "priority.h"
+#include "opts.h"
 
 namespace felis {
 
+size_t PriorityTxnService::g_queue_length = 32_K;
+
 PriorityTxnService::PriorityTxnService()
 {
+  if (Options::kTxnQueueLength)
+    PriorityTxnService::g_queue_length = Options::kTxnQueueLength.ToLargeNumber();
+  this->core = 0;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
       exec_progress[i] = new uint64_t(0);
@@ -11,6 +17,14 @@ PriorityTxnService::PriorityTxnService()
     r->set_urgent(true);
     go::GetSchedulerFromPool(i + 1)->WakeUp(r);
   }
+}
+
+void PriorityTxnService::PushTxn(PriorityTxn* txn) {
+  abort_if(!NodeConfiguration::g_priority_txn,
+           "[pri] Priority txn is turned off. Why are you trying to push a PriorityTxn?");
+  int core_id = this->core.fetch_add(1) % NodeConfiguration::g_nr_threads;
+  auto &svc = util::Impl<PromiseRoutineDispatchService>();
+  svc.Add(core_id, txn);
 }
 
 uint64_t PriorityTxnService::GetSIDLowerBound()
@@ -26,28 +40,7 @@ uint64_t PriorityTxnService::GetAvailableSID()
   // uint64_t res = find(start from lower_bound);
   // if (not found)
   //   return -1;
-  return lower_bound + 1;
-}
-
-
-// find the VHandle in Masstree, append it, return success or not
-template <typename Table>
-bool PriorityTxn::InitRegisterUpdate(std::vector<typename Table::Key> keys,
-                                     std::vector<VHandle*>& handles)
-{
-  if (this->initialized)
-    return false;
-
-  for (auto key : keys) {
-    int table = static_cast<int>(Table::kTable);
-    auto &rel = util::Instance<RelationManager>()[table];
-    auto handle = rel.SearchOrDefault(nullptr, [] { std::abort(); });
-    // it's an update, you should always find it
-
-    this->update_handles.push_back(handle);
-    handles.push_back(handle);
-  }
-  return true;
+  return (lower_bound | 0xFFFFFFFF000000FF) | (14000 << 8);
 }
 
 // do the ad hoc initialization.
@@ -69,6 +62,7 @@ bool PriorityTxn::Init()
     update_handles[i]->AppendNewVersion(sid, sid >> 32);
     if (util::Instance<PriorityTxnService>().HasProgressPassed(sid)) {
       failed = i + 1;
+      logger->info("[pri] epoch {} txn {} failed on {}", sid >> 32, sid >> 8 & 0xFFFFFF, failed);
       break;
     }
   }

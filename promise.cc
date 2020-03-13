@@ -242,7 +242,15 @@ void BasePromise::ExecutionRoutine::Run()
         return true;
       });
 
-  while (svc.Peek(core_id, should_pop)) {
+  bool hasTxn;
+  PriorityTxn txn;
+  while ((hasTxn = svc.Peek(core_id, txn)) || svc.Peek(core_id, should_pop)) {
+    // short circuiting
+    if (hasTxn) {
+      txn.Run();
+      continue;
+    }
+
     auto [rt, in] = next_r;
     if (rt->sched_key != 0)
       debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);

@@ -5,13 +5,19 @@
 
 namespace felis {
 
+class PriorityTxn;
+
 class PriorityTxnService {
  private:
   // per-core progress, the maximum piece sid each core has started executing
   std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> exec_progress;
+  std::atomic_int core;
 
  public:
+  static size_t g_queue_length;
+
   PriorityTxnService();
+  void PushTxn(PriorityTxn* txn);
 
   inline bool UpdateProgress(int core_id, uint64_t progress) {
     abort_if(exec_progress[core_id] == nullptr, "priority service init failure");
@@ -51,20 +57,44 @@ class PriorityTxnService {
 
 
 class PriorityTxn {
- public:
-  PriorityTxn() : sid(-1), initialized(false) {}
-  virtual bool Run() = 0;
-
  private:
+  bool (*callback)(PriorityTxn *);
   bool initialized; // meaning the registered VHandles would be valid
   std::vector<VHandle*> update_handles;
   uint64_t sid;
 
- protected: // APIs for subclass txn to implement the workload
+ public:
+  PriorityTxn(bool (*func)(PriorityTxn *)): sid(-1), initialized(false),
+                                            update_handles(), callback(func) {}
+  PriorityTxn() : PriorityTxn(nullptr) {}
+
+  bool Run() {
+    return this->callback(this);
+  }
+
+  // APIs for the callback to use
   uint64_t serial_id() { return sid; }
+
+  // find the VHandle in Masstree, store it, return success or not
   template <typename Table>
   bool InitRegisterUpdate(std::vector<typename Table::Key> keys,
-                          std::vector<VHandle*>& handles);
+                          std::vector<VHandle*>& handles) {
+    if (this->initialized)
+      return false;
+
+    for (auto key : keys) {
+      int table = static_cast<int>(Table::kTable);
+      auto &rel = util::Instance<RelationManager>()[table];
+      auto keyVarStr = key.Encode();
+
+      auto handle = rel.SearchOrDefault(keyVarStr, [] { std::abort(); return nullptr; });
+      // it's an update, you should always find it
+
+      this->update_handles.push_back(handle);
+      handles.push_back(handle);
+    }
+    return true;
+  }
 
   template <typename Table>
   bool InitRegisterInsert(std::vector<typename Table::Key> keys,

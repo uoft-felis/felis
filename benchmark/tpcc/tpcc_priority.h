@@ -18,10 +18,6 @@ struct StockTxnInput {
 template <>
 StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>();
 
-class StockTxn : public felis::PriorityTxn, public StockTxnInput {
- public:
-  StockTxn(StockTxnInput input) : PriorityTxn(), StockTxnInput(input) {}
-  bool Run() override final;
-};
+bool StockTxn_Run(felis::PriorityTxn *txn);
 
 }

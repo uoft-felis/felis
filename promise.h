@@ -134,6 +134,8 @@ class PromiseRoutineTransportService {;
   virtual long UrgencyCount(int core_id) { return -1; }
 };
 
+class PriorityTxn;
+
 class PromiseRoutineDispatchService {
  public:
 
@@ -153,9 +155,11 @@ class PromiseRoutineDispatchService {
   };
 
   virtual void Add(int core_id, PromiseRoutineWithInput *r, size_t nr_routines) = 0;
+  virtual void Add(int core_id, PriorityTxn *t) = 0;
   virtual void AddBubble() = 0;
   virtual bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
+  virtual bool Peek(int core_id, PriorityTxn &txn) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;
   virtual bool IsRunning(int core_id) = 0;

@@ -81,6 +81,7 @@ struct Options {
   static inline const auto kEnableGranola = Option("EnableGranola");
 
   static inline const auto kPriorityTxn = Option("PriorityTxn");
+  static inline const auto kTxnQueueLength = Option("TxnQueueLength");
 
   static inline bool ParseExtentedOptions(std::string arg)
   {
