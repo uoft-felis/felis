@@ -220,6 +220,8 @@ class ClientBase {
 
   uint GetCurrentTime();
 
+  static std::atomic_ulong *g_last_no_o_ids;
+
  public:
   template <typename TableType, typename KeyType>
   static void OnNewRow(int slice_id, TableType table, const KeyType &k,
@@ -236,6 +238,17 @@ class ClientBase {
   static bool is_warehouse_hotspot(uint wid);
 
   template <class T> T GenerateTransactionInput();
+
+  static unsigned long LastNewOrderId(int warehouse, int district) {
+    auto idx = (warehouse - 1) * g_tpcc_config.districts_per_warehouse + district - 1;
+    return g_last_no_o_ids[idx].load();
+  }
+
+  static bool IncrementLastNewOrderId(int warehouse, int district,
+                                      unsigned long &old, unsigned long newid) {
+    auto idx = (warehouse - 1) * g_tpcc_config.districts_per_warehouse + district - 1;
+    return g_last_no_o_ids[idx].compare_exchange_strong(old, newid);
+  }
 };
 
 

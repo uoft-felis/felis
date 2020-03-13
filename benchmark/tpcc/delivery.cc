@@ -2,10 +2,6 @@
 
 namespace tpcc {
 
-static std::atomic_long g_last_no_o_ids[10] = {
-  2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100,
-};
-
 template <>
 DeliveryStruct ClientBase::GenerateTransactionInput<DeliveryStruct>()
 {
@@ -26,18 +22,22 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
         client(client)
   {}
   void Run() override final;
-  void Prepare() override final;
+  void Prepare() override final {
+    if (!EpochClient::g_enable_granola)
+      PrepareImpl();
+  }
   void PrepareInsert() override final {}
+
+  void PrepareImpl();
 };
 
-void DeliveryTxn::Prepare()
+void DeliveryTxn::PrepareImpl()
 {
   INIT_ROUTINE_BRK(16384);
   auto &mgr = util::Instance<RelationManager>();
   for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
-     auto district_id = i + 1;
-    auto oidhi = g_last_no_o_ids[i].load();
-    auto oid_min = oidhi << 8;
+    auto district_id = i + 1;
+    auto oid_min = ClientBase::LastNewOrderId(warehouse_id, district_id);
 
     auto neworder_start = NewOrder::Key::New(
         warehouse_id, district_id, oid_min, 0);
@@ -50,22 +50,20 @@ void DeliveryTxn::Prepare()
              neworder_start.EncodeFromRoutine(), neworder_end.EncodeFromRoutine());
          no_it.IsValid(); no_it.Next()) {
       if (no_it.row()->ShouldScanSkip(serial_id())) continue;
-
       no_key = no_it.key().template ToType<NewOrder::Key>();
-
-      // logger->info("district {} oid {} ver {} < sid {}", district_id, no_key.no_o_id, no_it.row()->first_version(), serial_id());
-      goto found;
+      oid_min = ClientBase::LastNewOrderId(warehouse_id, district_id);
+      if (no_key.no_o_id <= oid_min) continue;
+      if (ClientBase::IncrementLastNewOrderId(
+              warehouse_id, district_id, oid_min, no_key.no_o_id)) {
+        // logger->info("district {} oid {} ver {} < sid {}", district_id, no_key.no_o_id, no_it.row()->first_version(), serial_id());
+        goto found;
+      }
     }
     state->nodes[i] = NodeBitmap();
     continue;
  found:
 
     auto oid = no_key.no_o_id;
-    long newoidhi = oid >> 8;
-    while (newoidhi > oidhi) {
-      g_last_no_o_ids[i].compare_exchange_strong(oidhi, newoidhi);
-    }
-
     auto customer_id = no_key.no_c_id;
     auto orderline_start = OrderLine::Key::New(
         warehouse_id, district_id, oid, 0);
@@ -92,6 +90,9 @@ void DeliveryTxn::Prepare()
 
 void DeliveryTxn::Run()
 {
+  if (EpochClient::g_enable_granola)
+    PrepareImpl();
+
   for (int i = 0; i < 10; i++) {
     int16_t sum_node = -1, customer_node = -1;
     for (auto &p: state->nodes[i]) {
@@ -168,8 +169,6 @@ void DeliveryTxn::Run()
   }
   if (Client::g_enable_granola) {
     root_promise()->AssignAffinity(warehouse_id - 1);
-  } else {
-    root_promise()->AssignAffinity(NodeConfiguration::g_nr_threads);
   }
 }
 

@@ -398,6 +398,8 @@ bool ClientBase::is_warehouse_hotspot(uint wid)
   return (g_tpcc_config.hotspot_warehouse_bitmap & (1 << (wid - 1))) != 0;
 }
 
+std::atomic_ulong *ClientBase::g_last_no_o_ids = nullptr;
+
 namespace loaders {
 
 template <>
@@ -811,6 +813,10 @@ void Loader<LoaderType::Order>::DoLoad()
           auto_inc_zone, g_tpcc_config.customers_per_district + 1);
     }
   }
+
+  auto nr_all_districts = g_tpcc_config.nr_warehouses * g_tpcc_config.districts_per_warehouse;
+  g_last_no_o_ids = new std::atomic_ulong[nr_all_districts];
+  std::fill(g_last_no_o_ids, g_last_no_o_ids + nr_all_districts, 2101 << 8);
 
   delete [] c_ids;
 
