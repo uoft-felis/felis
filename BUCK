@@ -30,7 +30,7 @@ ycsb_srcs = [
 
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
-    'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
+    'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'promise.h', 'sqltypes.h',
     'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'vhandle_batchappender.h',
     'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',

@@ -1,6 +1,6 @@
 // -*- mode: c++ -*-
-#ifndef PROBE_H
-#define PROBE_H
+#ifndef PROBE_UTILS_H
+#define PROBE_UTILS_H
 
 #include <cstring>
 #include <cmath>
@@ -9,39 +9,15 @@
 #include <iostream>
 #include <iomanip>
 #include <limits>
-#include <functional>
 
-template <typename T, typename ...Args> void RunProbe(Args... args) {}
 
-#define DTRACE_PROBE0(ns, klass) RunProbe<ns::klass>();
-#define DTRACE_PROBE1(ns, klass, a1) RunProbe<ns::klass>(a1);
-#define DTRACE_PROBE2(ns, klass, a1, a2) RunProbe<ns::klass>(a1, a2);
-#define DTRACE_PROBE3(ns, klass, a1, a2, a3) RunProbe<ns::klass>(a1, a2, a3);
+template <typename T> void OnProbe(T t);
 
-class ScopeProbe {
-  std::function<void ()> f;
- public:
-  ScopeProbe(std::function<void ()> f1, std::function<void ()> f2) : f(f2) {
-    f1();
-  }
-  ~ScopeProbe() {
-    f();
-  }
-};
-
-#define DEFINE_PROBE(ns, klass) namespace ns { struct klass{}; }
-
-#define PROBE(ns, klass, ...)                           \
-  template <> void RunProbe<ns::klass>(__VA_ARGS__)     \
-
-#define AT_EXIT()                                               \
-  static struct ProbeMain { ~ProbeMain(); } __probe_main__;     \
-  ProbeMain::~ProbeMain()                                       \
+#define PROBE_PROXY(klass) void klass::operator()() const { OnProbe(*this); }
 
 namespace agg {
 
 // aggregations
-
 #define AGG(ins) decltype(global.ins)::Value ins = global.ins
 
 template <typename Impl>
@@ -52,17 +28,20 @@ class Agg : public Impl {
     Value(Agg &agg) : parent(&agg) {
       parent->Add(this);
     }
-    // We do not want to introduce destructor here because that will rely on
-    // newer glibc under Linux.
+    ~Value() {
+      parent->Remove(this);
+    }
   };
-
-  Value local() {
-    return Value(*this);
-  }
 
   void Add(Value *node) {
     std::lock_guard<std::mutex> _(m);
     values.insert(node);
+  }
+
+  void Remove(Value *node) {
+    std::lock_guard<std::mutex> _(m);
+    (*this) << *node;
+    values.erase(node);
   }
 
   Impl operator()() {
@@ -214,4 +193,4 @@ std::ostream &operator<<(std::ostream &out, const LogHistogram<N, Offset, Base> 
 }
 
 
-#endif /* PROBE_H */
+#endif /* PROBE_UTILS_H */

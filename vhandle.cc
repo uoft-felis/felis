@@ -344,7 +344,7 @@ VarStr *LinkListVHandle::ReadWithVersion(uint64_t sid)
     p = p->next;
   }
 
-  DTRACE_PROBE2(felis, linklist_search_read, search_count, size);
+  // PROBE2(felis, linklist_search_read, search_count, size);
 
   if (!p) return nullptr;
 
@@ -362,7 +362,7 @@ bool LinkListVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch
     search_count++;
     p = p->next;
   }
-  DTRACE_PROBE2(felis, linklist_search_write, search_count, size);
+  // PROBE2(felis, linklist_search_write, search_count, size);
   if (!p) {
     logger->critical("Diverging outcomes! sid {}", sid);
     return false;
