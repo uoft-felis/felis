@@ -1,7 +1,8 @@
-Build -----
+Build
+-----
 
 If you on the CSL cluster, you don't need to install any
-dependencies. Otherwise, you need Clang 8 and Buck.
+dependencies. Otherwise, you need to install Clang 8 manually.
 
 1. If you have not runned before, you can run the configure script
 
@@ -9,30 +10,36 @@ dependencies. Otherwise, you need Clang 8 and Buck.
 ./configure
 ```
 
-This script will download `buck` build tool, look for clang compiler,
-and generate configurations for `buck`.
+This script will check for `buck` build tool and download if
+necessary.
 
 3. Now you can build
 
 ```
-./buck.pex build db
+buck build db
 ```
 
 This will generate a binary to `buck-out/gen/db#debug`. By default,
-the build is debug build and if you need optimized build you can run.
+the build is debug build. If you need optimized build you can run.
 
 ```
-./buck.pex build db_release
+buck build db_release
 ```
 
 This will generate the release binary to `buck-out/gen/db#release`
 
-Test ----
+If you are not on the CSL cluster, you need to install buck or use the
+`./buck.pex` that the configure script has downloaded.
+
+Test
+----
+
+FIXME: Unit tests are broken now. You may skip this section.
 
 Use
 
 ```
-./buck.pex build test
+./buck build test
 ```
 
 to build the test binary. Then run the `buck-out/gen/dbtest` to run
@@ -42,7 +49,8 @@ https://github.com/google/googletest/blob/master/googletest/docs/advanced.md#run
 .
 
 
-Logs ----
+Logs
+----
 
 If you are running the debug version, the logging level is "debug" by
 default, otherwise, the logging level is "info". You can always tune
@@ -54,32 +62,33 @@ The debug level will output to a log file named `dbg-hostname.log`
 where hostname is your node name. This is to prevent debugging log
 flooding your screen.
 
-Run ---
+Run
+---
 
-Setting Things Up =================
+Setting Things Up
+=================
 
 First, you need to run the `felis-controller`. Please refer to the
 README file there.
 
 Second, Felis need to use HugePages for memory allocation (to reduce
 the TLB misses). Common CSL cluster machines should have these already
-setup, so you can skip this step. The following is what I did on c153
-to pre-allocate 400GB memory of HugePages memory. You can adjust the
-amount depending on your memory size. (Each HuagePage is 2MB by
-default in Linux.)
+setup, and you may skip this step. The following pre-allocates 400GB
+of HugePages. You can adjust the amount depending on your memory
+size. (Each HuagePage is 2MB by default in Linux.)
 
 ```
 echo 204800 > /proc/sys/vm/nr_hugepages
 ```
 
-Run The Workload ================
+Run The Workload
+================
 
 Nodes need to be specified first. They are speicified in `config.json`
-on the felis-controller side. Once they are defined, you just need to
-run. For example:
+on the felis-controller side. Once they are defined, you can run:
 
 ```
-buck-out/gen/db#release -c 127.0.0.1:<rpc_port> -n host1 -w tpcc -Xcpu32 -Xmem32G -XYcsbContentionKey4 -XYcsbSkewFactor90 -XVHandleBatchAppend -XVHandleParallel
+buck-out/gen/db#release -c 127.0.0.1:<rpc_port> -n host1 -w tpcc -Xcpu16 -Xmem20G -XVHandleBatchAppend -XVHandleParallel
 ```
 
 `-c` is the felis-controller IP address, `-n` is the host name for
@@ -100,10 +109,25 @@ can proceed:
 curl localhost:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 ```
 
-This will make every node start running the actual benchmark. When it
-all finishes, you can also use the following commands to safely
-shutdown.
+This would broadcast to every node to start running the
+benchmark. When it all finishes, you can also use the following
+commands to safely shutdown.
 
 ```
 curl localhost:8666/broadcast/ -d '{"type": "status_change", "status": "exiting"}'
 ```
+
+Development Setup
+=================
+
+We use `ccls` <https://github.com/MaskRay/ccls> for development. If
+you have run the `./configure` script, it would generate a `.ccls`
+configuration file for you. `ccls` supports
+[Emacs](https://github.com/MaskRay/ccls/wiki/lsp-mode),
+[Vim](https://github.com/MaskRay/ccls/wiki/vim-lsp) and
+[VSCode](https://github.com/MaskRay/ccls/wiki/Visual-Studio-Code).
+
+Mike has a precompiled `ccls` binary on the cluster machine. You can
+download at <http://fs.csl.utoronto.ca/~mike/ccls>.
+
+Zhiqi has some experience with using ccls with VSCode.
