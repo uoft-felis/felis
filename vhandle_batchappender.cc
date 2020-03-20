@@ -55,7 +55,7 @@ struct VersionBufferHeadAllocation {
   VersionBufferHead *AllocHead(int owner_core);
 };
 
-std::array<VersionBufferHeadAllocation, NodeConfiguration::kMaxNrNode / mem::kNrCorePerNode> g_alloc;
+std::array<VersionBufferHeadAllocation, kMaxNrNode / mem::kNrCorePerNode> g_alloc;
 
 // This is a per-core allocator for rows. By moving the `pos`, we can allocate
 // buffers to each row.

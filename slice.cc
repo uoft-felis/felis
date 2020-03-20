@@ -60,7 +60,7 @@ void SliceManager::ScanShippingHandle() {
 }
 
 SliceMappingTable::SliceMappingTable() {
-  std::fill_n(node_compress, NodeConfiguration::kMaxNrNode, -1);
+  std::fill_n(node_compress, kMaxNrNode, -1);
 }
 
 void SliceMappingTable::InitNode(int node_id) {

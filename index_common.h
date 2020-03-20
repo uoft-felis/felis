@@ -63,6 +63,17 @@ class BaseRelation {
     auto ts = auto_increment_cnt[zone].fetch_add(1);
     return (ts << 8) | (conf.node_id() & 0x00FF);
   }
+
+  uint64_t GetCurrentAutoIncrement(int zone = 0) {
+    auto &conf = util::Instance<NodeConfiguration>();
+    auto ts = auto_increment_cnt[zone].load();
+    return (ts << 8) | (conf.node_id() & 0x00FF);
+  }
+
+  void ResetAutoIncrement(int zone = 0, uint64_t ts = 0) {
+    auto_increment_cnt[zone] = ts;
+  }
+
 };
 
 class RelationManagerBase {

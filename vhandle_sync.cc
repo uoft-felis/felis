@@ -68,11 +68,12 @@ long SpinnerSlot::GetWaitCountStat(int core)
 void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver,
                               void *handle)
 {
-  DTRACE_PROBE1(felis, version_read, handle);
+  probes::VersionRead{false, handle}();
 
   uintptr_t oldval = *addr;
   if (!IsPendingVal(oldval)) return;
-  DTRACE_PROBE1(felis, blocking_version_read, handle);
+
+  probes::VersionRead{true, handle}();
 
   int core = go::Scheduler::CurrentThreadPoolId() - 1;
   uint64_t mask = 1ULL << core;
@@ -137,7 +138,10 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
     }
 
     if ((wait_cnt & 0x0FFFF) == 0) {
-      transport.ForceFlushPromiseRoutine();
+      // Because periodic flush will run on all cores, we just have to flush our
+      // own per-core buffer.
+      transport.PeriodicIO(core_id);
+
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         // logger->info("Preempt back");
         return true;
@@ -148,7 +152,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
     _mm_pause();
   }
 
-  DTRACE_PROBE3(felis, wait_jiffies, wait_cnt, sid, ver);
+  probes::WaitCounters{wait_cnt, sid, ver}();
   slot(core_id)->done.store(false, std::memory_order_release);
   return true;
 }
@@ -193,7 +197,7 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
     }
 
     if ((wait_cnt & 0x0FFFF) == 0) {
-      transport.ForceFlushPromiseRoutine();
+      transport.PeriodicIO(core_id);
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         continue;
       }

@@ -11,7 +11,6 @@ NewOrderStruct ClientBase::GenerateTransactionInput<NewOrderStruct>()
   s.district_id = PickDistrict();
   s.customer_id = GetCustomerId();
   s.nr_items = RandomNumber(5, NewOrderStruct::kNewOrderMaxItems);
-  s.new_order_id = PickNewOrderId(s.warehouse_id, s.district_id);
 
   for (int i = 0; i < s.nr_items; i++) {
  again:
@@ -74,13 +73,13 @@ void NewOrderTxn::PrepareInsertImpl()
   INIT_ROUTINE_BRK(8192);
 
   state->orderlines_nodes =
-      TxnIndexInsert<NewOrderState::OrderLinesInsertCompletion, void>(
-          tpcc::SliceRouter, nullptr,
+      TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, void>(
+          nullptr,
           KeyParam<OrderLine>(orderline_keys, nr_items));
 
   state->other_inserts_nodes =
-      TxnIndexInsert<NewOrderState::OtherInsertCompletion, void>(
-          tpcc::SliceRouter, nullptr,
+      TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, void>(
+          nullptr,
           KeyParam<OOrder>(oorder_key),
           KeyParam<NewOrder>(neworder_key));
 }
@@ -88,26 +87,19 @@ void NewOrderTxn::PrepareInsertImpl()
 void NewOrderTxn::PrepareImpl()
 {
   Stock::Key stock_keys[kNewOrderMaxItems];
-  Item::Key item_keys[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
     stock_keys[i] =
         Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
-    item_keys[i] = Item::Key::New(detail.item_id[i]);
   }
 
   INIT_ROUTINE_BRK(8192);
 
-  abort_if(nr_items < 5, "WTF {}", nr_items);
+  // abort_if(nr_items < 5, "WTF {}", nr_items);
 
   state->stocks_nodes =
-      TxnIndexLookup<NewOrderState::StocksLookupCompletion, void>(
-          tpcc::SliceRouter, nullptr,
+      TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
+          nullptr,
           KeyParam<Stock>(stock_keys, nr_items));
-
-  state->items_nodes =
-      TxnIndexLookup<NewOrderState::ItemsLookupCompletion, void>(
-          state->orderlines_nodes, nullptr,
-          KeyParam<Item>(item_keys, nr_items));
 }
 
 void NewOrderTxn::Run()
@@ -160,7 +152,6 @@ void NewOrderTxn::Run()
       }
     }
 
-    auto root = proc.promise();
     for (int f = 0; f < nr_warehouse_filters; f++) {
       auto filter = warehouse_filters[f];
       auto aff = std::numeric_limits<uint64_t>::max();
@@ -201,54 +192,53 @@ void NewOrderTxn::Run()
 
   for (auto &p: state->other_inserts_nodes) {
     auto [node, bitmap] = p;
+    root->Then(
+        MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
+        [](const auto &ctx, auto args) -> Optional<VoidValue> {
+          auto &[state, index_handle, bitmap, customer_id, nr_items, ts_now,
+                 all_local] = ctx;
+          if (bitmap & 0x01) {
+            index_handle(state->oorder)
+                .Write(OOrder::Value::New(customer_id, 0, nr_items,
+                                          all_local, ts_now));
+            ClientBase::OnUpdateRow(state->oorder);
+          }
 
-    proc |
-        TxnProc(node,
-                [](const auto &ctx, auto args) -> Optional<VoidValue> {
-                  auto &[state, index_handle, bitmap, customer_id, nr_items, ts_now,
-                         all_local] = ctx;
-                  if (bitmap & 0x01) {
-                    index_handle(state->oorder)
-                        .Write(OOrder::Value::New(customer_id, 0, nr_items,
-                                                  all_local, ts_now));
-                    ClientBase::OnUpdateRow(state->oorder);
-                  }
+          if (bitmap & 0x02) {
+            index_handle(state->neworder).Write(NewOrder::Value());
+            ClientBase::OnUpdateRow(state->neworder);
+          }
 
-                  if (bitmap & 0x02) {
-                    index_handle(state->neworder).Write(NewOrder::Value());
-                    ClientBase::OnUpdateRow(state->neworder);
-                  }
-
-                  return nullopt;
-                },
-                bitmap, customer_id, nr_items, ts_now, all_local);
+          return nullopt;
+        });
   }
 
   for (auto &p: state->orderlines_nodes) {
     auto [node, bitmap] = p;
-    proc
-        | TxnProc(
-            node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto &[state, index_handle, bitmap, detail] = ctx;
+    root->Then(
+        MakeContext(bitmap, detail), node,
+        [](const auto &ctx, auto args) -> Optional<VoidValue> {
+          auto &[state, index_handle, bitmap, detail] = ctx;
+          auto &mgr = util::Instance<RelationManager>();
 
-              for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
-                if ((bitmap & (1 << i)) == 0) continue;
+          INIT_ROUTINE_BRK(4096);
 
-                auto item_value = index_handle(state->items[i])
-                                  .template Read<Item::Value>();
-                auto amount = item_value.i_price * detail.order_quantities[i];
+          for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+            if ((bitmap & (1 << i)) == 0) continue;
 
-                index_handle(state->orderlines[i])
-                    .Write(OrderLine::Value::New(detail.item_id[i], 0, amount,
-                                                 detail.supplier_warehouse_id[i],
-                                                 detail.order_quantities[i]));
-                ClientBase::OnUpdateRow(state->orderlines[i]);
-              }
+            auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeFromRoutine());
+            auto item_value = index_handle(item).template Read<Item::Value>();
+            auto amount = item_value.i_price * detail.order_quantities[i];
 
-              return nullopt;
-            },
-            bitmap, detail);
+            index_handle(state->orderlines[i])
+                .Write(OrderLine::Value::New(detail.item_id[i], 0, amount,
+                                             detail.supplier_warehouse_id[i],
+                                             detail.order_quantities[i]));
+            ClientBase::OnUpdateRow(state->orderlines[i]);
+          }
+
+          return nullopt;
+        });
   }
   if (Client::g_enable_granola)
     root_promise()->AssignAffinity(warehouse_id - 1);

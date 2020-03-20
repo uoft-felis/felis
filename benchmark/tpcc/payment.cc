@@ -51,8 +51,8 @@ void PaymentTxn::PrepareImpl()
       customer_warehouse_id, customer_district_id, customer_id);
 
   state->nodes =
-      TxnIndexLookup<PaymentState::Completion, void>(
-          tpcc::SliceRouter, nullptr,
+      TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
+          nullptr,
           KeyParam<Warehouse>(warehouse_key),
           KeyParam<District>(district_key),
           KeyParam<Customer>(customer_key));
@@ -65,7 +65,6 @@ void PaymentTxn::Run()
 
   for (auto &p: state->nodes) {
     auto [node, bitmap] = p;
-    auto root = root_promise();
     std::array<int, 2> filters;
 
     if (!Client::g_enable_granola) {

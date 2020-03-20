@@ -1,6 +1,7 @@
 #include <sys/time.h>
 #include "spdlog/sinks/rotating_file_sink.h"
 #include "spdlog/sinks/basic_file_sink.h"
+#include "spdlog/sinks/ansicolor_sink.h"
 #include "opts.h"
 #include "log.h"
 #include "literals.h"

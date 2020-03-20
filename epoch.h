@@ -266,7 +266,7 @@ class EpochMemory {
   struct {
     uint8_t *mmap_buf;
     std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads> brks; // per-core brks
-  } node_mem[NodeConfiguration::kMaxNrNode];
+  } node_mem[kMaxNrNode];
 
   friend class EpochManager;
  public:
@@ -379,9 +379,13 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   struct State {
     PromiseRoutineWithInput current;
     CompleteCounter complete_counter;
-    std::atomic_bool running;
 
-    State() : current({nullptr, VarStr()}), running(false) {}
+    static constexpr int kSleeping = 0;
+    static constexpr int kRunning = 1;
+    static constexpr int kDeciding = -1;
+    std::atomic_int running;
+
+    State() : current({nullptr, VarStr()}), running(kSleeping) {}
   };
 
   struct Queue {
@@ -412,12 +416,16 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
   bool Peek(int core_id, PriorityTxn &txn) final override;
-  bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) final override;
+  bool Preempt(int core_id, BasePromise::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   int TraceDependency(uint64_t key) final override;
   bool IsRunning(int core_id) final override {
-    return queues[core_id]->state.running.load(std::memory_order_acquire);
+    auto &s = queues[core_id]->state;
+    int running = -1;
+    while ((running = s.running.load(std::memory_order_seq_cst)) == State::kDeciding)
+      _mm_pause();
+    return running == State::kRunning;
   }
   bool IsReady(int core_id) final override {
     return EpochClient::g_workload_client->get_worker(core_id)->call_worker.has_finished();

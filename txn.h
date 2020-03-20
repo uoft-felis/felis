@@ -25,7 +25,7 @@ class BaseTxn {
   Epoch *epoch;
   uint64_t sid;
 
-  PromiseProc proc;
+  Promise<DummyValue> *root;
 
   using BrkType = std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads / mem::kNrCorePerNode>;
   static BrkType g_brk;
@@ -52,11 +52,11 @@ class BaseTxn {
   }
 
   Promise<DummyValue> *root_promise() {
-    return proc.promise();
+    return root;
   }
 
   void ResetRoot() {
-    proc.Reset();
+    root = new Promise<DummyValue>();
   }
 
   uint64_t serial_id() const { return sid; }
@@ -513,27 +513,28 @@ class Txn : public BaseTxn {
 #endif
 
  private:
-  template <typename KParam, typename ...KParams>
-  void KeyParamsToBitmap(SliceRoute router, uint16_t bitmap_per_node[],
+  template <typename Router, typename KParam, typename ...KParams>
+  void KeyParamsToBitmap(uint16_t bitmap_per_node[],
                          int bitshift, KParam param, KParams ...rest) {
     auto &locator = util::Instance<SliceLocator<typename KParam::TableType>>();
     for (int i = 0; i < param.size(); i++) {
       auto node = util::Instance<NodeConfiguration>().node_id();
       auto slice_id = locator.Locate(param[i]);
-      if (slice_id >= 0) node = router(slice_id);
+      if (slice_id >= 0) node = Router::SliceToNodeId(slice_id);
       bitmap_per_node[node] |= 1 << (i + bitshift);
     }
-    KeyParamsToBitmap(router, bitmap_per_node, bitshift + param.size(), rest...);
+    KeyParamsToBitmap<Router>(bitmap_per_node, bitshift + param.size(), rest...);
   }
-  void KeyParamsToBitmap(SliceRoute router, uint16_t bitmap_per_node[], int bitshift) {}
+  template <typename Router>
+  void KeyParamsToBitmap(uint16_t bitmap_per_node[], int bitshift) {}
  public:
-  template <typename ...KParams>
-  NodeBitmap GenerateNodeBitmap(SliceRoute router, KParams ...params) {
+  template <typename Router, typename ...KParams>
+  NodeBitmap GenerateNodeBitmap(KParams ...params) {
     auto &conf = util::Instance<NodeConfiguration>();
     uint16_t bitmap_per_node[conf.nr_nodes() + 1];
     NodeBitmap nodes_bitmap;
     std::fill(bitmap_per_node, bitmap_per_node + conf.nr_nodes() + 1, 0);
-    KeyParamsToBitmap(router, bitmap_per_node, 0, params...);
+    KeyParamsToBitmap<Router>(bitmap_per_node, 0, params...);
     for (int node = 1; node <= conf.nr_nodes(); node++) {
       if (bitmap_per_node[node] == 0) continue;
       nodes_bitmap.Add(node, bitmap_per_node[node]);
@@ -545,9 +546,9 @@ class Txn : public BaseTxn {
             typename OnCompleteParam,
             typename OnComplete,
             typename ...KParams>
-  NodeBitmap TxnIndexOp(NodeBitmap nodes_bitmap,
-                        OnCompleteParam *pp,
-                        KParams ...params) {
+  NodeBitmap TxnIndexOpWithNodeBitmap(NodeBitmap nodes_bitmap,
+                                      OnCompleteParam *pp,
+                                      KParams ...params) {
     for (auto &p: nodes_bitmap) {
       auto [node, bitmap] = p;
       auto op_ctx = TxnIndexOpContextEx<OnCompleteParam>(
@@ -558,27 +559,25 @@ class Txn : public BaseTxn {
         }
 
       if (!EpochClient::g_enable_granola) {
-        proc
-            | std::make_tuple(
-                op_ctx,
-                node,
-                [](auto &ctx, auto _) -> Optional<VoidValue> {
-                  auto completion = OnComplete();
-                  if constexpr (!std::is_void<OnCompleteParam>()) {
-                    completion.args = (OnCompleteParam) ctx;
-                  }
+        root->Then(
+            op_ctx, node,
+            [](auto &ctx, auto _) -> Optional<VoidValue> {
+              auto completion = OnComplete();
+              if constexpr (!std::is_void<OnCompleteParam>()) {
+                  completion.args = (OnCompleteParam) ctx;
+                }
 
-                  completion.handle = ctx.handle;
-                  completion.state = State(ctx.state);
+              completion.handle = ctx.handle;
+              completion.state = State(ctx.state);
 
-                  TxnIndexOpContext::ForEachWithBitmap(
-                      ctx.keys_bitmap,
-                      [&ctx, &completion](int j, int i) {
-                        auto op = IndexOp(ctx, j);
-                        completion(i, op.result);
-                      });
-                  return nullopt;
-                });
+              TxnIndexOpContext::ForEachWithBitmap(
+                  ctx.keys_bitmap,
+                  [&ctx, &completion](int j, int i) {
+                    auto op = IndexOp(ctx, j);
+                    completion(i, op.result);
+                  });
+              return nullopt;
+            });
       } else {
         auto completion = OnComplete();
         if constexpr (!std::is_void<OnCompleteParam>()) {
@@ -600,43 +599,43 @@ class Txn : public BaseTxn {
   }
 
   template <typename IndexOp,
+            typename Router,
             typename OnCompleteParam,
             typename OnComplete,
             typename ...KParams>
-  NodeBitmap TxnIndexOp(SliceRoute router,
-                        OnCompleteParam *pp,
+  NodeBitmap TxnIndexOp(OnCompleteParam *pp,
                         KParams ...params) {
-    return TxnIndexOp<IndexOp, OnCompleteParam, OnComplete, KParams...>(
-        GenerateNodeBitmap(router, params...),
+    return TxnIndexOpWithNodeBitmap<IndexOp, OnCompleteParam, OnComplete, KParams...>(
+        GenerateNodeBitmap<Router>(params...),
         pp,
         params...);
   }
 
  public:
-  template <typename Completion,
+  template <typename Router,
+            typename Completion,
             typename CompletionParam = void,
-            typename Route,
             typename ...KParams>
-  NodeBitmap TxnIndexLookup(Route r,
-                            CompletionParam *pp,
+  NodeBitmap TxnIndexLookup(CompletionParam *pp,
                             KParams ...params) {
     return TxnIndexOp<BaseTxn::TxnIndexLookupOpImpl,
+                      Router,
                       CompletionParam,
                       Completion,
-                      KParams...>(r, pp, params...);
+                      KParams...>(pp, params...);
   }
 
-  template <typename Completion,
+  template <typename Router,
+            typename Completion,
             typename CompletionParam = void,
-            typename Route,
             typename ...KParams>
-  NodeBitmap TxnIndexInsert(Route r,
-                            CompletionParam *pp,
+  NodeBitmap TxnIndexInsert(CompletionParam *pp,
                             KParams ...params) {
     return TxnIndexOp<BaseTxn::TxnIndexInsertOpImpl,
+                      Router,
                       CompletionParam,
                       Completion,
-                      KParams...>(r, pp, params...);
+                      KParams...>(pp, params...);
   }
 };
 

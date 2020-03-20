@@ -4,7 +4,7 @@
 // Only include this file from a .cc file!!!
 
 #include "util.h"
-#include "node_config.h"
+#include "tcp_node.h"
 #include "epoch.h"
 #include "vhandle_sync.h"
 
@@ -12,7 +12,7 @@ namespace util {
 
 using namespace felis;
 
-IMPL(PromiseRoutineTransportService, NodeConfiguration);
+IMPL(PromiseRoutineTransportService, TcpNodeTransport);
 IMPL(PromiseRoutineDispatchService, EpochExecutionDispatchService);
 IMPL(VHandleSyncService, SpinnerSlot);
 // IMPL(VHandleSyncService, SimpleSync);

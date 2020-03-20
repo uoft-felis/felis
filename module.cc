@@ -1,5 +1,4 @@
-#include <iostream>
-#include <fstream>
+#include <thread>
 #include <sys/mman.h>
 
 #include "module.h"
@@ -36,16 +35,18 @@ class LoggingModule : public Module<CoreModule> {
     auto &console = util::Instance<Console>();
     InitializeLogger(console.server_node_name());
 
-    std::stringstream ss;
-    ss << "/tmp/";
+    std::string pid_filename;
 
     auto username = getenv("USER");
-    if (username)
-      ss << username << "-";
-    ss << "felis-" << console.server_node_name() << ".pid";
+    if (username) {
+      pid_filename = fmt::format("/tmp/{}-felis-{}.pid", username, console.server_node_name());
+    } else {
+      pid_filename = fmt::format("/tmp/felis-{}.pid", username, console.server_node_name());
+    }
 
-    std::ofstream pid_fout(ss.str());
-    pid_fout << (unsigned long) getpid();
+    FILE *fp = fopen(pid_filename.c_str(), "w");
+    fprintf(fp, "%d", getpid());
+    fclose(fp);
   }
 };
 
@@ -214,8 +215,6 @@ class NodeServerModule : public Module<CoreModule> {
   void Init() final override {
     Module<CoreModule>::InitModule("config");
     Module<CoreModule>::InitModule("coroutine");
-
-    util::Instance<NodeConfiguration>().RunAllServers();
   }
 };
 

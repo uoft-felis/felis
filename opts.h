@@ -71,6 +71,7 @@ struct Options {
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");
   static inline const auto kTpccHotWarehouseBitmap = Option("TpccHotWarehouseBitmap");
   static inline const auto kTpccHotWarehouseLoad = Option("TpccHotWarehouseLoad");
+  static inline const auto kTpccHashShard = Option("TpccHashShard");
 
   static inline const auto kYcsbContentionKey = Option("YcsbContentionKey");
   static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");

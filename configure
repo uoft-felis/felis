@@ -2,13 +2,23 @@
 # -*- mode: python -*-
 
 import os
-import stat
 import sys
 import platform
 import shutil
 import subprocess
+from distutils.spawn import find_executable
 
-if not os.path.exists('./buck.pex') and platform.system() != 'Darwin':
+if platform.system() != 'Linux':
+    print("We only support Linux for now")
+    sys.exit(-1)
+
+buck_path = find_executable('buck')
+
+if buck_path:
+    print("Found system buck installation")
+elif os.path.exists('./buck.pex'):
+    print("Found local buck.pex")
+else:
     print("Getting Buck...")
     os.system('curl -o buck.pex -L http://fs.csl.utoronto.ca/~mike/buck.pex') # Java11 Compatible build
     os.system('chmod +x buck.pex')
@@ -36,5 +46,3 @@ with open('.buckconfig.local', 'w') as f:
 
     with open('.ccls', 'w') as f:
         f.write('\n'.join('clang++ -std=c++17 -I. -Ispdlog/include -DCACHE_LINE_SIZE=64'.split(' ') + ccls_inc_path))
-        if platform.system() == 'Darwin':
-            f.write('-DDISABLE_NUMA\n')

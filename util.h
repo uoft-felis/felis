@@ -3,7 +3,6 @@
 #ifndef UTIL_H
 #define UTIL_H
 
-#include <sys/types.h>
 #include <string>
 #include <cassert>
 #include <atomic>
@@ -11,6 +10,7 @@
 #include <unistd.h>
 #include <sched.h>
 #include <pthread.h>
+#include <sys/types.h>
 
 #include <optional>
 

@@ -2,8 +2,10 @@
 #include "epoch.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
+
 #include <queue>
 #include "util.h"
+#include "opts.h"
 #include "mem.h"
 #include "priority.h"
 
@@ -21,23 +23,32 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   r->capture_len = capture_len;
   r->capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
   r->sched_key = 0;
+  r->level = 0;
   r->affinity = std::numeric_limits<uint64_t>::max();
+
+  r->callback = nullptr;
+  r->node_func = nullptr;
   r->next = nullptr;
   return r;
 }
 
-std::tuple<PromiseRoutine *, VarStr>
-PromiseRoutine::CreateFromPacket(go::TcpInputChannel *in, size_t packet_len)
+PromiseRoutineWithInput
+PromiseRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
 {
   uint16_t len;
-  in->Read(&len, 2);
+  memcpy(&len, p, 2);
 
   uint16_t aligned_len = util::Align(2 + len);
   auto *input_ptr = (uint8_t *) BasePromise::Alloc(aligned_len);
-  in->Read(input_ptr, aligned_len - 2);
+  memcpy(input_ptr, p + 2, aligned_len - 2);
+
+  p += aligned_len;
 
   auto r = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
-  r->DecodeNode(in);
+  auto result_len = r->DecodeNode(p, packet_len - aligned_len);
+  abort_if(result_len != packet_len - aligned_len,
+           "DecodeNode() consumes {} but passed in {} bytes",
+           result_len, packet_len - aligned_len);
   VarStr input(len, 0, input_ptr);
   return std::make_tuple(r, input);
 }
@@ -92,30 +103,34 @@ uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
   return p;
 }
 
-void PromiseRoutine::DecodeNode(go::TcpInputChannel *in)
+size_t PromiseRoutine::DecodeNode(uint8_t *p, size_t len)
 {
-  in->Read(this, util::Align(sizeof(PromiseRoutine)));
+  uint8_t *orig_p = p;
+  size_t off = util::Align(sizeof(PromiseRoutine));
+  memcpy(this, p, off);
+  p += off;
 
-  capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
-  in->Read(capture_data, util::Align(capture_len));
+  off = util::Align(capture_len);
+  capture_data = (uint8_t *) BasePromise::Alloc(off);
+  memcpy(capture_data, p, off);
+  p += off;
 
   next = nullptr;
 
   size_t nr_children = 0;
-  in->Read(&nr_children, 8);
+  memcpy(&nr_children, p, 8);
+  p += 8;
 
   if (nr_children > 0) {
     next = new BasePromise(nr_children);
     for (int i = 0; i < nr_children; i++) {
       auto child = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
-      child->DecodeNode(in);
+      off = child->DecodeNode(p, len - (p - orig_p));
+      p += off;
       next->Add(child);
     }
   }
-}
-
-PromiseProc::~PromiseProc()
-{
+  return p - orig_p;
 }
 
 size_t BasePromise::g_nr_threads = 0;
@@ -173,24 +188,30 @@ void BasePromise::Complete(const VarStr &in)
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   for (size_t i = 0; i < nr_handlers; i++) {
     auto r = routine(i);
-    transport.TransportPromiseRoutine(r, in);
+
+    // This is a dynamically dispatched piece.
+    if (r->node_id == 255) {
+      auto real_node = r->node_func(r, in);
+      auto max_node = transport.GetNumberOfNodes();
+      VarStr bubble(0, 0, (uint8_t *) PromiseRoutine::kBubblePointer);
+      for (r->node_id = 1; r->node_id <= max_node; r->node_id++) {
+        if (r->node_id == real_node) {
+          transport.TransportPromiseRoutine(r, in);
+        } else {
+          transport.TransportPromiseRoutine(r, bubble);
+        }
+      }
+    } else {
+      transport.TransportPromiseRoutine(r, in);
+    }
   }
+
+  // Recursively complete all bubbles.
   if (in.data == (uint8_t *) PromiseRoutine::kBubblePointer) {
     for (size_t i = 0; i < nr_handlers; i++) {
       auto r = routine(i);
       if (r->next) r->next->Complete(in);
     }
-  }
-}
-
-static std::unique_ptr<util::CacheAligned<std::atomic_ulong>[]> batch_counts;
-
-void BasePromise::InitializeSourceCount(int nr_sources, size_t nr_threads)
-{
-  g_nr_threads = nr_threads;
-  batch_counts.reset(new util::CacheAligned<std::atomic_ulong>[g_nr_threads + 1]);
-  for (int i = 0; i < g_nr_threads; i++) {
-    batch_counts[i].elem = 0;
   }
 }
 
@@ -214,18 +235,18 @@ void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, boo
 void BasePromise::ExecutionRoutine::Run()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
-  int core_id = scheduler()->thread_pool_id() - 1;
-  if (!svc.IsReady(core_id))
-    return;
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
 
+  int core_id = scheduler()->thread_pool_id() - 1;
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PromiseRoutineWithInput next_r;
+  bool give_up = false;
   // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-      [&next_r, sched]
+      [&next_r, &give_up, sched]
       (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
@@ -235,54 +256,60 @@ void BasePromise::ExecutionRoutine::Run()
           } else {
             trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
           }
+          give_up = true;
           return false;
         }
+        give_up = false;
         next_r = r;
         // next_state = state;
         return true;
       });
 
+
+  unsigned long cnt = 0x01F;
   bool hasTxn;
   PriorityTxn txn;
-  while ((hasTxn = svc.Peek(core_id, txn)) || svc.Peek(core_id, should_pop)) {
-    // short circuiting
-    if (hasTxn) {
-      txn.Run();
-      continue;
+
+  do {
+    while ((hasTxn = svc.Peek(core_id, txn)) | svc.Peek(core_id, should_pop)) {
+      cnt++;
+      // Periodic flush
+      if ((cnt & 0x01F) == 0) {
+        transport.PeriodicIO(core_id);
+      }
+
+      if (hasTxn) {
+        txn.Run();
+      }
+
+      auto [rt, in] = next_r;
+      if (rt->sched_key != 0)
+        debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+
+      if (NodeConfiguration::g_priority_txn) {
+        util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
+      }
+
+      RunPromiseRoutine(rt, in);
+      svc.Complete(core_id);
     }
+  } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 
-    auto [rt, in] = next_r;
-    if (rt->sched_key != 0)
-      debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
-
-    if (NodeConfiguration::g_priority_txn) {
-      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
-    }
-
-    RunPromiseRoutine(rt, in);
-    svc.Complete(core_id);
-  }
-  trace(TRACE_EXEC_ROUTINE "Coroutine Exit");
+  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
 }
 
-bool BasePromise::ExecutionRoutine::Preempt(bool force)
+bool BasePromise::ExecutionRoutine::Preempt()
 {
-  // TODO:
-  //
-  // `force` should be deprecated? It means I'll preempt no matter what, even if
-  // the scheduler tell me not to. This is why, under this setting, no matter
-  // what we'll always need to spawn a new routine. However, I doubt if we ever
-  // need anything like this?
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
-  bool spawn = !force;
+  bool spawn = true;
 
-  if (svc.Preempt(core_id, force, this)) {
-    trace(TRACE_EXEC_ROUTINE "Initial sleep. Spawning a new coroutine. force = {}", force);
+  if (svc.Preempt(core_id, this)) {
  sleep:
     if (spawn) {
       sched->WakeUp(new ExecutionRoutine());
     }
+    trace(TRACE_EXEC_ROUTINE "Sleep. Spawning a new coroutine = {}.", spawn);
     sched->RunNext(go::Scheduler::SleepState);
 
     spawn = true;
@@ -314,18 +341,18 @@ bool BasePromise::ExecutionRoutine::Preempt(bool force)
   return false;
 }
 
-void BasePromise::QueueRoutine(felis::PromiseRoutineWithInput *routines, size_t nr_routines,
-                               int source_idx, int thread, bool batch)
+void BasePromise::QueueRoutine(felis::PromiseRoutineWithInput *routines, size_t nr_routines, int core_id)
 {
-  util::Impl<PromiseRoutineDispatchService>().Add(thread - 1, routines, nr_routines);
+  util::Impl<PromiseRoutineDispatchService>().Add(core_id, routines, nr_routines);
 }
 
 void BasePromise::FlushScheduler()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
-  for (int i = 1; i <= g_nr_threads; i++) {
-    if (!svc.IsRunning(i - 1))
-      go::GetSchedulerFromPool(i)->WakeUp(new ExecutionRoutine());
+  for (int i = 0; i < g_nr_threads; i++) {
+    if (!svc.IsRunning(i)) {
+      go::GetSchedulerFromPool(i + 1)->WakeUp(new ExecutionRoutine());
+    }
   }
 }
 

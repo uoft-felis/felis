@@ -144,9 +144,9 @@ class SliceMappingTable {
   struct {
     int id;
     std::bitset<kNrMaxSlices> owned[NumOwnerTypes];
-  } slice_owners[NodeConfiguration::kMaxNrNode];
+  } slice_owners[kMaxNrNode];
   // Mapping of real node id into an index for |slice_owners|.
-  int node_compress[NodeConfiguration::kMaxNrNode];
+  int node_compress[kMaxNrNode];
   int nr_nodes;
   std::atomic<int> next_node;
 
@@ -172,6 +172,13 @@ class SliceMappingTable {
                    int node = -1, bool broadcast = true) {
     SetEntry(slice_id, false, type, node, broadcast);
   }
+
+  void UpdateSliceMappingTablesFromReceiver(int nr_ops, uint32_t *data) {
+    for (int i = 0; i < nr_ops; i++) {
+      uint32_t op = data[i];
+      ReplayUpdate(op);
+    }
+  }
 };
 
 template <typename TableType>
@@ -188,8 +195,6 @@ static constexpr int16_t kReadOnlySliceId = std::numeric_limits<int16_t>::min();
 // Read only tables are replicated all over the place
 #define READ_ONLY_TABLE(Table)                          \
   SHARD_TABLE(Table) { return kReadOnlySliceId; }       \
-
-using SliceRoute = int (*)(int16_t slice_id);
 
 }
 

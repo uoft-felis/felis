@@ -7,8 +7,13 @@ namespace ycsb {
 using namespace felis;
 
 static constexpr int kTotal = 10;
+static constexpr int kNrMSBContentionKey = 6;
 
-static int DummySliceRouter(int16_t slice_id) { return 1; } // Always on node 1
+class DummySliceRouter {
+ public:
+  static int SliceToNodeId(int16_t slice_id) { return 1; } // Always on node 1
+};
+
 
 // static uint64_t *g_permutation_map;
 
@@ -35,14 +40,18 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
 {
   RMWStruct s;
 
+  int nr_lsb = 63 - __builtin_clzll(g_table_size) - kNrMSBContentionKey;
+  size_t mask = 0;
+  if (nr_lsb > 0) mask = (1 << nr_lsb) - 1;
+
   for (int i = 0; i < kTotal; i++) {
  again:
     // s.keys[i] = g_permutation_map[rand.next() % g_table_size];
     s.keys[i] = rand.next() % g_table_size;
     if (i < g_contention_key) {
-      s.keys[i] &= ~0x07FFF;
+      s.keys[i] &= ~mask;
     } else {
-      if ((s.keys[i] & 0x07FFF) == 0)
+      if ((s.keys[i] & mask) == 0)
         goto again;
     }
     for (int j = 0; j < i; j++)
@@ -65,7 +74,6 @@ class RMWTxn : public Txn<RMWState>, public RMWStruct {
 
   template <typename Func>
   void RunOnPartition(Func f) {
-    auto root = proc.promise();
     auto handle = index_handle();
     for (int i = 0; i < kTotal; i++) {
       auto part = (keys[i] * NodeConfiguration::g_nr_threads) / Client::g_table_size;
@@ -91,8 +99,7 @@ void RMWTxn::Prepare()
     INIT_ROUTINE_BRK(8192);
 
     // Omit the return value because this workload is totally single node
-    TxnIndexLookup<RMWState::LookupCompletion, void>(
-        DummySliceRouter,
+    TxnIndexLookup<DummySliceRouter, RMWState::LookupCompletion, void>(
         nullptr,
         KeyParam<Ycsb>(dbk, kTotal));
   } else {
@@ -140,26 +147,24 @@ void RMWTxn::Run()
             return row;
           });
     }
-
-    proc
-        | TxnProc(
-            1,
-            [](const auto &ctx, auto _) -> Optional<VoidValue> {
-              auto &[state, index_handle] = ctx;
-              for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-                state->futures[i].Invoke(&state, index_handle);
-              }
-              if (Client::g_dependency) {
-                for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-                  state->futures[i].Wait();
-                }
-              }
-              WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
-              for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
-                ReadRow(index_handle(state->rows[i]));
-              }
-              return nullopt;
-            });
+    root->Then(
+        MakeContext(), 1,
+        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+          auto &[state, index_handle] = ctx;
+          for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+            state->futures[i].Invoke(&state, index_handle);
+          }
+          if (Client::g_dependency) {
+            for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+              state->futures[i].Wait();
+            }
+          }
+          WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
+          for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
+            ReadRow(index_handle(state->rows[i]));
+          }
+          return nullopt;
+        });
 
   } else {
     if (Client::g_dependency)
@@ -256,7 +261,7 @@ void YcsbLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 1048576;
+size_t Client::g_table_size = 1048576 * 16;
 double Client::g_theta = 0.00;
 bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;

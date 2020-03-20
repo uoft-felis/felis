@@ -1,6 +1,5 @@
 # BUILD FILE SYNTAX: SKYLARK
 
-common_cflags = ['-pthread', '-Wstrict-aliasing', '-DCACHE_LINE_SIZE=64']
 includes = ['-I.', '-Ispdlog/include']
 
 tpcc_headers = [
@@ -33,20 +32,21 @@ ycsb_srcs = [
 
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
-    'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe.h', 'promise.h', 'sqltypes.h',
+    'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'promise.h', 'sqltypes.h',
     'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'vhandle_batchappender.h',
     'shipping.h', 'completion.h', 'entity.h',
-    'slice.h', 'vhandle_cch.h', 'priority.h',
+    'slice.h', 'vhandle_cch.h', 'tcp_node.h', 'priority.h',
 ]
 
 db_srcs = [
     'epoch.cc', 'txn.cc', 'log.cc', 'vhandle.cc', 'vhandle_sync.cc', 'vhandle_batchappender.cc',
     'gc.cc', 'index.cc', 'mem.cc',
     'promise.cc', 'masstree_index_impl.cc', 'node_config.cc', 'console.cc', 'console_client.cc',
-    'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc',
+    'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
     'felis_probes.cc',
     'priority.cc',
     'json11/json11.cpp',
+    'spdlog/src/spdlog.cpp',
     'xxHash/xxhash.c',
     'gopp/gopp.cc', 'gopp/channels.cc',
     'gopp/asm.S'] + [

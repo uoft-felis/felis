@@ -14,6 +14,8 @@ namespace felis {
 
 using sql::VarStr;
 
+// TODO: I need to update this doc.
+
 // Distributed Promise system. We can use promise to define the intra
 // transaction dependencies. The dependencies have to be acyclic.
 
@@ -27,7 +29,9 @@ using sql::VarStr;
 // nodes.
 
 class BasePromise;
+class PromiseRoutine;
 
+using PromiseRoutineWithInput = std::tuple<PromiseRoutine *, VarStr>;
 // Performance: It seems critical to keep this struct one cache line!
 struct PromiseRoutine {
   uint8_t *capture_data;
@@ -38,12 +42,12 @@ struct PromiseRoutine {
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 
   void (*callback)(PromiseRoutine *, VarStr input);
-  void *callback_native_func;
+  uint8_t (*node_func)(PromiseRoutine *, VarStr input);
 
   size_t NodeSize() const;
   uint8_t *EncodeNode(uint8_t *p);
 
-  void DecodeNode(go::TcpInputChannel *in);
+  size_t DecodeNode(uint8_t *p, size_t len);
 
   size_t TreeSize(const VarStr &input) const;
   void EncodeTree(uint8_t *p, const VarStr &input);
@@ -54,16 +58,13 @@ struct PromiseRoutine {
   uint8_t __padding__[8];
 
   static PromiseRoutine *CreateFromCapture(size_t capture_len);
-  static std::tuple<PromiseRoutine *, VarStr> CreateFromPacket(go::TcpInputChannel *in,
-                                                               size_t packet_len);
+  static PromiseRoutineWithInput CreateFromPacket(uint8_t *p, size_t packet_len);
 
   static constexpr size_t kUpdateBatchCounter = std::numeric_limits<uint64_t>::max() - (1ULL << 56);
   static constexpr size_t kBubble = std::numeric_limits<uint64_t>::max() - (1ULL << 56) - 0x00FFFFFF;
 };
 
 static_assert(sizeof(PromiseRoutine) == CACHE_LINE_SIZE);
-
-using PromiseRoutineWithInput = std::tuple<PromiseRoutine *, VarStr>;
 
 class EpochClient;
 
@@ -93,7 +94,7 @@ class BasePromise {
     void Run() final override;
     void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready = false) final override;
 
-    bool Preempt(bool force = false);
+    bool Preempt();
    private:
     void RunPromiseRoutine(PromiseRoutine *r, const VarStr &in);
   };
@@ -108,8 +109,7 @@ class BasePromise {
 
   static void *operator new(std::size_t size);
   static void *Alloc(size_t size);
-  static void InitializeSourceCount(int nr_sources, size_t nr_threads);
-  static void QueueRoutine(PromiseRoutineWithInput *routines, size_t nr_routines, int source_idx, int thread, bool batch = true);
+  static void QueueRoutine(PromiseRoutineWithInput *routines, size_t nr_routines, int core_id);
   static void FlushScheduler();
 
   size_t nr_routines() const { return nr_handlers; }
@@ -123,15 +123,15 @@ class BasePromise {
 
 static_assert(sizeof(BasePromise) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");
 
-class PromiseRoutineTransportService {;
+class PromiseRoutineTransportService {
  public:
   static constexpr size_t kPromiseMaxLevels = 16;
 
   virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
-  virtual void ForceFlushPromiseRoutine() {}
-  virtual void PreparePromisesToQueue(int core, int level, unsigned long nr) {}
-  virtual void FinishPromiseFromQueue(PromiseRoutine *routine) {}
-  virtual long UrgencyCount(int core_id) { return -1; }
+  virtual bool PeriodicIO(int core) { return false; }
+  virtual void PrefetchInbound() {};
+  virtual void FinishCompletion(int level) {}
+  virtual uint8_t GetNumberOfNodes() { return 0; }
 };
 
 class PriorityTxn;
@@ -157,7 +157,7 @@ class PromiseRoutineDispatchService {
   virtual void Add(int core_id, PromiseRoutineWithInput *r, size_t nr_routines) = 0;
   virtual void Add(int core_id, PriorityTxn *t) = 0;
   virtual void AddBubble() = 0;
-  virtual bool Preempt(int core_id, bool force, BasePromise::ExecutionRoutine *state) = 0;
+  virtual bool Preempt(int core_id, BasePromise::ExecutionRoutine *state) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
   virtual bool Peek(int core_id, PriorityTxn &txn) = 0;
   virtual void Reset() = 0;
@@ -199,6 +199,10 @@ class Promise : public BasePromise {
  public:
   typedef T Type;
 
+  Promise(PromiseRoutine *routine = nullptr) : BasePromise() {
+    if (routine) routine->next = this;
+  }
+
   template <typename Func, typename Closure>
   struct Next {
     typedef typename std::result_of<Func (const Closure &, T)>::type OptType;
@@ -206,11 +210,13 @@ class Promise : public BasePromise {
   };
 
   template <typename Func, typename Closure>
-  PromiseRoutine *AttachRoutine(const Closure &capture, Func func) {
+  PromiseRoutine *AttachRoutine(const Closure &capture, Func func,
+                                uint64_t affinity = std::numeric_limits<uint64_t>::max()) {
+    // C++17 allows converting from a non-capture lambda to a constexpr function pointer! Cool!
+    constexpr typename Next<Func, Closure>::OptType (*native_func)(const Closure &, T) = func;
+
     auto static_func =
         [](PromiseRoutine *routine, VarStr input) {
-          auto native_func = (typename Next<Func, Closure>::OptType(*)(
-              const Closure &, T))routine->callback_native_func;
           Closure capture;
           T t;
           capture.DecodeFrom(routine->capture_data);
@@ -219,6 +225,9 @@ class Promise : public BasePromise {
           auto next = routine->next;
           auto output = native_func(capture, t);
           if (next && next->nr_routines() > 0) {
+            auto &transport = util::Impl<PromiseRoutineTransportService>();
+            auto l = routine->level + 1;
+
             if (output) {
               void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
               VarStr *output_str = output->EncodeFromAlloca(buffer);
@@ -227,12 +236,13 @@ class Promise : public BasePromise {
               VarStr bubble(0, 0, (uint8_t *)PromiseRoutine::kBubblePointer);
               next->Complete(bubble);
             }
+
+            transport.FinishCompletion(l);
           }
-          util::Impl<PromiseRoutineTransportService>().FinishPromiseFromQueue(routine);
         };
     auto routine = PromiseRoutine::CreateFromCapture(capture.EncodeSize());
-    routine->callback = (void (*)(PromiseRoutine *, VarStr)) static_func;
-    routine->callback_native_func = (void *) (typename Next<Func, Closure>::OptType (*)(const Closure &, T)) func;
+    routine->callback = static_func;
+    routine->affinity = affinity;
     capture.EncodeTo(routine->capture_data);
 
     Add(routine);
@@ -245,14 +255,30 @@ class Promise : public BasePromise {
   Promise<typename Next<Func, Closure>::Type> *Then(
       const Closure &capture, int placement, Func func,
       uint64_t affinity = std::numeric_limits<uint64_t>::max()) {
-    auto routine = AttachRoutine(capture, func);
+    auto routine = AttachRoutine(capture, func, affinity);
     routine->node_id = placement;
-    routine->level = 0;
-    routine->affinity = affinity;
-    routine->sched_key = 0;
-    auto next_promise = new Promise<typename Next<Func, Closure>::Type>();
-    routine->next = next_promise;
-    return next_promise;
+    return new Promise<typename Next<Func, Closure>::Type>(routine);
+  }
+
+  template <typename Func, typename Closure, typename PlacementFunc>
+  Promise<typename Next<Func, Closure>::Type> *ThenDynamic(
+      const Closure &capture, PlacementFunc placement_func, Func func,
+      uint64_t affinity = std::numeric_limits<uint64_t>::max()) {
+    constexpr uint8_t (*native_placement_func)(const Closure&, T) = placement_func;
+    auto static_func =
+        [](PromiseRoutine *routine, VarStr input) -> uint8_t {
+          Closure capture;
+          T t;
+          capture.DecodeFrom(routine->capture_data);
+          t.Decode(&input);
+
+          return native_placement_func(capture, t);
+        };
+
+    auto routine = AttachRoutine(capture, func, affinity);
+    routine->node_id = 255;
+    routine->node_func = static_func;
+    return new Promise<typename Next<Func, Closure>::Type>(routine);
   }
 
 };
@@ -261,140 +287,11 @@ template <>
 class Promise<VoidValue> : public BasePromise {
  public:
 
-  Promise() {
+  Promise(PromiseRoutine *routine = nullptr) {
     std::abort();
   }
   static void *operator new(size_t size) noexcept {
     return nullptr;
-  }
-};
-
-template <typename T>
-class PromiseStream {
- protected:
-  Promise<T> *p;
- public:
-  PromiseStream(Promise<T> *p) : p(p) {}
-
-  Promise<T> *operator->() const {
-    return p;
-  }
-
-  Promise<T> *promise() const {
-    return p;
-  }
-
-  operator Promise<T>*() const {
-    return p;
-  }
-
-  template <typename Tuple>
-  struct ChainType {
-    using Closure = typename std::tuple_element<0, Tuple>::type;
-    using Func = typename std::tuple_element<2, Tuple>::type;
-    using Type = PromiseStream<typename Promise<T>::template Next<Func, Closure>::Type>;
-  };
-
-  template <typename Tuple>
-  typename ChainType<Tuple>::Type operator|(Tuple t) {
-    return typename ChainType<Tuple>::Type(p->Then(std::get<0>(t), std::get<1>(t), std::get<2>(t)));
-  }
-};
-
-class PromiseProc : public PromiseStream<DummyValue> {
- public:
-  PromiseProc() : PromiseStream<DummyValue>(nullptr) {}
-  PromiseProc(const PromiseProc &rhs) = delete;
-  PromiseProc(PromiseProc &&rhs) = delete;
-  ~PromiseProc();
-
-  void Reset() {
-    p = new Promise<DummyValue>();
-  }
-};
-
-struct BaseCombinerState {
-  std::atomic<long> finished_states;
-  BaseCombinerState() : finished_states(0) {}
-
-  long Finish() { return finished_states.fetch_add(1) + 1; }
-};
-
-template <typename ...Types>
-class CombinerState : public BaseCombinerState, public sql::TupleField<Types...> {
- public:
-  typedef sql::Tuple<Types...> TupleType;
-  typedef Promise<TupleType> PromiseType;
-  static constexpr size_t kNrFields = sizeof...(Types);
-};
-
-template <typename CombinerStatePtr, typename CombinerStateType, typename T, typename ...Types>
-static void CombineImplInstall(int node_id, CombinerStatePtr state_ptr,
-                               typename CombinerStateType::PromiseType *next_promise, Promise<T> *p) {
-  auto routine = p->AttachRoutine(
-      sql::Tuple<CombinerStatePtr>(state_ptr),
-      [](auto ctx, T result) -> Optional<typename CombinerStateType::TupleType> {
-        // We only set the first item in the tuple because of this cast!
-        CombinerStatePtr state_ptr;
-        ctx.Unpack(state_ptr);
-
-        auto *raw_state_ptr = (CombinerStateType *) state_ptr;
-        sql::TupleField<T, Types...> *tuple = raw_state_ptr;
-        tuple->value = result;
-
-        if (state_ptr->Finish() < CombinerStateType::kNrFields) {
-          return nullopt;
-        }
-
-        typename CombinerStateType::TupleType final_result(*raw_state_ptr);
-        return final_result;
-      });
-  routine->node_id = node_id;
-  routine->next = next_promise->Ref();
-}
-
-template <typename CombinerStatePtr, typename CombinerStateType, typename T, typename ...Types>
-class CombineImpl : public CombineImpl<CombinerStatePtr, CombinerStateType, Types...> {
- public:
-  void Install(int node_id, CombinerStatePtr state_ptr,
-               typename CombinerStateType::PromiseType *next_promise,
-               Promise<T> *p, Promise<Types>*... rest) {
-    CombineImplInstall<CombinerStatePtr, CombinerStateType, T, Types...>(node_id, state_ptr, next_promise, p);
-    CombineImpl<CombinerStatePtr, CombinerStateType, Types...>::Install(node_id, state_ptr, next_promise, rest...);
-  }
-};
-
-template <typename CombinerStatePtr, typename CombinerStateType, typename T>
-class CombineImpl<CombinerStatePtr, CombinerStateType, T> {
- public:
-  void Install(int node_id, CombinerStatePtr state_ptr,
-               typename CombinerStateType::PromiseType *next_promise,
-               Promise<T> *p) {
-    CombineImplInstall<CombinerStatePtr, CombinerStateType, T>(node_id, state_ptr, next_promise, p);
-  }
-};
-
-template <typename CombinerStatePtr, typename ...Types>
-class Combine {
-  typedef typename CombinerState<Types...>::PromiseType PromiseType;
-  CombineImpl<CombinerStatePtr, CombinerState<Types...>, Types...> impl;
-  PromiseType *next_promise = new PromiseType();
- public:
-  Combine(int node_id, CombinerStatePtr state_ptr, Promise<Types>*... args) {
-    impl.Install(node_id, state_ptr, next_promise, args...);
-    next_promise->UnRef();
-  }
-  PromiseType *operator->() const {
-    return next_promise;
-  }
-  PromiseType *promise() const {
-    return next_promise;
-  }
-  PromiseStream<typename PromiseType::Type> stream() const {
-    return PromiseStream<typename PromiseType::Type>(promise());
-  }
-  operator PromiseType*() const {
-    return next_promise;
   }
 };
 

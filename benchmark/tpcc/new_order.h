@@ -18,8 +18,6 @@ struct NewOrderStruct {
   uint customer_id;
   uint nr_items;
 
-  ulong new_order_id;
-
   uint ts_now;
 
   struct OrderDetail {
@@ -31,6 +29,8 @@ struct NewOrderStruct {
 
 
 struct NewOrderState {
+
+  /*
   VHandle *items[15]; // read-only
   struct ItemsLookupCompletion : public TxnStateCompletion<NewOrderState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
@@ -38,6 +38,7 @@ struct NewOrderState {
     }
   };
   NodeBitmap items_nodes;
+  */
 
   VHandle *orderlines[15]; // insert
   struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
