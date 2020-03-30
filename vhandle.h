@@ -93,6 +93,7 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t last_version() const { return versions[size - 1]; }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed); }
   short region_id() const { return alloc_by_regionid; }
+  short object_coreid() const { return this_coreid; }
   uint64_t contention_weight() const { return contention; }
  private:
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
@@ -101,13 +102,7 @@ class SortedArrayVHandle : public BaseVHandle {
     versions[pos] = sid;
   }
   void EnsureSpace();
-  void IncreaseSize(int delta) {
-    size += delta;
-    EnsureSpace();
-
-    std::fill(versions + capacity + size - delta, versions + capacity + size,
-              kPendingValue);
-  }
+  void IncreaseSize(int delta);
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 

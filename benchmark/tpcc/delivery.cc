@@ -27,7 +27,6 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
       PrepareImpl();
   }
   void PrepareInsert() override final {}
-
   void PrepareImpl();
 };
 
@@ -103,12 +102,18 @@ void DeliveryTxn::Run()
     for (auto &p: state->nodes[i]) {
       auto [node, bitmap] = p;
       if (bitmap == (1 << 3)) continue;
+      auto aff = std::numeric_limits<uint64_t>::max();
 
-      auto next = root->Then(
-          MakeContext(bitmap, i + 1, o_carrier_id, ts), node,
-          [](const auto &ctx, auto args) -> Optional<Tuple<int>> {
-            auto &[state, index_handle, bitmap, district_id, carrier_id, ts] = ctx;
-            int i = district_id - 1;
+      aff = client->get_execution_locality_manager().GetScheduleCore(
+          0x03,
+          {state->oorders[i], state->new_orders[i]});
+
+      root->Then(
+          MakeContext(bitmap, i, o_carrier_id), node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle, bitmap, i, carrier_id] = ctx;
+
+            probes::TpccDelivery{0, __builtin_popcount(bitmap)}();
 
             if (bitmap & (1 << 4)) {
               index_handle(state->new_orders[i]).Delete();
@@ -123,6 +128,25 @@ void DeliveryTxn::Run()
               ClientBase::OnUpdateRow(state->oorders[i]);
             }
 
+            return nullopt;
+          }, aff);
+
+      VHandle *valid_rows[16];
+      int nr_valid_rows = 0;
+      for (int j = 0; j < 15; j++) {
+        if (state->order_lines[i][j] == nullptr) break;
+        valid_rows[nr_valid_rows++] = state->order_lines[i][j];
+      }
+      valid_rows[nr_valid_rows++] = state->customers[i];
+
+      aff = client->get_execution_locality_manager().GetScheduleCore(
+          (1 << nr_valid_rows) - 1, valid_rows);
+
+      auto next = root->Then(
+          MakeContext(bitmap, i, ts), node,
+          [](const auto &ctx, auto args) -> Optional<Tuple<int>> {
+            auto &[state, index_handle, bitmap, i, ts] = ctx;
+
             if (bitmap & (1 << 0)) {
               int sum = 0;
               for (int j = 0; j < 15; j++) {
@@ -131,6 +155,9 @@ void DeliveryTxn::Run()
                 auto ol = handle.template Read<OrderLine::Value>();
                 sum += ol.ol_amount;
                 ol.ol_delivery_d = ts;
+
+                probes::TpccDelivery{1, 1}();
+
                 handle.Write(ol);
                 ClientBase::OnUpdateRow(state->order_lines[i][j]);
               }
@@ -138,6 +165,8 @@ void DeliveryTxn::Run()
 #ifdef SPLIT_CUSTOMER_PIECE
               return Tuple<int>(sum);
 #else
+              probes::TpccDelivery{1, 1}();
+
               auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
               customer.c_balance = sum;
               index_handle(state->customers[i]).Write(customer);
@@ -146,7 +175,7 @@ void DeliveryTxn::Run()
             }
 
             return nullopt;
-          });
+          }, aff);
 
 #ifdef SPLIT_CUSTOMER_PIECE
       if (node == sum_node) {

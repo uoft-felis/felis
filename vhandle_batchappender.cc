@@ -266,10 +266,10 @@ void BatchAppender::Reset()
         auto row = p->backrefs[i];
         row->buf_pos.store(-1, std::memory_order_release);
 
-        if (!Options::kVHandleParallel) continue;
+        if (!Options::kOnDemandSplitting) continue;
 
         auto w = row->size - row->nr_updated();
-        if (w <= EpochClient::g_vhandle_parallel_threshold) continue;
+        if (w <= EpochClient::g_splitting_threshold) continue;
 
         row->contention = cw_end;
         cw_end += w;
@@ -289,7 +289,7 @@ void BatchAppender::Reset()
   for (int core = 0; core < nr_threads; core++) {
     buffer_heads[core] = g_alloc[core / mem::kNrCorePerNode].AllocHead(core);
   }
-  if (Options::kVHandleParallel) {
+  if (Options::kOnDemandSplitting) {
     logger->info("Contention Weight {} {} ", cw_begin, cw_end);
   }
 }

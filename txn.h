@@ -360,12 +360,12 @@ class Txn : public BaseTxn {
     auto w = row->nr_versions() - row->nr_updated();
     new (future) FutureType;
 
-    if (Options::kVHandleBatchAppend && Options::kVHandleParallel) {
+    if (Options::kVHandleBatchAppend && Options::kOnDemandSplitting) {
       auto &appender = util::Instance<BatchAppender>();
       auto total_scale = appender.contention_weight_end() - appender.contention_weight_begin();
       if (total_scale == 0
           || row->contention_weight() < appender.contention_weight_begin()
-          || w <= EpochClient::g_vhandle_parallel_threshold)
+          || w <= EpochClient::g_splitting_threshold)
         goto nosplit;
 
       static thread_local util::XORRandom64 local_rand;
@@ -420,97 +420,6 @@ class Txn : public BaseTxn {
 
     return future;
   }
-
-#if 0
-  template <typename RowFunc, typename LastFunc, typename ...Types>
-  void TxnHotKeys(int node, VHandle** hot_begin, VHandle **hot_end,
-                  RowFunc rowfunc, LastFunc lastfunc, Types... params) {
-    using RowFuncPtr = void (*)(const ContextType<Types...> &, VHandle **);
-    using LastFuncPtr = void (*)(const ContextType<Types...> &);
-
-    uint64_t splitted_bitmap = 0;
-    LastFuncPtr lastfunc_ptr = (LastFuncPtr) lastfunc;
-
-    if (!Options::kVHandleBatchAppend || !Options::kVHandleParallel) {
-      goto main_piece;
-    } else {
-      auto &appender = util::Instance<BatchAppender>();
-      auto total_scale = appender.contention_weight_end() - appender.contention_weight_begin();
-
-      abort_if(hot_end - hot_begin > 63, "TxnHotKeys does not support > 63 keys");
-
-      if (total_scale == 0)
-        goto main_piece;
-
-      for (auto p = hot_begin; p != hot_end; p++) {
-        auto w = (*p)->nr_versions() - (*p)->nr_updated();
-        if ((*p)->contention_weight() < appender.contention_weight_begin()
-            || w <= Options::kVHandleParallel.ToInt() * EpochClient::g_txn_per_epoch / 1000)
-          continue;
-
-        splitted_bitmap |= 1ULL << (p - hot_begin);
-        auto routine = root_promise()->AttachRoutine(
-            sql::MakeTuple(p, (RowFuncPtr) rowfunc, MakeContext(params...)),
-            [](const sql::Tuple<VHandle **, RowFuncPtr, ContextType<Types...>> &ctx, DummyValue _)
-            -> Optional<VoidValue> {
-              auto &[p, rowfunc, real_ctx] = ctx;
-              rowfunc(real_ctx, p);
-              return nullopt;
-            });
-        static thread_local util::XORRandom64 local_rand;
-        auto lower = (*p)->contention_weight() - appender.contention_weight_begin();
-        auto upper = lower + w;
-        auto aff = lower * NodeConfiguration::g_nr_threads / total_scale;
-        auto upper_aff = (upper - 1) * NodeConfiguration::g_nr_threads / total_scale;
-        if (aff != upper_aff) {
-          if (aff / mem::kNrCorePerNode != upper_aff / mem::kNrCorePerNode) {
-            // They belong to different sockets
-            auto numa_node = (lower + upper - 1) * NodeConfiguration::g_nr_threads
-                             / 2 / total_scale / mem::kNrCorePerNode;
-            if (aff / mem::kNrCorePerNode != numa_node) {
-              lower = numa_node * mem::kNrCorePerNode * total_scale / NodeConfiguration::g_nr_threads;
-            }
-            if (upper_aff / mem::kNrCorePerNode != numa_node) {
-              upper = ((numa_node + 1) * mem::kNrCorePerNode) * total_scale / NodeConfiguration::g_nr_threads;
-            }
-          }
-          aff = local_rand.NextRange(lower, upper) * NodeConfiguration::g_nr_threads / total_scale;
-        }
-        routine->affinity = aff;
-        routine->level = 0;
-        routine->node_id = node;
-        routine->next = nullptr;
-
-        // put routine at the beginning of execution turns out isn't a good idea
-        // routine->sched_key = serial_id() & 0x00FFFFFFFF;
-        routine->sched_key = serial_id();
-      }
-    }
-
-    // There is nothing in the main_piece. Both lastfunc and the main piece have
-    // to be none.
-    if (lastfunc_ptr == nullptr && __builtin_popcount(splitted_bitmap) == hot_end - hot_begin)
-      return;
-
- main_piece:
-
-    proc
-        | std::tuple(
-            sql::MakeTuple(hot_begin, hot_end, (RowFuncPtr) rowfunc, lastfunc_ptr, splitted_bitmap, MakeContext(params...)),
-            node,
-            [](const sql::Tuple<VHandle **, VHandle **, RowFuncPtr, LastFuncPtr, uint64_t, ContextType<Types...>> &ctx, DummyValue _)
-            -> Optional<VoidValue> {
-              auto &[hot_begin, hot_end, rowfunc, lastfunc, splitted_bitmap, real_ctx] = ctx;
-              for (auto p = hot_begin; p != hot_end; p++) {
-                if (splitted_bitmap & (1ULL << (p - hot_begin))) continue;
-                rowfunc(real_ctx, p);
-              }
-              if (lastfunc)
-                lastfunc(real_ctx);
-              return nullopt;
-            });
-  }
-#endif
 
  private:
   template <typename Router, typename KParam, typename ...KParams>

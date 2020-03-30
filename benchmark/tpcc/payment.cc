@@ -80,11 +80,18 @@ void PaymentTxn::Run()
         aff = warehouse_id - 1;
       } else if (filter == 0x02) {
         aff = customer_warehouse_id - 1;
+      } else {
+        aff = client->get_execution_locality_manager().GetScheduleCore(
+            0x01,
+            {state->warehouse, state->district, state->customer});
       }
       root->Then(
           MakeContext(bitmap, payment_amount, filter), node,
           [](const auto &ctx, auto args) -> Optional<VoidValue> {
             auto &[state, index_handle, bitmap, payment_amount, filter] = ctx;
+
+            probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
+
             if ((bitmap & 0x01) && (filter & 0x01)) {
               // Warehouse
               TxnVHandle vhandle = index_handle(state->warehouse);

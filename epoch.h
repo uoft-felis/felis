@@ -9,6 +9,7 @@
 #include "mem.h"
 #include "completion.h"
 #include "shipping.h"
+#include "locality_manager.h"
 
 namespace felis {
 
@@ -136,7 +137,7 @@ class EpochClient {
   static bool g_enable_granola;
 
   static long g_corescaling_threshold;
-  static long g_vhandle_parallel_threshold;
+  static long g_splitting_threshold;
 
   EpochClient();
   virtual ~EpochClient() {}
@@ -147,6 +148,7 @@ class EpochClient {
 
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
+  LocalityManager &get_execution_locality_manager() { return exec_lmgr; }
 
   virtual unsigned int LoadPercentage() = 0;
   unsigned long NumberOfTxns() {
@@ -185,8 +187,7 @@ class EpochClient {
   std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
-
-  bool disable_load_balance;
+  LocalityManager exec_lmgr;
 
   NodeConfiguration &conf;
 };

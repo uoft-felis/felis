@@ -31,13 +31,13 @@ ycsb_srcs = [
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'promise.h', 'sqltypes.h',
-    'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'vhandle_batchappender.h',
+    'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'vhandle_batchappender.h', 'locality_manager.h',
     'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
 ]
 
 db_srcs = [
-    'epoch.cc', 'txn.cc', 'log.cc', 'vhandle.cc', 'vhandle_sync.cc', 'vhandle_batchappender.cc',
+    'epoch.cc', 'txn.cc', 'log.cc', 'vhandle.cc', 'vhandle_sync.cc', 'vhandle_batchappender.cc', 'locality_manager.cc',
     'gc.cc', 'index.cc', 'mem.cc',
     'promise.cc', 'masstree_index_impl.cc', 'node_config.cc', 'console.cc', 'console_client.cc',
     'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',

@@ -5,6 +5,7 @@
 #include "log.h"
 #include "vhandle.h"
 #include "node_config.h"
+#include "epoch.h"
 #include "gc.h"
 
 #include "opts.h"
@@ -68,14 +69,36 @@ void SortedArrayVHandle::EnsureSpace()
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
     auto new_cap = 1U << (32 - __builtin_clz((unsigned int) size));
     auto new_versions = EnlargePair64Array(versions, capacity, alloc_by_regionid, new_cap);
-    if (new_versions == nullptr) {
-      logger->critical("Memory allocation failure, last GC {}, second ver epoch {}", last_gc_mark_epoch, versions[1] >> 32);
-      std::abort();
+
+    abort_if(new_versions == nullptr,
+             "Memory allocation failure, last GC {}, second ver epoch {}",
+             last_gc_mark_epoch, versions[1] >> 32);
+    /*
+    if (EpochClient::g_workload_client) {
+      auto &lm = EpochClient::g_workload_client->get_execution_locality_manager();
+      lm.PlanLoad(alloc_by_regionid, -1 * (long) size);
+      lm.PlanLoad(current_regionid, (long) size);
     }
+    */
+
     versions = new_versions;
     capacity = new_cap;
     alloc_by_regionid = current_regionid;
   }
+}
+
+void SortedArrayVHandle::IncreaseSize(int delta)
+{
+  if (EpochClient::g_workload_client) {
+    auto &lm = EpochClient::g_workload_client->get_execution_locality_manager();
+    lm.PlanLoad(this_coreid, (long) delta);
+  }
+  size += delta;
+  EnsureSpace();
+
+  std::fill(versions + capacity + size - delta,
+            versions + capacity + size,
+            kPendingValue);
 }
 
 void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr)
@@ -128,6 +151,8 @@ unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsign
 // Insert a new version into the version array, with value pending.
 void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 {
+  probes::VHandleAppend{this, sid, alloc_by_regionid}();
+
   if (likely(!VHandleSyncService::g_lock_elision)) {
     util::MCSSpinLock::QNode qnode;
     VersionBufferHandle handle;
@@ -241,6 +266,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   // Writing to exact location
   sync().OfferData(addr, (uintptr_t) obj);
 
+  probes::VersionWrite{this, epoch_nr}();
+
   unsigned int ver = latest_version.load();
   unsigned int latest = it - versions;
   while (latest > ver) {
@@ -257,6 +284,8 @@ bool SortedArrayVHandle::WriteExactVersion(unsigned int version_idx, VarStr *obj
   volatile uintptr_t *addr = versions + capacity + version_idx;
   // sync().OfferData(addr, (uintptr_t) obj);
   *addr = (uintptr_t) obj;
+
+  probes::VersionWrite{this}();
 
   unsigned int ver = latest_version.load();
   while (version_idx > ver) {

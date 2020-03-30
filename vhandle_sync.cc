@@ -141,18 +141,21 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
       // Because periodic flush will run on all cores, we just have to flush our
       // own per-core buffer.
       transport.PeriodicIO(core_id);
+    }
 
+    if ((wait_cnt & 0x00FF) == 0) {
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         // logger->info("Preempt back");
         return true;
       }
     }
+
     if (slot(core_id)->done.load(std::memory_order_acquire))
       break;
     _mm_pause();
   }
 
-  probes::WaitCounters{wait_cnt, sid, ver}();
+  probes::WaitCounters{wait_cnt, sid, ver, *ptr}();
   slot(core_id)->done.store(false, std::memory_order_release);
   return true;
 }

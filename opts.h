@@ -66,7 +66,8 @@ struct Options {
 
   // In 0.001 of txns per-epoch
   static inline const auto kCoreScaling = Option("CoreScaling");
-  static inline const auto kVHandleParallel = Option("VHandleParallel");
+  static inline const auto kOnDemandSplitting = Option("OnDemandSplitting");
+  static inline const auto kLocalityManagement = Option("LocalityManagement");
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");
   static inline const auto kTpccHotWarehouseBitmap = Option("TpccHotWarehouseBitmap");

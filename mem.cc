@@ -387,6 +387,7 @@ void SlabPool::ReturnSlab()
 void *SlabPool::Alloc()
 {
   if (chunk_size == 0) return nullptr;
+
   stats.used += chunk_size;
   stats.watermark = std::max(stats.used, stats.watermark);
 

@@ -24,7 +24,7 @@ namespace felis {
 EpochClient *EpochClient::g_workload_client = nullptr;
 bool EpochClient::g_enable_granola = false;
 long EpochClient::g_corescaling_threshold = 0;
-long EpochClient::g_vhandle_parallel_threshold = 0;
+long EpochClient::g_splitting_threshold = 0;
 size_t EpochClient::g_txn_per_epoch = 100000;
 
 void EpochCallback::operator()(unsigned long cnt)
@@ -119,7 +119,6 @@ EpochClient::EpochClient()
     : control(this),
       callback(EpochCallback(this)),
       completion(0, callback),
-      disable_load_balance(false),
       conf(util::Instance<NodeConfiguration>())
 {
   callback.perf.End();
@@ -157,8 +156,8 @@ EpochClient::EpochClient()
                  wc, g_corescaling_threshold);
   }
 
-  if (Options::kVHandleParallel) {
-    g_vhandle_parallel_threshold = Options::kVHandleParallel.ToInt();
+  if (Options::kOnDemandSplitting) {
+    g_splitting_threshold = Options::kOnDemandSplitting.ToInt();
   }
 }
 
@@ -358,9 +357,10 @@ void EpochClient::InitializeEpoch()
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
-  disable_load_balance = true;
   cur_txns = &all_txns[epoch_nr - 1];
   total_nr_txn = NumberOfTxns();
+
+  get_execution_locality_manager().Reset();
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
@@ -398,6 +398,8 @@ void EpochClient::OnInitializeComplete()
   }
 
   util::Impl<VHandleSyncService>().ClearWaitCountStats();
+  get_execution_locality_manager().Balance();
+  get_execution_locality_manager().PrintLoads();
 
   auto &mgr = util::Instance<EpochManager>();
 

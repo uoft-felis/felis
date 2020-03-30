@@ -18,6 +18,8 @@
 #include "tpcc.h"
 #include "opts.h"
 
+#include "felis_probes.h"
+
 namespace tpcc {
 
 using felis::Relation;
@@ -438,6 +440,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
           SetAllocAffinity(core_id);
           auto handle = relation(TableType::Warehouse).SearchOrCreate(k.EncodeFromAlloca(large_buf));
+          printf("warehouse %d coreid %d\n", k.w_id, handle->object_coreid());
           OnNewRow(slice_id, TableType::Warehouse, k, handle);
           felis::InitVersion(handle, v.Encode());
         });

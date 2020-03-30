@@ -95,7 +95,6 @@ void NewOrderTxn::PrepareImpl()
   INIT_ROUTINE_BRK(8192);
 
   // abort_if(nr_items < 5, "WTF {}", nr_items);
-
   state->stocks_nodes =
       TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
           nullptr,
@@ -128,6 +127,76 @@ void NewOrderTxn::Run()
       all_local = false;
   }
 
+  for (auto &p: state->other_inserts_nodes) {
+    auto [node, bitmap] = p;
+    auto aff = std::numeric_limits<uint64_t>::max();
+
+    aff = client->get_execution_locality_manager().GetScheduleCore(
+        bitmap,
+        {state->oorder, state->neworder});
+
+    root->Then(
+        MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
+        [](const auto &ctx, auto args) -> Optional<VoidValue> {
+          auto &[state, index_handle, bitmap, customer_id, nr_items, ts_now,
+                 all_local] = ctx;
+          probes::TpccNewOrder{0, __builtin_popcount(bitmap)}();
+
+          if (bitmap & 0x01) {
+            index_handle(state->oorder)
+                .Write(OOrder::Value::New(customer_id, 0, nr_items,
+                                          all_local, ts_now));
+            ClientBase::OnUpdateRow(state->oorder);
+          }
+
+          if (bitmap & 0x02) {
+            index_handle(state->neworder).Write(NewOrder::Value());
+            ClientBase::OnUpdateRow(state->neworder);
+          }
+
+          return nullopt;
+        },
+        aff);
+  }
+
+  for (auto &p: state->orderlines_nodes) {
+    auto [node, bitmap] = p;
+    auto aff = std::numeric_limits<uint64_t>::max();
+
+    aff = client->get_execution_locality_manager().GetScheduleCore(
+        bitmap,
+        state->orderlines);
+
+    root->Then(
+        MakeContext(bitmap, detail), node,
+        [](const auto &ctx, auto args) -> Optional<VoidValue> {
+          auto &[state, index_handle, bitmap, detail] = ctx;
+          auto &mgr = util::Instance<RelationManager>();
+
+          INIT_ROUTINE_BRK(4096);
+
+          for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+            if ((bitmap & (1 << i)) == 0) continue;
+
+            auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeFromRoutine());
+            auto item_value = index_handle(item).template Read<Item::Value>();
+            auto amount = item_value.i_price * detail.order_quantities[i];
+
+            probes::TpccNewOrder{1, 1}();
+
+            index_handle(state->orderlines[i])
+                .Write(OrderLine::Value::New(detail.item_id[i], 0, amount,
+                                             detail.supplier_warehouse_id[i],
+                                             detail.order_quantities[i]));
+            ClientBase::OnUpdateRow(state->orderlines[i]);
+          }
+
+          return nullopt;
+        },
+        aff);
+  }
+
+
   for (auto &p: state->stocks_nodes) {
     auto [node, bitmap] = p;
 
@@ -157,6 +226,7 @@ void NewOrderTxn::Run()
       auto aff = std::numeric_limits<uint64_t>::max();
 
       if (filter > 0) aff = filter - 1;
+      else aff = client->get_execution_locality_manager().GetScheduleCore(bitmap, state->stocks);
 
       root->Then(
           MakeContext(bitmap, params, filter), node,
@@ -171,6 +241,9 @@ void NewOrderTxn::Run()
 
               TxnVHandle vhandle = index_handle(state->stocks[i]);
               auto stock = vhandle.Read<Stock::Value>();
+
+              probes::TpccNewOrder{2, 1}();
+
               if (stock.s_quantity - params.quantities[i] < 10) {
                 stock.s_quantity += 91;
               }
@@ -190,56 +263,6 @@ void NewOrderTxn::Run()
     }
   }
 
-  for (auto &p: state->other_inserts_nodes) {
-    auto [node, bitmap] = p;
-    root->Then(
-        MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
-        [](const auto &ctx, auto args) -> Optional<VoidValue> {
-          auto &[state, index_handle, bitmap, customer_id, nr_items, ts_now,
-                 all_local] = ctx;
-          if (bitmap & 0x01) {
-            index_handle(state->oorder)
-                .Write(OOrder::Value::New(customer_id, 0, nr_items,
-                                          all_local, ts_now));
-            ClientBase::OnUpdateRow(state->oorder);
-          }
-
-          if (bitmap & 0x02) {
-            index_handle(state->neworder).Write(NewOrder::Value());
-            ClientBase::OnUpdateRow(state->neworder);
-          }
-
-          return nullopt;
-        });
-  }
-
-  for (auto &p: state->orderlines_nodes) {
-    auto [node, bitmap] = p;
-    root->Then(
-        MakeContext(bitmap, detail), node,
-        [](const auto &ctx, auto args) -> Optional<VoidValue> {
-          auto &[state, index_handle, bitmap, detail] = ctx;
-          auto &mgr = util::Instance<RelationManager>();
-
-          INIT_ROUTINE_BRK(4096);
-
-          for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
-            if ((bitmap & (1 << i)) == 0) continue;
-
-            auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeFromRoutine());
-            auto item_value = index_handle(item).template Read<Item::Value>();
-            auto amount = item_value.i_price * detail.order_quantities[i];
-
-            index_handle(state->orderlines[i])
-                .Write(OrderLine::Value::New(detail.item_id[i], 0, amount,
-                                             detail.supplier_warehouse_id[i],
-                                             detail.order_quantities[i]));
-            ClientBase::OnUpdateRow(state->orderlines[i]);
-          }
-
-          return nullopt;
-        });
-  }
   if (Client::g_enable_granola)
     root_promise()->AssignAffinity(warehouse_id - 1);
 }
