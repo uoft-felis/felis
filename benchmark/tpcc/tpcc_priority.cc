@@ -1,4 +1,3 @@
-#include "epoch.h"
 #include "benchmark/tpcc/tpcc_priority.h"
 
 namespace tpcc {
@@ -24,14 +23,16 @@ StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>()
 
 bool StockTxn_Run(felis::PriorityTxn *txn)
 {
-  StockTxnInput input = dynamic_cast<tpcc::Client*>
+  // generate txn input
+  StockTxnInput txnInput = dynamic_cast<tpcc::Client*>
       (felis::EpochClient::g_workload_client)->GenerateTransactionInput<StockTxnInput>();
   std::vector<Stock::Key> stock_keys;
-  for (int i = 0; i < input.nr_items; ++i) {
-    stock_keys.push_back(Stock::Key::New(input.warehouse_id,
-                                         input.detail.item_id[i]));
+  for (int i = 0; i < txnInput.nr_items; ++i) {
+    stock_keys.push_back(Stock::Key::New(txnInput.warehouse_id,
+                                         txnInput.detail.item_id[i]));
   }
 
+  // init
   logger->info("[Pri] Priority Txn {} Running!", txn->serial_id());
   std::vector<felis::VHandle*> stock_rows;
   if (!(txn->InitRegisterUpdate<tpcc::Stock>(stock_keys, stock_rows))) {
@@ -44,19 +45,36 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   }
   logger->info("[Pri] Init() succuess!");
 
-  // TODO: issue PromiseRoutine
-  // for (int i = 0; i < input.nr_items; ++i) {
-  //   logger->info("[Pri] Priority Txn {} updating its {} row {}",
-  //         txn->serial_id(), i, (void *) stock_rows[i]);
+  struct Context {
+    uint warehouse_id;
+    uint item_id;
+    uint quantity;
+    felis::VHandle* stock_row;
+    felis::PriorityTxn *txn;
+  };
 
-  //   auto stock = txn->Read<Stock::Value>(stock_rows[i]);
-  //   stock.s_quantity += input.detail.stock_quantities[i];
-  //   txn->Write(stock_rows[i], stock);
-  //   ClientBase::OnUpdateRow(stock_rows[i]);
+  // issue promise
+  for (int i = 0; i < txnInput.nr_items; ++i) {
+    auto lambda =
+        [](std::tuple<Context> capture) {
+          auto [ctx] = capture;
+            auto stock = ctx.txn->Read<Stock::Value>(ctx.stock_row);
+            printf("LAMBDA updates: w_id %u, i_id %u, %u -> %u, %p\n",
+                   ctx.warehouse_id, ctx.item_id, stock.s_quantity,
+                   stock.s_quantity + ctx.quantity, ctx.stock_row);
+            stock.s_quantity += ctx.quantity;
+            ctx.txn->Write(ctx.stock_row, stock);
+            ClientBase::OnUpdateRow(ctx.stock_row);
 
-  //   logger->info("[Pri] Priority Txn {} updated its {} row {}",
-  //         txn->serial_id(), i, (void *)stock_rows[i]);
-  // }
+        };
+    Context ctx{txnInput.warehouse_id,
+                txnInput.detail.item_id[i],
+                txnInput.detail.stock_quantities[i],
+                stock_rows[i],
+                txn};
+    txn->IssuePromise(ctx, lambda);
+  }
+
   return txn->Commit();
 }
 

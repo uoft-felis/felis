@@ -14,6 +14,7 @@
 #include "mem.h"
 #include "gc.h"
 #include "opts.h"
+#include "priority.h"
 
 #include "literals.h"
 

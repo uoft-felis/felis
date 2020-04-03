@@ -1,6 +1,7 @@
 #ifndef PRIORITY_H
 #define PRIORITY_H
 
+#include "epoch.h"
 #include "masstree_index_impl.h"
 
 namespace felis {
@@ -72,7 +73,7 @@ class PriorityTxn {
     return this->callback(this);
   }
 
-  // APIs for the callback to use
+ public: // APIs for the callback to use
   uint64_t serial_id() { return sid; }
 
   // find the VHandle in Masstree, store it, return success or not
@@ -117,6 +118,39 @@ class PriorityTxn {
     return handle->WriteWithVersion(sid, o.Encode(), sid >> 32);
   }
 
+
+  template <typename T, typename Lambda>
+  void IssuePromise(T input, Lambda lambda) {
+    auto capture = std::make_tuple(input);
+    auto empty_input = felis::VarStr::FromAlloca(alloca(sizeof(felis::VarStr)), sizeof(felis::VarStr));
+
+    // convert non-capture lambda to constexpr func ptr
+    constexpr void (*native_func)(std::tuple<T> capture) = lambda;
+
+    // this static func is what the worker will actually run.
+    //   (in ExecutionRoutine::RunPromiseRoutine())
+    // it decodes routine->capture_data into capture, and pass it back to lambda
+    using serializer = sql::Serializer<std::tuple<T>>;
+    auto static_func =
+        [](felis::PromiseRoutine *routine, felis::VarStr input) {
+            std::tuple<T> capture;
+            serializer::DecodeFrom(&capture, routine->capture_data);
+            native_func(capture);
+        };
+
+    // construct PromiseRoutine
+    auto routine = PromiseRoutine::CreateFromCapture(serializer::EncodeSize(&capture));
+    routine->callback = static_func;
+    routine->sched_key = this->serial_id();
+    serializer::EncodeTo(routine->capture_data, &capture);
+
+    // put PromiseRoutineWithInput into PQ
+    EpochClient::g_workload_client->completion_object()->Increment(1);
+    PromiseRoutineWithInput tuple = std::make_tuple(routine, *empty_input);
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &tuple, 1);
+    logger->info("I think I have put the lambda into the PQ!");
+  }
 
   // if doing OCC, check write set and commit and stuff
   bool Commit() {

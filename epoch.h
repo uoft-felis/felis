@@ -9,7 +9,6 @@
 #include "mem.h"
 #include "completion.h"
 #include "shipping.h"
-#include "priority.h"
 
 namespace felis {
 
