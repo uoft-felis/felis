@@ -15,7 +15,11 @@ class PriorityTxnService {
   std::atomic_int core;
 
  public:
+  // total number of priority txn queue length
   static size_t g_queue_length;
+  // extra percentage of slots to add. say we have 100 batched txns, % is 20,
+  // then we add 20 slots, making the serial_id space 120.
+  static size_t g_slot_percentage;
 
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);

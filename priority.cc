@@ -4,11 +4,14 @@
 namespace felis {
 
 size_t PriorityTxnService::g_queue_length = 32_K;
+size_t PriorityTxnService::g_slot_percentage = 0;
 
 PriorityTxnService::PriorityTxnService()
 {
   if (Options::kTxnQueueLength)
     PriorityTxnService::g_queue_length = Options::kTxnQueueLength.ToLargeNumber();
+  if (Options::kSlotPercentage)
+    PriorityTxnService::g_slot_percentage = Options::kSlotPercentage.ToInt();
   this->core = 0;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
@@ -29,18 +32,34 @@ void PriorityTxnService::PushTxn(PriorityTxn* txn) {
 
 uint64_t PriorityTxnService::GetSIDLowerBound()
 {
+  uint64_t max = this->GetMaxProgress();
+  uint64_t node_id = max & 0xFF, epoch_nr = max >> 32, seq = max >> 8 & 0xFFFFFF;
+
   // TODO: backoff scheme
-  return this->GetMaxProgress() + 1000;
+  uint64_t new_seq = seq + 1;
+
+  return (epoch_nr << 32) | (new_seq << 8) | node_id;
 }
 
 // TODO: multi-threaded, multi entrance
 uint64_t PriorityTxnService::GetAvailableSID()
 {
   uint64_t lower_bound = GetSIDLowerBound();
+  printf("lower_bound: %lu\n", lower_bound);
+
+  uint64_t node_id = lower_bound & 0xFF, epoch_nr = lower_bound >> 32;
+  uint64_t seq = lower_bound >> 8 & 0xFFFFFF;
+
+  abort_if(PriorityTxnService::g_slot_percentage <= 0, "pri % is {}",
+           PriorityTxnService::g_slot_percentage);
+  // every k serial id has 1 slot reversed for priority txn in the back
+  int k = 1 + 100 / PriorityTxnService::g_slot_percentage;
+  uint64_t new_seq = (seq/k + 1) * k;
+
   // uint64_t res = find(start from lower_bound);
   // if (not found)
   //   return -1;
-  return (lower_bound | 0xFFFFFFFF000000FF) | (14000 << 8);
+  return (epoch_nr << 32) | (new_seq << 8) | node_id;
 }
 
 // do the ad hoc initialization.
@@ -52,6 +71,8 @@ bool PriorityTxn::Init()
     return false;
 
   sid = util::Instance<PriorityTxnService>().GetAvailableSID();
+  printf("sid: %lu\n", sid);
+
   if (sid == -1)
     return false;
 
@@ -70,8 +91,12 @@ bool PriorityTxn::Init()
 
   if (failed) {
   // set inserted version to "kIgnoreValue"
-    for (int i = 0; i < failed; ++i)
+    for (int i = 0; i < failed; ++i) {
       update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
+      printf("reverted handle %p\n", update_handles[i]);
+    }
+    logger->info("[Pri] reverted {} rows", failed);
+
     return false;
   }
 

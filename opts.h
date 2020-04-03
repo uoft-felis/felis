@@ -83,6 +83,7 @@ struct Options {
 
   static inline const auto kPriorityTxn = Option("PriorityTxn");
   static inline const auto kTxnQueueLength = Option("TxnQueueLength");
+  static inline const auto kSlotPercentage = Option("SlotPercentage");
 
   static inline bool ParseExtentedOptions(std::string arg)
   {
