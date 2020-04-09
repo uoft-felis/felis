@@ -112,6 +112,7 @@ void LocalityManager::OffloadCore(int core, WeightDist &w, long limit)
 
 void LocalityManager::PrintLoads()
 {
+  if (!enable) return;
   fmt::memory_buffer buffer;
   for (int core = 0; core < NodeConfiguration::g_nr_threads; core++) {
     auto &w = (*per_core_weights[core]);
