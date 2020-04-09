@@ -30,7 +30,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
 
   versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
-  latest_version.store(0);
+  latest_version.store(-1);
 }
 
 bool SortedArrayVHandle::ShouldScanSkip(uint64_t sid)
@@ -268,8 +268,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 
   probes::VersionWrite{this, epoch_nr}();
 
-  unsigned int ver = latest_version.load();
-  unsigned int latest = it - versions;
+  int ver = latest_version.load();
+  int latest = it - versions;
   while (latest > ver) {
     if (latest_version.compare_exchange_strong(ver, latest))
       break;
@@ -287,7 +287,7 @@ bool SortedArrayVHandle::WriteExactVersion(unsigned int version_idx, VarStr *obj
 
   probes::VersionWrite{this}();
 
-  unsigned int ver = latest_version.load();
+  int ver = latest_version.load();
   while (version_idx > ver) {
     if (latest_version.compare_exchange_strong(ver, version_idx))
       break;

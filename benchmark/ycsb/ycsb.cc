@@ -138,6 +138,7 @@ void RMWTxn::ReadRow(TxnVHandle vhandle)
 void RMWTxn::Run()
 {
   if (!Client::g_enable_partition) {
+    auto bitmap = 1ULL << (kTotal - Client::g_extra_read - 1);
     for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
       UpdateForKey(
           &state->futures[i], 1, state->rows[i],
@@ -146,7 +147,12 @@ void RMWTxn::Run()
             WriteRow(index_handle(row));
             return row;
           });
+
+      if (state->futures[i].has_callback())
+        bitmap |= 1ULL << i;
     }
+
+    auto aff = client->get_execution_locality_manager().GetScheduleCore(bitmap, state->rows);
     root->Then(
         MakeContext(), 1,
         [](const auto &ctx, auto _) -> Optional<VoidValue> {
@@ -164,7 +170,8 @@ void RMWTxn::Run()
             ReadRow(index_handle(state->rows[i]));
           }
           return nullopt;
-        });
+        },
+        aff);
 
   } else {
     if (Client::g_dependency)

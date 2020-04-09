@@ -360,7 +360,8 @@ void EpochClient::InitializeEpoch()
   cur_txns = &all_txns[epoch_nr - 1];
   total_nr_txn = NumberOfTxns();
 
-  get_execution_locality_manager().Reset();
+  exec_lmgr.Reset();
+  cont_lmgr.Reset();
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
@@ -398,8 +399,10 @@ void EpochClient::OnInitializeComplete()
   }
 
   util::Impl<VHandleSyncService>().ClearWaitCountStats();
-  get_execution_locality_manager().Balance();
-  get_execution_locality_manager().PrintLoads();
+  exec_lmgr.Balance();
+  exec_lmgr.PrintLoads();
+  cont_lmgr.Balance();
+  cont_lmgr.PrintLoads();
 
   auto &mgr = util::Instance<EpochManager>();
 

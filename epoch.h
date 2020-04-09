@@ -149,6 +149,7 @@ class EpochClient {
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
   LocalityManager &get_execution_locality_manager() { return exec_lmgr; }
+  LocalityManager &get_contention_locality_manager() { return cont_lmgr; }
 
   virtual unsigned int LoadPercentage() = 0;
   unsigned long NumberOfTxns() {
@@ -188,6 +189,7 @@ class EpochClient {
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
   LocalityManager exec_lmgr;
+  LocalityManager cont_lmgr;
 
   NodeConfiguration &conf;
 };

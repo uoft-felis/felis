@@ -4,6 +4,7 @@
 #include "node_config.h"
 #include "vhandle.h"
 #include "opts.h"
+#include "felis_probes.h"
 
 namespace felis {
 
@@ -68,6 +69,8 @@ void LocalityManager::Balance()
       OffloadCore(core, w, average);
     }
     nr_prealloc += w.nr_dist;
+    abort_if(nr_prealloc > kPrealloc, "{}<{} is too small inside Locality Manager",
+             kPrealloc, nr_prealloc)
   }
 }
 
@@ -116,9 +119,10 @@ void LocalityManager::PrintLoads()
     for (int d = 0; d < w.nr_dist; d++) {
       fmt::format_to(buffer, "{} on {} ", w.dist[d], w.cores[d]);
     }
+    if (w.weight > w.dist[w.nr_dist - 1]) fmt::format_to(buffer, "*");
     fmt::format_to(buffer, "\n");
   }
-  logger->info("Loads information: {}", std::string_view(buffer.data(), buffer.size()));
+  logger->info("Loads information: \n{}", std::string_view(buffer.data(), buffer.size()));
 }
 
 void LocalityManager::PlanLoad(int core, long delta)
@@ -132,29 +136,34 @@ void LocalityManager::PlanLoad(int core, long delta)
 
 static thread_local util::XORRandom64 local_rand;
 
-uint64_t LocalityManager::GetScheduleCore(int core)
+uint64_t LocalityManager::GetScheduleCore(int core, int weight)
 {
   if (!enable) return std::numeric_limits<uint64_t>::max();
 
   auto &w = (*per_core_weights[core]);
-  if (w.nr_dist == 1)
-    return w.cores[0];
-
-  long value = local_rand.Next() % w.weight;
-  auto it = std::upper_bound(w.dist, w.dist + w.nr_dist, value);
-  return w.cores[it - w.dist];
+  uint64_t sched_core = 0;
+  if (w.nr_dist == 1) {
+    sched_core = w.cores[0];
+  } else {
+    long value = local_rand.Next() % w.dist[w.nr_dist - 1];
+    auto it = std::upper_bound(w.dist, w.dist + w.nr_dist, value);
+    sched_core = w.cores[it - w.dist];
+  }
+  probes::LocalitySchedule{core, weight, sched_core}();
+  return sched_core;
 }
 
 uint64_t LocalityManager::GetScheduleCore(uint64_t bitmap, VHandle *const *it)
 {
   if (!enable || bitmap == 0)
     return std::numeric_limits<uint64_t>::max();
-  auto sel = local_rand.Next() % __builtin_popcountll(bitmap);
+  auto nrbits = __builtin_popcountll(bitmap);
+  auto sel = local_rand.Next() % nrbits;
   do {
     int skip = __builtin_ctzll(bitmap);
     it += skip;
     if (sel-- == 0) {
-      return GetScheduleCore((*it)->object_coreid());
+      return GetScheduleCore((*it)->object_coreid(), nrbits);
     }
     ++it;
     bitmap >>= skip + 1;

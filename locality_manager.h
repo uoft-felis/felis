@@ -36,7 +36,7 @@ class LocalityManager {
   void PrintLoads();
   void Reset();
   void PlanLoad(int core, long delta);
-  uint64_t GetScheduleCore(int core_affinity);
+  uint64_t GetScheduleCore(int core_affinity, int weight = 1);
   uint64_t GetScheduleCore(uint64_t bitmap, VHandle *const *it);
 
   uint64_t GetScheduleCore(uint64_t bitmap, std::initializer_list<VHandle *> con) {

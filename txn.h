@@ -357,17 +357,19 @@ class Txn : public BaseTxn {
                            int placement,
                            VHandle *row, RowFunc rowfunc, Types... params) {
     using RowFuncPtr = typename FutureType::ValueType (*)(const ContextType<Types...>&, VHandle *);
-    auto w = row->nr_versions() - row->nr_updated();
     new (future) FutureType;
 
     if (Options::kVHandleBatchAppend && Options::kOnDemandSplitting) {
       auto &appender = util::Instance<BatchAppender>();
-      auto total_scale = appender.contention_weight_end() - appender.contention_weight_begin();
+      auto cw_begin = appender.contention_weight_begin(), cw_end = appender.contention_weight_end();
+      auto w = row->nr_versions() - row->nr_updated();
+      auto total_scale =  cw_end - cw_begin;
       if (total_scale == 0
-          || row->contention_weight() < appender.contention_weight_begin()
+          || row->contention_weight() < cw_begin
           || w <= EpochClient::g_splitting_threshold)
         goto nosplit;
 
+#if 0
       static thread_local util::XORRandom64 local_rand;
       auto lower = row->contention_weight() - appender.contention_weight_begin();
 
@@ -388,7 +390,12 @@ class Txn : public BaseTxn {
         }
         aff = local_rand.NextRange(lower, upper) * NodeConfiguration::g_nr_threads / total_scale;
       }
-
+#endif
+      auto &mgr = EpochClient::g_workload_client->get_contention_locality_manager();
+      auto core_affinity = NodeConfiguration::g_nr_threads
+                           * (row->contention_weight() + w / 2 - cw_begin)
+                           / total_scale;
+      auto aff = mgr.GetScheduleCore(core_affinity);
       root_promise()->Then(
           sql::MakeTuple(future, (RowFuncPtr) rowfunc, row, MakeContext(params...)),
           placement,

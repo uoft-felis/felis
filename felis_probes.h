@@ -39,6 +39,13 @@ struct VHandleAppend {
   void operator()() const;
 };
 
+struct LocalitySchedule {
+  int core;
+  int weight;
+  uint64_t result;
+  void operator()() const;
+};
+
 struct TpccNewOrder {
   int piece_id;
   int nr_update;
@@ -67,6 +74,7 @@ struct TpccDelivery {
   PROBE_PROXY(felis::probes::VersionWrite);     \
   PROBE_PROXY(felis::probes::WaitCounters);     \
   PROBE_PROXY(felis::probes::VHandleAppend);    \
+  PROBE_PROXY(felis::probes::LocalitySchedule); \
   PROBE_PROXY(felis::probes::TpccNewOrder);     \
   PROBE_PROXY(felis::probes::TpccPayment);      \
   PROBE_PROXY(felis::probes::TpccDelivery);     \
