@@ -81,9 +81,7 @@ void PaymentTxn::Run()
       } else if (filter == 0x02) {
         aff = customer_warehouse_id - 1;
       } else {
-        aff = client->get_execution_locality_manager().GetScheduleCore(
-            0x01,
-            {state->warehouse, state->district, state->customer});
+        aff = AffinityFromRows(0x01, {state->warehouse, state->district, state->customer});
       }
       root->Then(
           MakeContext(bitmap, payment_amount, filter), node,

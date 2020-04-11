@@ -56,8 +56,6 @@ class SortedArrayVHandle : public BaseVHandle {
   short this_coreid;
   unsigned int capacity;
   unsigned int size;
-
-  // unsigned int value_mark;
   std::atomic_int latest_version; // the latest written version's offset in *versions
   uint64_t contention = 0;
   // versions: ptr to the version array.

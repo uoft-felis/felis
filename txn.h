@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <cstdint>
 #include <array>
+#include <initializer_list>
+
 #include "epoch.h"
 #include "util.h"
 #include "sqltypes.h"
@@ -61,6 +63,12 @@ class BaseTxn {
 
   uint64_t serial_id() const { return sid; }
   uint64_t epoch_nr() const { return sid >> 32; }
+
+  uint64_t AffinityFromRow(VHandle *row);
+  uint64_t AffinityFromRows(uint64_t bitmap, VHandle *const *it);
+  uint64_t AffinityFromRows(uint64_t bitmap, std::initializer_list<VHandle *> con) {
+    return AffinityFromRows(bitmap, con.begin());
+  }
 
   template <typename Api>
   class TxnApi {
@@ -361,12 +369,8 @@ class Txn : public BaseTxn {
 
     if (Options::kVHandleBatchAppend && Options::kOnDemandSplitting) {
       auto &appender = util::Instance<BatchAppender>();
-      auto cw_begin = appender.contention_weight_begin(), cw_end = appender.contention_weight_end();
-      auto w = row->nr_versions() - row->nr_updated();
-      auto total_scale =  cw_end - cw_begin;
-      if (total_scale == 0
-          || row->contention_weight() < cw_begin
-          || w <= EpochClient::g_splitting_threshold)
+      auto core_affinity = appender.GetRowContentionAffinity(row);
+      if (core_affinity == -1)
         goto nosplit;
 
 #if 0
@@ -392,9 +396,6 @@ class Txn : public BaseTxn {
       }
 #endif
       auto &mgr = EpochClient::g_workload_client->get_contention_locality_manager();
-      auto core_affinity = NodeConfiguration::g_nr_threads
-                           * (row->contention_weight() + w / 2 - cw_begin)
-                           / total_scale;
       auto aff = mgr.GetScheduleCore(core_affinity);
       root_promise()->Then(
           sql::MakeTuple(future, (RowFuncPtr) rowfunc, row, MakeContext(params...)),

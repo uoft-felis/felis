@@ -131,9 +131,7 @@ void NewOrderTxn::Run()
     auto [node, bitmap] = p;
     auto aff = std::numeric_limits<uint64_t>::max();
 
-    aff = client->get_execution_locality_manager().GetScheduleCore(
-        bitmap,
-        {state->oorder, state->neworder});
+    aff = AffinityFromRows(bitmap, {state->oorder, state->neworder});
 
     root->Then(
         MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
@@ -163,9 +161,7 @@ void NewOrderTxn::Run()
     auto [node, bitmap] = p;
     auto aff = std::numeric_limits<uint64_t>::max();
 
-    aff = client->get_execution_locality_manager().GetScheduleCore(
-        bitmap,
-        state->orderlines);
+    aff = AffinityFromRows(bitmap, state->orderlines);
 
     root->Then(
         MakeContext(bitmap, detail), node,
@@ -226,7 +222,7 @@ void NewOrderTxn::Run()
       auto aff = std::numeric_limits<uint64_t>::max();
 
       if (filter > 0) aff = filter - 1;
-      else aff = client->get_execution_locality_manager().GetScheduleCore(bitmap, state->stocks);
+      else aff = AffinityFromRows(bitmap, state->stocks);
 
       root->Then(
           MakeContext(bitmap, params, filter), node,

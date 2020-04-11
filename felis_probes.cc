@@ -8,8 +8,6 @@
 static struct ProbeMain {
   agg::Agg<agg::LogHistogram<16>> wait_cnt;
   agg::Agg<agg::Histogram<32, 0, 1>> write_cnt;
-  agg::Agg<agg::Histogram<32, 0, 1>> lm_ask_cnt;
-  agg::Agg<agg::Histogram<32, 0, 1>> lm_ans_cnt;
 
   agg::Agg<agg::Histogram<32, 0, 1>> neworder_cnt;
   agg::Agg<agg::Histogram<32, 0, 1>> payment_cnt;
@@ -20,8 +18,6 @@ static struct ProbeMain {
 thread_local struct ProbePerCore {
   AGG(wait_cnt);
   AGG(write_cnt);
-  AGG(lm_ask_cnt);
-  AGG(lm_ans_cnt);
 
   AGG(neworder_cnt);
   AGG(payment_cnt);
@@ -79,20 +75,12 @@ template <> void OnProbe(felis::probes::VersionWrite p)
     CountUpdate(statcnt.write_cnt, 1);
 }
 
-template <> void OnProbe(felis::probes::LocalitySchedule p)
-{
-  CountUpdate(statcnt.lm_ask_cnt, 1, p.core);
-  CountUpdate(statcnt.lm_ans_cnt, 1, p.result);
-}
-
 ProbeMain::~ProbeMain()
 {
   std::cout
       << "waitcnt" << std::endl
       << global.wait_cnt() << std::endl
-      << global.write_cnt() << std::endl
-      << global.lm_ask_cnt() << std::endl
-      << global.lm_ans_cnt() << std::endl;
+      << global.write_cnt() << std::endl;
 }
 
 PROBE_LIST;

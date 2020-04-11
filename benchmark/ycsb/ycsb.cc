@@ -152,7 +152,7 @@ void RMWTxn::Run()
         bitmap |= 1ULL << i;
     }
 
-    auto aff = client->get_execution_locality_manager().GetScheduleCore(bitmap, state->rows);
+    auto aff = AffinityFromRows(bitmap, state->rows);
     root->Then(
         MakeContext(), 1,
         [](const auto &ctx, auto _) -> Optional<VoidValue> {

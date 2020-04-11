@@ -3,6 +3,7 @@
 #include "locality_manager.h"
 #include "node_config.h"
 #include "vhandle.h"
+#include "vhandle_batchappender.h"
 #include "opts.h"
 #include "felis_probes.h"
 
@@ -137,34 +138,35 @@ void LocalityManager::PlanLoad(int core, long delta)
 
 static thread_local util::XORRandom64 local_rand;
 
-uint64_t LocalityManager::GetScheduleCore(int core, int weight)
+uint64_t LocalityManager::GetScheduleCore(int core)
 {
   if (!enable) return std::numeric_limits<uint64_t>::max();
 
   auto &w = (*per_core_weights[core]);
   uint64_t sched_core = 0;
+  uint64_t seed = 0, max_seed = w.dist[w.nr_dist - 1];
   if (w.nr_dist == 1) {
     sched_core = w.cores[0];
   } else {
-    long value = local_rand.Next() % w.dist[w.nr_dist - 1];
-    auto it = std::upper_bound(w.dist, w.dist + w.nr_dist, value);
+    seed = local_rand.Next() % w.dist[w.nr_dist - 1];
+    auto it = std::upper_bound(w.dist, w.dist + w.nr_dist, seed);
     sched_core = w.cores[it - w.dist];
   }
-  probes::LocalitySchedule{core, weight, sched_core}();
+  probes::LocalitySchedule{core, sched_core, seed, max_seed}();
   return sched_core;
 }
 
-uint64_t LocalityManager::GetScheduleCore(uint64_t bitmap, VHandle *const *it)
+VHandle *LocalityManager::SelectRow(uint64_t bitmap, VHandle *const *it)
 {
-  if (!enable || bitmap == 0)
-    return std::numeric_limits<uint64_t>::max();
+  if (bitmap == 0)
+    return nullptr;
   auto nrbits = __builtin_popcountll(bitmap);
   auto sel = local_rand.Next() % nrbits;
   do {
     int skip = __builtin_ctzll(bitmap);
     it += skip;
     if (sel-- == 0) {
-      return GetScheduleCore((*it)->object_coreid(), nrbits);
+      return *it;
     }
     ++it;
     bitmap >>= skip + 1;

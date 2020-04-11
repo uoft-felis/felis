@@ -41,8 +41,9 @@ struct VHandleAppend {
 
 struct LocalitySchedule {
   int core;
-  int weight;
   uint64_t result;
+  uint64_t seed;
+  uint64_t max_seed;
   void operator()() const;
 };
 

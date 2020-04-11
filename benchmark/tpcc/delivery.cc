@@ -104,9 +104,7 @@ void DeliveryTxn::Run()
       if (bitmap == (1 << 3)) continue;
       auto aff = std::numeric_limits<uint64_t>::max();
 
-      aff = client->get_execution_locality_manager().GetScheduleCore(
-          0x03,
-          {state->oorders[i], state->new_orders[i]});
+      aff = AffinityFromRows(0x03, {state->oorders[i], state->new_orders[i]});
 
       root->Then(
           MakeContext(bitmap, i, o_carrier_id), node,
@@ -139,8 +137,7 @@ void DeliveryTxn::Run()
       }
       valid_rows[nr_valid_rows++] = state->customers[i];
 
-      aff = client->get_execution_locality_manager().GetScheduleCore(
-          (1 << nr_valid_rows) - 1, valid_rows);
+      aff = AffinityFromRows((1 << nr_valid_rows) - 1, valid_rows);
 
       auto next = root->Then(
           MakeContext(bitmap, i, ts), node,

@@ -27,6 +27,7 @@ class BatchAppender {
   void Reset();
   uint64_t contention_weight_begin() const { return cw_begin; }
   uint64_t contention_weight_end() const { return cw_end; }
+  int GetRowContentionAffinity(VHandle *row) const;
 };
 
 }

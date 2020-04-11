@@ -172,4 +172,23 @@ BaseTxn::TxnIndexInsertOpImpl::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx
       });
 }
 
+uint64_t BaseTxn::AffinityFromRows(uint64_t bitmap, VHandle *const *it)
+{
+  auto row = LocalityManager::SelectRow(bitmap, it);
+  if (row == nullptr)
+    return std::numeric_limits<uint64_t>::max();
+  return AffinityFromRow(row);
+}
+
+uint64_t BaseTxn::AffinityFromRow(VHandle *row)
+{
+  auto core_affinity = util::Instance<BatchAppender>().GetRowContentionAffinity(row);
+  auto client = EpochClient::g_workload_client;
+  if (core_affinity != -1) {
+    return client->get_execution_locality_manager().GetScheduleCore(core_affinity);
+  } else {
+    return client->get_execution_locality_manager().GetScheduleCore(row->object_coreid());
+  }
+}
+
 }

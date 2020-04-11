@@ -293,12 +293,11 @@ void BatchAppender::Reset()
 
       for (long i = 0; i < p->pos.load(std::memory_order_acquire); i++) {
         auto row = p->backrefs[i];
-        long w = row->size - row->nr_updated();
-        if (w <= EpochClient::g_splitting_threshold) continue;
+        int new_aff = GetRowContentionAffinity(row);
+        if (new_aff == -1) continue;
 
+        long w = row->size - row->nr_updated();
         auto old_aff = row->this_coreid;
-        int new_aff = nr_threads * (row->contention +  w / 2 - cw_begin)
-                      / (cw_end - cw_begin);
         auto client = EpochClient::g_workload_client;
         client->get_execution_locality_manager().PlanLoad(old_aff, -1 * w);
         client->get_contention_locality_manager().PlanLoad(new_aff, w);
@@ -320,6 +319,19 @@ void BatchAppender::Reset()
   if (Options::kOnDemandSplitting) {
     logger->info("Contention Weight {} {} ", cw_begin, cw_end);
   }
+}
+
+int BatchAppender::GetRowContentionAffinity(VHandle *row) const
+{
+  auto cw_begin = contention_weight_begin(), cw_end = contention_weight_end();
+  auto w = row->nr_versions() - row->nr_updated();
+  if (w <= EpochClient::g_splitting_threshold
+      || cw_begin == cw_end
+      || row->contention < cw_begin)
+    return -1;
+  return NodeConfiguration::g_nr_threads
+      * (row->contention +  w / 2 - cw_begin)
+      / (cw_end - cw_begin);
 }
 
 }

@@ -2,7 +2,6 @@
 #define LOCALITY_MANAGER_H
 
 #include <atomic>
-#include <initializer_list>
 
 #include "util.h"
 
@@ -36,12 +35,9 @@ class LocalityManager {
   void PrintLoads();
   void Reset();
   void PlanLoad(int core, long delta);
-  uint64_t GetScheduleCore(int core_affinity, int weight = 1);
-  uint64_t GetScheduleCore(uint64_t bitmap, VHandle *const *it);
+  uint64_t GetScheduleCore(int core_affinity);
 
-  uint64_t GetScheduleCore(uint64_t bitmap, std::initializer_list<VHandle *> con) {
-    return GetScheduleCore(bitmap, con.begin());
-  }
+  static VHandle *SelectRow(uint64_t bitmap, VHandle *const *it);
 
  private:
   void OffloadCore(int core, WeightDist &w, long limit);
