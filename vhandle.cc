@@ -202,7 +202,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   sync().WaitForData(addr, sid, versions[pos], (void *) this);
 
   if (*addr == kIgnoreValue) {
-    return ReadWithVersion(sid - 1);
+    return ReadWithVersion(versions[pos]);
   }
 
   return (VarStr *) *addr;

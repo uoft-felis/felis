@@ -174,9 +174,13 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   while (i < handle->size - 1 && i <= limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
     i++;
   }
+  while (i > 0 && objects[i] == kIgnoreValue) {
+    i--; // if last version is ignore, then we gc less versions
+  }
   if (i == 0) return 0;
 
   for (auto j = 0; j < i; j++) {
+    if (objects[j] == kIgnoreValue) continue;
     delete (VarStr *) objects[j];
   }
   std::move(objects + i, objects + handle->size, objects);
