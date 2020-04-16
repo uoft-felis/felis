@@ -27,7 +27,13 @@ SortedArrayVHandle::SortedArrayVHandle()
   capacity = 4;
   // value_mark = 0;
   size = 0;
+  nr_ondsplt = 0;
+
+  // abort_if(mem::ParallelPool::CurrentAffinity() >= 256,
+  //         "Too many cores, we need a larger vhandle");
+
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+  cont_affinity = -1;
 
   versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
   latest_version.store(-1);
@@ -101,8 +107,10 @@ void SortedArrayVHandle::IncreaseSize(int delta)
             kPendingValue);
 }
 
-void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr)
+void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split)
 {
+  if (is_ondemand_split) nr_ondsplt++;
+
   // append this version at the end of version array
   IncreaseSize(1);
   BookNewVersionNoLock(sid, size - 1);
@@ -149,7 +157,7 @@ unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsign
 }
 
 // Insert a new version into the version array, with value pending.
-void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
+void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split)
 {
   probes::VHandleAppend{this, sid, alloc_by_regionid}();
 
@@ -162,23 +170,23 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
 
     if (buf_pos.load(std::memory_order_acquire) == -1
         && lock.TryLock(&qnode)) {
-      AppendNewVersionNoLock(sid, epoch_nr);
+      AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
       lock.Unlock(&qnode);
       return;
     }
 
     handle = util::Instance<BatchAppender>().GetOrInstall((VHandle *) this);
     if (handle.prealloc_ptr) {
-      handle.Append((VHandle *) this, sid, epoch_nr);
+      handle.Append((VHandle *) this, sid, epoch_nr, is_ondemand_split);
       return;
     }
 
  slowpath:
     lock.Lock(&qnode);
-    AppendNewVersionNoLock(sid, epoch_nr);
+    AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
     lock.Unlock(&qnode);
   } else {
-    AppendNewVersionNoLock(sid, epoch_nr);
+    AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
   }
 }
 
@@ -273,6 +281,10 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   while (latest > ver) {
     if (latest_version.compare_exchange_strong(ver, latest))
       break;
+  }
+  if (latest == size - 1) {
+    nr_ondsplt = 0;
+    cont_affinity = -1;
   }
   return true;
 }

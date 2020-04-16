@@ -29,8 +29,10 @@ struct RMWState {
   struct LookupCompletion : public TxnStateCompletion<RMWState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       state->rows[id] = rows[0];
-      if (id < kTotal - Client::g_extra_read)
-        handle(rows[0]).AppendNewVersion();
+      if (id < kTotal - Client::g_extra_read) {
+        bool last = (id == kTotal - Client::g_extra_read - 1);
+        handle(rows[0]).AppendNewVersion(!last);
+      }
     }
   };
 };

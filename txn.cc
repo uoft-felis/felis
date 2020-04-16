@@ -18,10 +18,10 @@ void BaseTxn::InitBrk(long nr_epochs)
   }
 }
 
-void BaseTxn::TxnVHandle::AppendNewVersion()
+void BaseTxn::TxnVHandle::AppendNewVersion(bool is_ondemand_split)
 {
   if (!EpochClient::g_enable_granola) {
-    api->AppendNewVersion(sid, epoch_nr);
+    api->AppendNewVersion(sid, epoch_nr, is_ondemand_split);
   } else {
     if (api->nr_versions() == 0) {
       api->AppendNewVersion(sid, epoch_nr);
@@ -177,18 +177,17 @@ uint64_t BaseTxn::AffinityFromRows(uint64_t bitmap, VHandle *const *it)
   auto row = LocalityManager::SelectRow(bitmap, it);
   if (row == nullptr)
     return std::numeric_limits<uint64_t>::max();
-  return AffinityFromRow(row);
+  auto client = EpochClient::g_workload_client;
+  return client->get_execution_locality_manager().GetScheduleCore(
+      row->object_coreid(), __builtin_popcount(bitmap));
 }
 
 uint64_t BaseTxn::AffinityFromRow(VHandle *row)
 {
-  auto core_affinity = util::Instance<BatchAppender>().GetRowContentionAffinity(row);
   auto client = EpochClient::g_workload_client;
-  if (core_affinity != -1) {
-    return client->get_execution_locality_manager().GetScheduleCore(core_affinity);
-  } else {
-    return client->get_execution_locality_manager().GetScheduleCore(row->object_coreid());
-  }
+  // This is prepared for the non-on-demand-splitted pieces anyway.
+  return client->get_execution_locality_manager().GetScheduleCore(
+      row->object_coreid());
 }
 
 }

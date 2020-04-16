@@ -11,7 +11,8 @@ namespace felis {
 
 struct VersionBuffer {
   static constexpr size_t kMaxBatch = 63;
-  size_t buf_cnt;
+  uint32_t buf_cnt;
+  uint32_t ondsplt_cnt;
   uint64_t versions[kMaxBatch];
 };
 
@@ -78,7 +79,8 @@ struct VersionBufferHead {
       return;
     auto prealloc = VersionPrealloc(get_prealloc());
     auto abs_pos = base_pos + p;
-    prealloc.version_buffers()[abs_pos].buf_cnt = 0;
+    auto &buf = prealloc.version_buffers()[abs_pos];
+    buf.buf_cnt = buf.ondsplt_cnt = 0;
     prealloc.bitmap()[abs_pos / 64] &= ~(1ULL << (abs_pos % 64));
   }
 
@@ -104,7 +106,8 @@ VersionBufferHead *VersionBufferHeadAllocation::AllocHead(int owner_core)
   return p;
 }
 
-void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_nr)
+void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_nr,
+                                 bool is_ondemand_split)
 {
   VersionPrealloc prealloc(prealloc_ptr);
   auto buf = (prealloc.version_buffers() + pos);
@@ -116,9 +119,9 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
     handle->BookNewVersionNoLock(sid, end);
 
     end = handle->AbsorbNewVersionNoLock(end, VersionBuffer::kMaxBatch);
+    if (is_ondemand_split) handle->nr_ondsplt++;
 
     FlushIntoNoLock(handle, epoch_nr, end);
-
     handle->lock.Release(&qnode);
 
     return;
@@ -127,6 +130,7 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
     prealloc.bitmap()[pos / 64] |= (1ULL << (pos % 64));
   }
   buf->versions[buf->buf_cnt++] = sid;
+  if (is_ondemand_split) buf->ondsplt_cnt++;
 }
 
 void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, unsigned int end)
@@ -138,8 +142,10 @@ void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, un
     // printf("absorb %d %d\n", end, i);
     end = handle->AbsorbNewVersionNoLock(end, i);
   }
+  handle->nr_ondsplt += buf->ondsplt_cnt;
   util::Instance<GC>().AddVHandle(handle, epoch_nr);
   buf->buf_cnt = 0;
+  buf->ondsplt_cnt = 0;
   prealloc.bitmap()[pos / 64] &= ~(1ULL << (pos % 64));
 }
 
@@ -195,7 +201,6 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
 }
 
 BatchAppender::BatchAppender()
-    : cw_begin(0), cw_end(0)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
   auto nr_slots = kPreAllocCount / nr_threads;
@@ -253,7 +258,7 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
 void BatchAppender::Reset()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  cw_begin = cw_end;
+  unsigned int sum = 0;
 
   for (int core = 0; core < nr_threads; core++) {
     auto p = buffer_heads[core];
@@ -267,19 +272,17 @@ void BatchAppender::Reset()
 
         if (!Options::kOnDemandSplitting) continue;
 
-        auto w = row->size - row->nr_updated();
-        if (w <= EpochClient::g_splitting_threshold) continue;
-
-        row->contention = cw_end;
-        cw_end += w;
+        if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
+        sum += row->nr_ondsplt;
       }
-
     }
   }
 
-  if (cw_end - cw_begin < NodeConfiguration::g_nr_threads) {
-    cw_end = cw_begin;
+  if (sum < NodeConfiguration::g_nr_threads) {
+    sum = 0;
   }
+
+  int s = 0;
 
   for (int core = 0; core < nr_threads; core++) {
     auto numa_zone = core / mem::kNrCorePerNode;
@@ -288,19 +291,18 @@ void BatchAppender::Reset()
     for (auto next = p; p; p = next) {
       next = p->next_buffer_head;
 
-      if (cw_begin == cw_end)
+      if (sum == 0)
         goto done;
 
       for (long i = 0; i < p->pos.load(std::memory_order_acquire); i++) {
         auto row = p->backrefs[i];
-        int new_aff = GetRowContentionAffinity(row);
-        if (new_aff == -1) continue;
+        if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
 
-        long w = row->size - row->nr_updated();
-        auto old_aff = row->this_coreid;
+        row->cont_affinity = NodeConfiguration::g_nr_threads * (s + row->nr_ondsplt / 2) / sum;
         auto client = EpochClient::g_workload_client;
-        client->get_execution_locality_manager().PlanLoad(old_aff, -1 * w);
-        client->get_contention_locality_manager().PlanLoad(new_aff, w);
+        client->get_execution_locality_manager().PlanLoad(row->this_coreid, -1 * row->nr_ondsplt);
+        client->get_contention_locality_manager().PlanLoad(row->cont_affinity, row->nr_ondsplt);
+        s += row->nr_ondsplt;
       }
    done:
       g_alloc[numa_zone].pool.Free(p);
@@ -315,23 +317,9 @@ void BatchAppender::Reset()
   for (int core = 0; core < nr_threads; core++) {
     buffer_heads[core] = g_alloc[core / mem::kNrCorePerNode].AllocHead(core);
   }
-
   if (Options::kOnDemandSplitting) {
-    logger->info("Contention Weight {} {} ", cw_begin, cw_end);
+    logger->info("OnDemand {}", sum);
   }
-}
-
-int BatchAppender::GetRowContentionAffinity(VHandle *row) const
-{
-  auto cw_begin = contention_weight_begin(), cw_end = contention_weight_end();
-  auto w = row->nr_versions() - row->nr_updated();
-  if (w <= EpochClient::g_splitting_threshold
-      || cw_begin == cw_end
-      || row->contention < cw_begin)
-    return -1;
-  return NodeConfiguration::g_nr_threads
-      * (row->contention +  w / 2 - cw_begin)
-      / (cw_end - cw_begin);
 }
 
 }

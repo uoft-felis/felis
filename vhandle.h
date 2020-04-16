@@ -52,12 +52,14 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class BatchAppender;
 
   util::MCSSpinLock lock;
-  short alloc_by_regionid;
-  short this_coreid;
+  uint8_t alloc_by_regionid;
+  uint8_t this_coreid;
+  int8_t cont_affinity;
+
   unsigned int capacity;
   unsigned int size;
   std::atomic_int latest_version; // the latest written version's offset in *versions
-  uint64_t contention = 0;
+  int nr_ondsplt;
   // versions: ptr to the version array.
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
@@ -77,7 +79,7 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
   bool ShouldScanSkip(uint64_t sid);
-  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
+  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split = false);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
@@ -90,11 +92,12 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t first_version() const { return versions[0]; }
   uint64_t last_version() const { return versions[size - 1]; }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed) + 1; }
-  short region_id() const { return alloc_by_regionid; }
-  short object_coreid() const { return this_coreid; }
-  uint64_t contention_weight() const { return contention; }
+  int nr_ondemand_split() const { return nr_ondsplt; }
+  uint8_t region_id() const { return alloc_by_regionid; }
+  uint8_t object_coreid() const { return this_coreid; }
+  int8_t contention_affinity() const { return cont_affinity; }
  private:
-  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
+  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split);
   unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
   void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
     versions[pos] = sid;

@@ -400,9 +400,9 @@ void EpochClient::OnInitializeComplete()
 
   util::Impl<VHandleSyncService>().ClearWaitCountStats();
   exec_lmgr.Balance();
-  exec_lmgr.PrintLoads();
+  // exec_lmgr.PrintLoads();
   cont_lmgr.Balance();
-  cont_lmgr.PrintLoads();
+  // cont_lmgr.PrintLoads();
 
   auto &mgr = util::Instance<EpochManager>();
 

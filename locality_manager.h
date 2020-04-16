@@ -35,7 +35,7 @@ class LocalityManager {
   void PrintLoads();
   void Reset();
   void PlanLoad(int core, long delta);
-  uint64_t GetScheduleCore(int core_affinity);
+  uint64_t GetScheduleCore(int core_affinity, int weight = 1);
 
   static VHandle *SelectRow(uint64_t bitmap, VHandle *const *it);
 

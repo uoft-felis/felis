@@ -84,7 +84,7 @@ class BaseTxn {
   class TxnVHandle : public TxnApi<VHandle> {
    public:
     using TxnApi<VHandle>::TxnApi;
-    void AppendNewVersion();
+    void AppendNewVersion(bool is_ondemand_split = false);
 
     VarStr *ReadVarStr();
     template <typename T> T Read() {
@@ -369,8 +369,7 @@ class Txn : public BaseTxn {
 
     if (Options::kVHandleBatchAppend && Options::kOnDemandSplitting) {
       auto &appender = util::Instance<BatchAppender>();
-      auto core_affinity = appender.GetRowContentionAffinity(row);
-      if (core_affinity == -1)
+      if (row->contention_affinity() == -1)
         goto nosplit;
 
 #if 0
@@ -396,7 +395,7 @@ class Txn : public BaseTxn {
       }
 #endif
       auto &mgr = EpochClient::g_workload_client->get_contention_locality_manager();
-      auto aff = mgr.GetScheduleCore(core_affinity);
+      auto aff = mgr.GetScheduleCore(row->contention_affinity());
       root_promise()->Then(
           sql::MakeTuple(future, (RowFuncPtr) rowfunc, row, MakeContext(params...)),
           placement,

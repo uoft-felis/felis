@@ -138,7 +138,7 @@ void LocalityManager::PlanLoad(int core, long delta)
 
 static thread_local util::XORRandom64 local_rand;
 
-uint64_t LocalityManager::GetScheduleCore(int core)
+uint64_t LocalityManager::GetScheduleCore(int core, int weight)
 {
   if (!enable) return std::numeric_limits<uint64_t>::max();
 
@@ -152,7 +152,7 @@ uint64_t LocalityManager::GetScheduleCore(int core)
     auto it = std::upper_bound(w.dist, w.dist + w.nr_dist, seed);
     sched_core = w.cores[it - w.dist];
   }
-  probes::LocalitySchedule{core, sched_core, seed, max_seed}();
+  probes::LocalitySchedule{core, weight, sched_core, seed, max_seed, w.load}();
   return sched_core;
 }
 
