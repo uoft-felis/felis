@@ -146,8 +146,8 @@ BaseTxn::TxnIndexLookupOpImpl::TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx
     auto &table = mgr[ctx.relation_ids[idx]];
     int i = 0;
     for (auto it = table.IndexSearchIterator(&range_start, &range_end);
-         it.IsValid(); it.Next(), i++) {
-      result[i] = it.row();
+         it->IsValid(); it->Next(), i++) {
+      result[i] = it->row();
     }
   }
 }

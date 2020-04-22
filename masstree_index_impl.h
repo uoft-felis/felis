@@ -15,35 +15,15 @@ namespace felis {
 
 class RelationManager;
 class MasstreeMap;
-class MasstreeMapForwardScanIteratorImpl;
 
 class MasstreeIndex {
- protected:
+ private:
+  friend class MasstreeMap;
   MasstreeMap *map;
   static threadinfo *GetThreadInfo();
  public:
   static void ResetThreadInfo();
 
-  struct Iterator {
-    const VarStr *end_key;
-    MasstreeMapForwardScanIteratorImpl *it;
-    threadinfo *ti;
-    VarStr cur_key;
-    VHandle *vhandle;
-
-    Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
-             const VarStr *terminate_key);
-
-    void Next() __attribute__((noinline));
-    bool IsValid() const;
-
-    const VarStr &key() const { return cur_key; }
-    const VHandle *row() const { return vhandle; }
-    VHandle *row() { return vhandle; }
-
-   private:
-    void Adapt();
-  };
   void Initialize(threadinfo *ti);
  protected:
 
@@ -74,7 +54,7 @@ class MasstreeIndex {
 
   VHandle *Search(const VarStr *k);
 
-  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) __attribute__((noinline));
+  BaseRelation::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr);
 
   size_t nr_unique_keys() const {
     size_t rs = 0;

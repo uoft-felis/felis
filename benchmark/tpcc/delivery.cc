@@ -47,9 +47,9 @@ void DeliveryTxn::PrepareImpl()
 
     for (auto no_it = mgr.Get<NewOrder>().IndexSearchIterator(
              neworder_start.EncodeFromRoutine(), neworder_end.EncodeFromRoutine());
-         no_it.IsValid(); no_it.Next()) {
-      if (no_it.row()->ShouldScanSkip(serial_id())) continue;
-      no_key = no_it.key().template ToType<NewOrder::Key>();
+         no_it->IsValid(); no_it->Next()) {
+      if (no_it->row()->ShouldScanSkip(serial_id())) continue;
+      no_key = no_it->key().template ToType<NewOrder::Key>();
       oid_min = ClientBase::LastNewOrderId(warehouse_id, district_id);
       if (no_key.no_o_id <= oid_min) continue;
       if (ClientBase::IncrementLastNewOrderId(

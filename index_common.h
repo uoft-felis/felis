@@ -74,15 +74,25 @@ class BaseRelation {
     auto_increment_cnt[zone] = ts;
   }
 
-};
+  class Iterator {
+   protected:
+    const VarStr *end_key;
+    VarStr cur_key;
+    VHandle *vhandle;
 
-class RelationManagerBase {
- public:
-  RelationManagerBase() {}
+   public:
+    void set_end_key(const VarStr *end) { end_key = end; }
+    virtual void Next() = 0;
+    virtual bool IsValid() const = 0;
+
+    const VarStr &key() const { return cur_key; }
+    const VHandle *row() const { return vhandle; }
+    VHandle *row() { return vhandle; }
+  };
 };
 
 template <class T>
-class RelationManagerPolicy : public RelationManagerBase {
+class RelationManagerPolicy {
  protected:
  public:
   static constexpr int kMaxNrRelations = 1024;
