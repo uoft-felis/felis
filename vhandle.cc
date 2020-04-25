@@ -197,15 +197,15 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   uint64_t *p = versions;
   uint64_t *start = versions;
   uint64_t *end = versions + size;
-  unsigned int latest = latest_version.load();
+  int latest = latest_version.load();
 
-  if (sid > versions[latest]) {
+  if (latest >= 0 && sid > versions[latest]) {
     start = versions + latest + 1;
     if (start >= versions + size || sid <= *start) {
       p = start;
       goto found;
     }
-  } else {
+  } else if (latest >= 0) {
     end = versions + latest + 1;
   }
 

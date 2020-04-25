@@ -833,7 +833,7 @@ void Loader<LoaderType::Order>::DoLoad()
 }
 
 static constexpr int kTPCCTxnMix[] = {
-  49, 47, 4,
+  45, 43, 4, 4, 4
 };
 
 felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)

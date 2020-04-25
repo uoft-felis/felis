@@ -66,13 +66,22 @@ void MasstreeMap::Iterator<MasstreeIteratorImpl>::Next()
   Adapt();
 }
 
-template <class MasstreeIteratorImpl>
-bool MasstreeMap::Iterator<MasstreeIteratorImpl>::IsValid() const
+template <>
+bool MasstreeMap::Iterator<MasstreeMap::forward_scan_iterator_impl>::IsValid() const
 {
   if (end_key == nullptr)
     return !this->terminated;
   else
     return !this->terminated && !(*end_key < cur_key);
+}
+
+template <>
+bool MasstreeMap::Iterator<MasstreeMap::reverse_scan_iterator_impl>::IsValid() const
+{
+  if (end_key == nullptr)
+    return !this->terminated;
+  else
+    return !this->terminated && !(cur_key < *end_key);
 }
 
 void MasstreeIndex::Initialize(threadinfo *ti)
@@ -127,6 +136,15 @@ void MasstreeIndex::ResetThreadInfo()
 BaseRelation::Iterator *MasstreeIndex::IndexSearchIterator(const VarStr *start, const VarStr *end)
 {
   auto it = map->find_iterator<MasstreeMap::ForwardIterator>(
+      lcdf::Str(start->data, start->len), *GetThreadInfo());
+  it->set_end_key(end);
+  it->Adapt();
+  return it;
+}
+
+BaseRelation::Iterator *MasstreeIndex::IndexReverseIterator(const VarStr *start, const VarStr *end)
+{
+  auto it = map->find_iterator<MasstreeMap::ReverseIterator>(
       lcdf::Str(start->data, start->len), *GetThreadInfo());
   it->set_end_key(end);
   it->Adapt();

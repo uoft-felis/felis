@@ -312,7 +312,8 @@ enum class TxnType : int {
   NewOrder,
   Payment,
   Delivery,
-  // CreditCheck,
+  OrderStatus,
+  StockLevel,
 
   AllTxn,
 };

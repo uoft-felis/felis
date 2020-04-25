@@ -55,6 +55,7 @@ class MasstreeIndex {
   VHandle *Search(const VarStr *k);
 
   BaseRelation::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr);
+  BaseRelation::Iterator *IndexReverseIterator(const VarStr *start, const VarStr *end = nullptr);
 
   size_t nr_unique_keys() const {
     size_t rs = 0;
@@ -78,7 +79,7 @@ class RelationManager : public RelationManagerPolicy<Relation> {
   RelationManager();
   template <typename T> friend T &util::Instance() noexcept;
  public:
-  threadinfo *GetThreadInfo() { return ti; }
+  // threadinfo *GetThreadInfo() { return ti; }
 };
 
 }

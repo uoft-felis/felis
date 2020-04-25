@@ -8,6 +8,8 @@ tpcc_headers = [
     'benchmark/tpcc/new_order.h',
     'benchmark/tpcc/payment.h',
     'benchmark/tpcc/delivery.h',
+    'benchmark/tpcc/order_status.h',
+    'benchmark/tpcc/stock_level.h',
 ]
 
 tpcc_srcs = [
@@ -16,6 +18,8 @@ tpcc_srcs = [
     'benchmark/tpcc/new_order.cc',
     'benchmark/tpcc/payment.cc',
     'benchmark/tpcc/delivery.cc',
+    'benchmark/tpcc/order_status.cc',
+    'benchmark/tpcc/stock_level.cc',
 ]
 
 ycsb_headers = [

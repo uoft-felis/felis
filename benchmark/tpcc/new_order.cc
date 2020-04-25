@@ -65,6 +65,7 @@ void NewOrderTxn::PrepareInsertImpl()
 
   auto oorder_key = OOrder::Key::New(warehouse_id, district_id, oorder_id);
   auto neworder_key = NewOrder::Key::New(warehouse_id, district_id, oorder_id, customer_id);
+  auto cididx_key = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id, oorder_id);
   OrderLine::Key orderline_keys[kNewOrderMaxItems];
   for (int i = 0; i < nr_items; i++) {
     orderline_keys[i] = OrderLine::Key::New(warehouse_id, district_id, oorder_id, i + 1);
@@ -81,7 +82,8 @@ void NewOrderTxn::PrepareInsertImpl()
       TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, void>(
           nullptr,
           KeyParam<OOrder>(oorder_key),
-          KeyParam<NewOrder>(neworder_key));
+          KeyParam<NewOrder>(neworder_key),
+          KeyParam<OOrderCIdIdx>(cididx_key));
 }
 
 void NewOrderTxn::PrepareImpl()
@@ -131,7 +133,7 @@ void NewOrderTxn::Run()
     auto [node, bitmap] = p;
     auto aff = std::numeric_limits<uint64_t>::max();
 
-    aff = AffinityFromRows(bitmap, {state->oorder, state->neworder});
+    aff = AffinityFromRows(bitmap, {state->oorder, state->neworder, state->cididx});
 
     root->Then(
         MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
@@ -150,6 +152,11 @@ void NewOrderTxn::Run()
           if (bitmap & 0x02) {
             index_handle(state->neworder).Write(NewOrder::Value());
             ClientBase::OnUpdateRow(state->neworder);
+          }
+
+          if (bitmap & 0x04) {
+            index_handle(state->cididx).Write(OOrderCIdIdx::Value());
+            ClientBase::OnUpdateRow(state->cididx);
           }
 
           return nullopt;

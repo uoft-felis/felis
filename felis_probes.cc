@@ -77,10 +77,12 @@ template <> void OnProbe(felis::probes::VersionWrite p)
 
 ProbeMain::~ProbeMain()
 {
+#if 0
   std::cout
       << "waitcnt" << std::endl
       << global.wait_cnt() << std::endl
       << global.write_cnt() << std::endl;
+#endif
 }
 
 PROBE_LIST;

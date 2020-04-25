@@ -51,12 +51,15 @@ struct NewOrderState {
 
   VHandle *oorder; // insert
   VHandle *neworder; // insert
+  VHandle *cididx; // insert
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     void operator()(int id, VHandle *row) {
       if (id == 0) {
         state->oorder = row;
       } else if (id == 1) {
         state->neworder = row;
+      } else if (id == 2) {
+        state->cididx = row;
       }
       handle(row).AppendNewVersion();
     }

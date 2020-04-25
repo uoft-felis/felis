@@ -79,6 +79,7 @@ class BaseTxn {
    public:
     TxnApi(uint64_t sid, uint64_t epoch_nr, Api *api)
         : sid(sid), epoch_nr(epoch_nr), api(api) {}
+    uint64_t serial_id() const { return sid; }
   };
 
   class TxnVHandle : public TxnApi<VHandle> {
