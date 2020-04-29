@@ -27,7 +27,7 @@ struct MasstreeDollyParam : public Masstree::nodeparams<15, 15> {
 class MasstreeMap : public Masstree::basic_table<MasstreeDollyParam> {
  public:
   template <class MasstreeIteratorImpl>
-  struct Iterator : public BaseRelation::Iterator,
+  struct Iterator : public Table::Iterator,
                     public MasstreeIteratorImpl {
     threadinfo *ti;
     void Adapt();
@@ -84,24 +84,25 @@ bool MasstreeMap::Iterator<MasstreeMap::reverse_scan_iterator_impl>::IsValid() c
     return !this->terminated && !(cur_key < *end_key);
 }
 
-void MasstreeIndex::Initialize(threadinfo *ti)
+MasstreeIndex::MasstreeIndex(std::tuple<> conf) noexcept
+    : Table()
 {
-  auto tree = new MasstreeMap();
+  auto tree = new (get_map()) MasstreeMap();
+  auto ti = GetThreadInfo();
   tree->initialize(*ti);
-  map = tree;
 }
 
-VHandle *MasstreeIndex::SearchOrDefaultImpl(const VarStr *k,
-                                            const SearchOrDefaultHandler &default_func)
+template <typename Func>
+VHandle *MasstreeIndex::SearchOrCreateImpl(const VarStr *k, Func f)
 {
   VHandle *result;
   // result = this->Search(k);
   // if (result) return result;
   auto ti = GetThreadInfo();
-  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
+  typename MasstreeMap::cursor_type cursor(*get_map(), k->data, k->len);
   bool found = cursor.find_insert(*ti);
   if (!found) {
-    cursor.value() = default_func();
+    cursor.value() = f();
     // nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].add_cnt++;
   }
   result = cursor.value();
@@ -110,16 +111,27 @@ VHandle *MasstreeIndex::SearchOrDefaultImpl(const VarStr *k,
   return result;
 }
 
+VHandle *MasstreeIndex::SearchOrCreate(const VarStr *k)
+{
+  return SearchOrCreateImpl(k, [=]() { return NewRow(); });
+}
+
+VHandle *MasstreeIndex::SearchOrCreate(const VarStr *k, bool *created)
+{
+  *created = false;
+  return SearchOrCreateImpl(k, [=]() { *created = true; return NewRow(); });
+}
+
 VHandle *MasstreeIndex::Search(const VarStr *k)
 {
   auto ti = GetThreadInfo();
   VHandle *result = nullptr;
-  map->get(lcdf::Str(k->data, k->len), result, *ti);
+  get_map()->get(lcdf::Str(k->data, k->len), result, *ti);
   return result;
 }
 
 
-static __thread threadinfo *TLSThreadInfo;
+static thread_local threadinfo *TLSThreadInfo;
 
 threadinfo *MasstreeIndex::GetThreadInfo()
 {
@@ -133,18 +145,18 @@ void MasstreeIndex::ResetThreadInfo()
   TLSThreadInfo = nullptr;
 }
 
-BaseRelation::Iterator *MasstreeIndex::IndexSearchIterator(const VarStr *start, const VarStr *end)
+Table::Iterator *MasstreeIndex::IndexSearchIterator(const VarStr *start, const VarStr *end)
 {
-  auto it = map->find_iterator<MasstreeMap::ForwardIterator>(
+  auto it = get_map()->find_iterator<MasstreeMap::ForwardIterator>(
       lcdf::Str(start->data, start->len), *GetThreadInfo());
   it->set_end_key(end);
   it->Adapt();
   return it;
 }
 
-BaseRelation::Iterator *MasstreeIndex::IndexReverseIterator(const VarStr *start, const VarStr *end)
+Table::Iterator *MasstreeIndex::IndexReverseIterator(const VarStr *start, const VarStr *end)
 {
-  auto it = map->find_iterator<MasstreeMap::ReverseIterator>(
+  auto it = get_map()->find_iterator<MasstreeMap::ReverseIterator>(
       lcdf::Str(start->data, start->len), *GetThreadInfo());
   it->set_end_key(end);
   it->Adapt();
@@ -154,7 +166,7 @@ BaseRelation::Iterator *MasstreeIndex::IndexReverseIterator(const VarStr *start,
 void MasstreeIndex::ImmediateDelete(const VarStr *k)
 {
   auto ti = GetThreadInfo();
-  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
+  typename MasstreeMap::cursor_type cursor(*get_map(), k->data, k->len);
   bool found = cursor.find_locked(*ti);
   if (found) {
     VHandle *phandle = cursor.value();
@@ -165,13 +177,14 @@ void MasstreeIndex::ImmediateDelete(const VarStr *k)
   cursor.finish(-1, *ti);
 }
 
-RelationManager::RelationManager()
+void *MasstreeIndex::operator new(size_t sz)
 {
-  // initialize all relations
-  ti = threadinfo::make(threadinfo::TI_MAIN, -1);
-  for (int i = 0; i < kMaxNrRelations; i++) {
-    relations[i].Initialize(ti);
-  }
+  return malloc(sz + sizeof(MasstreeMap));
+}
+
+void MasstreeIndex::operator delete(void *p)
+{
+  return free(p);
 }
 
 }

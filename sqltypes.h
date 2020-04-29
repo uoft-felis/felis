@@ -40,10 +40,10 @@ struct VarStr {
     }
   }
 
-  static VarStr *FromAlloca(void *ptr, uint16_t length) {
+  static VarStr *FromPtr(void *ptr, uint16_t length) {
     VarStr *str = static_cast<VarStr *>(ptr);
     str->len = length;
-    str->region_id = -5206; // something peculiar, making you realize it's allocated from stack
+    str->region_id = -5206; // something peculiar, making you realize it's allocated adhoc.
     str->data = (uint8_t *) str + sizeof(VarStr);
     return str;
   }
@@ -364,13 +364,18 @@ class Object : public Base {
 
   VarStr *Encode() const { return EncodeVarStr(VarStr::New(this->EncodeSize())); }
 
-  VarStr *EncodeFromAlloca(void *base_ptr) const {
-    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
+  VarStr *EncodeFromPtr(void *ptr) const {
+    return EncodeVarStr(VarStr::FromPtr(ptr, this->EncodeSize()));
+  }
+
+  VarStr *EncodeFromPtrOrDefault(void *ptr) const {
+    if (ptr) return EncodeFromPtr(ptr);
+    else return Encode();
   }
 
   VarStr *EncodeFromRoutine() const {
     void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
-    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
+    return EncodeVarStr(VarStr::FromPtr(base_ptr, this->EncodeSize()));
   }
   void Decode(const VarStr *str) {
     this->DecodeFrom(str->data);

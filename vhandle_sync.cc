@@ -125,7 +125,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
   auto routine = sched->current_routine();
   // routine->set_busy_poll(true);
 
-  abort_if(core_id < 0, "We should not run on thread pool 0!");
+  // abort_if(core_id < 0, "We should not run on thread pool 0!");
 
   while (!slot(core_id)->done.load(std::memory_order_acquire)) {
     wait_cnt++;
@@ -201,10 +201,14 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
 
     if ((wait_cnt & 0x0FFFF) == 0) {
       transport.PeriodicIO(core_id);
+    }
+
+    if ((wait_cnt & 0x00FF) == 0) {
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         continue;
       }
     }
+
     if (!IsPendingVal(*addr))
       break;
     _mm_pause();

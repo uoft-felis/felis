@@ -28,6 +28,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   // value_mark = 0;
   size = 0;
   nr_ondsplt = 0;
+  inline_used = 0xFF; // disabled, 0x0F at most when enabled.
 
   // abort_if(mem::ParallelPool::CurrentAffinity() >= 256,
   //         "Too many cores, we need a larger vhandle");
@@ -35,7 +36,8 @@ SortedArrayVHandle::SortedArrayVHandle()
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
   cont_affinity = -1;
 
-  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
+  // versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
+  versions = (uint64_t *) ((uint8_t *) this + 64);
   latest_version.store(-1);
 }
 
@@ -51,7 +53,8 @@ bool SortedArrayVHandle::ShouldScanSkip(uint64_t sid)
   return skip;
 }
 
-static uint64_t *EnlargePair64Array(uint64_t *old_p, unsigned int old_cap, int old_regionid,
+static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
+                                    uint64_t *old_p, unsigned int old_cap, int old_regionid,
                                     unsigned int new_cap)
 {
   const size_t old_len = old_cap * sizeof(uint64_t);
@@ -65,16 +68,25 @@ static uint64_t *EnlargePair64Array(uint64_t *old_p, unsigned int old_cap, int o
   std::copy(old_p, old_p + old_cap, new_p);
   // memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
   std::copy(old_p + old_cap, old_p + 2 * old_cap, new_p + new_cap);
-  mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
+  if ((uint8_t *) old_p - (uint8_t *) row != 64)
+    mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
   return new_p;
 }
 
-void SortedArrayVHandle::EnsureSpace()
+void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 {
+  if (EpochClient::g_workload_client) {
+    auto &lm = EpochClient::g_workload_client->get_execution_locality_manager();
+    lm.PlanLoad(this_coreid, (long) delta);
+  }
+
+  size += delta;
+  util::Instance<GC>().AddVHandle((VHandle *) this, epoch_nr);
+
   if (unlikely(size >= capacity)) {
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
-    auto new_cap = 1U << (32 - __builtin_clz((unsigned int) size));
-    auto new_versions = EnlargePair64Array(versions, capacity, alloc_by_regionid, new_cap);
+    auto new_cap = std::max(8U, 1U << (32 - __builtin_clz((unsigned int) size)));
+    auto new_versions = EnlargePair64Array(this, versions, capacity, alloc_by_regionid, new_cap);
 
     abort_if(new_versions == nullptr,
              "Memory allocation failure, last GC {}, second ver epoch {}",
@@ -91,16 +103,6 @@ void SortedArrayVHandle::EnsureSpace()
     capacity = new_cap;
     alloc_by_regionid = current_regionid;
   }
-}
-
-void SortedArrayVHandle::IncreaseSize(int delta)
-{
-  if (EpochClient::g_workload_client) {
-    auto &lm = EpochClient::g_workload_client->get_execution_locality_manager();
-    lm.PlanLoad(this_coreid, (long) delta);
-  }
-  size += delta;
-  EnsureSpace();
 
   std::fill(versions + capacity + size - delta,
             versions + capacity + size,
@@ -112,7 +114,7 @@ void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr,
   if (is_ondemand_split) nr_ondsplt++;
 
   // append this version at the end of version array
-  IncreaseSize(1);
+  IncreaseSize(1, epoch_nr);
   BookNewVersionNoLock(sid, size - 1);
 
 #if 0
@@ -194,6 +196,8 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
   assert(size > 0);
 
+  if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
+
   uint64_t *p = versions;
   uint64_t *start = versions;
   uint64_t *end = versions + size;
@@ -206,7 +210,11 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
       goto found;
     }
   } else if (latest >= 0) {
-    end = versions + latest + 1;
+    end = versions + latest;
+    if (*(end - 1) < sid) {
+      p = end;
+      goto found;
+    }
   }
 
   p = std::lower_bound(start, end, sid);
@@ -252,20 +260,25 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
+  if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
   // Finding the exact location
-  auto it = std::lower_bound(versions, versions + size, sid);
-  if (unlikely(it == versions + size || *it != sid)) {
-    // sid is greater than all the versions, or the located lower_bound isn't sid version
-    logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
-                     sid, it - versions, size);
-    logger->critical("bufpos {}", buf_pos.load());
-    std::stringstream ss;
-    for (int i = 0; i < size; i++) {
-      ss << versions[i] << ' ';
+  int pos = latest_version.load();
+  uint64_t *it = versions + pos + 1;
+  if (*it != sid) {
+    it = std::lower_bound(versions, versions + size, sid);
+    if (unlikely(it == versions + size || *it != sid)) {
+      // sid is greater than all the versions, or the located lower_bound isn't sid version
+      logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
+                       sid, it - versions, size);
+      logger->critical("bufpos {}", buf_pos.load());
+      fmt::memory_buffer buffer;
+      for (int i = 0; i < size; i++) {
+        fmt::format_to(buffer, "{}{} ", versions[i], i == it - versions ? "*" : "");
+      }
+      logger->critical("Versions: {}", std::string_view(buffer.data(), buffer.size()));
+      std::abort();
+      return false;
     }
-    logger->critical("Versions: {}", ss.str());
-    std::abort();
-    return false;
   }
 
   auto objects = versions + capacity;
@@ -276,12 +289,16 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 
   probes::VersionWrite{this, epoch_nr}();
 
-  int ver = latest_version.load();
   int latest = it - versions;
-  while (latest > ver) {
-    if (latest_version.compare_exchange_strong(ver, latest))
+  // The following is correct, but costly! 2% of the time for this atomic CAS!
+  // Let's use something sloppy???
+  /*
+  while (latest > pos) {
+    if (latest_version.compare_exchange_strong(pos, latest))
       break;
   }
+  */
+  latest_version = latest;
   if (latest == size - 1) {
     nr_ondsplt = 0;
     cont_affinity = -1;
@@ -307,6 +324,7 @@ bool SortedArrayVHandle::WriteExactVersion(unsigned int version_idx, VarStr *obj
   return true;
 }
 
+#if 0
 void SortedArrayVHandle::GarbageCollect()
 {
   auto objects = versions + capacity;
@@ -322,18 +340,29 @@ void SortedArrayVHandle::GarbageCollect()
   latest_version.fetch_sub(size - 1);
   size = 1;
 }
+#endif
 
-void *SortedArrayVHandle::operator new(size_t nr_bytes)
+SortedArrayVHandle *SortedArrayVHandle::New()
 {
-  return pool.Alloc();
+  return new (pool.Alloc()) SortedArrayVHandle();
+}
+
+SortedArrayVHandle *SortedArrayVHandle::NewInline()
+{
+  auto r = new (inline_pool.Alloc()) SortedArrayVHandle();
+  r->inline_used = 0;
+  return r;
 }
 
 mem::ParallelSlabPool BaseVHandle::pool;
+mem::ParallelSlabPool BaseVHandle::inline_pool;
 
 void BaseVHandle::InitPool()
 {
-  pool = mem::ParallelSlabPool(mem::VhandlePool, 64, 4);
+  pool = mem::ParallelSlabPool(mem::VhandlePool, 128, 4);
+  inline_pool = mem::ParallelSlabPool(mem::VhandlePool, 256, 4);
   pool.Register();
+  inline_pool.Register();
 }
 
 #ifdef LL_REPLAY

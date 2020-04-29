@@ -1,8 +1,9 @@
-#include "mem.h"
-
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
+
+#include "mem.h"
 
 #include <sys/types.h>
 #include <syscall.h>
@@ -100,14 +101,15 @@ long BasicPool::CheckPointer(void *ptr)
               ptr, data, (uint8_t *) data + len);
     std::abort();
   }
-  auto r = std::div((uint8_t *) ptr - (uint8_t *) data, (long long) len / capacity);
-  if (r.rem != 0) {
+  size_t off = (uint8_t *) ptr - (uint8_t *) data;
+  size_t maxnr = len / capacity;
+  if (off % maxnr != 0) {
     if (!suppress_warning)
       fprintf(stderr, "%p is not aligned. %p with chunk_size %lu\n",
               ptr, data, len / capacity);
     std::abort();
   }
-  return r.quot;
+  return off / maxnr;
 }
 
 void *BasicPool::Alloc()
@@ -207,9 +209,9 @@ struct SlabMemory {
   }
 
   Slab *GetSlab(void *ptr, bool large_slab) {
-    auto d = std::lldiv(((uint8_t *) ptr - p) - data_offset, SlabPool::kLargeSlabPageSize);
-    auto idx = d.quot;
-    auto slab_idx = large_slab ? 0 : d.rem / SlabPool::kSlabPageSize;
+    size_t off = ((uint8_t *) ptr - p) - data_offset;
+    auto idx = off / SlabPool::kLargeSlabPageSize;
+    auto slab_idx = large_slab ? 0 : (off % SlabPool::kLargeSlabPageSize) / SlabPool::kSlabPageSize;
     return ((Slab *) ((MetaSlab *) p + idx)->slabs) + slab_idx;
   }
 
@@ -492,10 +494,9 @@ ParallelSlabPool::ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, u
   this->total_cap = buffer * ParallelAllocationPolicy::g_nr_cores;
 
   uint8_t *mem = nullptr;
-  for (int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
-    auto d = std::div(i + g_core_shifting, kNrCorePerNode);
-    auto numa_node = d.quot;
-    auto numa_offset = d.rem;
+  for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+    auto numa_node = i / kNrCorePerNode;
+    auto numa_offset = i % kNrCorePerNode;
     if (numa_offset == 0) {
       mem = (uint8_t *) MemMapAlloc(alloc_type, kHeaderSize * kNrCorePerNode);
     }

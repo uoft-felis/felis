@@ -33,17 +33,20 @@ void StockLevelTxn::PrepareInsert()
   if (client->g_enable_granola)
     return;
 
+  auto &mgr = util::Instance<TableManager>();
   auto auto_inc_zone = warehouse_id * 10 + district_id;
-  state->current_oid = client->relation(OOrder::kTable).GetCurrentAutoIncrement(auto_inc_zone);
+  state->current_oid = mgr.Get<OOrder>().GetCurrentAutoIncrement(auto_inc_zone);
+
+  client->get_execution_locality_manager().PlanLoad(warehouse_id - 1, 150);
 }
 
 void StockLevelTxn::Run()
 {
-  root->Then(
+    root->Then(
       MakeContext(warehouse_id, district_id, threshold), 0,
       [](const auto &ctx, auto _) -> Optional<VoidValue> {
         auto &[state, index_handle, warehouse_id, district_id, threshold] = ctx;
-        auto &mgr = util::Instance<RelationManager>();
+        auto &mgr = util::Instance<TableManager>();
         auto lower = std::max<int>(state->current_oid - (20 << 8), 0);
         auto upper = std::max<int>(state->current_oid, 0);
 
@@ -80,14 +83,13 @@ void StockLevelTxn::Run()
           auto stock_key = Stock::Key::New(warehouse_id, id);
           auto stock_value = index_handle(mgr.Get<Stock>().Search(stock_key.EncodeFromRoutine()))
                              .template Read<Stock::Value>();
-          if (stock_value.s_quantity < threshold)
-            result++;
+          if (stock_value.s_quantity < threshold) result++;
         }
-
         return nullopt;
-      });
+      },
+      client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1));
 
-  root->AssignSchedulingKey(serial_id() + (4000ULL << 8));
+    // root->AssignSchedulingKey(serial_id() + (1ULL << 8));
 }
 
 }

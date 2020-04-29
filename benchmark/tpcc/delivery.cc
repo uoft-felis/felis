@@ -33,7 +33,7 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
 void DeliveryTxn::PrepareImpl()
 {
   INIT_ROUTINE_BRK(16384);
-  auto &mgr = util::Instance<RelationManager>();
+  auto &mgr = util::Instance<TableManager>();
   for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
     auto district_id = i + 1;
     auto oid_min = ClientBase::LastNewOrderId(warehouse_id, district_id);
@@ -83,6 +83,8 @@ void DeliveryTxn::PrepareImpl()
             KeyParam<Customer>(customer_key),
             KeyParam<NewOrder>(dest_neworder_key));
   }
+
+  root->AssignAffinity(warehouse_id - 1);
 }
 
 // #define SPLIT_CUSTOMER_PIECE
@@ -122,7 +124,7 @@ void DeliveryTxn::Run()
               // logger->info("row {} district {} sid {}", (void *) state->oorders[i], district_id, index_handle.serial_id());
               auto oorder = index_handle(state->oorders[i]).template Read<OOrder::Value>();
               oorder.o_carrier_id = carrier_id;
-              index_handle(state->oorders[i]).Write(oorder);
+              index_handle(state->oorders[i]).WriteTryInline(oorder);
               ClientBase::OnUpdateRow(state->oorders[i]);
             }
 
@@ -155,7 +157,7 @@ void DeliveryTxn::Run()
 
                 probes::TpccDelivery{1, 1}();
 
-                handle.Write(ol);
+                handle.WriteTryInline(ol);
                 ClientBase::OnUpdateRow(state->order_lines[i][j]);
               }
 

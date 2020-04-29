@@ -132,20 +132,19 @@ const uint8_t *BaseTxn::TxnIndexOpContext::DecodeFrom(const uint8_t *buf)
 
 BaseTxn::TxnIndexLookupOpImpl::TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx, int idx)
 {
-  auto &rel = util::Instance<RelationManager>()[ctx.relation_ids[idx]];
+  auto tbl = util::Instance<TableManager>().GetTable(ctx.relation_ids[idx]);
   result.fill(nullptr);
 
   if (ctx.slice_ids[idx] >= 0 || ctx.slice_ids[idx] == kReadOnlySliceId) {
     VarStr key(ctx.key_len[idx], 0, ctx.key_data[idx]);
-    auto handle = rel.Search(&key);
+    auto handle = tbl->Search(&key);
     result[0] = handle;
   } else if (ctx.slice_ids[idx] == -1) {
     VarStr range_start(ctx.key_len[idx], 0, ctx.key_data[idx]);
     VarStr range_end(ctx.key_len[idx + 1], 0, ctx.key_data[idx + 1]);
-    auto &mgr = util::Instance<RelationManager>();
-    auto &table = mgr[ctx.relation_ids[idx]];
+    // auto &table = mgr[ctx.relation_ids[idx]];
     int i = 0;
-    for (auto it = table.IndexSearchIterator(&range_start, &range_end);
+    for (auto it = tbl->IndexSearchIterator(&range_start, &range_end);
          it->IsValid(); it->Next(), i++) {
       result[i] = it->row();
     }
@@ -154,22 +153,23 @@ BaseTxn::TxnIndexLookupOpImpl::TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx
 
 BaseTxn::TxnIndexInsertOpImpl::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx, int idx)
 {
-  auto &rel = util::Instance<RelationManager>()[ctx.relation_ids[idx]];
+  auto tbl = util::Instance<TableManager>().GetTable(ctx.relation_ids[idx]);
 
   abort_if(ctx.keys_bitmap != ctx.slices_bitmap,
            "InsertOp should have same number of keys and values. bitmap {} != {}",
            ctx.keys_bitmap, ctx.slices_bitmap);
   VarStr key(ctx.key_len[idx], 0, ctx.key_data[idx]);
-  result = rel.SearchOrDefault(
-      &key,
-      [&ctx, idx]() {
-        VarStr *kstr = VarStr::New(ctx.key_len[idx]);
-        memcpy((void *) kstr->data, ctx.key_data[idx], ctx.key_len[idx]);
-        auto row = new VHandle();
-        util::Instance<felis::SliceManager>().OnNewRow(
-            ctx.slice_ids[idx], ctx.relation_ids[idx], kstr, row);
-        return row;
-      });
+  bool created = false;
+  result = tbl->SearchOrCreate(
+      &key, &created);
+
+  if (created) {
+    VarStr *kstr = VarStr::New(ctx.key_len[idx]);
+    memcpy((void *) kstr->data, ctx.key_data[idx], ctx.key_len[idx]);
+
+    util::Instance<felis::SliceManager>().OnNewRow(
+        ctx.slice_ids[idx], ctx.relation_ids[idx], kstr, result);
+  }
 }
 
 uint64_t BaseTxn::AffinityFromRows(uint64_t bitmap, VHandle *const *it)

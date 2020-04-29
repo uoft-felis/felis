@@ -61,7 +61,7 @@ std::array<VersionBufferHeadAllocation, kMaxNrNode / mem::kNrCorePerNode> g_allo
 // This is a per-core allocator for rows. By moving the `pos`, we can allocate
 // buffers to each row.
 struct VersionBufferHead {
-  static constexpr int kMaxPos = 1024;
+  static constexpr int kMaxPos = 8192;
 
   long base_pos;
   std::atomic_int pos;
@@ -114,12 +114,16 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
   if (buf->buf_cnt == VersionBuffer::kMaxBatch) {
     util::MCSSpinLock::QNode qnode;
     handle->lock.Acquire(&qnode);
-    auto end = handle->size;
-    handle->IncreaseSize(VersionBuffer::kMaxBatch + 1);
-    handle->BookNewVersionNoLock(sid, end);
 
-    end = handle->AbsorbNewVersionNoLock(end, VersionBuffer::kMaxBatch);
+    handle->AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
     if (is_ondemand_split) handle->nr_ondsplt++;
+
+    auto end = handle->size;
+    handle->IncreaseSize(VersionBuffer::kMaxBatch, epoch_nr);
+    // handle->IncreaseSize(VersionBuffer::kMaxBatch + 1);
+    // handle->BookNewVersionNoLock(sid, end);
+
+    // end = handle->AbsorbNewVersionNoLock(end, VersionBuffer::kMaxBatch);
 
     FlushIntoNoLock(handle, epoch_nr, end);
     handle->lock.Release(&qnode);
@@ -137,13 +141,13 @@ void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, un
 {
   VersionPrealloc prealloc(prealloc_ptr);
   auto buf = prealloc.version_buffers() + pos;
+  std::sort(buf->versions, buf->versions + buf->buf_cnt);
   for (int i = buf->buf_cnt - 1; i >= 0; i--) {
     handle->BookNewVersionNoLock(buf->versions[i], end);
-    // printf("absorb %d %d\n", end, i);
+    // printf("absorb %d %d %lu %p\n", end, i, buf->versions[i], handle);
     end = handle->AbsorbNewVersionNoLock(end, i);
   }
   handle->nr_ondsplt += buf->ondsplt_cnt;
-  util::Instance<GC>().AddVHandle(handle, epoch_nr);
   buf->buf_cnt = 0;
   buf->ondsplt_cnt = 0;
   prealloc.bitmap()[pos / 64] &= ~(1ULL << (pos % 64));
@@ -194,7 +198,7 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
     auto buf = prealloc.version_buffers() + p;
 
     vhandle->lock.Acquire(&qnode);
-    vhandle->IncreaseSize(buf->buf_cnt);
+    vhandle->IncreaseSize(buf->buf_cnt, epoch_nr);
     buf_handle.FlushIntoNoLock(vhandle, epoch_nr, vhandle->size - buf->buf_cnt);
     vhandle->lock.Release(&qnode);
   }
@@ -258,7 +262,7 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
 void BatchAppender::Reset()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  unsigned int sum = 0;
+  unsigned int sum = 0, nr_cleared = 0;
 
   for (int core = 0; core < nr_threads; core++) {
     auto p = buffer_heads[core];
@@ -269,6 +273,7 @@ void BatchAppender::Reset()
       for (long i = 0; i < p->pos.load(std::memory_order_acquire); i++) {
         auto row = p->backrefs[i];
         row->buf_pos.store(-1, std::memory_order_release);
+        nr_cleared++;
 
         if (!Options::kOnDemandSplitting) continue;
 
@@ -318,7 +323,9 @@ void BatchAppender::Reset()
     buffer_heads[core] = g_alloc[core / mem::kNrCorePerNode].AllocHead(core);
   }
   if (Options::kOnDemandSplitting) {
-    logger->info("OnDemand {}", sum);
+    logger->info("OnDemand {} Batch {} rows", sum, nr_cleared);
+  } else {
+    logger->info("Batch {} rows", nr_cleared);
   }
 }
 

@@ -56,6 +56,8 @@ void PaymentTxn::PrepareImpl()
           KeyParam<Warehouse>(warehouse_key),
           KeyParam<District>(district_key),
           KeyParam<Customer>(customer_key));
+
+  root->AssignAffinity(warehouse_id - 1);
 }
 
 void PaymentTxn::Run()

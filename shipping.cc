@@ -267,7 +267,7 @@ void RowShipmentReceiver::Run()
   static constexpr int batchSize = 32; // entity batch num per lambda
   RowEntity ent[recvBufSize];
   for (int i = 0; i < recvBufSize; i++) {
-    ent[i].Prepare(VarStr::FromAlloca(alloca(64), 64), VarStr::FromAlloca(alloca(768), 768));
+    ent[i].Prepare(VarStr::FromPtr(alloca(64), 64), VarStr::FromPtr(alloca(768), 768));
   }
 
   while (true) {
@@ -292,7 +292,7 @@ void RowShipmentReceiver::Run()
       int entCount = (i + batchSize > recvCount) ? (recvCount - i) : batchSize;
       auto r = go::Make(
           [en, entCount, complete] {
-            auto &mgr = util::Instance<RelationManager>();
+            auto &mgr = util::Instance<TableManager>();
             for (int i = 0; i < entCount; i++) {
               auto rel_id = en[i].get_rel_id();
               auto slice_id = en[i].slice_id();
@@ -305,10 +305,10 @@ void RowShipmentReceiver::Run()
               //   If the key exists in the masstree, then return the value
               //   If the key does not exist, then execute the lambda function, insert the
               //     (key, return value of lambda) into the masstree, and return the value
-              auto &rel = mgr[rel_id];
-              bool exist = true;
-              auto handle = rel.SearchOrDefault(k, [&exist]() { exist = false; return new VHandle(); });
-              if (exist) {
+              auto rel = mgr.GetTable(rel_id);
+              bool created = true;
+              auto handle = rel->SearchOrCreate(k, &created);
+              if (!created) {
                 auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
                 auto sid = handle->last_version() + 1;
                 handle->AppendNewVersion(sid, epoch_nr);

@@ -4,6 +4,7 @@
 #include "table_decl.h"
 #include "epoch.h"
 #include "slice.h"
+#include "index.h"
 
 #include "zipfian_random.h"
 
@@ -16,6 +17,9 @@ enum class TableType : int {
 
 struct Ycsb {
   static constexpr auto kTable = TableType::Ycsb;
+  static constexpr auto kIndexArgs = std::make_tuple();
+
+  using IndexBackend = felis::MasstreeIndex;
   using Key = sql::YcsbKey;
   using Value = sql::YcsbValue;
 };

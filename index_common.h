@@ -2,10 +2,11 @@
 #ifndef INDEX_COMMON_H
 #define INDEX_COMMON_H
 
+#include <cstdlib>
+#include <type_traits>
 #include <memory>
 #include <mutex>
 #include <atomic>
-#include <cstdlib>
 
 #include "mem.h"
 #include "log.h"
@@ -27,14 +28,7 @@ class Checkpoint {
   virtual void Export() = 0;
 };
 
-// Relations is an index or a table. Both are associates between keys and
-// rows.
-//
-// Since we are doing replay, we need two layers of indexing.
-// First layer is indexing the keys.
-// Second layer is the versioning layer. The versioning layers could be simply
-// kept as a sorted array
-class BaseRelation {
+class Table {
  public:
   static constexpr size_t kAutoIncrementZones = 1024;
 
@@ -43,8 +37,9 @@ class BaseRelation {
   bool read_only;
   size_t key_len;
   std::atomic_uint64_t auto_increment_cnt[kAutoIncrementZones];
+  bool enable_inline;
  public:
-  BaseRelation() : id(-1), read_only(false) {}
+  Table() : id(-1), read_only(false) {}
 
   void set_id(int relation_id) { id = relation_id; }
   int relation_id() { return id; }
@@ -54,6 +49,9 @@ class BaseRelation {
 
   void set_read_only(bool v) { read_only = v; }
   bool is_read_only() const { return read_only; }
+
+  void set_enable_inline(bool v) { enable_inline = v; }
+  bool is_enable_inline() const { return enable_inline; }
 
   // In a distributed environment, we may need to generate a AutoIncrement key
   // on one node and insert on another. In order to prevent conflict, we need to
@@ -89,47 +87,53 @@ class BaseRelation {
     const VHandle *row() const { return vhandle; }
     VHandle *row() { return vhandle; }
   };
+
+  // IndexBackend will implement these
+  virtual VHandle *SearchOrCreate(const VarStr *k, bool *created) { return nullptr; }
+  virtual VHandle *SearchOrCreate(const VarStr *k) { return nullptr; }
+  virtual VHandle *Search(const VarStr *k) { return nullptr; }
+  virtual Table::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) {
+    return nullptr;
+  }
+  virtual Table::Iterator *IndexReverseIterator(const VarStr *start, const VarStr *end = nullptr) {
+    return nullptr;
+  }
+
+  VHandle *NewRow();
 };
 
-template <class T>
-class RelationManagerPolicy {
- protected:
+class TableManager {
+  template <typename T> friend T &util::Instance() noexcept;
+  TableManager() {}
  public:
   static constexpr int kMaxNrRelations = 1024;
-  RelationManagerPolicy() {}
 
-  T &GetRelationOrCreate(int fid) {
-#ifndef NDEBUG
-    abort_if(fid < 0 || fid >= kMaxNrRelations,
-             "Cannot access {}, limit {}", fid, kMaxNrRelations);
-#endif
+  template <typename TableSpec>
+  typename TableSpec::IndexBackend &Get() {
+    static_assert(std::is_base_of<Table, typename TableSpec::IndexBackend>::value);
 
-    if (relations[fid].relation_id() == -1)
-      relations[fid].set_id(fid);
-    return relations[fid];
+    return *static_cast<typename TableSpec::IndexBackend *>(
+        tables[static_cast<int>(TableSpec::kTable)]);
   }
 
-  T &operator[](int fid) {
-#ifndef NDEBUG
-    abort_if(fid < 0 || fid >= kMaxNrRelations || relations[fid].relation_id() == -1,
-             "Cannot access {}? Is it initialized? limit {}", fid, kMaxNrRelations);
-#endif
-    return relations[fid];
+  Table *GetTable(int idx) {
+    return tables[idx];
   }
 
-  template <typename TableT> T &Get() { return (*this)[static_cast<int>(TableT::kTable)]; }
+  template <typename TableSpec, typename ...TableSpecs>
+  void Create() {
+    static_assert(std::is_base_of<Table, typename TableSpec::IndexBackend>::value);
+
+    auto table = new typename TableSpec::IndexBackend(TableSpec::kIndexArgs);
+    table->set_id(static_cast<int>(TableSpec::kTable));
+
+    tables[static_cast<int>(TableSpec::kTable)] = table;
+
+    if constexpr(sizeof...(TableSpecs) > 0) Create<TableSpecs...>();
+  }
 
  protected:
-  std::array<T, kMaxNrRelations> relations;
-};
-
-template <class IndexPolicy>
-class RelationPolicy : public BaseRelation,
-		       public IndexPolicy {
- public:
-  VHandle *SearchOrCreate(const VarStr *k) {
-    return this->SearchOrDefault(k, []() { return new VHandle(); });
-  }
+  std::array<Table *, kMaxNrRelations> tables;
 };
 
 void InitVersion(felis::VHandle *, VarStr *);

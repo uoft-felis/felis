@@ -899,7 +899,7 @@ void EpochPromiseAllocationService::Reset()
   }
 }
 
-static constexpr size_t kEpochMemoryLimitPerCore = 16_M;
+static constexpr size_t kEpochMemoryLimitPerCore = 4_M;
 
 EpochMemory::EpochMemory()
 {

@@ -13,49 +13,42 @@ class threadinfo;
 
 namespace felis {
 
-class RelationManager;
 class MasstreeMap;
+class TableManager;
 
-class MasstreeIndex {
+class MasstreeIndex final : public Table {
  private:
   friend class MasstreeMap;
-  MasstreeMap *map;
-  static threadinfo *GetThreadInfo();
- public:
-  static void ResetThreadInfo();
+  friend class TableManager;
 
-  void Initialize(threadinfo *ti);
- protected:
+  static threadinfo *GetThreadInfo();
 
   struct {
     uint64_t add_cnt;
     uint64_t del_cnt;
   } nr_keys [NodeConfiguration::kMaxNrThreads]; // scalable counting
 
- public:
-
-  struct SearchOrDefaultHandler {
-    virtual VHandle *operator()() const = 0;
-  };
-
-  VHandle *SearchOrDefaultImpl(const VarStr *k, const SearchOrDefaultHandler &default_handler);
-
-  template <typename Func>
-  VHandle *SearchOrDefault(const VarStr *k, Func default_func) {
-    struct SearchOrDefaultHandlerImpl : public SearchOrDefaultHandler {
-      Func f;
-      SearchOrDefaultHandlerImpl(Func f) : f(f) {}
-      VHandle *operator()() const override final {
-        return f();
-      }
-    };
-    return SearchOrDefaultImpl(k, SearchOrDefaultHandlerImpl(default_func));
+  MasstreeMap *get_map() {
+    // Let's reduce cache miss
+    return (MasstreeMap *) ((uint8_t *) (this + 1));
   }
 
-  VHandle *Search(const VarStr *k);
+  template <typename Func>
+  VHandle *SearchOrCreateImpl(const VarStr *k, Func f);
+ public:
+  static void ResetThreadInfo();
 
-  BaseRelation::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr);
-  BaseRelation::Iterator *IndexReverseIterator(const VarStr *start, const VarStr *end = nullptr);
+  MasstreeIndex(std::tuple<> conf) noexcept; // no configuration required
+
+  static void *operator new(size_t sz);
+  static void operator delete(void *p);
+
+  VHandle *SearchOrCreate(const VarStr *k, bool *created) override;
+  VHandle *SearchOrCreate(const VarStr *k) override;
+  VHandle *Search(const VarStr *k) override ;
+
+  Table::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) override;
+  Table::Iterator *IndexReverseIterator(const VarStr *start, const VarStr *end = nullptr) override;
 
   size_t nr_unique_keys() const {
     size_t rs = 0;
@@ -69,17 +62,6 @@ class MasstreeIndex {
     // delete an object, this won't be checkpointed
     nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++;
   }
-};
-
-class Relation : public felis::RelationPolicy<MasstreeIndex> {};
-
-class RelationManager : public RelationManagerPolicy<Relation> {
-  threadinfo *ti;
-
-  RelationManager();
-  template <typename T> friend T &util::Instance() noexcept;
- public:
-  // threadinfo *GetThreadInfo() { return ti; }
 };
 
 }

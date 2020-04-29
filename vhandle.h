@@ -29,10 +29,13 @@ class VHandleSyncService {
 class BaseVHandle {
  public:
   static mem::ParallelSlabPool pool;
+
+  // Cicada uses inline data to reduce cache misses. These inline rows are much
+  // larger: 4-cache lines.
+  static mem::ParallelSlabPool inline_pool;
   static void InitPool();
-  static void Quiescence() { pool.Quiescence(); }
+  static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
  public:
-  void Prefetch() const {}
 
   VHandleSyncService &sync();
 };
@@ -46,18 +49,20 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class RowEntity;
   friend class SliceManager;
   friend class GC;
-  friend class VHandleContentionMetric;
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
   friend class BatchAppender;
+  friend class HashtableIndex;
 
   util::MCSSpinLock lock;
   uint8_t alloc_by_regionid;
   uint8_t this_coreid;
   int8_t cont_affinity;
+  uint8_t inline_used;
 
   unsigned int capacity;
   unsigned int size;
+
   std::atomic_int latest_version; // the latest written version's offset in *versions
   int nr_ondsplt;
   // versions: ptr to the version array.
@@ -66,17 +71,20 @@ class SortedArrayVHandle : public BaseVHandle {
   util::OwnPtr<RowEntity> row_entity;
   std::atomic_long buf_pos = -1;
   uint64_t last_gc_mark_epoch = 0;
- public:
 
-  static void *operator new(size_t nr_bytes);
+  SortedArrayVHandle();
+ public:
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
-    pool.Free(ptr, phandle->this_coreid);
+    if (phandle->inline_used == 0xFF)
+      inline_pool.Free(ptr, phandle->this_coreid);
+    else
+      pool.Free(ptr, phandle->this_coreid);
   }
 
-  SortedArrayVHandle();
-  SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
+  static SortedArrayVHandle *New();
+  static SortedArrayVHandle *NewInline();
 
   bool ShouldScanSkip(uint64_t sid);
   void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split = false);
@@ -84,8 +92,34 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
-  void GarbageCollect();
+  // void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
+
+  uint8_t *AllocFromInline(size_t sz) {
+    if (inline_used != 0xFF) {
+      sz = util::Align(sz, 32);
+      if (sz > 128) return nullptr;
+
+      uint8_t mask = (1 << (sz >> 5)) - 1;
+      for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
+        if ((inline_used & (mask << off)) == 0) {
+          inline_used |= (mask << off);
+          return (uint8_t *) this + 128 + (off << 5);
+        }
+      }
+    }
+    return nullptr;
+  }
+
+  void FreeToInline(uint8_t *p, size_t sz) {
+    if (inline_used != 0xFF) {
+        sz = util::Align(sz, 16);
+        if (sz > 128) return;
+        uint8_t mask = (1 << (sz >> 4)) - 1;
+        uint8_t off = (p - (uint8_t *) this - 128) >> 4;
+        inline_used &= ~(mask << off);
+      }
+  }
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   const size_t nr_versions() const { return size; }
@@ -102,8 +136,7 @@ class SortedArrayVHandle : public BaseVHandle {
   void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
     versions[pos] = sid;
   }
-  void EnsureSpace();
-  void IncreaseSize(int delta);
+  void IncreaseSize(int delta, uint64_t epoch_nr);
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 

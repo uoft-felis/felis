@@ -111,7 +111,7 @@ void RMWTxn::Prepare()
               t, 1, // Always on the local node.
               [](auto &ctx, auto _) -> Optional<VoidValue> {
                 INIT_ROUTINE_BRK(1024);
-                auto &rel = util::Instance<RelationManager>()[static_cast<int>(Ycsb::kTable)];
+                auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
                 auto [k, i, state, handle] = ctx;
                 Ycsb::Key dbk;
                 dbk.k = k;
@@ -194,7 +194,7 @@ void RMWTxn::Run()
                 }
 
                 if (Client::g_enable_granola) {
-                  auto &rel = util::Instance<RelationManager>()[static_cast<int>(Ycsb::kTable)];
+                  auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
                   Ycsb::Key dbk;
                   dbk.k = k;
                   state->rows[i] = rel.Search(dbk.EncodeFromRoutine());
@@ -223,9 +223,7 @@ void RMWTxn::Run()
 
 void YcsbLoader::Run()
 {
-  auto &mgr = util::Instance<felis::RelationManager>();
-  int table_id = static_cast<int>(TableType::Ycsb);
-  mgr.GetRelationOrCreate(table_id);
+  auto &mgr = util::Instance<felis::TableManager>();
 
   void *large_buf = alloca(1024);
 
@@ -245,7 +243,7 @@ void YcsbLoader::Run()
       Ycsb::Value dbv;
       dbk.k = i;
       dbv.v.resize_junk(90);
-      auto handle = mgr[table_id].SearchOrCreate(dbk.EncodeFromAlloca(large_buf));
+      auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeFromPtr(large_buf));
       // TODO: slice mapping table stuff?
       felis::InitVersion(handle, dbv.Encode());
     }

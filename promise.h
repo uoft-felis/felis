@@ -180,13 +180,13 @@ struct VoidValue {
   VoidValue() {} // private because you shall never use a Optional<VoidValue> than nullopt_t!
  public:
   void Decode(const VarStr *) {}
-  VarStr *EncodeFromAlloca(void *buffer) const { return nullptr; }
+  VarStr *EncodeFromPtr(void *buffer) const { return nullptr; }
   size_t EncodeSize() const { return 0; }
 };
 
 struct DummyValue {
   void Decode(const VarStr *) {}
-  VarStr *EncodeFromAlloca(void *buffer) const { return nullptr; }
+  VarStr *EncodeFromPtr(void *buffer) const { return nullptr; }
   size_t EncodeSize() const { return 0; }
 };
 
@@ -226,7 +226,7 @@ class Promise : public BasePromise {
 
             if (output) {
               void *buffer = Alloc(output->EncodeSize() + sizeof(VarStr) + 1);
-              VarStr *output_str = output->EncodeFromAlloca(buffer);
+              VarStr *output_str = output->EncodeFromPtr(buffer);
               next->Complete(*output_str);
             } else {
               VarStr bubble(0, 0, (uint8_t *)PromiseRoutine::kBubblePointer);

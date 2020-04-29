@@ -60,8 +60,9 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
 
 void NewOrderTxn::PrepareInsertImpl()
 {
+  auto &mgr = util::Instance<TableManager>();
   auto auto_inc_zone = warehouse_id * 10 + district_id;
-  auto oorder_id = client->relation(OOrder::kTable).AutoIncrement(auto_inc_zone);
+  auto oorder_id = mgr.Get<tpcc::OOrder>().AutoIncrement(auto_inc_zone);
 
   auto oorder_key = OOrder::Key::New(warehouse_id, district_id, oorder_id);
   auto neworder_key = NewOrder::Key::New(warehouse_id, district_id, oorder_id, customer_id);
@@ -84,6 +85,8 @@ void NewOrderTxn::PrepareInsertImpl()
           KeyParam<OOrder>(oorder_key),
           KeyParam<NewOrder>(neworder_key),
           KeyParam<OOrderCIdIdx>(cididx_key));
+
+  root->AssignAffinity(warehouse_id - 1);
 }
 
 void NewOrderTxn::PrepareImpl()
@@ -101,6 +104,8 @@ void NewOrderTxn::PrepareImpl()
       TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
           nullptr,
           KeyParam<Stock>(stock_keys, nr_items));
+
+  root->AssignAffinity(warehouse_id - 1);
 }
 
 void NewOrderTxn::Run()
@@ -144,18 +149,18 @@ void NewOrderTxn::Run()
 
           if (bitmap & 0x01) {
             index_handle(state->oorder)
-                .Write(OOrder::Value::New(customer_id, 0, nr_items,
-                                          all_local, ts_now));
+                .WriteTryInline(OOrder::Value::New(customer_id, 0, nr_items,
+                                                   all_local, ts_now));
             ClientBase::OnUpdateRow(state->oorder);
           }
 
           if (bitmap & 0x02) {
-            index_handle(state->neworder).Write(NewOrder::Value());
+            index_handle(state->neworder).WriteTryInline(NewOrder::Value());
             ClientBase::OnUpdateRow(state->neworder);
           }
 
           if (bitmap & 0x04) {
-            index_handle(state->cididx).Write(OOrderCIdIdx::Value());
+            index_handle(state->cididx).WriteTryInline(OOrderCIdIdx::Value());
             ClientBase::OnUpdateRow(state->cididx);
           }
 
@@ -174,7 +179,7 @@ void NewOrderTxn::Run()
         MakeContext(bitmap, detail), node,
         [](const auto &ctx, auto args) -> Optional<VoidValue> {
           auto &[state, index_handle, bitmap, detail] = ctx;
-          auto &mgr = util::Instance<RelationManager>();
+          auto &mgr = util::Instance<TableManager>();
 
           INIT_ROUTINE_BRK(4096);
 
@@ -188,9 +193,9 @@ void NewOrderTxn::Run()
             probes::TpccNewOrder{1, 1}();
 
             index_handle(state->orderlines[i])
-                .Write(OrderLine::Value::New(detail.item_id[i], 0, amount,
-                                             detail.supplier_warehouse_id[i],
-                                             detail.order_quantities[i]));
+                .WriteTryInline(OrderLine::Value::New(detail.item_id[i], 0, amount,
+                                                      detail.supplier_warehouse_id[i],
+                                                      detail.order_quantities[i]));
             ClientBase::OnUpdateRow(state->orderlines[i]);
           }
 
@@ -235,6 +240,7 @@ void NewOrderTxn::Run()
           MakeContext(bitmap, params, filter), node,
           [](const auto &ctx, auto args) -> Optional<VoidValue> {
             auto &[state, index_handle, bitmap, params, filter] = ctx;
+
             for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
               if ((bitmap & (1 << i)) == 0) continue;
               if (filter > 0 && params.supplier_warehouses[i] != filter) continue;

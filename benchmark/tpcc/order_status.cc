@@ -32,7 +32,7 @@ void OrderStatusTxn::Run()
       MakeContext(warehouse_id, district_id, customer_id), 0,
       [](const auto &ctx, auto _) -> Optional<VoidValue> {
         auto &[state, index_handle, warehouse_id, district_id, customer_id] = ctx;
-        auto &mgr = util::Instance<RelationManager>();
+        auto &mgr = util::Instance<TableManager>();
         INIT_ROUTINE_BRK(8 << 10);
 
         auto customer_key = Customer::Key::New(warehouse_id, district_id, customer_id);

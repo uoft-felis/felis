@@ -96,6 +96,11 @@ class BaseTxn {
     template <typename T> bool Write(const T &o) {
       return WriteVarStr(o.Encode());
     }
+
+    template <typename T> bool WriteTryInline(const T &o) {
+      return WriteVarStr(o.EncodeFromPtrOrDefault(api->AllocFromInline(o.EncodeSize())));
+    }
+
     bool Delete() {
       return WriteVarStr(nullptr);
     }

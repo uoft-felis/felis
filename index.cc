@@ -7,7 +7,8 @@ namespace felis {
 
 std::map<std::string, Checkpoint *> Checkpoint::impl;
 
-void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue) {
+void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
+{
   handle->AppendNewVersion(0, 0);
   if (obj != (void *) kPendingValue) {
     abort_if(!handle->WriteWithVersion(0, obj, 0),
@@ -15,5 +16,12 @@ void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
   }
 }
 
+VHandle *Table::NewRow()
+{
+  if (enable_inline)
+    return (VHandle *) VHandle::NewInline();
+  else
+    return (VHandle *) VHandle::New();
+}
 
 }
