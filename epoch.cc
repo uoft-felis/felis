@@ -216,6 +216,10 @@ void AllocStateTxnWorker::Run()
     auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
     txn->PrepareState();
   }
+  if (comp.fetch_sub(1) == 2) {
+    client->insert_lmgr.Balance();
+    comp.fetch_sub(1);
+  }
 }
 
 void CallTxnsWorker::Run()
@@ -227,6 +231,8 @@ void CallTxnsWorker::Run()
 
   set_urgent(true);
   auto pq = client->cur_txns.load()->per_core_txns[t];
+
+  while (AllocStateTxnWorker::comp.load() != 0);
 
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
@@ -241,6 +247,7 @@ void CallTxnsWorker::Run()
   // assigned. Because transactions are already round-robinned, there is no
   // imbalanced here.
 
+  // These are used for corescaling, I think they are deprecated.
   long extra_offset = 0;
   for (auto i = client->core_limit; i < t; i++) {
     extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
@@ -258,6 +265,7 @@ void CallTxnsWorker::Run()
       // auto zone = t % avail_nr_zones;
       aff = (i + extra_offset) % client->core_limit;
     }
+
     auto root = txn->root_promise();
     root->AssignAffinity(aff);
     root->Complete(VarStr());
@@ -357,6 +365,8 @@ void EpochClient::InitializeEpoch()
   cur_txns = &all_txns[epoch_nr - 1];
   total_nr_txn = NumberOfTxns();
 
+  insert_lmgr.Reset();
+  init_lmgr.Reset();
   exec_lmgr.Reset();
   cont_lmgr.Reset();
 
@@ -364,6 +374,7 @@ void EpochClient::InitializeEpoch()
 
   util::Instance<GC>().PrepareGCForAllCores();
 
+  AllocStateTxnWorker::comp = nr_threads + 1;
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->alloc_state_worker;
     r->Reset();
@@ -378,6 +389,7 @@ void EpochClient::InitializeEpoch()
 void EpochClient::OnInsertComplete()
 {
   stats.insert_time_ms += callback.perf.duration_ms();
+  init_lmgr.Balance();
   callback.phase = EpochPhase::Initialize;
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),

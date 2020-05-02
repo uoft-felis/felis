@@ -69,6 +69,7 @@ class CallTxnsWorker : public EpochClientBaseWorker {
 
 class AllocStateTxnWorker : public EpochClientBaseWorker {
  public:
+  static inline std::atomic_ulong comp = 0;
   using EpochClientBaseWorker::EpochClientBaseWorker;
   void Run() override final;
 };
@@ -148,6 +149,8 @@ class EpochClient {
 
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
+  LocalityManager &get_insert_locality_manager() { return insert_lmgr; }
+  LocalityManager &get_initialization_locality_manager() { return init_lmgr; }
   LocalityManager &get_execution_locality_manager() { return exec_lmgr; }
   LocalityManager &get_contention_locality_manager() { return cont_lmgr; }
 
@@ -188,6 +191,7 @@ class EpochClient {
   std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
+  LocalityManager insert_lmgr, init_lmgr;
   LocalityManager exec_lmgr;
   LocalityManager cont_lmgr;
 

@@ -44,6 +44,11 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
         NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
         client(client)
   {}
+  void PrepareState() override final {
+    Txn<NewOrderState>::PrepareState();
+    client->get_insert_locality_manager().PlanLoad(warehouse_id - 1, nr_items);
+    client->get_initialization_locality_manager().PlanLoad(warehouse_id - 1, 5);
+  }
   void Run() override final;
   void Prepare() override final {
     if (!Client::g_enable_granola)
@@ -86,7 +91,7 @@ void NewOrderTxn::PrepareInsertImpl()
           KeyParam<NewOrder>(neworder_key),
           KeyParam<OOrderCIdIdx>(cididx_key));
 
-  root->AssignAffinity(warehouse_id - 1);
+  root->AssignAffinity(client->get_insert_locality_manager().GetScheduleCore(warehouse_id - 1));
 }
 
 void NewOrderTxn::PrepareImpl()
@@ -105,7 +110,7 @@ void NewOrderTxn::PrepareImpl()
           nullptr,
           KeyParam<Stock>(stock_keys, nr_items));
 
-  root->AssignAffinity(warehouse_id - 1);
+  root->AssignAffinity(client->get_initialization_locality_manager().GetScheduleCore(warehouse_id - 1));
 }
 
 void NewOrderTxn::Run()

@@ -26,7 +26,9 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
     if (!EpochClient::g_enable_granola)
       PrepareImpl();
   }
-  void PrepareInsert() override final {}
+  void PrepareInsert() override final {
+    client->get_initialization_locality_manager().PlanLoad(warehouse_id - 1, 40);
+  }
   void PrepareImpl();
 };
 
@@ -84,7 +86,7 @@ void DeliveryTxn::PrepareImpl()
             KeyParam<NewOrder>(dest_neworder_key));
   }
 
-  root->AssignAffinity(warehouse_id - 1);
+  root->AssignAffinity(client->get_initialization_locality_manager().GetScheduleCore(warehouse_id - 1));
 }
 
 // #define SPLIT_CUSTOMER_PIECE

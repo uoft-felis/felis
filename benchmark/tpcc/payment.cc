@@ -37,7 +37,9 @@ class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
       PrepareImpl();
   }
   void Run() override final;
-  void PrepareInsert() override final {}
+  void PrepareInsert() override final {
+    client->get_initialization_locality_manager().PlanLoad(warehouse_id - 1, 4);
+  }
   void PrepareImpl();
 };
 
@@ -57,7 +59,7 @@ void PaymentTxn::PrepareImpl()
           KeyParam<District>(district_key),
           KeyParam<Customer>(customer_key));
 
-  root->AssignAffinity(warehouse_id - 1);
+  root->AssignAffinity(client->get_initialization_locality_manager().GetScheduleCore(warehouse_id - 1));
 }
 
 void PaymentTxn::Run()

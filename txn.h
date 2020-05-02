@@ -344,7 +344,7 @@ class Txn : public BaseTxn {
  public:
   Txn(uint64_t serial_id) : BaseTxn(serial_id) {}
 
-  void PrepareState() final override {
+  void PrepareState() override {
     epoch = util::Instance<EpochManager>().current_epoch();
     state = epoch->AllocateEpochObjectOnCurrentNode<TxnState>();
     // printf("state epoch %lu\n", state.nr());
