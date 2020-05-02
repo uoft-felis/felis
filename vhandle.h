@@ -62,6 +62,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   unsigned int capacity;
   unsigned int size;
+  unsigned int cur_start;
 
   std::atomic_int latest_version; // the latest written version's offset in *versions
   int nr_ondsplt;
@@ -70,14 +71,14 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t *versions;
   util::OwnPtr<RowEntity> row_entity;
   std::atomic_long buf_pos = -1;
-  uint64_t last_gc_mark_epoch = 0;
+  std::atomic<uint64_t> gc_handle = 0;
 
   SortedArrayVHandle();
  public:
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
-    if (phandle->inline_used == 0xFF)
+    if (phandle->is_inlined())
       inline_pool.Free(ptr, phandle->this_coreid);
     else
       pool.Free(ptr, phandle->this_coreid);
@@ -94,6 +95,8 @@ class SortedArrayVHandle : public BaseVHandle {
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
   // void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
+
+  bool is_inlined() const { return inline_used != 0xFF; }
 
   uint8_t *AllocFromInline(size_t sz) {
     if (inline_used != 0xFF) {
@@ -113,12 +116,12 @@ class SortedArrayVHandle : public BaseVHandle {
 
   void FreeToInline(uint8_t *p, size_t sz) {
     if (inline_used != 0xFF) {
-        sz = util::Align(sz, 16);
-        if (sz > 128) return;
-        uint8_t mask = (1 << (sz >> 4)) - 1;
-        uint8_t off = (p - (uint8_t *) this - 128) >> 4;
-        inline_used &= ~(mask << off);
-      }
+      sz = util::Align(sz, 16);
+      if (sz > 128) return;
+      uint8_t mask = (1 << (sz >> 4)) - 1;
+      uint8_t off = (p - (uint8_t *) this - 128) >> 4;
+      inline_used &= ~(mask << off);
+    }
   }
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.

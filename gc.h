@@ -8,62 +8,25 @@
 namespace felis {
 
 class VHandle;
+struct GarbageBlockSlab;
+struct GarbageBlock;
 
 class GC {
-  static mem::ParallelPool g_block_pool;
+  static std::array<GarbageBlockSlab *, NodeConfiguration::kMaxNrThreads> g_slabs;
+  std::atomic<GarbageBlock *> collect_head = nullptr;
  public:
-  void AddVHandle(VHandle *vhandle, uint64_t epoch_nr);
-  void PrepareGC();
+  uint64_t AddRow(VHandle *row, uint64_t epoch_nr);
+  void RemoveRow(VHandle *row, uint64_t gc_handle);
+  void PrepareGCForAllCores();
   void RunGC();
-  void FinalizeGC();
 
-  struct GarbageBlock {
-    static constexpr size_t kBlockSize = 512;
-    static constexpr int kMaxNrBlocks = kBlockSize / 8 - 3;
-    std::array<VHandle *, kMaxNrBlocks> handles;
-    int alloc_core;
-    int nr_handles;
-    GarbageBlock *next;
-    GarbageBlock *processing_next;
-
-    GarbageBlock() : alloc_core(mem::ParallelPool::CurrentAffinity()),
-                     nr_handles(0) {}
-
-    void Prefetch() {
-      for (int i = 0; i < nr_handles; i++) {
-        __builtin_prefetch(handles[i]);
-      }
-    }
-
-    static void *operator new(size_t) {
-      return GC::AllocBlock();
-    }
-
-    static void operator delete(void *ptr) {
-      GC::FreeBlock((GarbageBlock *) ptr);
-    }
-  };
-  static_assert(sizeof(GarbageBlock) == GarbageBlock::kBlockSize, "Block doesn't match block size?");
-
-  static void *AllocBlock() { return g_block_pool.Alloc(); }
-  static void FreeBlock(GarbageBlock *b) { return g_block_pool.Free(b, b->alloc_core); }
   static void InitPool();
 
- private:
+  static bool IsDataGarbage(VHandle *row, VarStr *data);
   size_t Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes);
+ private:
   size_t Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes);
 
-  struct LocalCollector {
-    GarbageBlock *pending = nullptr;
-    GarbageBlock *processing = nullptr;
-    GarbageBlock *left_over = nullptr;
-  };
-  std::array<LocalCollector, NodeConfiguration::kMaxNrThreads> local_cls;
-
-  LocalCollector &local_collector();
-  std::atomic<GarbageBlock *> processing_queue = nullptr;
-  std::atomic_ulong nr_gc_collecting = 0;
-  std::atomic_ulong last_gc_epoch = 0;
   static unsigned int g_gc_every_epoch;
 };
 

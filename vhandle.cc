@@ -27,6 +27,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   capacity = 4;
   // value_mark = 0;
   size = 0;
+  cur_start = 0;
   nr_ondsplt = 0;
   inline_used = 0xFF; // disabled, 0x0F at most when enabled.
 
@@ -44,8 +45,6 @@ SortedArrayVHandle::SortedArrayVHandle()
 bool SortedArrayVHandle::ShouldScanSkip(uint64_t sid)
 {
   auto epoch_of_txn = sid >> 32;
-  if (last_gc_mark_epoch > 0 && last_gc_mark_epoch < epoch_of_txn)
-    return false;
   util::MCSSpinLock::QNode qnode;
   lock.Acquire(&qnode);
   bool skip = (first_version() >= sid);
@@ -81,7 +80,6 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
   }
 
   size += delta;
-  util::Instance<GC>().AddVHandle((VHandle *) this, epoch_nr);
 
   if (unlikely(size >= capacity)) {
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
@@ -89,8 +87,8 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
     auto new_versions = EnlargePair64Array(this, versions, capacity, alloc_by_regionid, new_cap);
 
     abort_if(new_versions == nullptr,
-             "Memory allocation failure, last GC {}, second ver epoch {}",
-             last_gc_mark_epoch, versions[1] >> 32);
+             "Memory allocation failure, second ver epoch {}",
+             versions[1] >> 32);
     /*
     if (EpochClient::g_workload_client) {
       auto &lm = EpochClient::g_workload_client->get_execution_locality_manager();
@@ -104,9 +102,34 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
     alloc_by_regionid = current_regionid;
   }
 
-  std::fill(versions + capacity + size - delta,
-            versions + capacity + size,
+  auto objects = versions + capacity;
+
+  std::fill(objects + size - delta,
+            objects + size,
             kPendingValue);
+
+  auto latest = latest_version.load(std::memory_order_relaxed);
+  if (cur_start != latest + 1) {
+    cur_start = latest + 1;
+    auto &gc = util::Instance<GC>();
+    size_t nr_bytes = 0;
+    auto handle = gc_handle.load(std::memory_order_relaxed);
+    bool garbage_left = latest >= 16_K;
+
+    if (handle) {
+      if (latest > 0)
+        gc.Collect((VHandle *) this, epoch_nr, std::min<size_t>(16_K, latest - 1), &nr_bytes);
+      gc.RemoveRow((VHandle *) this, handle);
+      gc_handle.store(0, std::memory_order_relaxed);
+    }
+
+    if (!garbage_left && latest >= 0
+        && GC::IsDataGarbage((VHandle *) this, (VarStr *) objects[latest]))
+      garbage_left = true;
+
+    if (garbage_left)
+      gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
+  }
 }
 
 void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split)
@@ -128,13 +151,6 @@ void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr,
 #endif
 
   AbsorbNewVersionNoLock(size - 1, 0);
-
-  // We don't need to move the values, because they are all kPendingValue in
-  // this epoch anyway. Of course, this is assuming sid will never smaller than
-  // the minimum sid of this epoch. In felis, we can assume this. However if we
-  // were to replay Ermia, we couldn't.
-
-  util::Instance<GC>().AddVHandle((VHandle *) this, epoch_nr);
 }
 
 unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift)
@@ -199,7 +215,7 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
 
   uint64_t *p = versions;
-  uint64_t *start = versions;
+  uint64_t *start = versions + cur_start;
   uint64_t *end = versions + size;
   int latest = latest_version.load();
 
@@ -265,7 +281,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   int pos = latest_version.load();
   uint64_t *it = versions + pos + 1;
   if (*it != sid) {
-    it = std::lower_bound(versions, versions + size, sid);
+    it = std::lower_bound(versions + cur_start, versions + size, sid);
     if (unlikely(it == versions + size || *it != sid)) {
       // sid is greater than all the versions, or the located lower_bound isn't sid version
       logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
@@ -290,18 +306,23 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   probes::VersionWrite{this, epoch_nr}();
 
   int latest = it - versions;
-  // The following is correct, but costly! 2% of the time for this atomic CAS!
-  // Let's use something sloppy???
-  /*
   while (latest > pos) {
     if (latest_version.compare_exchange_strong(pos, latest))
       break;
   }
-  */
-  latest_version = latest;
+
   if (latest == size - 1) {
     nr_ondsplt = 0;
     cont_affinity = -1;
+  } else {
+    if (GC::IsDataGarbage((VHandle *) this, obj) && gc_handle == 0) {
+      auto &gc = util::Instance<GC>();
+      auto gchdl = gc.AddRow((VHandle *) this, epoch_nr);
+      uint64_t old = 0;
+      if (!gc_handle.compare_exchange_strong(old, gchdl)) {
+        gc.RemoveRow((VHandle *) this, gchdl);
+      }
+    }
   }
   return true;
 }
@@ -309,6 +330,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 bool SortedArrayVHandle::WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr)
 {
   abort_if(version_idx >= size, "WriteExactVersion overflowed {} >= {}", version_idx, size);
+  // TODO: GC?
 
   volatile uintptr_t *addr = versions + capacity + version_idx;
   // sync().OfferData(addr, (uintptr_t) obj);

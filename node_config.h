@@ -65,6 +65,7 @@ class LocalTransport : public PromiseRoutineTransportService {
 
   void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) final override;
   void Flush();
+  bool TryFlushForCore(int core_id);
 };
 
 class IncomingTraffic {

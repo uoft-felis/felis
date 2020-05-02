@@ -166,6 +166,11 @@ void LocalTransport::TransportPromiseRoutine(PromiseRoutine *routine, const VarS
 }
 
 void LocalTransport::Flush() { lb->Flush(); }
+bool LocalTransport::TryFlushForCore(int core_id)
+{
+  auto [success, ___] = lb->TryFlushForThread(core_id + 1);
+  return success;
+}
 
 size_t NodeConfiguration::g_nr_threads = 8;
 int NodeConfiguration::g_core_shifting = 0;

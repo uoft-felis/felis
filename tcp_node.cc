@@ -535,7 +535,13 @@ bool TcpNodeTransport::PeriodicIO(int core)
 
   // We constantly flush the issuing buffer as well. This is because the core
   // needs to poll from this in case it has some pieces it needs.
-  ltp.Flush();
+  //
+  // We don't need to do a full flush, just like above, as long as every core is
+  // flushing periodically, we are free from deadlock.
+
+  // ltp.Flush();
+  ltp.TryFlushForCore(core);
+
   return cont_io;
 }
 
