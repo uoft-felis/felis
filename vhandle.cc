@@ -187,6 +187,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
     if (!Options::kVHandleBatchAppend) goto slowpath;
 
     if (buf_pos.load(std::memory_order_acquire) == -1
+        && size - cur_start <= EpochClient::g_splitting_threshold
         && lock.TryLock(&qnode)) {
       AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
       lock.Unlock(&qnode);

@@ -287,7 +287,7 @@ void BatchAppender::Reset()
     sum = 0;
   }
 
-  int s = 0;
+  unsigned int s = 0;
 
   for (int core = 0; core < nr_threads; core++) {
     auto numa_zone = core / mem::kNrCorePerNode;
@@ -323,7 +323,7 @@ void BatchAppender::Reset()
     buffer_heads[core] = g_alloc[core / mem::kNrCorePerNode].AllocHead(core);
   }
   if (Options::kOnDemandSplitting) {
-    logger->info("OnDemand {} Batch {} rows", sum, nr_cleared);
+    logger->info("OnDemand {} Batch {} rows", s, nr_cleared);
   } else {
     logger->info("Batch {} rows", nr_cleared);
   }

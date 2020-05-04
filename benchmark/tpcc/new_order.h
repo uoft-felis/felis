@@ -52,6 +52,9 @@ struct NewOrderState {
   VHandle *oorder; // insert
   VHandle *neworder; // insert
   VHandle *cididx; // insert
+
+  FutureValue<VHandle *> oorder_future, neworder_future;
+
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     void operator()(int id, VHandle *row) {
       if (id == 0) {
@@ -61,17 +64,18 @@ struct NewOrderState {
       } else if (id == 2) {
         state->cididx = row;
       }
-      handle(row).AppendNewVersion();
+      handle(row).AppendNewVersion(id < 2);
     }
   };
   NodeBitmap other_inserts_nodes;
 
   VHandle *stocks[15]; // update
+  FutureValue<VHandle *> stock_futures[15];
   struct StocksLookupCompletion : public TxnStateCompletion<NewOrderState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       debug(DBG_WORKLOAD "AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
       state->stocks[id] = rows[0];
-      handle(rows[0]).AppendNewVersion();
+      handle(rows[0]).AppendNewVersion(true);
     }
   };
   NodeBitmap stocks_nodes;

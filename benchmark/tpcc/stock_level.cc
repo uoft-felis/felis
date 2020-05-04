@@ -89,7 +89,7 @@ void StockLevelTxn::Run()
       },
       client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1));
 
-    // root->AssignSchedulingKey(serial_id() + (1ULL << 8));
+    root->AssignSchedulingKey(serial_id() + (1024ULL << 8));
 }
 
 }

@@ -296,7 +296,7 @@ class NodeBitmap {
   }
 };
 
-template <typename T, size_t ClosureSize = 24>
+template <typename T, size_t ClosureSize = 40>
 class FutureValue {
  public:
   std::atomic_bool ready = false;
@@ -422,8 +422,10 @@ class Txn : public BaseTxn {
             auto rowfunc = pclosure->template _<1>();
             auto row = pclosure->template _<2>();
             if constexpr(sizeof...(Types) > 0) {
-              sql::TupleField<Types...> *pparams = pclosure;
-              auto ctx = ContextType<Types...>(*(const State *) state, index_handle, *pparams);
+              ContextType<Types...> ctx;
+              (sql::Tuple<Types...>) ctx = (sql::Tuple<Types...>) *pclosure;
+              ctx.template set<0>(*(State *) state);
+              ctx.template set<1>(index_handle);
               future->Signal(rowfunc(ctx, row));
             } else {
               future->Signal(rowfunc(ContextType<Types...>(*(State *) state, index_handle), row));

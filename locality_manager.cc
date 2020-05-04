@@ -121,7 +121,7 @@ void LocalityManager::PrintLoads()
     for (int d = 0; d < w.nr_dist; d++) {
       fmt::format_to(buffer, "{} on {} ", w.dist[d], w.cores[d]);
     }
-    if (w.weight > w.dist[w.nr_dist - 1]) fmt::format_to(buffer, "*");
+    if (w.nr_dist > 0 && w.weight > w.dist[w.nr_dist - 1]) fmt::format_to(buffer, "*");
     fmt::format_to(buffer, "\n");
   }
   logger->info("Loads information: \n{}", std::string_view(buffer.data(), buffer.size()));
@@ -145,7 +145,10 @@ uint64_t LocalityManager::GetScheduleCore(int core, int weight)
   auto &w = (*per_core_weights[core]);
   uint64_t sched_core = 0;
   uint64_t seed = 0, max_seed = w.dist[w.nr_dist - 1];
-  if (w.nr_dist == 1) {
+
+  if (w.nr_dist == 0) {
+    return core;
+  } else if (w.nr_dist == 1) {
     sched_core = w.cores[0];
   } else {
     seed = local_rand.Next() % w.dist[w.nr_dist - 1];

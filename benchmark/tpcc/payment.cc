@@ -71,6 +71,50 @@ void PaymentTxn::Run()
     auto [node, bitmap] = p;
     std::array<int, 2> filters;
 
+    UpdateForKey(
+        &state->warehouse_future, node, state->warehouse,
+        [](const auto &ctx, VHandle *row) -> VHandle * {
+          auto &[state, index_handle, payment_amount] = ctx;
+          TxnVHandle vhandle = index_handle(state->warehouse);
+          auto w = vhandle.Read<Warehouse::Value>();
+          w.w_ytd += payment_amount;
+          vhandle.Write(w);
+          ClientBase::OnUpdateRow(state->warehouse);
+          return row;
+        }, payment_amount);
+
+    UpdateForKey(
+        &state->district_future, node, state->district,
+        [](const auto &ctx, VHandle *row) -> VHandle * {
+          auto &[state, index_handle, payment_amount] = ctx;
+          TxnVHandle vhandle = index_handle(state->district);
+          auto d = vhandle.Read<District::Value>();
+          d.d_ytd += payment_amount;
+          vhandle.Write(d);
+          ClientBase::OnUpdateRow(state->district);
+          return row;
+        }, payment_amount);
+
+
+    UpdateForKey(
+        &state->customer_future, node, state->customer,
+        [](const auto &ctx, VHandle *row) -> VHandle * {
+          auto &[state, index_handle, payment_amount] = ctx;
+          TxnVHandle vhandle = index_handle(state->customer);
+          auto c = vhandle.Read<Customer::Value>();
+          c.c_balance -= payment_amount;
+          c.c_ytd_payment += payment_amount;
+          c.c_payment_cnt++;
+          vhandle.Write(c);
+          ClientBase::OnUpdateRow(state->customer);
+          return row;
+        }, payment_amount);
+
+    if (!state->warehouse_future.has_callback()
+        && !state->district_future.has_callback()
+        && !state->customer_future.has_callback())
+      continue;
+
     if (!Client::g_enable_granola) {
       filters = {0x03, 0};
     } else {
@@ -87,38 +131,24 @@ void PaymentTxn::Run()
       } else {
         aff = AffinityFromRows(0x01, {state->warehouse, state->district, state->customer});
       }
+
       root->Then(
-          MakeContext(bitmap, payment_amount, filter), node,
+          MakeContext(bitmap, filter), node,
           [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, bitmap, payment_amount, filter] = ctx;
+            auto &[state, index_handle, bitmap, filter] = ctx;
 
             probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
 
             if ((bitmap & 0x01) && (filter & 0x01)) {
-              // Warehouse
-              TxnVHandle vhandle = index_handle(state->warehouse);
-              auto w = vhandle.Read<Warehouse::Value>();
-              w.w_ytd += payment_amount;
-              vhandle.Write(w);
-              ClientBase::OnUpdateRow(state->warehouse);
+              state->warehouse_future.Invoke(&state, index_handle);
             }
+
             if ((bitmap & 0x02) && (filter & 0x01)) {
-              // District
-              TxnVHandle vhandle = index_handle(state->district);
-              auto d = vhandle.Read<District::Value>();
-              d.d_ytd += payment_amount;
-              vhandle.Write(d);
-              ClientBase::OnUpdateRow(state->district);
+              state->district_future.Invoke(&state, index_handle);
             }
+
             if ((bitmap & 0x04) && (filter & 0x02)) {
-              // Customer
-              TxnVHandle vhandle = index_handle(state->customer);
-              auto c = vhandle.Read<Customer::Value>();
-              c.c_balance -= payment_amount;
-              c.c_ytd_payment += payment_amount;
-              c.c_payment_cnt++;
-              vhandle.Write(c);
-              ClientBase::OnUpdateRow(state->customer);
+              state->customer_future.Invoke(&state, index_handle);
             }
             return nullopt;
           },

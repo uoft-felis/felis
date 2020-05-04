@@ -23,6 +23,10 @@ struct PaymentState {
   VHandle *district;
   VHandle *customer;
   NodeBitmap nodes;
+
+  FutureValue<VHandle *, 32> warehouse_future;
+  FutureValue<VHandle *, 32> district_future;
+  FutureValue<VHandle *, 32> customer_future;
   struct Completion : public TxnStateCompletion<PaymentState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       if (id == 0) {
@@ -32,7 +36,7 @@ struct PaymentState {
       } else if (id == 2) {
         state->customer = rows[0];
       }
-      handle(rows[0]).AppendNewVersion();
+      handle(rows[0]).AppendNewVersion(true);
     }
   };
 };

@@ -132,7 +132,7 @@ std::array<GarbageBlockSlab *, NodeConfiguration::kMaxNrThreads> GC::g_slabs;
 
 void GC::InitPool()
 {
-  g_gc_every_epoch = 2000000 / EpochClient::g_txn_per_epoch;
+  g_gc_every_epoch = 800000 / EpochClient::g_txn_per_epoch;
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     g_slabs[i] = new GarbageBlockSlab(i);
   }
@@ -240,10 +240,10 @@ void GC::RunGC()
 
 size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes)
 {
-  util::MCSSpinLock::QNode qnode;
-  handle->lock.Lock(&qnode);
+  // util::MCSSpinLock::QNode qnode;
+  // handle->lock.Lock(&qnode);
   size_t n = Collect(handle, cur_epoch_nr, limit, nr_bytes);
-  handle->lock.Unlock(&qnode);
+  // handle->lock.Unlock(&qnode);
   return n;
 }
 

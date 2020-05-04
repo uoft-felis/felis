@@ -141,8 +141,34 @@ void NewOrderTxn::Run()
 
   for (auto &p: state->other_inserts_nodes) {
     auto [node, bitmap] = p;
-    auto aff = std::numeric_limits<uint64_t>::max();
 
+    if (bitmap & (1 << 0)) {
+      UpdateForKey(
+          &state->oorder_future, node, state->oorder,
+          [](const auto &ctx, VHandle *row) -> VHandle * {
+            auto &[state, index_handle, customer_id, nr_items, ts_now,
+                   all_local] = ctx;
+            index_handle(row).WriteTryInline(
+                OOrder::Value::New(customer_id, 0, nr_items,
+                                   all_local, ts_now));
+            ClientBase::OnUpdateRow(row);
+            return row;
+          },
+          customer_id, nr_items, ts_now, all_local);
+    }
+
+    if (bitmap & (1 << 1)) {
+      UpdateForKey(
+          &state->neworder_future, node, state->neworder,
+          [](const auto &ctx, VHandle *row) -> VHandle * {
+            auto &[state, index_handle] = ctx;
+            index_handle(row).WriteTryInline(NewOrder::Value());
+            ClientBase::OnUpdateRow(row);
+            return row;
+          });
+    }
+
+    auto aff = std::numeric_limits<uint64_t>::max();
     aff = AffinityFromRows(bitmap, {state->oorder, state->neworder, state->cididx});
 
     root->Then(
@@ -153,15 +179,11 @@ void NewOrderTxn::Run()
           probes::TpccNewOrder{0, __builtin_popcount(bitmap)}();
 
           if (bitmap & 0x01) {
-            index_handle(state->oorder)
-                .WriteTryInline(OOrder::Value::New(customer_id, 0, nr_items,
-                                                   all_local, ts_now));
-            ClientBase::OnUpdateRow(state->oorder);
+            state->oorder_future.Invoke(&state, index_handle);
           }
 
           if (bitmap & 0x02) {
-            index_handle(state->neworder).WriteTryInline(NewOrder::Value());
-            ClientBase::OnUpdateRow(state->neworder);
+            state->neworder_future.Invoke(&state, index_handle);
           }
 
           if (bitmap & 0x04) {
@@ -176,8 +198,8 @@ void NewOrderTxn::Run()
 
   for (auto &p: state->orderlines_nodes) {
     auto [node, bitmap] = p;
-    auto aff = std::numeric_limits<uint64_t>::max();
 
+    auto aff = std::numeric_limits<uint64_t>::max();
     aff = AffinityFromRows(bitmap, state->orderlines);
 
     root->Then(
@@ -213,16 +235,62 @@ void NewOrderTxn::Run()
   for (auto &p: state->stocks_nodes) {
     auto [node, bitmap] = p;
 
-    // Granola needs partitioning, that's why we need to split this into
-    // multiple pieces even if this piece could totally be executed on the same
-    // node.
-    std::array<int, NewOrderStruct::kNewOrderMaxItems> warehouse_filters;
-    int nr_warehouse_filters = 0;
-    warehouse_filters.fill(0);
-
     if (!Client::g_enable_granola) {
-      warehouse_filters[nr_warehouse_filters++] = -1; // Don't filter
+      for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+        if ((bitmap & (1 << i)) == 0) continue;
+
+        UpdateForKey(
+            &state->stock_futures[i], node, state->stocks[i],
+            [](const auto &ctx, VHandle *row) -> VHandle * {
+              auto &[state, index_handle, quantity, remote, i] = ctx;
+              debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
+                    index_handle.serial_id(), i, (void *) row);
+
+                TxnVHandle vhandle = index_handle(row);
+                auto stock = vhandle.Read<Stock::Value>();
+
+                probes::TpccNewOrder{2, 1}();
+
+                if (stock.s_quantity - quantity < 10) {
+                  stock.s_quantity += 91;
+                }
+                stock.s_quantity -= quantity;
+                stock.s_ytd += quantity;
+                stock.s_remote_cnt += remote ? 1 : 0;
+
+                vhandle.Write(stock);
+                ClientBase::OnUpdateRow(row);
+                debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
+                      index_handle.serial_id(), i,
+                      (void *) row);
+
+                return row;
+            },
+            params.quantities[i],
+            (bool) (params.supplier_warehouses[i] != warehouse_id),
+            i);
+      }
+
+      root->Then(
+          MakeContext(bitmap), node,
+          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            auto &[state, index_handle, bitmap] = ctx;
+            for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+              if ((bitmap & (1 << i)) == 0) continue;
+
+              state->stock_futures[i].Invoke(&state, index_handle);
+            }
+            return nullopt;
+          });
+
     } else {
+      // Granola needs partitioning, that's why we need to split this into
+      // multiple pieces even if this piece could totally be executed on the same
+      // node.
+      std::array<int, NewOrderStruct::kNewOrderMaxItems> warehouse_filters;
+      int nr_warehouse_filters = 0;
+      warehouse_filters.fill(0);
+
       for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
         if ((bitmap & (1 << i)) == 0) continue;
 
@@ -232,49 +300,50 @@ void NewOrderTxn::Run()
           warehouse_filters[nr_warehouse_filters++] = supp_warehouse;
         }
       }
-    }
+      for (int f = 0; f < nr_warehouse_filters; f++) {
+        auto filter = warehouse_filters[f];
+        auto aff = std::numeric_limits<uint64_t>::max();
 
-    for (int f = 0; f < nr_warehouse_filters; f++) {
-      auto filter = warehouse_filters[f];
-      auto aff = std::numeric_limits<uint64_t>::max();
+        if (filter > 0) aff = filter - 1;
+        else aff = AffinityFromRows(bitmap, state->stocks);
 
-      if (filter > 0) aff = filter - 1;
-      else aff = AffinityFromRows(bitmap, state->stocks);
+        root->Then(
+            MakeContext(bitmap, params, filter), node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, bitmap, params, filter] = ctx;
 
-      root->Then(
-          MakeContext(bitmap, params, filter), node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, bitmap, params, filter] = ctx;
+              for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+                if ((bitmap & (1 << i)) == 0) continue;
+                if (filter > 0 && params.supplier_warehouses[i] != filter) continue;
 
-            for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
-              if ((bitmap & (1 << i)) == 0) continue;
-              if (filter > 0 && params.supplier_warehouses[i] != filter) continue;
+                debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
+                      index_handle.serial_id(), i, (void *) state->stocks[i]);
 
-              debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
-                    index_handle.serial_id(), i, (void *) state->stocks[i]);
+                TxnVHandle vhandle = index_handle(state->stocks[i]);
+                auto stock = vhandle.Read<Stock::Value>();
 
-              TxnVHandle vhandle = index_handle(state->stocks[i]);
-              auto stock = vhandle.Read<Stock::Value>();
+                probes::TpccNewOrder{2, 1}();
 
-              probes::TpccNewOrder{2, 1}();
+                if (stock.s_quantity - params.quantities[i] < 10) {
+                  stock.s_quantity += 91;
+                }
+                stock.s_quantity -= params.quantities[i];
+                stock.s_ytd += params.quantities[i];
+                stock.s_remote_cnt += (params.supplier_warehouses[i] != params.warehouse);
 
-              if (stock.s_quantity - params.quantities[i] < 10) {
-                stock.s_quantity += 91;
+                vhandle.Write(stock);
+                ClientBase::OnUpdateRow(state->stocks[i]);
+                debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
+                      index_handle.serial_id(), i,
+                      (void *)state->stocks[i]);
               }
-              stock.s_quantity -= params.quantities[i];
-              stock.s_ytd += params.quantities[i];
-              stock.s_remote_cnt += (params.supplier_warehouses[i] != params.warehouse);
-
-              vhandle.Write(stock);
-              ClientBase::OnUpdateRow(state->stocks[i]);
-              debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
-                    index_handle.serial_id(), i,
-                    (void *)state->stocks[i]);
-            }
-            return nullopt;
-          },
-          aff);
+              return nullopt;
+            },
+            aff);
+      }
     }
+
+
   }
 
   if (Client::g_enable_granola)

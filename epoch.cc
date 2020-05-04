@@ -24,7 +24,7 @@ namespace felis {
 EpochClient *EpochClient::g_workload_client = nullptr;
 bool EpochClient::g_enable_granola = false;
 long EpochClient::g_corescaling_threshold = 0;
-long EpochClient::g_splitting_threshold = 0;
+long EpochClient::g_splitting_threshold = std::numeric_limits<long>::max();
 size_t EpochClient::g_txn_per_epoch = 100000;
 
 void EpochCallback::operator()(unsigned long cnt)
@@ -298,7 +298,7 @@ void CallTxnsWorker::Run()
     mem::GetDataRegion().Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
-     util::Instance<GC>().RunGC();
+    util::Instance<GC>().RunGC();
   }
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
@@ -910,7 +910,7 @@ void EpochPromiseAllocationService::Reset()
   }
 }
 
-static constexpr size_t kEpochMemoryLimitPerCore = 4_M;
+static constexpr size_t kEpochMemoryLimitPerCore = 16_M;
 
 EpochMemory::EpochMemory()
 {

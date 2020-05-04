@@ -552,6 +552,11 @@ class TupleImpl : public TupleField<Types...> {
   }
 
   template <size_t N>
+  void set(const typename TupleFieldType<N, TupleField, Types...>::ValueType &val) {
+    ((typename TupleFieldType<N, TupleField, Types...>::Type *) this)->value = val;
+  }
+
+  template <size_t N>
   typename TupleFieldType<N, TupleField, Types...>::ValueType get() const {
     return _<N>();
   }
