@@ -326,6 +326,14 @@ uint ClientBase::GetCurrentTime()
   return ++tl_hack;
 }
 
+uint32_t ClientBase::AcquireLastNewOrderId(int warehouse, int district)
+{
+  abort_if(!g_tpcc_config.shard_by_warehouse, "TODO: needs to implement this under random sharding.");
+  auto node_id = util::Instance<NodeConfiguration>().node_id();
+  auto idx = (warehouse - 1) * g_tpcc_config.districts_per_warehouse + district - 1;
+  return (g_last_no_start[node_id][idx].fetch_add(1) << 8) | node_id;
+}
+
 struct Checker {
   // these sanity checks are just a few simple checks to make sure
   // the data is not entirely corrupted
@@ -397,7 +405,8 @@ bool ClientBase::is_warehouse_hotspot(uint wid)
   return (g_tpcc_config.hotspot_warehouse_bitmap & (1 << (wid - 1))) != 0;
 }
 
-std::atomic_ulong *ClientBase::g_last_no_o_ids = nullptr;
+std::atomic_ulong *ClientBase::g_last_no_start[32];
+std::atomic_ulong *ClientBase::g_last_no_end[32];
 
 namespace loaders {
 
@@ -687,6 +696,15 @@ void Loader<LoaderType::Customer>::DoLoad()
 template <>
 void Loader<LoaderType::Order>::DoLoad()
 {
+  auto nr_all_districts = g_tpcc_config.nr_warehouses * g_tpcc_config.districts_per_warehouse;
+  for (int i = 1; i <= util::Instance<NodeConfiguration>().nr_nodes(); i++) {
+    g_last_no_start[i] = new std::atomic_ulong[nr_all_districts];
+    g_last_no_end[i] = new std::atomic_ulong[nr_all_districts];
+
+    std::fill(g_last_no_start[i], g_last_no_start[i] + nr_all_districts, 2101);
+    std::fill(g_last_no_end[i], g_last_no_end[i] + nr_all_districts, 3000);
+  }
+
   void *large_buf = alloca(1024);
   // a random permutation of customer IDs
   auto c_ids = new uint32_t[g_tpcc_config.customers_per_district];
@@ -797,10 +815,6 @@ void Loader<LoaderType::Order>::DoLoad()
           auto_inc_zone, g_tpcc_config.customers_per_district + 1);
     }
   }
-
-  auto nr_all_districts = g_tpcc_config.nr_warehouses * g_tpcc_config.districts_per_warehouse;
-  g_last_no_o_ids = new std::atomic_ulong[nr_all_districts];
-  std::fill(g_last_no_o_ids, g_last_no_o_ids + nr_all_districts, 2101 << 8);
 
   delete [] c_ids;
   logger->info("Order Loader done.");

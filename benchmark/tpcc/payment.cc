@@ -76,7 +76,7 @@ void PaymentTxn::Run()
         [](const auto &ctx, VHandle *row) -> VHandle * {
           auto &[state, index_handle, payment_amount] = ctx;
           TxnVHandle vhandle = index_handle(state->warehouse);
-          auto w = vhandle.Read<Warehouse::Value>();
+          auto w = vhandle.Read<Warehouse::CommonValue>();
           w.w_ytd += payment_amount;
           vhandle.Write(w);
           ClientBase::OnUpdateRow(state->warehouse);
@@ -88,7 +88,7 @@ void PaymentTxn::Run()
         [](const auto &ctx, VHandle *row) -> VHandle * {
           auto &[state, index_handle, payment_amount] = ctx;
           TxnVHandle vhandle = index_handle(state->district);
-          auto d = vhandle.Read<District::Value>();
+          auto d = vhandle.Read<District::CommonValue>();
           d.d_ytd += payment_amount;
           vhandle.Write(d);
           ClientBase::OnUpdateRow(state->district);
@@ -101,7 +101,7 @@ void PaymentTxn::Run()
         [](const auto &ctx, VHandle *row) -> VHandle * {
           auto &[state, index_handle, payment_amount] = ctx;
           TxnVHandle vhandle = index_handle(state->customer);
-          auto c = vhandle.Read<Customer::Value>();
+          auto c = vhandle.Read<Customer::CommonValue>();
           c.c_balance -= payment_amount;
           c.c_ytd_payment += payment_amount;
           c.c_payment_cnt++;

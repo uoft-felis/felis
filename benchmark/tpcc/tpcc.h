@@ -92,6 +92,7 @@ struct Customer {
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::CustomerKey;
   using Value = sql::CustomerValue;
+  using CommonValue = sql::CustomerCommonValue;
 };
 
 #if 0
@@ -115,6 +116,7 @@ struct District {
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::DistrictKey;
   using Value = sql::DistrictValue;
+  using CommonValue = sql::DistrictCommonValue;
 };
 
 struct History {
@@ -211,6 +213,7 @@ struct Warehouse {
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::WarehouseKey;
   using Value = sql::WarehouseValue;
+  using CommonValue = sql::WarehouseCommonValue;
 };
 
 void InitializeTPCC();
@@ -286,7 +289,8 @@ class ClientBase {
 
   uint GetCurrentTime();
 
-  static std::atomic_ulong *g_last_no_o_ids;
+  static std::atomic_ulong *g_last_no_start[32]; // max 32 nodes
+  static std::atomic_ulong *g_last_no_end[32];
 
   static felis::TableManager &tables() { return util::Instance<felis::TableManager>(); }
 
@@ -306,16 +310,9 @@ class ClientBase {
 
   template <class T> T GenerateTransactionInput();
 
-  static unsigned long LastNewOrderId(int warehouse, int district) {
-    auto idx = (warehouse - 1) * g_tpcc_config.districts_per_warehouse + district - 1;
-    return g_last_no_o_ids[idx].load();
-  }
-
-  static bool IncrementLastNewOrderId(int warehouse, int district,
-                                      unsigned long &old, unsigned long newid) {
-    auto idx = (warehouse - 1) * g_tpcc_config.districts_per_warehouse + district - 1;
-    return g_last_no_o_ids[idx].compare_exchange_strong(old, newid);
-  }
+  static uint32_t AcquireLastNewOrderId(int warehouse, int district);
+  // TODO: We need the following for random sharding.
+  // static void AddLastNewOrderid(int warehouse, int district, uint32_t id);
 };
 
 

@@ -38,7 +38,7 @@ void DeliveryTxn::PrepareImpl()
   auto &mgr = util::Instance<TableManager>();
   for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
     auto district_id = i + 1;
-    auto oid_min = ClientBase::LastNewOrderId(warehouse_id, district_id);
+    auto oid_min = ClientBase::AcquireLastNewOrderId(warehouse_id, district_id);
 
     auto neworder_start = NewOrder::Key::New(
         warehouse_id, district_id, oid_min, 0);
@@ -50,6 +50,7 @@ void DeliveryTxn::PrepareImpl()
     for (auto no_it = mgr.Get<NewOrder>().IndexSearchIterator(
              neworder_start.EncodeFromRoutine(), neworder_end.EncodeFromRoutine());
          no_it->IsValid(); no_it->Next()) {
+      /*
       if (no_it->row()->ShouldScanSkip(serial_id())) continue;
       no_key = no_it->key().template ToType<NewOrder::Key>();
       oid_min = ClientBase::LastNewOrderId(warehouse_id, district_id);
@@ -59,6 +60,15 @@ void DeliveryTxn::PrepareImpl()
         // logger->info("district {} oid {} ver {} < sid {}", district_id, no_key.no_o_id, no_it.row()->first_version(), serial_id());
         goto found;
       }
+      */
+      no_key = no_it->key().template ToType<NewOrder::Key>();
+
+      if (no_it->row()->ShouldScanSkip(serial_id())) {
+        logger->warn("TPCC Delivery: skipping w {} d {} oid {} (from node {})",
+                     warehouse_id, district_id, no_key.no_o_id >> 8, no_key.no_o_id & 0xFF);
+        break;
+      }
+      goto found;
     }
     state->nodes[i] = NodeBitmap();
     continue;
@@ -168,7 +178,7 @@ void DeliveryTxn::Run()
 #else
               probes::TpccDelivery{1, 1}();
 
-              auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
+              auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
               customer.c_balance = sum;
               index_handle(state->customers[i]).Write(customer);
               ClientBase::OnUpdateRow(state->customers[i]);
@@ -186,7 +196,7 @@ void DeliveryTxn::Run()
               auto [sum] = args;
               auto &[state, index_handle, i] = ctx;
 
-              auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
+              auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
               customer.c_balance = sum;
               index_handle(state->customers[i]).Write(customer);
               ClientBase::OnUpdateRow(state->customers[i]);

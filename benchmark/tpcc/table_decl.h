@@ -12,15 +12,16 @@ FIELD(uint32_t , c_d_id) ;
 FIELD(uint32_t , c_id)   ;
 KEYS(CustomerKey);
 
+FIELD(InheritBasePtr            , __baseptr)        ;
+FIELD(int                       , c_balance)      ;
+FIELD(int                       , c_ytd_payment)  ;
+FIELD(int32_t                   , c_payment_cnt)  ;
+FIELD(int32_t                   , c_delivery_cnt) ;
 FIELD(int                       , c_discount)     ;
 FIELD(sql::Char<2>  , c_credit)       ;
 FIELD(sql::inline_str_8<16>     , c_last)         ;
 FIELD(sql::inline_str_8<16>     , c_first)        ;
 FIELD(int                       , c_credit_lim)   ;
-FIELD(int                       , c_balance)      ;
-FIELD(int                       , c_ytd_payment)  ;
-FIELD(int32_t                   , c_payment_cnt)  ;
-FIELD(int32_t                   , c_delivery_cnt) ;
 FIELD(sql::inline_str_8<20>     , c_street_1)     ;
 FIELD(sql::inline_str_8<20>     , c_street_2)     ;
 FIELD(sql::inline_str_8<20>     , c_city)         ;
@@ -31,6 +32,7 @@ FIELD(uint32_t                  , c_since)        ;
 FIELD(sql::Char<2>  , c_middle)       ;
 FIELD(sql::inline_str_16<500>   , c_data)         ;
 VALUES(CustomerValue);
+DERIVED(CustomerCommonValue, CustomerValue, 4);
 
 FIELD(uint32_t,  c_w_id) ;
 FIELD(uint32_t,  c_d_id) ;
@@ -45,6 +47,7 @@ FIELD(uint32_t, d_w_id) ;
 FIELD(uint32_t, d_id)   ;
 KEYS(DistrictKey);
 
+FIELD(InheritBasePtr            , __baseptr)    ;
 FIELD(int32_t                  , d_ytd)       ;
 FIELD(int32_t                  , d_tax)       ;
 FIELD(uint32_t                 , d_next_o_id) ;
@@ -55,6 +58,7 @@ FIELD(sql::inline_str_8<20>    , d_city)      ;
 FIELD(sql::Char<2> , d_state)     ;
 FIELD(sql::Char<9> , d_zip)       ;
 VALUES(DistrictValue);
+DERIVED(DistrictCommonValue, DistrictValue, 2);
 
 FIELD(uint32_t , h_c_id  ) ;
 FIELD(uint32_t , h_c_d_id) ;
@@ -151,6 +155,7 @@ VALUES(StockDataValue);
 FIELD(uint32_t                  , w_id) ;
 KEYS(WarehouseKey);
 
+FIELD(InheritBasePtr            , __baseptr)    ;
 FIELD(int32_t                   , w_ytd)      ;
 FIELD(int32_t                   , w_tax)      ;
 FIELD(sql::inline_str_8<10>     , w_name)     ;
@@ -160,6 +165,7 @@ FIELD(sql::inline_str_8<20>     , w_city)     ;
 FIELD(sql::Char<2>  , w_state)    ;
 FIELD(sql::Char<9>  , w_zip)      ;
 VALUES(WarehouseValue);
+DERIVED(WarehouseCommonValue, WarehouseValue, 2);
 
 }
 

@@ -10,7 +10,7 @@
 namespace felis {
 
 struct VersionBuffer {
-  static constexpr size_t kMaxBatch = 63;
+  static constexpr size_t kMaxBatch = 255;
   uint32_t buf_cnt;
   uint32_t ondsplt_cnt;
   uint64_t versions[kMaxBatch];
@@ -110,16 +110,17 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
                                  bool is_ondemand_split)
 {
   VersionPrealloc prealloc(prealloc_ptr);
+  util::MCSSpinLock::QNode qnode;
+
   auto buf = (prealloc.version_buffers() + pos);
   if (buf->buf_cnt == VersionBuffer::kMaxBatch) {
-    util::MCSSpinLock::QNode qnode;
     handle->lock.Acquire(&qnode);
 
     handle->AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
     if (is_ondemand_split) handle->nr_ondsplt++;
 
-    auto end = handle->size;
-    handle->IncreaseSize(VersionBuffer::kMaxBatch, epoch_nr);
+    handle->IncreaseSize(buf->buf_cnt, epoch_nr);
+    auto end = handle->size - buf->buf_cnt;
     // handle->IncreaseSize(VersionBuffer::kMaxBatch + 1);
     // handle->BookNewVersionNoLock(sid, end);
 
@@ -135,6 +136,14 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
   }
   buf->versions[buf->buf_cnt++] = sid;
   if (is_ondemand_split) buf->ondsplt_cnt++;
+
+  if (buf->buf_cnt > VersionBuffer::kMaxBatch / 2
+      && handle->lock.TryLock(&qnode)) {
+    handle->IncreaseSize(buf->buf_cnt, epoch_nr);
+    auto end = handle->size - buf->buf_cnt;
+    FlushIntoNoLock(handle, epoch_nr, end);
+    handle->lock.Release(&qnode);
+  }
 }
 
 void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, unsigned int end)
@@ -184,24 +193,37 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
 {
   VersionPrealloc prealloc(g_preallocs[owner_core].ptr);
   auto bitmap = prealloc.bitmap();
-  for (long p = from; p < to; p++) {
-    auto vhandle = backrefs[p - from];
-    if (reset) {
-      vhandle->buf_pos.store(-1, std::memory_order_release);
+  int retry = 0;
+  bool disable_trylock = false;
+
+  do {
+    retry = 0;
+    for (long p = from; p < to; p++) {
+      auto vhandle = backrefs[p - from];
+      if (reset) {
+        vhandle->buf_pos.store(-1, std::memory_order_release);
+      }
+
+      if ((bitmap[p / 64] & (1ULL << (p % 64))) == 0)
+        continue;
+
+      VersionBufferHandle buf_handle{g_preallocs[owner_core].ptr, p};
+      util::MCSSpinLock::QNode qnode;
+      auto buf = prealloc.version_buffers() + p;
+
+      if (disable_trylock) {
+        vhandle->lock.Acquire(&qnode);
+      } else if (!vhandle->lock.TryLock(&qnode)) {
+        retry++;
+        continue;
+      }
+      vhandle->IncreaseSize(buf->buf_cnt, epoch_nr);
+      buf_handle.FlushIntoNoLock(vhandle, epoch_nr, vhandle->size - buf->buf_cnt);
+      vhandle->lock.Release(&qnode);
     }
 
-    if ((bitmap[p / 64] & (1ULL << (p % 64))) == 0)
-      continue;
-
-    VersionBufferHandle buf_handle{g_preallocs[owner_core].ptr, p};
-    util::MCSSpinLock::QNode qnode;
-    auto buf = prealloc.version_buffers() + p;
-
-    vhandle->lock.Acquire(&qnode);
-    vhandle->IncreaseSize(buf->buf_cnt, epoch_nr);
-    buf_handle.FlushIntoNoLock(vhandle, epoch_nr, vhandle->size - buf->buf_cnt);
-    vhandle->lock.Release(&qnode);
-  }
+    if (retry == 1) disable_trylock = true;
+  } while (retry > 0);
 }
 
 BatchAppender::BatchAppender()

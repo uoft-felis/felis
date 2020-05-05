@@ -35,7 +35,6 @@ struct DeliveryState {
           if (rows[j]->ShouldScanSkip(handle.serial_id())) {
             std::abort();
           }
-
           handle(rows[j]).AppendNewVersion();
         }
       } else if (id == 2) {

@@ -857,7 +857,7 @@ int EpochExecutionDispatchService::TraceDependency(uint64_t key)
   return -1;
 }
 
-static constexpr size_t kEpochPromiseAllocationWorkerLimit = 512_M;
+static constexpr size_t kEpochPromiseAllocationWorkerLimit = 1024_M;
 static constexpr size_t kEpochPromiseAllocationMainLimit = 64_M;
 static constexpr size_t kEpochPromiseMiniBrkSize = 4 * CACHE_LINE_SIZE;
 

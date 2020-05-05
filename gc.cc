@@ -240,10 +240,10 @@ void GC::RunGC()
 
 size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes)
 {
-  // util::MCSSpinLock::QNode qnode;
-  // handle->lock.Lock(&qnode);
+  util::MCSSpinLock::QNode qnode;
+  handle->lock.Lock(&qnode);
   size_t n = Collect(handle, cur_epoch_nr, limit, nr_bytes);
-  // handle->lock.Unlock(&qnode);
+  handle->lock.Unlock(&qnode);
   return n;
 }
 

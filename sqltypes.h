@@ -49,11 +49,12 @@ struct VarStr {
   }
 
   uint16_t len;
+  uint8_t inherit;
   int region_id;
   const uint8_t *data;
 
-  VarStr() : len(0), region_id(0), data(nullptr) {}
-  VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), region_id(region_id), data(data) {}
+  VarStr() : len(0), inherit(0), region_id(0), data(nullptr) {}
+  VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), inherit(0), region_id(region_id), data(data) {}
 
   bool operator<(const VarStr &rhs) const {
     if (data == nullptr) return true;
@@ -69,6 +70,12 @@ struct VarStr {
 
   bool operator!=(const VarStr &rhs) const {
     return !(*this == rhs);
+  }
+
+  VarStr *InspectBaseInheritPointer() const {
+    if (inherit > 1) std::abort();
+    if (inherit && len >= sizeof(VarStr *)) return (VarStr *) (*(uintptr_t *) data);
+    return nullptr;
   }
 
   template <typename T>
@@ -355,6 +362,31 @@ struct KeySerializer<uint32_t> : public Serializer<uint32_t> {
   }
 };
 
+struct InheritBasePtr {
+  VarStr *base = nullptr;
+};
+
+template <>
+struct KeySerializer<InheritBasePtr> {}; // Shouldn't call this!
+
+template <>
+struct ValueSerializer<InheritBasePtr> : public Serializer<InheritBasePtr> {
+  static void EncodeTo(uint8_t *buf, const InheritBasePtr *ptr) {
+    if (ptr->base == nullptr) {
+      // Encode where you are about to encode to! Also skips the VarStr header.
+      auto addr = (uintptr_t) (buf - sizeof(VarStr));
+      __builtin_memcpy(buf, &addr, sizeof(uintptr_t));
+    } else {
+      __builtin_memcpy(buf, &ptr->base, sizeof(uintptr_t));
+    }
+  }
+  static void DecodeFrom(InheritBasePtr *ptr, const uint8_t *buf) {
+    if (ptr->base != nullptr) {
+      __builtin_memcpy(&ptr->base, buf, sizeof(uintptr_t));
+    }
+  }
+};
+
 template <typename Base>
 class Object : public Base {
  public:
@@ -380,11 +412,9 @@ class Object : public Base {
   void Decode(const VarStr *str) {
     this->DecodeFrom(str->data);
   }
+
  private:
-  VarStr *EncodeVarStr(VarStr *str) const {
-    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
-    return str;
-  }
+  VarStr *EncodeVarStr(VarStr *str) const;
 };
 
 template <typename Base>
@@ -411,15 +441,14 @@ class Field : public Field<FieldSerializer, N - 1>, public FieldValue<N> {
   const ImplType *pointer() const { return FieldValue<N>::ptr(); }
 
  protected:
-  static constexpr int kFieldOffset = PreviousFields::kFieldOffset + 1;
   Field() {}
 
   template <int K>
   using FieldType = Field<FieldSerializer, K>;
 
  public:
+  static constexpr int kFieldOffset = PreviousFields::kFieldOffset + 1;
   static constexpr int kOffset = N;
-
 
   template <typename T>
   struct FieldBuilder : public FieldValue<N>::template Builder<typename Field<FieldSerializer, N + 1>::template FieldBuilder<T>, T> {};
@@ -482,6 +511,7 @@ class Field<FieldSerializer, __COUNTER__> : public GapField<FieldSerializer> {};
 
 #define KEYS(name) DBOBJ(name, KeySerializer)
 #define VALUES(name) DBOBJ(name, ValueSerializer)
+#define DERIVED(name, basename, offset) using name = sql::DerivedSchemas<sql::Field<ValueSerializer, basename::kOffset - basename::kFieldOffset + offset - 1>>;
 
 // Serializable tuples. Tuples are different than fields, because their
 // members are anonymous.
@@ -562,22 +592,27 @@ class TupleImpl : public TupleField<Types...> {
   }
 };
 
+template <typename Base>
+VarStr *Object<Base>::EncodeVarStr(VarStr *str) const
+{
+  this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+  str->inherit = 0;
+  if constexpr (std::is_base_of<GapField<ValueSerializer>, Base>::value) {
+  if constexpr (std::is_base_of<InheritBasePtr, typename FieldValue<Base::kOffset - Base::kFieldOffset>::Type>::value) str->inherit = 1;
+  }
+  return str;
+}
 
-template <typename AllFields>
-class SchemasImpl : public AllFields {
+template <typename LastField>
+class Schemas : public Object<LastField> {
  public:
-  // Concept:
-  // void EncodeTo(uint8_t *buf) const;
-  // size_t EncodeSize() const;
-  // void DecodeFrom(const uint8_t *buf);
+  Schemas() {}
 
-  SchemasImpl() {}
-
-  using ThisType = SchemasImpl<AllFields>;
-  using FirstBuilder = typename AllFields::template FieldType<AllFields::kOffset - AllFields::kFieldOffset>::template FieldBuilder<ThisType>;
+  using ThisType = Schemas<LastField>;
+  using FirstBuilder = typename LastField::template FieldType<LastField::kOffset - LastField::kFieldOffset>::template FieldBuilder<ThisType>;
 
   template <typename ...Args>
-  static Object<ThisType> New(Args... args) {
+  static ThisType New(Args... args) {
     ThisType o;
     o.Build().Init(args...);
     return o;
@@ -590,7 +625,15 @@ class SchemasImpl : public AllFields {
   }
 };
 
-template <typename AllFields> using Schemas = Object<SchemasImpl<AllFields>>;
+template <typename LastField>
+class DerivedSchemas : public Object<LastField> {
+ public:
+  static_assert(std::is_base_of<InheritBasePtr, typename FieldValue<LastField::kOffset - LastField::kFieldOffset>::Type>::value);
+  DerivedSchemas() {
+    ((InheritBasePtr *) this)->base = (VarStr *) 0x01;
+  }
+};
+
 template <typename ...Types> using Tuple = Object<TupleImpl<Types...>>;
 
 template <typename ...Types> Tuple<Types...> MakeTuple(Types... params) { return Tuple<Types...>(params...); }
