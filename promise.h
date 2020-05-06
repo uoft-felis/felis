@@ -6,13 +6,11 @@
 #include <tuple>
 #include <atomic>
 #include <optional>
-#include "sqltypes.h"
+#include "varstr.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 
 namespace felis {
-
-using sql::VarStr;
 
 // TODO: I need to update this doc.
 

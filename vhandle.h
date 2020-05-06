@@ -7,7 +7,7 @@
 #include "gopp/gopp.h"
 #include "felis_probes.h"
 #include "mem.h"
-#include "sqltypes.h"
+#include "varstr.h"
 #include "shipping.h"
 #include "entity.h"
 

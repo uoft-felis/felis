@@ -268,10 +268,15 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t 
 
   for (auto j = 0; j < i; j++) {
     auto p = (VarStr *) objects[j];
-    if (IsDataGarbage(handle, p)) {
+    auto basedata = p->InspectBaseInheritPointer();
+    if (basedata && ((VarStr *) objects[j + 1])->InspectBaseInheritPointer() == basedata) {
+      basedata = nullptr;
+    }
+    if (IsDataGarbage(handle, p) && p != basedata) {
       *nr_bytes += p->len;
       delete p;
     }
+    delete basedata;
   }
   std::move(objects + i, objects + handle->size, objects);
   std::move(versions + i, versions + handle->size, versions);

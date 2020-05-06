@@ -8,6 +8,7 @@
 
 #include "epoch.h"
 #include "util.h"
+#include "varstr.h"
 #include "sqltypes.h"
 #include "promise.h"
 #include "slice.h"
