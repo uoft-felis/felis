@@ -2,7 +2,9 @@
 #define TCP_NODE_H
 
 #include "node_config.h"
-#include "promise.h"
+#include "base_promise.h"
+#include "gopp/gopp.h"
+#include "gopp/channels.h"
 
 namespace felis {
 namespace tcp {

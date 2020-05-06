@@ -2,7 +2,7 @@
 #define TPCC_ORDER_STATUS_H
 
 #include "tpcc.h"
-#include "txn.h"
+#include "txn_cc.h"
 
 namespace tpcc {
 

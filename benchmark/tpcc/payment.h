@@ -2,7 +2,7 @@
 #define TPCC_PAYMENT_H
 
 #include "tpcc.h"
-#include "txn.h"
+#include "txn_cc.h"
 
 namespace tpcc {
 

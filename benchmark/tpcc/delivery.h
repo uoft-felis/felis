@@ -2,7 +2,7 @@
 #define TPCC_DELIVERY_H
 
 #include "tpcc.h"
-#include "txn.h"
+#include "txn_cc.h"
 #include "promise.h"
 #include <tuple>
 #include <string_view>

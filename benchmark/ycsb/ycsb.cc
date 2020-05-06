@@ -1,6 +1,6 @@
 #include "ycsb.h"
 #include "index.h"
-#include "txn.h"
+#include "txn_cc.h"
 
 namespace ycsb {
 

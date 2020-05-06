@@ -1,7 +1,7 @@
 #ifndef TPCC_STOCK_LEVEL_H
 #define TPCC_STOCK_LEVEL_H
 
-#include "txn.h"
+#include "txn_cc.h"
 #include "tpcc.h"
 
 namespace tpcc {

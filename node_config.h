@@ -7,7 +7,7 @@
 #include <bitset>
 #include "util.h"
 #include "log.h"
-#include "promise.h"
+#include "base_promise.h"
 
 namespace go {
 class OutputChannel;

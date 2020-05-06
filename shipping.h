@@ -10,6 +10,7 @@
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
 
+#include "gopp/channels.h"
 #include "log.h"
 #include "node_config.h"
 

@@ -167,8 +167,9 @@ void GC::PrepareGCForAllCores()
 
     GarbageBlock *tail_next = collect_head;
     // do {
-    // tail_node->next = tail_next;
+    //   tail_node->next = tail_next;
     // } while (!collect_head.compare_exchange_strong(tail_next, new_head));
+
     tail_node->next = tail_next;
     collect_head = new_head;
 

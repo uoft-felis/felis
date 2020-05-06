@@ -347,7 +347,7 @@ void NewOrderTxn::Run()
   }
 
   if (Client::g_enable_granola)
-    root_promise()->AssignAffinity(warehouse_id - 1);
+    root->AssignAffinity(warehouse_id - 1);
 }
 
 }
