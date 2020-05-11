@@ -64,6 +64,8 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
   return s;
 }
 
+char Client::zero_data[100];
+
 class RMWTxn : public Txn<RMWState>, public RMWStruct {
   Client *client;
  public:
@@ -128,7 +130,8 @@ void RMWTxn::Prepare()
 void RMWTxn::WriteRow(TxnVHandle vhandle)
 {
   auto dbv = vhandle.Read<Ycsb::Value>();
-  dbv.v.resize_junk(90);
+  dbv.v.assign(Client::zero_data, 100);
+  dbv.v.resize_junk(999);
   vhandle.Write(dbv);
 }
 
@@ -154,7 +157,8 @@ void RMWTxn::Run()
         bitmap |= 1ULL << i;
     }
 
-    auto aff = AffinityFromRows(bitmap, state->rows);
+    auto aff = std::numeric_limits<uint64_t>::max();
+    // auto aff = AffinityFromRows(bitmap, state->rows);
     root->Then(
         MakeContext(), 1,
         [](const auto &ctx, auto _) -> Optional<VoidValue> {
@@ -224,6 +228,7 @@ void RMWTxn::Run()
 void YcsbLoader::Run()
 {
   auto &mgr = util::Instance<felis::TableManager>();
+  mgr.Create<Ycsb>();
 
   void *large_buf = alloca(1024);
 
@@ -242,7 +247,7 @@ void YcsbLoader::Run()
       Ycsb::Key dbk;
       Ycsb::Value dbv;
       dbk.k = i;
-      dbv.v.resize_junk(90);
+      dbv.v.resize_junk(999);
       auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeFromPtr(large_buf));
       // TODO: slice mapping table stuff?
       felis::InitVersion(handle, dbv.Encode());
@@ -252,7 +257,7 @@ void YcsbLoader::Run()
   mem::ParallelPool::SetCurrentAffinity(-1);
   MasstreeIndex::ResetThreadInfo();
 
-  finish.unlock();
+  done = true;
 
   // Generate a random permutation
 #if 0
@@ -268,7 +273,7 @@ void YcsbLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 1048576 * 16;
+size_t Client::g_table_size = 10000000;
 double Client::g_theta = 0.00;
 bool Client::g_enable_partition = false;
 bool Client::g_enable_lock_elision = false;

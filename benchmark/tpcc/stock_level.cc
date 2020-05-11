@@ -42,7 +42,13 @@ void StockLevelTxn::PrepareInsert()
 
 void StockLevelTxn::Run()
 {
-    root->Then(
+  auto aff = std::numeric_limits<uint64_t>::max();
+  if (!Client::g_enable_granola) {
+    aff = client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1);
+  } else {
+    aff = warehouse_id - 1;
+  }
+  root->Then(
       MakeContext(warehouse_id, district_id, threshold), 0,
       [](const auto &ctx, auto _) -> Optional<VoidValue> {
         auto &[state, index_handle, warehouse_id, district_id, threshold] = ctx;
@@ -87,8 +93,9 @@ void StockLevelTxn::Run()
         }
         return nullopt;
       },
-      client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1));
+      aff);
 
+  if (!Client::g_enable_granola)
     root->AssignSchedulingKey(serial_id() + (1024ULL << 8));
 }
 

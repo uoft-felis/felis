@@ -16,14 +16,16 @@ struct NewOrderStruct {
   uint warehouse_id;
   uint district_id;
   uint customer_id;
-  uint nr_items;
 
   uint ts_now;
 
   struct OrderDetail {
+    uint nr_items;
     uint item_id[kNewOrderMaxItems];
     uint supplier_warehouse_id[kNewOrderMaxItems];
     uint order_quantities[kNewOrderMaxItems];
+
+    uint unit_price[kNewOrderMaxItems];
   } detail;
 };
 
@@ -42,9 +44,18 @@ struct NewOrderState {
 
   VHandle *orderlines[15]; // insert
   struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
+    Tuple<NewOrderStruct::OrderDetail> args;
     void operator()(int id, VHandle *row) {
       state->orderlines[id] = row;
       handle(row).AppendNewVersion();
+
+      auto &[detail] = args;
+      auto amount = detail.unit_price[id] * detail.order_quantities[id];
+
+      handle(row).WriteTryInline(
+          OrderLine::Value::New(detail.item_id[id], 0, amount,
+                                detail.supplier_warehouse_id[id],
+                                detail.order_quantities[id]));
     }
   };
   NodeBitmap orderlines_nodes;
@@ -56,15 +67,20 @@ struct NewOrderState {
   FutureValue<VHandle *> oorder_future, neworder_future;
 
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
+    OOrder::Value args;
     void operator()(int id, VHandle *row) {
+      handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;
+        handle(row).WriteTryInline(args);
       } else if (id == 1) {
         state->neworder = row;
+        handle(row).WriteTryInline(NewOrder::Value());
       } else if (id == 2) {
         state->cididx = row;
+        handle(row).WriteTryInline(OOrderCIdIdx::Value());
       }
-      handle(row).AppendNewVersion(id < 2);
+      // handle(row).AppendNewVersion(id < 2);
     }
   };
   NodeBitmap other_inserts_nodes;

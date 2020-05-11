@@ -166,6 +166,10 @@ void GC::PrepareGCForAllCores()
     }
 
     GarbageBlock *tail_next = collect_head;
+
+    // This function runs during epoch boundary, we don't need atomic access to
+    // the head.
+    //
     // do {
     //   tail_node->next = tail_next;
     // } while (!collect_head.compare_exchange_strong(tail_next, new_head));
@@ -248,6 +252,21 @@ size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t 
   return n;
 }
 
+void GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next, size_t *nr_bytes)
+{
+  VarStr *basedata = nullptr;
+
+  if (p) basedata = p->InspectBaseInheritPointer();
+  if (basedata && next && next->InspectBaseInheritPointer() == basedata) {
+    basedata = nullptr;
+  }
+  if (IsDataGarbage(row, p) && p != basedata) {
+    *nr_bytes += p->len;
+    delete p;
+  }
+  delete basedata;
+}
+
 size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes)
 {
   auto *versions = handle->versions;
@@ -269,15 +288,8 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t 
 
   for (auto j = 0; j < i; j++) {
     auto p = (VarStr *) objects[j];
-    auto basedata = p->InspectBaseInheritPointer();
-    if (basedata && ((VarStr *) objects[j + 1])->InspectBaseInheritPointer() == basedata) {
-      basedata = nullptr;
-    }
-    if (IsDataGarbage(handle, p) && p != basedata) {
-      *nr_bytes += p->len;
-      delete p;
-    }
-    delete basedata;
+    auto next = (VarStr *) objects[j + 1];
+    FreeIfGarbage(handle, p, next, nr_bytes);
   }
   std::move(objects + i, objects + handle->size, objects);
   std::move(versions + i, versions + handle->size, versions);

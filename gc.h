@@ -23,6 +23,8 @@ class GC {
   static void InitPool();
 
   static bool IsDataGarbage(VHandle *row, VarStr *data);
+  static void FreeIfGarbage(VHandle *row, VarStr *data, VarStr *next, size_t *nr_bytes);
+
   size_t Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes);
  private:
   size_t Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes);

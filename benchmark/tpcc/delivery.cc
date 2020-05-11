@@ -118,7 +118,8 @@ void DeliveryTxn::Run()
       if (bitmap == (1 << 3)) continue;
       auto aff = std::numeric_limits<uint64_t>::max();
 
-      aff = AffinityFromRows(0x03, {state->oorders[i], state->new_orders[i]});
+      if (!Client::g_enable_granola)
+        aff = AffinityFromRows(0x03, {state->oorders[i], state->new_orders[i]});
 
       root->Then(
           MakeContext(bitmap, i, o_carrier_id), node,
@@ -151,7 +152,8 @@ void DeliveryTxn::Run()
       }
       valid_rows[nr_valid_rows++] = state->customers[i];
 
-      aff = AffinityFromRows((1 << nr_valid_rows) - 1, valid_rows);
+      if (!Client::g_enable_granola)
+        aff = AffinityFromRows((1 << nr_valid_rows) - 1, valid_rows);
 
       auto next = root->Then(
           MakeContext(bitmap, i, ts), node,

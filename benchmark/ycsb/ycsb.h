@@ -16,10 +16,15 @@ enum class TableType : int {
 };
 
 struct Ycsb {
-  static constexpr auto kTable = TableType::Ycsb;
-  static constexpr auto kIndexArgs = std::make_tuple();
+  static uint32_t HashKey(const felis::VarStr *k) {
+    auto x = (uint8_t *) k->data;
+    return *(uint32_t *) x;
+  }
 
-  using IndexBackend = felis::MasstreeIndex;
+  static constexpr auto kTable = TableType::Ycsb;
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 10000000);
+
+  using IndexBackend = felis::HashtableIndex;
   using Key = sql::YcsbKey;
   using Value = sql::YcsbValue;
 };
@@ -30,6 +35,8 @@ class Client : public felis::EpochClient {
   // Zipfian random generator
   RandRng rand;
 
+  friend class RMWTxn;
+  static char zero_data[100];
  public:
   static double g_theta;
   static size_t g_table_size;
@@ -47,13 +54,11 @@ class Client : public felis::EpochClient {
 };
 
 class YcsbLoader : public go::Routine {
-  std::mutex finish;
+  std::atomic_bool done = false;
  public:
-  YcsbLoader() {
-    finish.lock();
-  }
+  YcsbLoader() {}
   void Run() override final;
-  void Wait() { finish.lock(); }
+  void Wait() { while (!done) sleep(1); }
 };
 
 }

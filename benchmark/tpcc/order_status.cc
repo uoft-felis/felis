@@ -30,6 +30,14 @@ class OrderStatusTxn : public Txn<OrderStatusState>, public OrderStatusStruct {
 void OrderStatusTxn::Run()
 {
   // TODO: This does not work for distributed TPC-C.
+  auto aff = std::numeric_limits<uint64_t>::max();
+
+  if (!Client::g_enable_granola) {
+    aff = client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1);
+  } else {
+    aff = warehouse_id - 1;
+  }
+
   root->Then(
       MakeContext(warehouse_id, district_id, customer_id), 0,
       [](const auto &ctx, auto _) -> Optional<VoidValue> {
@@ -72,7 +80,7 @@ void OrderStatusTxn::Run()
 
         return nullopt;
       },
-      client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1));
+      aff);
 }
 
 }

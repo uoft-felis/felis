@@ -2,6 +2,7 @@
 #include "index.h"
 #include "util.h"
 #include "literals.h"
+#include "gc.h"
 
 namespace felis {
 
@@ -40,7 +41,9 @@ bool BaseTxn::TxnVHandle::WriteVarStr(VarStr *obj)
   if (!EpochClient::g_enable_granola) {
     return api->WriteWithVersion(sid, obj, epoch_nr);
   } else {
-    delete api->ReadExactVersion(0);
+    auto p = api->ReadExactVersion(0);
+    size_t nr_bytes = 0;
+    GC::FreeIfGarbage(api, p, obj, &nr_bytes);
     return api->WriteExactVersion(0, obj, epoch_nr);
   }
 }

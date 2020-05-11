@@ -10,9 +10,9 @@ NewOrderStruct ClientBase::GenerateTransactionInput<NewOrderStruct>()
   s.warehouse_id = PickWarehouse();
   s.district_id = PickDistrict();
   s.customer_id = GetCustomerId();
-  s.nr_items = RandomNumber(5, NewOrderStruct::kNewOrderMaxItems);
+  s.detail.nr_items = RandomNumber(5, NewOrderStruct::kNewOrderMaxItems);
 
-  for (int i = 0; i < s.nr_items; i++) {
+  for (int i = 0; i < s.detail.nr_items; i++) {
  again:
     auto id = GetItemId();
     // Check duplicates. This is our customization to TPC-C because we cannot
@@ -46,7 +46,7 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
   {}
   void PrepareState() override final {
     Txn<NewOrderState>::PrepareState();
-    client->get_insert_locality_manager().PlanLoad(warehouse_id - 1, nr_items);
+    client->get_insert_locality_manager().PlanLoad(warehouse_id - 1, detail.nr_items);
     client->get_initialization_locality_manager().PlanLoad(warehouse_id - 1, 5);
   }
   void Run() override final;
@@ -73,20 +73,37 @@ void NewOrderTxn::PrepareInsertImpl()
   auto neworder_key = NewOrder::Key::New(warehouse_id, district_id, oorder_id, customer_id);
   auto cididx_key = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id, oorder_id);
   OrderLine::Key orderline_keys[kNewOrderMaxItems];
+  auto nr_items = detail.nr_items;
+  bool all_local = true;
+
   for (int i = 0; i < nr_items; i++) {
     orderline_keys[i] = OrderLine::Key::New(warehouse_id, district_id, oorder_id, i + 1);
+    if (detail.supplier_warehouse_id[i] != warehouse_id)
+      all_local = false;
   }
 
   INIT_ROUTINE_BRK(8192);
 
+  auto handle = index_handle();
+
+  for (int i = 0; i < nr_items; i++) {
+    auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeFromRoutine());
+    auto item_value = handle(item).Read<Item::Value>();
+    detail.unit_price[i] = item_value.i_price;
+  }
+
+  auto args0 = Tuple<OrderDetail>(detail);
   state->orderlines_nodes =
-      TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, void>(
-          nullptr,
+      TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
+          &args0,
           KeyParam<OrderLine>(orderline_keys, nr_items));
 
+  auto args1 = OOrder::Value::New(customer_id, 0, nr_items,
+                                  all_local, ts_now);
+
   state->other_inserts_nodes =
-      TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, void>(
-          nullptr,
+      TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, OOrder::Value>(
+          &args1,
           KeyParam<OOrder>(oorder_key),
           KeyParam<NewOrder>(neworder_key),
           KeyParam<OOrderCIdIdx>(cididx_key));
@@ -97,6 +114,7 @@ void NewOrderTxn::PrepareInsertImpl()
 void NewOrderTxn::PrepareImpl()
 {
   Stock::Key stock_keys[kNewOrderMaxItems];
+  auto nr_items = detail.nr_items;
   for (int i = 0; i < nr_items; i++) {
     stock_keys[i] =
         Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
@@ -131,6 +149,9 @@ void NewOrderTxn::Run()
   } params;
 
   params.warehouse = warehouse_id;
+  auto nr_items = detail.nr_items;
+
+
   bool all_local = true;
   for (auto i = 0; i < nr_items; i++) {
     params.quantities[i] = detail.order_quantities[i];
@@ -139,6 +160,7 @@ void NewOrderTxn::Run()
       all_local = false;
   }
 
+#if 0
   for (auto &p: state->other_inserts_nodes) {
     auto [node, bitmap] = p;
 
@@ -169,7 +191,9 @@ void NewOrderTxn::Run()
     }
 
     auto aff = std::numeric_limits<uint64_t>::max();
-    aff = AffinityFromRows(bitmap, {state->oorder, state->neworder, state->cididx});
+    if (!Client::g_enable_granola) {
+      aff = AffinityFromRows(bitmap, {state->oorder, state->neworder, state->cididx});
+    }
 
     root->Then(
         MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
@@ -200,7 +224,9 @@ void NewOrderTxn::Run()
     auto [node, bitmap] = p;
 
     auto aff = std::numeric_limits<uint64_t>::max();
-    aff = AffinityFromRows(bitmap, state->orderlines);
+    if (!Client::g_enable_granola) {
+      aff = AffinityFromRows(bitmap, state->orderlines);
+    }
 
     root->Then(
         MakeContext(bitmap, detail), node,
@@ -230,6 +256,7 @@ void NewOrderTxn::Run()
         },
         aff);
   }
+#endif
 
 
   for (auto &p: state->stocks_nodes) {
@@ -304,8 +331,7 @@ void NewOrderTxn::Run()
         auto filter = warehouse_filters[f];
         auto aff = std::numeric_limits<uint64_t>::max();
 
-        if (filter > 0) aff = filter - 1;
-        else aff = AffinityFromRows(bitmap, state->stocks);
+        aff = filter - 1;
 
         root->Then(
             MakeContext(bitmap, params, filter), node,

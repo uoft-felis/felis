@@ -79,6 +79,13 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
     lm.PlanLoad(this_coreid, (long) delta);
   }
 
+  auto &gc = util::Instance<GC>();
+  auto latest = latest_version.load(std::memory_order_relaxed);
+  if (size + delta >= capacity && capacity >= 512_K) {
+    size_t nr_bytes = 0;
+    gc.Collect((VHandle *) this, epoch_nr, 16_K, &nr_bytes);
+  }
+
   size += delta;
 
   if (unlikely(size >= capacity)) {
@@ -108,10 +115,8 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
             objects + size,
             kPendingValue);
 
-  auto latest = latest_version.load(std::memory_order_relaxed);
   if (cur_start != latest + 1) {
     cur_start = latest + 1;
-    auto &gc = util::Instance<GC>();
     size_t nr_bytes = 0;
     auto handle = gc_handle.load(std::memory_order_relaxed);
     bool garbage_left = latest >= 16_K;

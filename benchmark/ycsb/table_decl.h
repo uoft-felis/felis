@@ -10,7 +10,7 @@ namespace sql {
 FIELD(uint64_t, k);
 KEYS(YcsbKey);
 
-static constexpr int kYcsbRecordSize = 100;
+static constexpr int kYcsbRecordSize = 1000;
 
 FIELD(sql::inline_str_16<kYcsbRecordSize>, v);
 VALUES(YcsbValue);
