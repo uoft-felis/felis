@@ -43,7 +43,7 @@ bool BaseTxn::TxnVHandle::WriteVarStr(VarStr *obj)
   } else {
     auto p = api->ReadExactVersion(0);
     size_t nr_bytes = 0;
-    GC::FreeIfGarbage(api, p, obj, &nr_bytes);
+    util::Instance<GC>().FreeIfGarbage(api, p, obj);
     return api->WriteExactVersion(0, obj, epoch_nr);
   }
 }

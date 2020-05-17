@@ -125,6 +125,7 @@ class SortedArrayVHandle : public BaseVHandle {
   }
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
+  const size_t nr_capacity() const { return capacity; }
   const size_t nr_versions() const { return size; }
   uint64_t first_version() const { return versions[0]; }
   uint64_t last_version() const { return versions[size - 1]; }

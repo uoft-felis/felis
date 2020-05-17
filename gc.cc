@@ -28,7 +28,7 @@ struct GarbageBlock : public util::GenericListNode<GarbageBlock> {
 static_assert(sizeof(GarbageBlock) == GarbageBlock::kBlockSize, "Block doesn't match block size?");
 
 struct GarbageBlockSlab {
-  static constexpr auto kPreallocPerCore = 8192U;
+  static constexpr size_t kPreallocPerCore = 32_K;
   util::MCSSpinLock lock;
   int core_id;
   util::GenericListNode<GarbageBlock> free;
@@ -67,6 +67,7 @@ uint64_t GarbageBlockSlab::Add(VHandle *row, int q_idx)
   GarbageBlock *blk = nullptr;
   util::MCSSpinLock::QNode qnode;
   lock.Acquire(&qnode);
+
   if (!half_queue->empty()) {
     blk = half_queue->next->object();
     idx = __builtin_ffsll(~blk->bitmap) - 1;
@@ -144,7 +145,7 @@ void GC::PrepareGCForAllCores()
 
   for (auto core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
     auto &slab = g_slabs[core_id];
-    int q_idx = cur_epoch_nr % g_gc_every_epoch;
+    int q_idx = (cur_epoch_nr + 1) % g_gc_every_epoch;
     auto *full_queue = &slab->full[q_idx];
     auto *half_queue = &slab->half[q_idx];
 
@@ -185,17 +186,15 @@ void GC::PrepareGCForAllCores()
 void GC::RunGC()
 {
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
-  int q_idx = cur_epoch_nr % g_gc_every_epoch;
+  int q_idx = (cur_epoch_nr + 1) % g_gc_every_epoch;
 
-  size_t nr = 0, nrb = 0, nr_bytes = 0;
+  auto &s = stats[go::Scheduler::CurrentThreadPoolId() - 1];
 
   GarbageBlock *b = collect_head.load();
   while (true) {
     // logger->info("GC block {}", (void *) b);
     while (!b || !collect_head.compare_exchange_strong(b, b->next->object())) {
       if (!b) {
-        logger->info("GC done {} rows {} blks freed {}K", nr, nrb,
-                     nr_bytes >> 10);
         return;
       }
     }
@@ -209,11 +208,15 @@ void GC::RunGC()
     while (b->bitmap != 0) {
       i = __builtin_ffsll(b->bitmap) - 1;
       // logger->info("Found {} bitmap {:x}", i, b->bitmap);
-      auto nr_processed = Process(b->rows[i], cur_epoch_nr, 16_K, &nr_bytes);
+      // abort_if((uint64_t) &b->rows[i] != b->rows[i]->gc_handle.load(),
+      //          "gc_handle {:x} i {} blk {}", b->rows[i]->gc_handle.load(), i, (void *) b);
+
+      auto old = s.nr_bytes;
+      auto nr_processed = Process(b->rows[i], cur_epoch_nr, 16_K);
       if (nr_processed < 16_K) {
         b->rows[i]->gc_handle = 0;
         b->bitmap &= ~(1ULL << i);
-        nr++;
+        s.nr_rows++;
         continue;
       }
 
@@ -228,8 +231,8 @@ void GC::RunGC()
         }
         // slab->lock.Release(&qnode);
 
-        logger->info("GC unfinished {} rows {} blks, freed {}K", nr + 1, nrb,
-                     nr_bytes >> 10);
+        s.nr_rows++;
+        s.straggler = true;
         return;
       }
     }
@@ -238,41 +241,48 @@ void GC::RunGC()
     b->InsertAfter(&g_slabs[b->alloc_core]->free);
     // slab->lock.Release(&qnode);
 
-    nrb++;
+    s.nr_blocks++;
     b = b->next->object();
   }
 }
 
-size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes)
+size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 {
   util::MCSSpinLock::QNode qnode;
   handle->lock.Lock(&qnode);
-  size_t n = Collect(handle, cur_epoch_nr, limit, nr_bytes);
+  size_t n = Collect(handle, cur_epoch_nr, limit);
   handle->lock.Unlock(&qnode);
   return n;
 }
 
-void GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next, size_t *nr_bytes)
+bool GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next)
 {
+  auto &s = stats[go::Scheduler::CurrentThreadPoolId() - 1];
   VarStr *basedata = nullptr;
+  bool deleted = false;
 
   if (p) basedata = p->InspectBaseInheritPointer();
   if (basedata && next && next->InspectBaseInheritPointer() == basedata) {
     basedata = nullptr;
   }
-  if (IsDataGarbage(row, p) && p != basedata) {
-    *nr_bytes += p->len;
+  if (IsDataGarbage(row, p) && p != p->InspectBaseInheritPointer()) {
+    s.nr_bytes += p->len;
+    deleted = true;
     delete p;
   }
-  delete basedata;
+  if (basedata) {
+    deleted = true;
+    delete basedata;
+  }
+  return deleted;
 }
 
-size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t *nr_bytes)
+size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 {
   auto *versions = handle->versions;
   uintptr_t *objects = handle->versions + handle->capacity;
   int i = 0;
-  while (i < handle->size - 1 && i <= limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
+  while (i < handle->size - 1 && i < limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
     i++;
   }
   if (i == 0) return 0;
@@ -289,8 +299,9 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit, size_t 
   for (auto j = 0; j < i; j++) {
     auto p = (VarStr *) objects[j];
     auto next = (VarStr *) objects[j + 1];
-    FreeIfGarbage(handle, p, next, nr_bytes);
+    FreeIfGarbage(handle, p, next);
   }
+
   std::move(objects + i, objects + handle->size, objects);
   std::move(versions + i, versions + handle->size, versions);
   handle->size -= i;
@@ -317,6 +328,18 @@ bool GC::IsDataGarbage(VHandle *row, VarStr *data)
     return false;
   }
   return true;
+}
+
+void GC::PrintStats()
+{
+  fmt::memory_buffer buf;
+  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+    auto &s = stats[i];
+    fmt::format_to(buf, " {}({}{})={}K",
+                   s.nr_rows, s.nr_blocks, s.straggler ? "*" : "",
+                   s.nr_bytes >> 10);
+  }
+  logger->info("GC: {}", std::string_view(buf.data(), buf.size()));
 }
 
 }

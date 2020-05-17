@@ -80,15 +80,15 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
   }
 
   auto &gc = util::Instance<GC>();
+  auto handle = gc_handle.load(std::memory_order_relaxed);
   auto latest = latest_version.load(std::memory_order_relaxed);
-  if (size + delta >= capacity && capacity >= 512_K) {
-    size_t nr_bytes = 0;
-    gc.Collect((VHandle *) this, epoch_nr, 16_K, &nr_bytes);
+  if (size + delta > capacity && capacity >= 512_K) {
+    gc.Collect((VHandle *) this, epoch_nr, 16_K);
   }
 
   size += delta;
 
-  if (unlikely(size >= capacity)) {
+  if (unlikely(size > capacity)) {
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
     auto new_cap = std::max(8U, 1U << (32 - __builtin_clz((unsigned int) size)));
     auto new_versions = EnlargePair64Array(this, versions, capacity, alloc_by_regionid, new_cap);
@@ -118,12 +118,11 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
   if (cur_start != latest + 1) {
     cur_start = latest + 1;
     size_t nr_bytes = 0;
-    auto handle = gc_handle.load(std::memory_order_relaxed);
     bool garbage_left = latest >= 16_K;
 
     if (handle) {
       if (latest > 0)
-        gc.Collect((VHandle *) this, epoch_nr, std::min<size_t>(16_K, latest - 1), &nr_bytes);
+        gc.Collect((VHandle *) this, epoch_nr, std::min<size_t>(16_K, latest - 1));
       gc.RemoveRow((VHandle *) this, handle);
       gc_handle.store(0, std::memory_order_relaxed);
     }

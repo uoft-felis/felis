@@ -298,7 +298,7 @@ void CallTxnsWorker::Run()
     mem::GetDataRegion().Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
-    util::Instance<GC>().RunGC();
+    // util::Instance<GC>().RunGC();
   }
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
@@ -372,7 +372,7 @@ void EpochClient::InitializeEpoch()
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
-  util::Instance<GC>().PrepareGCForAllCores();
+  // util::Instance<GC>().PrepareGCForAllCores();
 
   AllocStateTxnWorker::comp = nr_threads + 1;
   for (auto t = 0; t < nr_threads; t++) {
@@ -388,6 +388,11 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::OnInsertComplete()
 {
+  // GC must have been completed
+  auto &gc = util::Instance<GC>();
+  gc.PrintStats();
+  gc.ClearStats();
+
   stats.insert_time_ms += callback.perf.duration_ms();
   init_lmgr.Balance();
   callback.phase = EpochPhase::Initialize;
