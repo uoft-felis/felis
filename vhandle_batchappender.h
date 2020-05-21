@@ -25,6 +25,10 @@ class BatchAppender {
   void FinalizeFlush(uint64_t epoch_nr);
   void Reset();
   int GetRowContentionAffinity(VHandle *row) const;
+
+ private:
+  static size_t BinPack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit);
+  static void PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label);
 };
 
 }

@@ -281,6 +281,9 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
   }
 }
 
+void Binpack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit);
+void PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label);
+
 void BatchAppender::Reset()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
@@ -309,7 +312,12 @@ void BatchAppender::Reset()
     sum = 0;
   }
 
+  VHandle **knapsacks = nullptr;
+  size_t nr_knapsacks = 0;
   unsigned int s = 0;
+  if (Options::kBinpackSplitting) {
+    knapsacks = new VHandle *[nr_cleared];
+  }
 
   for (int core = 0; core < nr_threads; core++) {
     auto numa_zone = core / mem::kNrCorePerNode;
@@ -326,15 +334,32 @@ void BatchAppender::Reset()
         if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
 
         row->cont_affinity = NodeConfiguration::g_nr_threads * (s + row->nr_ondsplt / 2) / sum;
+        s += row->nr_ondsplt;
+
         auto client = EpochClient::g_workload_client;
         client->get_execution_locality_manager().PlanLoad(row->this_coreid, -1 * row->nr_ondsplt);
+        if (Options::kBinpackSplitting) {
+          knapsacks[nr_knapsacks++] = row;
+          continue;
+        }
         client->get_contention_locality_manager().PlanLoad(row->cont_affinity, row->nr_ondsplt);
-        s += row->nr_ondsplt;
       }
    done:
       g_alloc[numa_zone].pool.Free(p);
     }
 
+  }
+
+  int delta = 0;
+  if (Options::kBinpackSplitting && sum > 0) {
+    // Exclude the Binpacking time
+    EpochClient::g_workload_client->perf.End();
+    for (int core = 0; core < nr_threads - 1; core++) {
+      const size_t hard_limit = sum / nr_threads;
+      delta = hard_limit + delta - BinPack(knapsacks, nr_knapsacks, core, hard_limit + 1 + delta);
+    }
+    PackLeftOver(knapsacks, nr_knapsacks, nr_threads - 1);
+    EpochClient::g_workload_client->perf.Start();
   }
 
   for (int n = 0; n < nr_threads / mem::kNrCorePerNode; n++) {
@@ -349,6 +374,66 @@ void BatchAppender::Reset()
   } else {
     logger->info("Batch {} rows", nr_cleared);
   }
+
+  delete [] knapsacks;
+}
+
+size_t BatchAppender::BinPack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit)
+{
+  if (limit == 0) return 0;
+
+  int *f = new int[limit];
+  int *pf = new int[limit];
+  auto *trace = new std::vector<bool>[nr_knapsack];
+  std::fill(pf, pf + limit, 0);
+
+  for (auto i = 0U; i < nr_knapsack; i++) {
+    if (knapsacks[i] == nullptr) continue;
+
+    trace[i].resize(limit);
+    auto wi = knapsacks[i]->nr_ondemand_split();
+    for (size_t w = 0; w < limit; w++) {
+      f[w] = pf[w];
+      if (w >= wi && pf[w - wi] + wi > f[w]) {
+        f[w] = pf[w - wi] + wi;
+        trace[i][w] = true;
+      }
+    }
+    std::swap(pf, f);
+  }
+
+  int maxcap = pf[limit - 1];
+  printf("Binpack max cap %d/%ld:", maxcap, limit);
+  auto w = limit - 1;
+  for (int i = nr_knapsack - 1; i >= 0; i--) {
+    if (knapsacks[i] == nullptr) continue;
+
+    auto wi = knapsacks[i]->nr_ondemand_split();
+    if (trace[i][w]) {
+      printf(" %d", wi);
+      w -= wi;
+      knapsacks[i]->cont_affinity = label;
+      knapsacks[i] = nullptr;
+    }
+  }
+  puts("");
+
+  delete [] f;
+  delete [] pf;
+  delete [] trace;
+  return maxcap;
+}
+
+void BatchAppender::PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label)
+{
+  printf("Binpack left:");
+  for (int i = 0; i < nr_knapsack; i++) {
+    if (knapsacks[i] != nullptr) {
+      printf(" %d", knapsacks[i]->nr_ondemand_split());
+      knapsacks[i]->cont_affinity = label;
+    }
+  }
+  puts("");
 }
 
 }

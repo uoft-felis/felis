@@ -29,11 +29,12 @@ static_assert(sizeof(GarbageBlock) == GarbageBlock::kBlockSize, "Block doesn't m
 
 struct GarbageBlockSlab {
   static constexpr size_t kPreallocPerCore = 32_K;
+  static constexpr size_t kNrQueue = 200;
   util::MCSSpinLock lock;
   int core_id;
   util::GenericListNode<GarbageBlock> free;
-  util::GenericListNode<GarbageBlock> half[128];
-  util::GenericListNode<GarbageBlock> full[128];
+  util::GenericListNode<GarbageBlock> half[kNrQueue];
+  util::GenericListNode<GarbageBlock> full[kNrQueue];
 
   GarbageBlockSlab(int core_id);
 
@@ -47,7 +48,7 @@ GarbageBlockSlab::GarbageBlockSlab(int core_id)
   auto blks = (GarbageBlock *) mem::MemMapAlloc(
       mem::VhandlePool, GarbageBlock::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
 
-  for (size_t i = 0; i < 128; i++) {
+  for (size_t i = 0; i < kNrQueue; i++) {
     half[i].Initialize();
     full[i].Initialize();
   }
@@ -87,6 +88,7 @@ uint64_t GarbageBlockSlab::Add(VHandle *row, int q_idx)
     blk->bitmap = 1;
     idx = 0;
   }
+  abort_if(blk == nullptr, "WHY?");
   blk->rows[idx] = row;
   lock.Release(&qnode);
 
@@ -134,6 +136,10 @@ std::array<GarbageBlockSlab *, NodeConfiguration::kMaxNrThreads> GC::g_slabs;
 void GC::InitPool()
 {
   g_gc_every_epoch = 800000 / EpochClient::g_txn_per_epoch;
+
+  abort_if(g_gc_every_epoch >= GarbageBlockSlab::kNrQueue,
+           "g_gc_every_epoch {} >= {}", g_gc_every_epoch, GarbageBlockSlab::kNrQueue);
+
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     g_slabs[i] = new GarbageBlockSlab(i);
   }

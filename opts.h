@@ -68,6 +68,7 @@ struct Options {
   static inline const auto kCoreScaling = Option("CoreScaling");
   static inline const auto kOnDemandSplitting = Option("OnDemandSplitting");
   static inline const auto kLocalityManagement = Option("LocalityManagement");
+  static inline const auto kBinpackSplitting = Option("BinpackSplitting");
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");
   static inline const auto kTpccHotWarehouseBitmap = Option("TpccHotWarehouseBitmap");

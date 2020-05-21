@@ -118,6 +118,7 @@ class EpochClient {
   friend class CallTxnsWorker;
   friend class AllocStateTxnWorker;
   friend class EpochExecutionDispatchService;
+  friend class BatchAppender;
 
   int core_limit;
   int best_core;
