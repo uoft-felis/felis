@@ -20,6 +20,7 @@ struct VersionRead {
 
 struct VersionWrite {
   void *handle;
+  long pos;
   uint64_t epoch_nr;
   void operator()() const;
 };
@@ -39,6 +40,21 @@ struct VHandleAppend {
   void operator()() const;
 };
 
+struct VHandleExpand {
+  void *handle;
+  unsigned int oldcap;
+  unsigned int newcap;
+
+  void operator()() const;
+};
+
+struct OnDemandSplit {
+  uint64_t sum;
+  uint64_t nr_batched;
+  uint64_t nr_splitted;
+  void operator()() const;
+};
+
 struct LocalitySchedule {
   int core;
   int weight;
@@ -46,6 +62,12 @@ struct LocalitySchedule {
   uint64_t seed;
   uint64_t max_seed;
   long load;
+  void operator()() const;
+};
+
+struct EndOfPhase {
+  uint64_t epoch_nr;
+  int phase_id;
   void operator()() const;
 };
 
@@ -77,7 +99,10 @@ struct TpccDelivery {
   PROBE_PROXY(felis::probes::VersionWrite);     \
   PROBE_PROXY(felis::probes::WaitCounters);     \
   PROBE_PROXY(felis::probes::VHandleAppend);    \
+  PROBE_PROXY(felis::probes::VHandleExpand);    \
   PROBE_PROXY(felis::probes::LocalitySchedule); \
+  PROBE_PROXY(felis::probes::OnDemandSplit);    \
+  PROBE_PROXY(felis::probes::EndOfPhase);       \
   PROBE_PROXY(felis::probes::TpccNewOrder);     \
   PROBE_PROXY(felis::probes::TpccPayment);      \
   PROBE_PROXY(felis::probes::TpccDelivery);     \

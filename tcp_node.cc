@@ -39,7 +39,7 @@ class SendChannel : public Flushable<SendChannel>, public OutgoingTraffic {
 
  public:
   static constexpr size_t kPerThreadBuffer = 16 << 10;
-  SendChannel(go::TcpSocket *sock);
+  SendChannel(go::TcpSocket *sock, int dst_node);
   void *Alloc(size_t sz);
   void Finish(size_t sz);
   long PendingFlush(int core_id);
@@ -54,7 +54,7 @@ class SendChannel : public Flushable<SendChannel>, public OutgoingTraffic {
     channels[tid]->flusher_start = flush_start;
   }
   bool PushRelease(int thr, unsigned int start, unsigned int end);
-  void DoFlush(bool async = false);
+  void DoFlush(bool async = false) final override;
   bool TryLock(int i) {
     bool locked = false;
     return channels[i]->lock.compare_exchange_strong(locked, true);
@@ -69,9 +69,10 @@ class SendChannel : public Flushable<SendChannel>, public OutgoingTraffic {
   }
 };
 
-SendChannel::SendChannel(go::TcpSocket *sock)
+SendChannel::SendChannel(go::TcpSocket *sock, int dst_node)
     : out(sock->output_channel())
 {
+  this->dst_node = dst_node;
   auto buffer =
       (uint8_t *) malloc((NodeConfiguration::g_nr_threads + 1) * kPerThreadBuffer);
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
@@ -141,7 +142,7 @@ void SendChannel::DoFlush(bool async)
   auto &chn = channels[core_id];
 
   uint8_t signal = 0;
-  logger->info("SendChannel signaling flusher");
+  logger->info("SendChannel signaling flusher {}", dst_node);
   flusher_channel->Write(&signal, 1);
 
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
@@ -196,6 +197,7 @@ class ReceiverChannel : public IncomingTraffic {
   std::atomic_bool lock;
   felis::TcpNodeTransport *transport;
   std::atomic_long nr_left;
+  bool warned_during_poll = false;
  public:
   ReceiverChannel(go::TcpSocket *sock, felis::TcpNodeTransport *transport)
       : IncomingTraffic(), in(sock->input_channel()), transport(transport) {
@@ -220,6 +222,7 @@ class ReceiverChannel : public IncomingTraffic {
       logger->info("Reset() failed, nr_left is {}", expect);
       std::abort();
     }
+    warned_during_poll = false;
   }
   size_t PollRoutines(PromiseRoutineWithInput *routines, size_t cnt);
   bool PollMappingTable();
@@ -232,7 +235,7 @@ void ReceiverChannel::Complete(size_t n)
   auto left = nr_left.fetch_sub(n) - n;
   abort_if(left < 0, "left {} < 0!", left);
   if (left == 0) {
-    logger->info("Compelte {}", n);
+    logger->info("{} Complete() last n={}", (void *) this, n);
     AdvanceStatus();
     abort_if(current_status() != Status::EndOfPhase, "Bogus current state! {}", (int) current_status());
   }
@@ -277,10 +280,13 @@ size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t c
       break;
 
     if (((header >> 56) & 0xFF) == 0xFF) {
-      abort_if (i == 0 && nr_left.load() > 0,
-                "why there's a mapping table request??? nr_left {}",
-                nr_left.load());
-      // logger->info("Next phase comming up...");
+      /*
+      if (!warned_during_poll) {
+        logger->info("WARNING: Next phase comming up from {} nr_left {} i {}...",
+                     src_node_id, nr_left, i);
+        warned_during_poll = true;
+      }
+      */
       break;
     } else if (header == PromiseRoutine::kUpdateBatchCounter) {
       auto &conf = util::Instance<NodeConfiguration>();
@@ -290,8 +296,9 @@ size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t c
       auto buflen = 8 + buffer_size;
       auto buf = (uint8_t *) alloca(buflen);
 
-      if (in->Peek(buf, buflen) < buflen)
+      if (in->Peek(buf, buflen) < buflen) {
         break;
+      }
 
       src_node_id = util::Instance<NodeConfiguration>().
                     UpdateBatchCountersFromReceiver((unsigned long *) (buf + 8));
@@ -339,7 +346,7 @@ bool ReceiverChannel::PollMappingTable()
   util::Instance<SliceMappingTable>()
       .UpdateSliceMappingTablesFromReceiver(nr_ops, data + 1);
 
-  logger->info("Mapping table applied");
+  logger->info("Mapping table from {} applied, buflen {}", src_node_id, buflen);
   AdvanceStatus();
 
   in->Skip(buflen);
@@ -391,7 +398,7 @@ void NodeServerRoutine::Run()
     bool rs = remote_sock->Connect(peer.host, peer.port);
     abort_if(!rs, "Cannot connect to {}:{}", peer.host, peer.port);
     transport->outgoing_socks[config->id] = remote_sock;
-    transport->outgoing_channels[config->id] = new SendChannel(remote_sock);
+    transport->outgoing_channels[config->id] = new SendChannel(remote_sock, config->id);
     conf.RegisterOutgoing(config->id, transport->outgoing_channels[config->id]);
   }
 
@@ -401,7 +408,7 @@ void NodeServerRoutine::Run()
   // The sources are different from nodes, and their orders are certainly
   // different from nodes too.
   for (size_t i = 1; i < nr_nodes; i++) {
-    auto *client_sock = server_sock->Accept(8 << 10, 1024);
+    auto *client_sock = server_sock->Accept(128 << 20, 1024);
     if (client_sock == nullptr) continue;
 
     logger->info("New worker peer connection");
@@ -436,7 +443,7 @@ void TcpNodeTransport::OnCounterReceived()
     for (int i = 0; i < conf.nr_nodes() - 1; i++) {
       auto r = incoming_connection[i];
       auto s = conf.CalculateIncomingFromNode(r->src_node_id);
-      logger->info("Counter stablized: src {} expecting {} pieces", r->src_node_id, s);
+      logger->info("Counter stablized: {} src {} expecting {} pieces", (void *) r, r->src_node_id, s);
       r->Complete(EpochClient::kMaxPiecesPerPhase - s);
     }
     counters = 0;
@@ -512,8 +519,9 @@ bool TcpNodeTransport::PeriodicIO(int core)
       chn->Flush();
     } else {
       auto [success, did_flush] = chn->TryFlushForThread(core + 1);
-      if (success && did_flush)
-        chn->DoFlush(true);
+
+      // We need to flush no matter what.
+      chn->DoFlush(true);
     }
   }
 

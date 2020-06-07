@@ -45,7 +45,7 @@ struct NewOrderState {
   VHandle *orderlines[15]; // insert
   struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
     Tuple<NewOrderStruct::OrderDetail> args;
-    void operator()(int id, VHandle *row) {
+    void operator()(int id, VHandle *row) __attribute__((noinline)) {
       state->orderlines[id] = row;
       handle(row).AppendNewVersion();
 
@@ -68,7 +68,7 @@ struct NewOrderState {
 
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     OOrder::Value args;
-    void operator()(int id, VHandle *row) {
+    void operator()(int id, VHandle *row) __attribute__((noinline)) {
       handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;
@@ -88,13 +88,15 @@ struct NewOrderState {
   VHandle *stocks[15]; // update
   FutureValue<VHandle *> stock_futures[15];
   struct StocksLookupCompletion : public TxnStateCompletion<NewOrderState> {
-    void operator()(int id, BaseTxn::LookupRowResult rows) {
+    void operator()(int id, BaseTxn::LookupRowResult rows) __attribute__((noinline)) {
       debug(DBG_WORKLOAD "AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
       state->stocks[id] = rows[0];
       handle(rows[0]).AppendNewVersion(true);
     }
   };
   NodeBitmap stocks_nodes;
+
+  uint16_t insert_aff, initialize_aff;
 };
 
 }

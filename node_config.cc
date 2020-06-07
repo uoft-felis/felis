@@ -335,8 +335,10 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
     out->WriteToNetwork(
         local_batch,
         16 + max_level * nr_nodes() * nr_nodes() * sizeof(unsigned long));
+    out->DoFlush(false);
   }
 
+  logger->info("Done Flushing buffer plan on {}", node_id());
   return true;
 }
 
@@ -410,12 +412,14 @@ void NodeConfiguration::SendStartPhase()
   memcpy(buf + 8, &id, 4);
   memcpy(buf + 12, broadcast_buffer.data(), nr_ent * 4);
 
+  logger->info("Send StartPhase");
   // Write out all the slice mapping table update commands.
   for (int i = 1; i <= nr_nodes(); i++) {
     if (i == node_id()) continue;
     auto out = outgoing[i];
     out->WriteToNetwork(buf, buf_cnt);
   }
+  logger->info("Done Sending Start Phase");
 
   broadcast_buffer.clear();
 }

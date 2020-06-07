@@ -96,7 +96,12 @@ void DeliveryTxn::PrepareImpl()
             KeyParam<NewOrder>(dest_neworder_key));
   }
 
-  root->AssignAffinity(client->get_initialization_locality_manager().GetScheduleCore(warehouse_id - 1));
+  if (g_tpcc_config.nr_warehouses != 1) {
+    state->initialize_aff = client->get_initialization_locality_manager().GetScheduleCore(
+        Config::WarehouseToCoreId(warehouse_id));
+
+    root->AssignAffinity(state->initialize_aff);
+  }
 }
 
 // #define SPLIT_CUSTOMER_PIECE
@@ -118,8 +123,8 @@ void DeliveryTxn::Run()
       if (bitmap == (1 << 3)) continue;
       auto aff = std::numeric_limits<uint64_t>::max();
 
-      if (!Client::g_enable_granola)
-        aff = AffinityFromRows(0x03, {state->oorders[i], state->new_orders[i]});
+      if (!Client::g_enable_granola && g_tpcc_config.nr_warehouses != 1)
+        aff = state->initialize_aff;
 
       root->Then(
           MakeContext(bitmap, i, o_carrier_id), node,
@@ -151,9 +156,6 @@ void DeliveryTxn::Run()
         valid_rows[nr_valid_rows++] = state->order_lines[i][j];
       }
       valid_rows[nr_valid_rows++] = state->customers[i];
-
-      if (!Client::g_enable_granola)
-        aff = AffinityFromRows((1 << nr_valid_rows) - 1, valid_rows);
 
       auto next = root->Then(
           MakeContext(bitmap, i, ts), node,

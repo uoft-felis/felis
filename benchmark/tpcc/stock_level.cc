@@ -37,14 +37,15 @@ void StockLevelTxn::PrepareInsert()
   auto auto_inc_zone = warehouse_id * 10 + district_id;
   state->current_oid = mgr.Get<OOrder>().GetCurrentAutoIncrement(auto_inc_zone);
 
-  client->get_execution_locality_manager().PlanLoad(warehouse_id - 1, 150);
+  client->get_execution_locality_manager().PlanLoad(Config::WarehouseToCoreId(warehouse_id), 150);
 }
 
 void StockLevelTxn::Run()
 {
   auto aff = std::numeric_limits<uint64_t>::max();
   if (!Client::g_enable_granola) {
-    aff = client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1);
+    aff = client->get_execution_locality_manager().GetScheduleCore(
+        Config::WarehouseToCoreId(warehouse_id));
   } else {
     aff = warehouse_id - 1;
   }
@@ -95,8 +96,9 @@ void StockLevelTxn::Run()
       },
       aff);
 
-  if (!Client::g_enable_granola)
+  if (!Client::g_enable_granola) {
     root->AssignSchedulingKey(serial_id() + (1024ULL << 8));
+  }
 }
 
 }

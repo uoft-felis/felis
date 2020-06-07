@@ -284,7 +284,7 @@ void BasePromise::ExecutionRoutine::Run()
     }
   } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 
-  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
+  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {} give up {}", core_id, give_up);
 }
 
 bool BasePromise::ExecutionRoutine::Preempt()

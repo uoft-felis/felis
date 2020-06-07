@@ -152,6 +152,7 @@ std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& 
 
 template <int N = 10, int Offset = 0, int Base = 2>
 struct LogHistogram {
+  static constexpr int kNrBins = N;
   long hist[N];
   LogHistogram() {
     memset(hist, 0, sizeof(long) * N);

@@ -218,6 +218,7 @@ void AllocStateTxnWorker::Run()
   }
   if (comp.fetch_sub(1) == 2) {
     client->insert_lmgr.Balance();
+    // client->insert_lmgr.PrintLoads();
     comp.fetch_sub(1);
   }
 }
@@ -298,7 +299,7 @@ void CallTxnsWorker::Run()
     mem::GetDataRegion().Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
-    // util::Instance<GC>().RunGC();
+    util::Instance<GC>().RunGC();
   }
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
@@ -372,7 +373,7 @@ void EpochClient::InitializeEpoch()
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
-  // util::Instance<GC>().PrepareGCForAllCores();
+  util::Instance<GC>().PrepareGCForAllCores();
 
   AllocStateTxnWorker::comp = nr_threads + 1;
   for (auto t = 0; t < nr_threads; t++) {
@@ -392,6 +393,7 @@ void EpochClient::OnInsertComplete()
   auto &gc = util::Instance<GC>();
   gc.PrintStats();
   gc.ClearStats();
+  probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 0}();
 
   stats.insert_time_ms += callback.perf.duration_ms();
   init_lmgr.Balance();
@@ -405,6 +407,8 @@ void EpochClient::OnInsertComplete()
 void EpochClient::OnInitializeComplete()
 {
   stats.initialize_time_ms += callback.perf.duration_ms();
+  probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 1}();
+
   callback.phase = EpochPhase::Execute;
 
   if (NodeConfiguration::g_data_migration && util::Instance<EpochManager>().current_epoch_nr() == 1) {
@@ -471,6 +475,8 @@ void EpochClient::OnExecuteComplete()
     }
     logger->info("Contention Control new core_limit {}", core_limit);
   }
+
+  probes::EndOfPhase{cur_epoch_nr, 2}();
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
     InitializeEpoch();
@@ -683,8 +689,9 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
     auto pos = pstart + i;
     AddToPriorityQueue(q, q.pending.q[pos % (g_max_item / NodeConfiguration::g_nr_threads)]);
   }
-  if (plen)
+  if (plen) {
     q.pending.start.fetch_add(plen);
+  }
 }
 
 static long __SystemTime()
@@ -841,7 +848,7 @@ int EpochExecutionDispatchService::TraceDependency(uint64_t key)
         printf("found %lu in the pending area of %d\n", key, core_id);
       }
     }
-    for (auto i = 0; i < q.end.load(); i++) {
+    for (auto i = 0; i < q.start.load(); i++) {
       if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
         printf("found %lu in the consumed pending area of %d\n", key, core_id);
       }

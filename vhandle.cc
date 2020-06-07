@@ -84,6 +84,7 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
   auto latest = latest_version.load(std::memory_order_relaxed);
   if (size + delta > capacity && capacity >= 512_K) {
     gc.Collect((VHandle *) this, epoch_nr, 16_K);
+    latest = latest_version.load(std::memory_order_relaxed);
   }
 
   size += delta;
@@ -92,6 +93,8 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
     auto new_cap = std::max(8U, 1U << (32 - __builtin_clz((unsigned int) size)));
     auto new_versions = EnlargePair64Array(this, versions, capacity, alloc_by_regionid, new_cap);
+
+    probes::VHandleExpand{(void *) this, capacity, new_cap}();
 
     abort_if(new_versions == nullptr,
              "Memory allocation failure, second ver epoch {}",
@@ -191,7 +194,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
     if (!Options::kVHandleBatchAppend) goto slowpath;
 
     if (buf_pos.load(std::memory_order_acquire) == -1
-        && size - cur_start <= EpochClient::g_splitting_threshold
+        && size - cur_start < EpochClient::g_splitting_threshold
         && lock.TryLock(&qnode)) {
       AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
       lock.Unlock(&qnode);
@@ -245,8 +248,17 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
     return nullptr;
   }
 found:
-  pos = --p - versions;
   auto objects = versions + capacity;
+
+  // A not very useful read-own-write implementation...
+  /*
+  if (*p == sid
+      && (objects[p - versions] >> 56) != 0xFE) {
+    return &objects[pos];
+  }
+  */
+
+  pos = --p - versions;
   return &objects[pos];
 }
 
@@ -308,9 +320,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   // Writing to exact location
   sync().OfferData(addr, (uintptr_t) obj);
 
-  probes::VersionWrite{this, epoch_nr}();
-
   int latest = it - versions;
+  probes::VersionWrite{this, latest, epoch_nr}();
   while (latest > pos) {
     if (latest_version.compare_exchange_strong(pos, latest))
       break;

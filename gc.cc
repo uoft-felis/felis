@@ -131,12 +131,11 @@ void GC::RemoveRow(VHandle *row, uint64_t gc_handle)
 }
 
 unsigned int GC::g_gc_every_epoch = 0;
+bool GC::g_lazy = false;
 std::array<GarbageBlockSlab *, NodeConfiguration::kMaxNrThreads> GC::g_slabs;
 
 void GC::InitPool()
 {
-  g_gc_every_epoch = 800000 / EpochClient::g_txn_per_epoch;
-
   abort_if(g_gc_every_epoch >= GarbageBlockSlab::kNrQueue,
            "g_gc_every_epoch {} >= {}", g_gc_every_epoch, GarbageBlockSlab::kNrQueue);
 
@@ -147,6 +146,9 @@ void GC::InitPool()
 
 void GC::PrepareGCForAllCores()
 {
+  if (g_lazy)
+    return;
+
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
 
   for (auto core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
@@ -191,6 +193,10 @@ void GC::PrepareGCForAllCores()
 
 void GC::RunGC()
 {
+  // TODO: add memory pressure detection.
+  if (g_lazy)
+    return;
+
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   int q_idx = (cur_epoch_nr + 1) % g_gc_every_epoch;
 

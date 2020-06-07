@@ -86,6 +86,15 @@ class AllocatorModule : public Module<CoreModule> {
 
     EpochClient::g_enable_granola = Options::kEnableGranola;
 
+    if (Options::kBatchAppendAlloc) {
+      BatchAppender::g_prealloc_count = Options::kBatchAppendAlloc.ToLargeNumber();
+      abort_if(BatchAppender::g_prealloc_count % 64 != 0, "BatchAppend Memory must align to 64 bytes");
+    }
+
+    // Setup GC
+    GC::g_gc_every_epoch = 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
+    GC::g_lazy = Options::kMajorGCLazy;
+
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     tasks.emplace_back(VHandle::InitPool);

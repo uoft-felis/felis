@@ -449,6 +449,7 @@ class Brk {
 
 void *AllocFromRoutine(size_t sz);
 
+PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();
 void *MemMap(mem::MemAllocType alloc_type, void *addr, size_t length, int prot,
              int flags, int fd, off_t offset);

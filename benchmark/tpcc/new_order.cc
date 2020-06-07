@@ -108,7 +108,11 @@ void NewOrderTxn::PrepareInsertImpl()
           KeyParam<NewOrder>(neworder_key),
           KeyParam<OOrderCIdIdx>(cididx_key));
 
-  root->AssignAffinity(client->get_insert_locality_manager().GetScheduleCore(warehouse_id - 1));
+  if (g_tpcc_config.nr_warehouses != 1) {
+    state->insert_aff = client->get_insert_locality_manager().GetScheduleCore(
+        Config::WarehouseToCoreId(warehouse_id));
+    root->AssignAffinity(state->insert_aff);
+  }
 }
 
 void NewOrderTxn::PrepareImpl()
@@ -128,7 +132,11 @@ void NewOrderTxn::PrepareImpl()
           nullptr,
           KeyParam<Stock>(stock_keys, nr_items));
 
-  root->AssignAffinity(client->get_initialization_locality_manager().GetScheduleCore(warehouse_id - 1));
+  if (g_tpcc_config.nr_warehouses != 1) {
+    state->initialize_aff = client->get_initialization_locality_manager().GetScheduleCore(
+        Config::WarehouseToCoreId(warehouse_id));
+    root->AssignAffinity(state->initialize_aff);
+  }
 }
 
 void NewOrderTxn::Run()
@@ -191,7 +199,7 @@ void NewOrderTxn::Run()
     }
 
     auto aff = std::numeric_limits<uint64_t>::max();
-    if (!Client::g_enable_granola) {
+    if (!Client::g_enable_granola && g_tpcc_config.nr_warehouses != 1) {
       aff = AffinityFromRows(bitmap, {state->oorder, state->neworder, state->cididx});
     }
 
@@ -258,20 +266,22 @@ void NewOrderTxn::Run()
   }
 #endif
 
-
   for (auto &p: state->stocks_nodes) {
     auto [node, bitmap] = p;
 
     if (!Client::g_enable_granola) {
-      for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
-        if ((bitmap & (1 << i)) == 0) continue;
+      auto &conf = util::Instance<NodeConfiguration>();
+      if (node == conf.node_id()) {
+        // Local
+        for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+          if ((bitmap & (1 << i)) == 0) continue;
 
-        UpdateForKey(
-            &state->stock_futures[i], node, state->stocks[i],
-            [](const auto &ctx, VHandle *row) -> VHandle * {
-              auto &[state, index_handle, quantity, remote, i] = ctx;
-              debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
-                    index_handle.serial_id(), i, (void *) row);
+          UpdateForKey(
+              &state->stock_futures[i], node, state->stocks[i],
+              [](const auto &ctx, VHandle *row) -> VHandle * {
+                auto &[state, index_handle, quantity, remote, i] = ctx;
+                debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
+                      index_handle.serial_id(), i, (void *) row);
 
                 TxnVHandle vhandle = index_handle(row);
                 auto stock = vhandle.Read<Stock::Value>();
@@ -292,23 +302,55 @@ void NewOrderTxn::Run()
                       (void *) row);
 
                 return row;
-            },
-            params.quantities[i],
-            (bool) (params.supplier_warehouses[i] != warehouse_id),
-            i);
+              },
+              params.quantities[i],
+              (bool) (params.supplier_warehouses[i] != warehouse_id),
+              i);
+        }
+
+        auto aff = std::numeric_limits<uint64_t>::max();
+
+        if (g_tpcc_config.nr_warehouses != 1) {
+          aff = state->initialize_aff;
+        }
+
+        root->Then(
+            MakeContext(bitmap), node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, bitmap] = ctx;
+              for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+                if ((bitmap & (1 << i)) == 0) continue;
+
+                state->stock_futures[i].Invoke(&state, index_handle);
+              }
+              return nullopt;
+            }, aff);
+      } else {
+        // Remote piece
+        root->Then(
+            MakeContext(bitmap, params), node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, bitmap, params] = ctx;
+              for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+                if ((bitmap & (1 << i)) == 0) continue;
+
+                TxnVHandle vhandle = index_handle(state->stocks[i]);
+                auto stock = vhandle.Read<Stock::Value>();
+
+                probes::TpccNewOrder{2, 1}();
+
+                if (stock.s_quantity - params.quantities[i] < 10) {
+                  stock.s_quantity += 91;
+                }
+                stock.s_quantity -= params.quantities[i];
+                stock.s_ytd += params.quantities[i];
+                stock.s_remote_cnt += (params.supplier_warehouses[i] != params.warehouse) ? 1 : 0;
+
+                vhandle.Write(stock);
+              }
+              return nullopt;
+            });
       }
-
-      root->Then(
-          MakeContext(bitmap), node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, bitmap] = ctx;
-            for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
-              if ((bitmap & (1 << i)) == 0) continue;
-
-              state->stock_futures[i].Invoke(&state, index_handle);
-            }
-            return nullopt;
-          });
 
     } else {
       // Granola needs partitioning, that's why we need to split this into
@@ -368,8 +410,6 @@ void NewOrderTxn::Run()
             aff);
       }
     }
-
-
   }
 
   if (Client::g_enable_granola)

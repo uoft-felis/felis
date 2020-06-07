@@ -25,6 +25,12 @@ using util::Instance;
 using felis::NodeConfiguration;
 template <typename TableType> using SliceLocator = felis::SliceLocator<TableType>;
 
+class TpccSliceRouter {
+ public:
+  static int SliceToNodeId(int16_t slice_id);
+  static int SliceToCoreId(int16_t slice_id);
+};
+
 struct Config {
   bool uniform_item_distribution;
 
@@ -44,8 +50,11 @@ struct Config {
   Config();
 
   unsigned int max_slice_id() const;
-  unsigned int WarehouseToSliceId(int w) const {
+  static unsigned int WarehouseToSliceId(int w) {
     return w - 1;
+  }
+  static unsigned int WarehouseToCoreId(int w) {
+    return TpccSliceRouter::SliceToCoreId(WarehouseToSliceId(w));
   }
 
   template <typename T, int Suffix = 0>
@@ -313,13 +322,6 @@ class ClientBase {
   static uint32_t AcquireLastNewOrderId(int warehouse, int district);
   // TODO: We need the following for random sharding.
   // static void AddLastNewOrderid(int warehouse, int district, uint32_t id);
-};
-
-
-class TpccSliceRouter {
- public:
-  static int SliceToNodeId(int16_t slice_id);
-  static int SliceToCoreId(int16_t slice_id);
 };
 
 // loaders for each table

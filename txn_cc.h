@@ -85,6 +85,13 @@ class FutureValue {
   uint8_t closure_data[ClosureSize];
  public:
   using ValueType = T;
+
+  FutureValue() {}
+
+  FutureValue(const FutureValue &rhs) : ready(rhs.ready.load()), value(rhs.value), fp(rhs.fp) {
+    __builtin_memcpy(closure_data, rhs.closure_data, ClosureSize);
+  }
+
   void Signal(T v) { value = v; ready = true; }
   T &Wait() {
     long wait_cnt = 0;
@@ -152,14 +159,15 @@ class Txn : public BaseTxn {
 
   template <typename FutureType, typename RowFunc, typename ...Types>
   FutureType *UpdateForKey(FutureType *future,
-                           int placement,
+                           int node,
                            VHandle *row, RowFunc rowfunc, Types... params) {
     using RowFuncPtr = typename FutureType::ValueType (*)(const ContextType<Types...>&, VHandle *);
+    auto &conf = util::Instance<NodeConfiguration>();
     new (future) FutureType;
 
     if (Options::kVHandleBatchAppend && Options::kOnDemandSplitting) {
       auto &appender = util::Instance<BatchAppender>();
-      if (row->contention_affinity() == -1)
+      if (row->contention_affinity() == -1 || (node != 0 && conf.node_id() != node))
         goto nosplit;
 
 #if 0
@@ -188,7 +196,7 @@ class Txn : public BaseTxn {
       auto aff = mgr.GetScheduleCore(row->contention_affinity());
       root->Then(
           sql::MakeTuple(future, (RowFuncPtr) rowfunc, row, MakeContext(params...)),
-          placement,
+          node,
           [](const auto &t, auto _) -> Optional<VoidValue> {
             auto &[future, rowfunc, row, ctx] = t;
             future->Signal(rowfunc(ctx, row));

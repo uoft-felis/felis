@@ -18,9 +18,7 @@ struct VersionBuffer {
 
 static_assert(sizeof(VersionBuffer) % 64 == 0);
 
-static constexpr size_t kPreAllocCount = 256_K;
-
-static_assert(kPreAllocCount % 64 == 0);
+size_t BatchAppender::g_prealloc_count = 256_K;
 
 // Per-core buffer for each row. Each row needs a fixed size per core
 // buffer. This class represent all buffer for all rows for only one core.
@@ -37,11 +35,11 @@ struct VersionPrealloc {
     return (uint64_t *) ptr;
   }
   VersionBuffer *version_buffers() {
-    return (VersionBuffer *)(ptr + kPreAllocCount / 8);
+    return (VersionBuffer *)(ptr + BatchAppender::g_prealloc_count / 8);
   }
 
   static size_t PhysicalSize() {
-    return kPreAllocCount / 8 + sizeof(VersionBuffer) * kPreAllocCount;
+    return BatchAppender::g_prealloc_count / 8 + sizeof(VersionBuffer) * BatchAppender::g_prealloc_count;
   }
 };
 
@@ -229,7 +227,7 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
 BatchAppender::BatchAppender()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  auto nr_slots = kPreAllocCount / nr_threads;
+  auto nr_slots = g_prealloc_count / nr_threads;
 
   std::vector<std::thread> tasks;
   for (int i = 0; i < nr_threads; i++) {
@@ -246,10 +244,10 @@ BatchAppender::BatchAppender()
 
   auto nr_numa_zone = nr_threads / mem::kNrCorePerNode;
 
-  auto cap = kPreAllocCount / nr_numa_zone / VersionBufferHead::kMaxPos;
+  auto cap = g_prealloc_count / nr_numa_zone / VersionBufferHead::kMaxPos;
   for (int i = 0; i < nr_numa_zone; i++) {
     auto &al = g_alloc[i];
-    al.base_pos = kPreAllocCount / nr_numa_zone * i;
+    al.base_pos = g_prealloc_count / nr_numa_zone * i;
     al.pos = 0;
     al.owner_numa_zone = i;
     al.pool = mem::Pool(mem::EpochQueuePool, sizeof(VersionBufferHead), cap, i);
@@ -268,7 +266,7 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
 {
   int core = go::Scheduler::CurrentThreadPoolId() - 1;
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  auto nr_slots = kPreAllocCount / nr_threads;
+  auto nr_slots = g_prealloc_count / nr_threads;
   for (int i = 0; i < nr_threads; i++) {
     for (auto p = buffer_heads[i]; p; p = p->next_buffer_head) {
       long from = p->base_pos;
@@ -287,7 +285,7 @@ void PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label);
 void BatchAppender::Reset()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  unsigned int sum = 0, nr_cleared = 0;
+  unsigned int sum = 0, nr_cleared = 0, nr_splitted = 0;
 
   for (int core = 0; core < nr_threads; core++) {
     auto p = buffer_heads[core];
@@ -304,6 +302,7 @@ void BatchAppender::Reset()
 
         if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
         sum += row->nr_ondsplt;
+        nr_splitted++;
       }
     }
   }
@@ -370,7 +369,8 @@ void BatchAppender::Reset()
     buffer_heads[core] = g_alloc[core / mem::kNrCorePerNode].AllocHead(core);
   }
   if (Options::kOnDemandSplitting) {
-    logger->info("OnDemand {} Batch {} rows", s, nr_cleared);
+    logger->info("OnDemand {} Splitted/Batch {}/{} rows", s, nr_splitted, nr_cleared);
+    felis::probes::OnDemandSplit{s, nr_cleared, nr_splitted}();
   } else {
     logger->info("Batch {} rows", nr_cleared);
   }

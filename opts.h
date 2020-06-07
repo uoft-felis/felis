@@ -60,14 +60,20 @@ struct Options {
 
   static inline const auto kNrEpoch = Option("NrEpoch");
   static inline const auto kEpochSize = Option("EpochSize");
+  static inline const auto kMajorGCThreshold = Option("MajorGCThreshold");
+  static inline const auto kMajorGCLazy = Option("LazyMajorGC");
   static inline const auto kEpochQueueLength = Option("EpochQueueLength");
   static inline const auto kVHandleLockElision = Option("VHandleLockElision");
   static inline const auto kVHandleBatchAppend = Option("VHandleBatchAppend");
+  static inline const auto kBatchAppendAlloc = Option("BatchAppendAlloc");
 
   // In 0.001 of txns per-epoch
   static inline const auto kCoreScaling = Option("CoreScaling");
+
   static inline const auto kOnDemandSplitting = Option("OnDemandSplitting");
   static inline const auto kLocalityManagement = Option("LocalityManagement");
+
+  // Wishy washy.
   static inline const auto kBinpackSplitting = Option("BinpackSplitting");
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");

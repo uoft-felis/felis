@@ -414,7 +414,7 @@ template <>
 void Loader<LoaderType::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  logger->info("Warehouse Loader starts");
+  // logger->info("Warehouse Loader starts");
   for (uint i = 1; i <= g_tpcc_config.nr_warehouses; i++) {
 
     // TODO: if multiple CPUs are sharing the same warehouse? This configuration
@@ -451,7 +451,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
         });
   }
 
-  logger->info("Warehouse Loader done.");
+  // logger->info("Warehouse Loader done.");
 }
 
 template <>
@@ -460,7 +460,7 @@ void Loader<LoaderType::Item>::DoLoad()
   // Item table is a read only table, we replicate this table on all nodes!
   int last_affinity = -1;
   void *large_buf = alloca(1024);
-  logger->info("Item Loader starts");
+  // logger->info("Item Loader starts");
   for (uint i = 1; i <= g_tpcc_config.nr_items; i++) {
     int core_id = (i - 1) * NodeConfiguration::g_nr_threads / g_tpcc_config.nr_items;
     if (go::Scheduler::CurrentThreadPoolId() - 1 != core_id) continue;
@@ -490,7 +490,7 @@ void Loader<LoaderType::Item>::DoLoad()
     auto p = handle->AllocFromInline(v.EncodeSize());
     felis::InitVersion(handle, v.EncodeFromPtrOrDefault(p));
   }
-  logger->info("Item Loader done.");
+  // logger->info("Item Loader done.");
 }
 
 template <>
@@ -499,9 +499,9 @@ void Loader<LoaderType::Stock>::DoLoad()
   // Stock and StockData table
   void *large_buf = alloca(1024);
   std::string s_dist = RandomStr(24);
-  logger->info("Stock Loader starts");
+  // logger->info("Stock Loader starts");
   for (uint w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
-    logger->info("Stock Loader on warehouse {}", w);
+    // logger->info("Stock Loader on warehouse {}", w);
     for(size_t i = 1; i <= g_tpcc_config.nr_items; i++) {
       const auto k = Stock::Key::New(w, i);
       // const auto k_data =  StockData::Key::New(w, i);
@@ -557,14 +557,14 @@ void Loader<LoaderType::Stock>::DoLoad()
 #endif
     }
   }
-  logger->info("Stock Loader done.");
+  // logger->info("Stock Loader done.");
 }
 
 template <>
 void Loader<LoaderType::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  logger->info("District Loader starts");
+  // logger->info("District Loader starts");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
     for (uint d = 1; d <= g_tpcc_config.districts_per_warehouse; d++) {
       const auto k = District::Key::New(w, d);
@@ -593,17 +593,17 @@ void Loader<LoaderType::District>::DoLoad()
 
     }
   }
-  logger->info("District Loader done.");
+  // logger->info("District Loader done.");
 }
 
 template <>
 void Loader<LoaderType::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  logger->info("Customer Loader starts");
+  // logger->info("Customer Loader starts");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
     for (auto d = 1; d <= g_tpcc_config.districts_per_warehouse; d++) {
-      logger->info("Customer Loader on warehouse {}", w);
+      // logger->info("Customer Loader on warehouse {}", w);
       for (auto cidx0 = 0; cidx0 < g_tpcc_config.customers_per_district; cidx0++) {
         const uint c = cidx0 + 1;
         auto k = Customer::Key::New(w, d, c);
@@ -690,7 +690,7 @@ void Loader<LoaderType::Customer>::DoLoad()
       }
     }
   }
-  logger->info("Customer Loader done.");
+  // logger->info("Customer Loader done.");
 }
 
 template <>
@@ -709,9 +709,9 @@ void Loader<LoaderType::Order>::DoLoad()
   // a random permutation of customer IDs
   auto c_ids = new uint32_t[g_tpcc_config.customers_per_district];
 
-  logger->info("Order Loader starts.");
+  // logger->info("Order Loader starts.");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
-    logger->info("Order Loader on warehouse {}", w);
+    // logger->info("Order Loader on warehouse {}", w);
     for (auto d = 1; d <= g_tpcc_config.districts_per_warehouse; d++) {
       // Random shuffle
       for (auto c = 1; c <= g_tpcc_config.customers_per_district; c++) {
@@ -817,7 +817,7 @@ void Loader<LoaderType::Order>::DoLoad()
   }
 
   delete [] c_ids;
-  logger->info("Order Loader done.");
+  // logger->info("Order Loader done.");
 }
 
 }
@@ -828,8 +828,6 @@ static constexpr int kTPCCTxnMix[] = {
 
 felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
-  // TODO: generate standard TPC-C txn mix here. Currently, only NewOrder,
-  // Delivery and Payment are available.
   int rd = r.next_u32() % 100;
   int txn_type_id = 0;
   while (true) {

@@ -30,7 +30,7 @@ class Checkpoint {
 
 class Table {
  public:
-  static constexpr size_t kAutoIncrementZones = 1024;
+  static constexpr size_t kAutoIncrementZones = 2048;
 
  protected:
   int id;
@@ -69,6 +69,7 @@ class Table {
   }
 
   void ResetAutoIncrement(int zone = 0, uint64_t ts = 0) {
+    abort_if(zone >= kAutoIncrementZones, "zone {} overflows", zone);
     auto_increment_cnt[zone] = ts;
   }
 

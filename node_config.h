@@ -79,8 +79,8 @@ class IncomingTraffic {
   };
   void AdvanceStatus() {
     auto old_state = state.fetch_add(1);
-    logger->info("Incoming traffic status changed {} -> {}",
-                 old_state % kTotalStates, (old_state + 1) % kTotalStates);
+    logger->info("{} {} Incoming traffic status changed {} -> {}",
+                 (void *) this, src_node_id, old_state % kTotalStates, (old_state + 1) % kTotalStates);
   }
   Status current_status() const {
     static constexpr Status all_status[] = {
@@ -91,8 +91,11 @@ class IncomingTraffic {
 };
 
 class OutgoingTraffic {
+ protected:
+  int dst_node;
  public:
   virtual void WriteToNetwork(void *data, size_t cnt) = 0;
+  virtual void DoFlush(bool async) = 0;
 };
 
 class NodeConfiguration {

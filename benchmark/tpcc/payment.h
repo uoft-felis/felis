@@ -22,6 +22,8 @@ struct PaymentState {
   VHandle *warehouse;
   VHandle *district;
   VHandle *customer;
+  uint16_t initialize_aff;
+
   NodeBitmap nodes;
 
   FutureValue<VHandle *, 32> warehouse_future;

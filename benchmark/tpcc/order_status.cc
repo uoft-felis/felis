@@ -33,7 +33,8 @@ void OrderStatusTxn::Run()
   auto aff = std::numeric_limits<uint64_t>::max();
 
   if (!Client::g_enable_granola) {
-    aff = client->get_execution_locality_manager().GetScheduleCore(warehouse_id - 1);
+    aff = client->get_execution_locality_manager().GetScheduleCore(
+        Config::WarehouseToCoreId(warehouse_id));
   } else {
     aff = warehouse_id - 1;
   }

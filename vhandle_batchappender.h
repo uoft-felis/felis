@@ -26,6 +26,8 @@ class BatchAppender {
   void Reset();
   int GetRowContentionAffinity(VHandle *row) const;
 
+  static size_t g_prealloc_count;
+
  private:
   static size_t BinPack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit);
   static void PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label);

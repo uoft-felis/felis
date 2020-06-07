@@ -21,7 +21,7 @@ namespace mem {
 
 static std::atomic_llong g_mem_tracker[NumMemTypes];
 static std::mutex g_ps_lock;
-static std::vector<std::tuple<MemAllocType, PoolStatistics *>> g_ps;
+static std::vector<PoolStatistics *> g_ps[NumMemTypes];
 
 WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap,
                    int numa_node)
@@ -60,7 +60,7 @@ WeakPool::~WeakPool()
 void WeakPool::Register()
 {
   std::lock_guard _(g_ps_lock);
-  g_ps.emplace_back(alloc_type, &stats);
+  g_ps[int(alloc_type)].emplace_back(&stats);
 }
 
 void *WeakPool::Alloc()
@@ -345,7 +345,7 @@ SlabPool::SlabPool(MemAllocType alloc_type, unsigned int chunk_size,
 void SlabPool::Register()
 {
   std::lock_guard _(g_ps_lock);
-  g_ps.emplace_back(alloc_type, &stats);
+  g_ps[int(alloc_type)].emplace_back(&stats);
 }
 
 Slab *SlabPool::RefillSlab()
@@ -658,6 +658,23 @@ std::string MemTypeToString(MemAllocType alloc_type) {
   return kMemAllocTypeLabel[alloc_type];
 }
 
+static PoolStatistics GetMemStatsNoLock(MemAllocType alloc_type)
+{
+  PoolStatistics stat;
+  memset(&stat, 0, sizeof(PoolStatistics));
+  for (auto ps: g_ps[int(alloc_type)]) {
+    stat.used += ps->used;
+    stat.watermark += ps->watermark;
+  }
+  return stat;
+}
+
+PoolStatistics GetMemStats(MemAllocType alloc_type)
+{
+  std::lock_guard _(g_ps_lock);
+  return GetMemStatsNoLock(alloc_type);
+}
+
 void PrintMemStats() {
   puts("General memory statistics:");
   for (int i = 0; i < EpochQueuePool; i++) {
@@ -670,22 +687,15 @@ void PrintMemStats() {
 
   auto N = static_cast<int>(NumMemTypes);
   PoolStatistics stats[N];
-  memset(stats, 0, sizeof(PoolStatistics) * N);
 
   {
     std::lock_guard _(g_ps_lock);
-    for (auto ps: g_ps) {
-      auto i = static_cast<int>(std::get<0>(ps));
-      if (i >= N || i < EpochQueuePool) {
-        fprintf(stderr, "Invalid alloc type %d\n", i);
-        std::abort();
-      }
-      stats[i].used += std::get<1>(ps)->used;
-      stats[i].watermark += std::get<1>(ps)->watermark;
+    for (int i = EpochQueuePool; i < N; i++) {
+      stats[i] = GetMemStatsNoLock((MemAllocType) i);
     }
   }
 
-  for (int i = EpochQueuePool; i < NumMemTypes; i++) {
+  for (int i = EpochQueuePool; i < N; i++) {
     auto bucket = static_cast<MemAllocType>(i);
     printf("    %s: %llu/%llu MB used (max %llu MB)\n", MemTypeToString(bucket).c_str(),
                  stats[i].used / 1024 / 1024, g_mem_tracker[bucket].load() / 1024 / 1024,
