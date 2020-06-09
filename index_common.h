@@ -10,7 +10,8 @@
 
 #include "mem.h"
 #include "log.h"
-#include "util.h"
+#include "util/objects.h"
+#include "util/linklist.h"
 
 #include "vhandle.h"
 #include "node_config.h"

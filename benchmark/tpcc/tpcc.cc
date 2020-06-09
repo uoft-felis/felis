@@ -12,7 +12,8 @@
 #include <memory>
 #include <string>
 
-#include "util.h"
+#include "util/objects.h"
+#include "util/random.h"
 #include "node_config.h"
 #include "console.h"
 #include "tpcc.h"

@@ -7,7 +7,6 @@
 #include <initializer_list>
 
 #include "epoch.h"
-#include "util.h"
 #include "varstr.h"
 #include "promise.h"
 #include "slice.h"

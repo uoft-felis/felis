@@ -5,10 +5,11 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <unistd.h>
 
 #include "console.h"
 #include "module.h"
-#include "util.h"
+#include "util/objects.h"
 #include "json11/json11.hpp"
 
 namespace felis {

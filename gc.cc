@@ -1,5 +1,6 @@
 #include "gc.h"
-#include "util.h"
+#include "util/linklist.h"
+#include "util/locks.h"
 #include "log.h"
 #include "vhandle.h"
 #include "index.h"
@@ -45,7 +46,7 @@ struct GarbageBlockSlab {
 GarbageBlockSlab::GarbageBlockSlab(int core_id)
     : core_id(core_id)
 {
-  auto blks = (GarbageBlock *) mem::MemMapAlloc(
+  auto blks = (GarbageBlock *) mem::AllocMemory(
       mem::VhandlePool, GarbageBlock::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
 
   for (size_t i = 0; i < kNrQueue; i++) {

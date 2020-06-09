@@ -14,7 +14,9 @@
 #include "epoch.h"
 #include "index.h"
 #include "sqltypes.h"
-#include "util.h"
+#include "util/objects.h"
+#include "util/random.h"
+#include "util/factory.h"
 
 #include "slice.h"
 #include "xxHash/xxhash.h"

@@ -3,13 +3,15 @@
 
 #include <cstdlib>
 #include <string>
-#include <atomic>
+#include <mutex>
 #include <cstdio>
 #include <array>
 #include <sys/mman.h>
 
 #include "json11/json11.hpp"
-#include "util.h"
+#include "util/arch.h"
+#include "util/locks.h"
+#include "util/linklist.h"
 #include "literals.h"
 
 namespace mem {
@@ -451,10 +453,8 @@ void *AllocFromRoutine(size_t sz);
 
 PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();
-void *MemMap(mem::MemAllocType alloc_type, void *addr, size_t length, int prot,
-             int flags, int fd, off_t offset);
-void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node = -1);
-
+void *AllocMemory(mem::MemAllocType alloc_type, size_t length,
+                  int numa_node = -1, bool on_demand = false);
 long TotalMemoryAllocated();
 
 }

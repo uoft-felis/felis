@@ -3,8 +3,6 @@
 
 #include <atomic>
 
-#include "util.h"
-
 namespace felis {
 
 class VHandle;

@@ -4,7 +4,7 @@
 #define ENTITY_H
 
 #include "vhandle.h"
-#include "util.h"
+#include "mem.h"
 
 // Entity is the minimum item we would like to send.
 // An IndexEntity is the index of a row, and a RowEntity is a row.

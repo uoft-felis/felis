@@ -4,7 +4,8 @@
 #include "gopp/channels.h"
 
 #include <queue>
-#include "util.h"
+#include "util/objects.h"
+#include "util/arch.h"
 #include "opts.h"
 #include "mem.h"
 

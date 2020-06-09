@@ -5,7 +5,6 @@
 #include <atomic>
 
 #include "index_common.h"
-#include "util.h"
 #include "log.h"
 #include "vhandle.h"
 

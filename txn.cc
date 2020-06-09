@@ -1,6 +1,6 @@
 #include "txn.h"
 #include "index.h"
-#include "util.h"
+#include "util/objects.h"
 #include "literals.h"
 #include "gc.h"
 
@@ -15,7 +15,7 @@ void BaseTxn::InitBrk(long nr_epochs)
   auto lmt = 24_M * nr_epochs / nr_numa_nodes;
   for (auto n = 0; n < nr_numa_nodes; n++) {
     auto numa_node = n + NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
-    g_brk[n] = mem::Brk::New(mem::MemMapAlloc(mem::Txn, lmt, numa_node), lmt);
+    g_brk[n] = mem::Brk::New(mem::AllocMemory(mem::Txn, lmt, numa_node), lmt);
   }
 }
 

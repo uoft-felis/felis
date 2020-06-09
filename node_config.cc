@@ -23,7 +23,7 @@ void TransportBatcher::Init(int nr_nodes, int nr_cores)
     auto numa_node = d.quot;
     auto numa_offset = d.rem;
     if (numa_offset == 0) {
-      mem = (LocalMetadata *) mem::MemMapAlloc(
+      mem = (LocalMetadata *) mem::AllocMemory(
           mem::Promise,
           sizeof(LocalMetadata) * kMaxLevels * mem::kNrCorePerNode,
           numa_node);
@@ -55,13 +55,13 @@ LocalDispatcherImpl::LocalDispatcherImpl(int idx)
     : idx(idx), dice(0)
 {
   auto mem =
-      (Queue *) mem::MemMapAlloc(mem::EpochQueueItem, sizeof(Queue), -1);
+      (Queue *) mem::AllocMemory(mem::EpochQueueItem, sizeof(Queue), -1);
 
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     if (i > 0) {
       auto d = std::div(i - 1 + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
       if (d.rem == 0) {
-        mem = (Queue *) mem::MemMapAlloc(
+        mem = (Queue *) mem::AllocMemory(
             mem::EpochQueueItem, sizeof(Queue) * mem::kNrCorePerNode, d.quot);
       }
       queues[i] = new (mem + d.rem) Queue();

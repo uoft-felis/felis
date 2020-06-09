@@ -1,5 +1,4 @@
 #include <thread>
-#include <sys/mman.h>
 
 #include "module.h"
 #include "opts.h"
@@ -15,6 +14,7 @@
 #include "gc.h"
 #include "vhandle_sync.h"
 #include "vhandle_batchappender.h"
+#include "util/os.h"
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -194,18 +194,20 @@ class CoroutineModule : public Module<CoreModule> {
       // We need to change core affinity by kCoreShifting
       auto r = go::Make(
           [i]() {
-            util::PinToCPU(i - 1 + NodeConfiguration::g_core_shifting);
+            util::Cpu info;
+            info.set_affinity(i - 1);
+            info.Pin();
           });
       go::GetSchedulerFromPool(i)->WakeUp(r);
     }
 
     auto r = go::Make(
         []() {
-          std::vector<int> cpus;
+          util::Cpu info;
           for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-            cpus.push_back(i + NodeConfiguration::g_core_shifting);
+            info.set_affinity(i);
           }
-          util::PinToCPU(cpus);
+          info.Pin();
         });
     go::GetSchedulerFromPool(0)->WakeUp(r);
   }

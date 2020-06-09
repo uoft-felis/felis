@@ -1,7 +1,7 @@
 #ifndef GC_H
 #define GC_H
 
-#include "util.h"
+#include "util/objects.h"
 #include "mem.h"
 #include "node_config.h"
 

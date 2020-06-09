@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <fstream>
 #include <sys/time.h>
-#include <sys/mman.h>
 
 #include <syscall.h>
 
@@ -16,7 +15,7 @@
 #include "opts.h"
 
 #include "literals.h"
-
+#include "util/os.h"
 #include "json11/json11.hpp"
 
 namespace felis {
@@ -136,11 +135,11 @@ EpochClient::EpochClient()
     auto numa_node = d.quot;
     auto numa_offset = d.rem;
     if (numa_offset == 0) {
-      cnt_mem = (unsigned long *) mem::MemMapAlloc(
+      cnt_mem = (unsigned long *) mem::AllocMemory(
           mem::Epoch,
           cnt_len * sizeof(unsigned long) * mem::kNrCorePerNode,
           numa_node);
-      workers_mem = (EpochWorkers *) mem::MemMapAlloc(
+      workers_mem = (EpochWorkers *) mem::AllocMemory(
           mem::Epoch,
           sizeof(EpochWorkers) * mem::kNrCorePerNode,
           numa_node);
@@ -169,7 +168,7 @@ EpochTxnSet::EpochTxnSet()
     size_t nr = d.quot;
     if (t < d.rem) nr++;
     auto numa_node = (t + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
-    auto p = mem::MemMapAlloc(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
+    auto p = mem::AllocMemory(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
     per_core_txns[t] = new (p) TxnSet(nr);
   }
 }
@@ -528,30 +527,30 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     auto offset_in_node = d.rem;
 
     if (offset_in_node == 0) {
-      qmem = (Queue *) mem::MemMapAlloc(
+      qmem = (Queue *) mem::AllocMemory(
           mem::EpochQueuePool, sizeof(Queue) * mem::kNrCorePerNode, numa_node);
     }
     queue = qmem + offset_in_node;
 
     queue->zq.end = queue->zq.start = 0;
     queue->zq.q = (PromiseRoutineWithInput *)
-                 mem::MemMapAlloc(
+                 mem::AllocMemory(
                      mem::EpochQueuePromise,
                      max_item_percore * sizeof(PromiseRoutineWithInput),
                      numa_node);
     queue->pq.len = 0;
     queue->pq.q = (PriorityQueueHeapEntry *)
-                 mem::MemMapAlloc(
+                 mem::AllocMemory(
                      mem::EpochQueueItem,
                      max_item_percore * sizeof(PriorityQueueHeapEntry),
                      numa_node);
     queue->pq.ht = (PriorityQueueHashHeader *)
-                  mem::MemMapAlloc(
+                  mem::AllocMemory(
                       mem::EpochQueueItem,
                       kHashTableSize * sizeof(PriorityQueueHashHeader),
                       numa_node);
     queue->pq.pending.q = (PromiseRoutineWithInput *)
-                         mem::MemMapAlloc(
+                         mem::AllocMemory(
                              mem::EpochQueuePromise,
                              max_item_percore * sizeof(PromiseRoutineWithInput),
                              numa_node);
@@ -886,7 +885,7 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
     } else {
       numa_node = (i - 1 + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
     }
-    brks[i] = mem::Brk::New(mem::MemMapAlloc(mem::Promise, s, numa_node), s);
+    brks[i] = mem::Brk::New(mem::AllocMemory(mem::Promise, s, numa_node), s);
     acc += s;
     constexpr auto mini_brk_size = 4 * CACHE_LINE_SIZE;
     minibrks[i] = mem::Brk::New(
@@ -932,24 +931,14 @@ EpochMemory::EpochMemory()
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
     node_mem[i].mmap_buf =
-        (uint8_t *) mem::MemMap(
-            mem::Epoch, nullptr, kEpochMemoryLimitPerCore * conf.g_nr_threads,
-            PROT_READ | PROT_WRITE,
-            MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+        (uint8_t *) mem::AllocMemory(
+            mem::Epoch, kEpochMemoryLimitPerCore * conf.g_nr_threads, -1, true);
     for (int t = 0; t < conf.g_nr_threads; t++) {
       auto p = node_mem[i].mmap_buf + t * kEpochMemoryLimitPerCore;
-      auto numa_node = (t + conf.g_core_shifting) / mem::kNrCorePerNode;
-      unsigned long nodemask = 1 << numa_node;
-      abort_if(syscall(
-          __NR_mbind,
-          p, kEpochMemoryLimitPerCore,
-          2 /* MPOL_BIND */,
-          &nodemask,
-          sizeof(unsigned long) * 8,
-          1 << 0 /* MPOL_MF_STRICT */) < 0, "mbind failed!");
+      auto numa_node = t / mem::kNrCorePerNode;
+      util::OSMemory::BindMemory(p, kEpochMemoryLimitPerCore, numa_node);
     }
-    abort_if(mlock(node_mem[i].mmap_buf, kEpochMemoryLimitPerCore * conf.g_nr_threads) < 0,
-             "Cannot allocate memory. mlock() failed.");
+    util::OSMemory::LockMemory(node_mem[i].mmap_buf, kEpochMemoryLimitPerCore * conf.g_nr_threads);
   }
   Reset();
 }

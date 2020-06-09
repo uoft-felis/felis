@@ -36,9 +36,10 @@ db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'gc.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'promise.h',
     'masstree_index_impl.h', 'hashtable_index_impl.h', 'varstr.h', 'sqltypes.h',
-    'txn.h', 'util.h', 'vhandle.h', 'vhandle_sync.h', 'vhandle_batchappender.h', 'locality_manager.h',
+    'txn.h', 'vhandle.h', 'vhandle_sync.h', 'vhandle_batchappender.h', 'locality_manager.h',
     'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
+    'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h'
 ]
 
 db_srcs = [
@@ -49,8 +50,8 @@ db_srcs = [
     'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
     'felis_probes.cc',
     'json11/json11.cpp',
-    'spdlog/src/spdlog.cpp',
-    'xxHash/xxhash.c',
+    'spdlog/src/spdlog.cpp', 'spdlog/src/fmt.cpp', 'spdlog/src/stdout_sinks.cpp', 'spdlog/src/async.cpp', 'spdlog/src/cfg.cpp', 'spdlog/src/color_sinks.cpp', 'spdlog/src/file_sinks.cpp',
+    'xxHash/xxhash.c', 'util/os_linux.cc', 'util/locks.cc',
     'gopp/gopp.cc', 'gopp/channels.cc',
     'gopp/asm.S'] + [
         ('masstree/kvthread.cc', ['-include', 'masstree/build/config.h']),

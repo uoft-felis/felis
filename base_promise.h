@@ -4,6 +4,7 @@
 #include <tuple>
 #include <atomic>
 
+#include "gopp/gopp.h"
 #include "varstr.h"
 
 namespace felis {

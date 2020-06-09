@@ -132,13 +132,13 @@ bool SliceScanner::IsConverging() {
 
 SliceScanner::SliceScanner(Slice * slice) : slice(slice)
 {
-  current_q = &slice->shared_q.elem;
+  current_q = &slice->shared_q;
   current_node = current_q->queue.next;
 }
 
 // reset the cursor used in GetNextHandle, so you can scan the slice again
 void SliceScanner::ResetCursor() {
-  current_q = &slice->shared_q.elem;
+  current_q = &slice->shared_q;
   current_node = current_q->queue.next;
 }
 
@@ -155,14 +155,14 @@ ShippingHandle *SliceScanner::GetNextHandle()
 
     // scan of current queue is over, switch to the next queue
     // queue order: shared_q, per_core_q[]
-    if (current_q == &slice->shared_q.elem) {
-      current_q = &slice->per_core_q[0].elem;
-    } else if (current_q == &slice->per_core_q[NodeConfiguration::g_nr_threads - 1].elem) {
+    if (current_q == &slice->shared_q) {
+      current_q = &slice->per_core_q[0];
+    } else if (current_q == &slice->per_core_q[NodeConfiguration::g_nr_threads - 1]) {
       current_q = nullptr;
     } else {
       for (int i = 0; i < NodeConfiguration::g_nr_threads - 1; i++) {
-        if (current_q == &slice->per_core_q[i].elem) {
-          current_q = &slice->per_core_q[i + 1].elem;
+        if (current_q == &slice->per_core_q[i]) {
+          current_q = &slice->per_core_q[i + 1];
           break;
         }
       }

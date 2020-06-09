@@ -4,16 +4,12 @@
 #include <thread>
 
 #include "mem.h"
-
-#include <sys/types.h>
-#include <syscall.h>
-
-#include <fstream>
-
 #include "json11/json11.hpp"
-
 #include "log.h"
-#include "util.h"
+#include "util/linklist.h"
+#include "util/locks.h"
+#include "util/arch.h"
+#include "util/os.h"
 #include "gopp/gopp.h"
 #include "literals.h"
 
@@ -25,7 +21,7 @@ static std::vector<PoolStatistics *> g_ps[NumMemTypes];
 
 WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap,
                    int numa_node)
-    : WeakPool(alloc_type, chunk_size, cap, MemMapAlloc(alloc_type, cap * chunk_size, numa_node))
+    : WeakPool(alloc_type, chunk_size, cap, AllocMemory(alloc_type, cap * chunk_size, numa_node))
 {
   need_unmap = true;
 }
@@ -235,7 +231,7 @@ void InitSlab(size_t memsz)
     tasks.emplace_back(
         [memsz, n]() {
           auto &m = g_slabmem[n];
-          m.p = (uint8_t *) MemMapAlloc(mem::GenericMemory, memsz, n);
+          m.p = (uint8_t *) AllocMemory(mem::GenericMemory, memsz, n);
           auto nr_metaslabs = ((memsz - 1) / SlabPool::kLargeSlabPageSize + 1);
           m.data_offset = util::Align(nr_metaslabs * sizeof(MetaSlab), SlabPool::kLargeSlabPageSize);
           m.data_len = memsz;
@@ -445,7 +441,7 @@ ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t to
         [alloc_type, chunk_size, cap, this, node]() {
           fprintf(stderr, "allocating %lu on node %d\n",
                   (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
-          auto mem = (uint8_t *) MemMapAlloc(
+          auto mem = (uint8_t *) AllocMemory(
               alloc_type, (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
           int offset = node * kNrCorePerNode - g_core_shifting;
           for (int i = offset; i < offset + kNrCorePerNode; i++) {
@@ -498,7 +494,7 @@ ParallelSlabPool::ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, u
     auto numa_node = i / kNrCorePerNode;
     auto numa_offset = i % kNrCorePerNode;
     if (numa_offset == 0) {
-      mem = (uint8_t *) MemMapAlloc(alloc_type, kHeaderSize * kNrCorePerNode);
+      mem = (uint8_t *) AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
     }
 
     auto p = mem + numa_offset * kHeaderSize;
@@ -703,7 +699,19 @@ void PrintMemStats() {
   }
 }
 
+void *AllocMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, bool on_demand)
+{
+  void *p = util::OSMemory::g_default.Alloc(length, numa_node, on_demand);
+  if (p == nullptr) {
+    printf("Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());
+    PrintMemStats();
+    return nullptr;
+  }
+  g_mem_tracker[alloc_type].fetch_add(length);
+  return p;
+}
 
+#if 0
 void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node)
 {
   int flags = MAP_ANONYMOUS | MAP_PRIVATE;
@@ -761,6 +769,7 @@ void *MemMap(MemAllocType alloc_type, void *addr, size_t length, int prot, int f
 
   return mem;
 }
+#endif
 
 long TotalMemoryAllocated()
 {

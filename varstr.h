@@ -6,7 +6,6 @@
 #include <cstring>
 
 #include "mem.h"
-#include "util.h"
 #include "spdlog/fmt/fmt.h"
 
 namespace felis {

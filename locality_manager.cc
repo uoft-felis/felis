@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "gopp/gopp.h"
+#include "util/random.h"
 #include "locality_manager.h"
 #include "node_config.h"
 #include "vhandle.h"
@@ -15,7 +16,7 @@ LocalityManager::LocalityManager()
   auto wd_size = util::Align(
       sizeof(WeightDist) + sizeof(long) * NodeConfiguration::g_nr_threads, 64);
   for (int node = 0; node < NodeConfiguration::g_nr_threads / mem::kNrCorePerNode; node++) {
-    auto p = (uint8_t *) mem::MemMapAlloc(
+    auto p = (uint8_t *) mem::AllocMemory(
         mem::MemAllocType::Epoch, wd_size * mem::kNrCorePerNode, node);
     for (int i = 0; i < mem::kNrCorePerNode; i++) {
       per_core_weights[i + node * mem::kNrCorePerNode] =

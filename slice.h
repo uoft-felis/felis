@@ -7,7 +7,7 @@
 #include <mutex>
 #include <vector>
 
-#include "util.h"
+#include "util/linklist.h"
 #include "node_config.h"
 #include "shipping.h"
 #include "log.h"

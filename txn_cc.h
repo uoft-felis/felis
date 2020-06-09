@@ -4,7 +4,6 @@
 #include "slice.h"
 #include "sqltypes.h"
 #include "epoch.h"
-#include "util.h"
 #include "txn.h"
 
 namespace felis {

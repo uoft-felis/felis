@@ -3,6 +3,7 @@
 
 #include <optional>
 #include "base_promise.h"
+#include "util/objects.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 

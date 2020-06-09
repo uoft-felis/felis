@@ -11,7 +11,6 @@
 #include <cassert>
 
 #include "mem.h"
-#include "util.h"
 #include "varstr.h"
 
 namespace sql {

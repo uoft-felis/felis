@@ -1,6 +1,7 @@
 #include "ycsb.h"
 #include "index.h"
 #include "txn_cc.h"
+#include "util/os.h"
 
 namespace ycsb {
 
@@ -238,7 +239,9 @@ void YcsbLoader::Run()
     MasstreeIndex::ResetThreadInfo();
 
     mem::ParallelPool::SetCurrentAffinity(t);
-    util::PinToCPU(t + NodeConfiguration::g_core_shifting);
+    util::Cpu info;
+    info.set_affinity(t);
+    info.Pin();
 
     unsigned long start = t * Client::g_table_size / nr_threads;
     unsigned long end = (t + 1) * Client::g_table_size / nr_threads;
@@ -253,7 +256,10 @@ void YcsbLoader::Run()
       felis::InitVersion(handle, dbv.Encode());
     }
   }
-  util::PinToCPU(go::Scheduler::CurrentThreadPoolId() - 1 + NodeConfiguration::g_core_shifting);
+  util::Cpu info;
+  info.set_affinity(go::Scheduler::CurrentThreadPoolId() - 1);
+  info.Pin();
+
   mem::ParallelPool::SetCurrentAffinity(-1);
   MasstreeIndex::ResetThreadInfo();
 

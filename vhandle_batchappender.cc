@@ -234,7 +234,7 @@ BatchAppender::BatchAppender()
     tasks.emplace_back(
         [i, nr_slots, this]() {
           auto length = VersionPrealloc::PhysicalSize();
-          g_preallocs[i].ptr = (uint8_t *) mem::MemMapAlloc(
+          g_preallocs[i].ptr = (uint8_t *) mem::AllocMemory(
               mem::EpochQueuePool, length, i / mem::kNrCorePerNode);
         });
   }

@@ -3,9 +3,9 @@
 
 #include <cstdint>
 #include <array>
-#include <map>
 #include "node_config.h"
-#include "util.h"
+#include "util/objects.h"
+#include "util/linklist.h"
 #include "mem.h"
 #include "completion.h"
 #include "shipping.h"

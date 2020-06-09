@@ -1,7 +1,9 @@
 #include <cstdlib>
 #include <cstdint>
 
-#include "util.h"
+#include "util/arch.h"
+#include "util/objects.h"
+#include "util/lowerbound.h"
 #include "log.h"
 #include "vhandle.h"
 #include "node_config.h"

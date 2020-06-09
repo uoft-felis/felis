@@ -6,7 +6,7 @@
 #include <condition_variable>
 #include <string>
 #include <map>
-#include "util.h"
+#include "util/objects.h"
 #include "json11/json11.hpp"
 
 namespace felis {

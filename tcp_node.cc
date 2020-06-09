@@ -46,21 +46,21 @@ class SendChannel : public Flushable<SendChannel>, public OutgoingTraffic {
 
   std::tuple<unsigned int, unsigned int> GetFlushRange(int tid) {
     return {
-      channels[tid]->flusher_start,
-      channels[tid]->append_start.load(std::memory_order_acquire),
+      channels[tid].flusher_start,
+      channels[tid].append_start.load(std::memory_order_acquire),
     };
   }
   void UpdateFlushStart(int tid, unsigned int flush_start) {
-    channels[tid]->flusher_start = flush_start;
+    channels[tid].flusher_start = flush_start;
   }
   bool PushRelease(int thr, unsigned int start, unsigned int end);
   void DoFlush(bool async = false) final override;
   bool TryLock(int i) {
     bool locked = false;
-    return channels[i]->lock.compare_exchange_strong(locked, true);
+    return channels[i].lock.compare_exchange_strong(locked, true);
   }
   void Unlock(int i) {
-    channels[i]->lock.store(false);
+    channels[i].lock.store(false);
   }
 
   void WriteToNetwork(void *data, size_t cnt) final override {
@@ -77,11 +77,11 @@ SendChannel::SendChannel(go::TcpSocket *sock, int dst_node)
       (uint8_t *) malloc((NodeConfiguration::g_nr_threads + 1) * kPerThreadBuffer);
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     auto &chn = channels[i];
-    chn->mem = buffer + i * kPerThreadBuffer;
-    chn->append_start = 0;
-    chn->flusher_start = 0;
-    chn->lock = false;
-    chn->dirty = false;
+    chn.mem = buffer + i * kPerThreadBuffer;
+    chn.append_start = 0;
+    chn.flusher_start = 0;
+    chn.lock = false;
+    chn.dirty = false;
   }
   flusher_channel = new go::BufferChannel(512);
   go::GetSchedulerFromPool(0)->WakeUp(new FlusherRoutine(flusher_channel, out));
@@ -94,16 +94,16 @@ void *SendChannel::Alloc(size_t sz)
 
   auto &chn = channels[tid];
 retry:
-  auto end = chn->append_start.load(std::memory_order_relaxed);
+  auto end = chn.append_start.load(std::memory_order_relaxed);
   if (end + sz >= kPerThreadBuffer) {
     while (!TryLock(tid)) _mm_pause();
-    auto start = chn->flusher_start;
-    chn->flusher_start = 0;
-    chn->append_start.store(0, std::memory_order_release);
+    auto start = chn.flusher_start;
+    chn.flusher_start = 0;
+    chn.append_start.store(0, std::memory_order_release);
     PushRelease(tid, start, end);
     goto retry;
   }
-  auto ptr = chn->mem + end;
+  auto ptr = chn.mem + end;
   return ptr;
 }
 
@@ -111,23 +111,23 @@ void SendChannel::Finish(size_t sz)
 {
   int tid = go::Scheduler::CurrentThreadPoolId();
   auto &chn = channels[tid];
-  chn->append_start.store(chn->append_start.load(std::memory_order_relaxed) + sz,
+  chn.append_start.store(chn.append_start.load(std::memory_order_relaxed) + sz,
                           std::memory_order_release);
 }
 
 bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
 {
-  auto mem = channels[tid]->mem;
+  auto mem = channels[tid].mem;
   if (end - start > 0) {
     void *buf = alloca(end - start);
     memcpy(buf, mem + start, end - start);
-    channels[tid]->dirty.store(true, std::memory_order_release);
+    channels[tid].dirty.store(true, std::memory_order_release);
     Unlock(tid);
     WriteToNetwork(buf, end - start);
     return true;
   } else {
     Unlock(tid);
-    return channels[tid]->dirty.load();
+    return channels[tid].dirty.load();
   }
 }
 
@@ -146,7 +146,7 @@ void SendChannel::DoFlush(bool async)
   flusher_channel->Write(&signal, 1);
 
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
-    channels[i]->dirty = false;
+    channels[i].dirty = false;
   }
 }
 

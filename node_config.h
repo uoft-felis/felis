@@ -5,7 +5,9 @@
 #include <array>
 #include <atomic>
 #include <bitset>
-#include "util.h"
+#include "util/objects.h"
+#include "util/types.h"
+#include "util/locks.h"
 #include "log.h"
 #include "base_promise.h"
 
