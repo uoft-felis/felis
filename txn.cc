@@ -14,7 +14,7 @@ void BaseTxn::InitBrk(long nr_epochs)
   auto nr_numa_nodes = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
   auto lmt = 24_M * nr_epochs / nr_numa_nodes;
   for (auto n = 0; n < nr_numa_nodes; n++) {
-    auto numa_node = n + NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
+    auto numa_node = n;
     g_brk[n] = mem::Brk::New(mem::AllocMemory(mem::Txn, lmt, numa_node), lmt);
   }
 }

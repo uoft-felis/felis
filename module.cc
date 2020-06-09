@@ -68,8 +68,7 @@ class AllocatorModule : public Module<CoreModule> {
     // An extra one region for the ShipmentReceivers
     std::vector<std::thread> tasks;
 
-    mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads,
-                                NodeConfiguration::g_core_shifting);
+    mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads);
     mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
 
     // Legacy
@@ -137,10 +136,8 @@ class CoroutineModule : public Module<CoreModule> {
     };
    public:
     CoroutineStackAllocator() {
-      auto nr_numa_nodes = (NodeConfiguration::g_core_shifting
-                            + NodeConfiguration::g_nr_threads) / mem::kNrCorePerNode;
-      for (int node = NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
-           node < nr_numa_nodes; node++) {
+      auto nr_numa_nodes = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
+      for (int node = 0; node < nr_numa_nodes; node++) {
         pools[node] = mem::Pool(
             mem::Coroutine,
             util::Align(sizeof(Chunk) + kContextSize, 8192),

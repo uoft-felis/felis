@@ -146,7 +146,7 @@ class Pool : public BasicPool {
 
 static_assert(sizeof(BasicPool) <= CACHE_LINE_SIZE);
 
-void InitTotalNumberOfCores(int nr_cores, int core_shifting = 0);
+void InitTotalNumberOfCores(int nr_cores);
 
 // Before we implement a region allocator, we need to implement a Slab
 // allocator. Slab allocator is to make memory from different pools shared at

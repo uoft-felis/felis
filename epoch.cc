@@ -131,7 +131,7 @@ EpochClient::EpochClient()
   EpochWorkers *workers_mem = nullptr;
 
   for (int t = 0; t < NodeConfiguration::g_nr_threads; t++) {
-    auto d = std::div(t + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto d = std::div(t, mem::kNrCorePerNode);
     auto numa_node = d.quot;
     auto numa_offset = d.rem;
     if (numa_offset == 0) {
@@ -167,7 +167,7 @@ EpochTxnSet::EpochTxnSet()
   for (auto t = 0; t < nr_threads; t++) {
     size_t nr = d.quot;
     if (t < d.rem) nr++;
-    auto numa_node = (t + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+    auto numa_node = t / mem::kNrCorePerNode;
     auto p = mem::AllocMemory(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
     per_core_txns[t] = new (p) TxnSet(nr);
   }
@@ -522,7 +522,7 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
 
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &queue = queues[i];
-    auto d = std::div(i + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto d = std::div(i, mem::kNrCorePerNode);
     auto numa_node = d.quot;
     auto offset_in_node = d.rem;
 
@@ -883,7 +883,7 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
     if (i == 0) {
       s = kEpochPromiseAllocationMainLimit;
     } else {
-      numa_node = (i - 1 + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+      numa_node = (i - 1) / mem::kNrCorePerNode;
     }
     brks[i] = mem::Brk::New(mem::AllocMemory(mem::Promise, s, numa_node), s);
     acc += s;

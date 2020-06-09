@@ -19,7 +19,7 @@ void TransportBatcher::Init(int nr_nodes, int nr_cores)
 {
   LocalMetadata *mem = nullptr;
   for (auto i = 0; i < nr_cores; i++) {
-    auto d = std::div(i + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto d = std::div(i, mem::kNrCorePerNode);
     auto numa_node = d.quot;
     auto numa_offset = d.rem;
     if (numa_offset == 0) {
@@ -59,7 +59,7 @@ LocalDispatcherImpl::LocalDispatcherImpl(int idx)
 
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     if (i > 0) {
-      auto d = std::div(i - 1 + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+      auto d = std::div(i - 1, mem::kNrCorePerNode);
       if (d.rem == 0) {
         mem = (Queue *) mem::AllocMemory(
             mem::EpochQueueItem, sizeof(Queue) * mem::kNrCorePerNode, d.quot);
@@ -173,7 +173,6 @@ bool LocalTransport::TryFlushForCore(int core_id)
 }
 
 size_t NodeConfiguration::g_nr_threads = 8;
-int NodeConfiguration::g_core_shifting = 0;
 bool NodeConfiguration::g_data_migration = false;
 
 static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, std::string name)
