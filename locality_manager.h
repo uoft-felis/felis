@@ -23,12 +23,10 @@ class LocalityManager {
   long dist_prealloc[kPrealloc];
   long core_prealloc[kPrealloc];
 
-  bool enable;
  public:
   LocalityManager();
   ~LocalityManager();
 
-  void set_enable(bool v) { this->enable = v; }
   void Balance();
   void PrintLoads();
   void Reset();

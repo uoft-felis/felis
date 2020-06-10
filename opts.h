@@ -70,7 +70,6 @@ struct Options {
   static inline const auto kCoreScaling = Option("CoreScaling");
 
   static inline const auto kOnDemandSplitting = Option("OnDemandSplitting");
-  static inline const auto kLocalityManagement = Option("LocalityManagement", false);
 
   // Wishy washy.
   static inline const auto kBinpackSplitting = Option("BinpackSplitting", false);

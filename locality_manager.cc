@@ -11,7 +11,6 @@
 namespace felis {
 
 LocalityManager::LocalityManager()
-    : enable(Options::kLocalityManagement)
 {
   auto wd_size = util::Align(
       sizeof(WeightDist) + sizeof(long) * NodeConfiguration::g_nr_threads, 64);
@@ -40,7 +39,6 @@ void LocalityManager::Reset()
 
 void LocalityManager::Balance()
 {
-  if (!enable) return;
   long tot = 0;
   const auto tot_cores = NodeConfiguration::g_nr_threads;
 
@@ -114,7 +112,6 @@ void LocalityManager::OffloadCore(int core, WeightDist &w, long limit)
 
 void LocalityManager::PrintLoads()
 {
-  if (!enable) return;
   fmt::memory_buffer buffer;
   for (int core = 0; core < NodeConfiguration::g_nr_threads; core++) {
     auto &w = (*per_core_weights[core]);
@@ -130,8 +127,6 @@ void LocalityManager::PrintLoads()
 
 void LocalityManager::PlanLoad(int core, long delta)
 {
-  if (!enable) return;
-
   int current_core = go::Scheduler::CurrentThreadPoolId() - 1;
   auto &w = (*per_core_weights[current_core]);
   w.weights_per_core[core] += delta;
@@ -141,8 +136,6 @@ static thread_local util::XORRandom64 local_rand;
 
 uint64_t LocalityManager::GetScheduleCore(int core, int weight)
 {
-  if (!enable) return std::numeric_limits<uint64_t>::max();
-
   auto &w = (*per_core_weights[core]);
   uint64_t sched_core = 0;
   uint64_t seed = 0, max_seed = w.dist[w.nr_dist - 1];
