@@ -86,8 +86,8 @@ class AllocatorModule : public Module<CoreModule> {
     EpochClient::g_enable_granola = Options::kEnableGranola;
 
     if (Options::kBatchAppendAlloc) {
-      BatchAppender::g_prealloc_count = Options::kBatchAppendAlloc.ToLargeNumber();
-      abort_if(BatchAppender::g_prealloc_count % 64 != 0, "BatchAppend Memory must align to 64 bytes");
+      ContentionManager::g_prealloc_count = Options::kBatchAppendAlloc.ToLargeNumber();
+      abort_if(ContentionManager::g_prealloc_count % 64 != 0, "BatchAppend Memory must align to 64 bytes");
     }
 
     // Setup GC
@@ -109,8 +109,8 @@ class AllocatorModule : public Module<CoreModule> {
           util::InstanceInit<SliceMappingTable>();
           util::InstanceInit<SpinnerSlot>();
           util::InstanceInit<SimpleSync>();
-          if (Options::kVHandleBatchAppend)
-            util::InstanceInit<BatchAppender>();
+          if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting)
+            util::InstanceInit<ContentionManager>();
         });
     for (auto &t: tasks) t.join();
 

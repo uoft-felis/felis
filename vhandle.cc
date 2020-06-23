@@ -193,20 +193,25 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
     VersionBufferHandle handle;
 
     if (sid == 0) goto slowpath;
-    if (!Options::kVHandleBatchAppend) goto slowpath;
+    if (Options::kVHandleBatchAppend) {
+      if (buf_pos.load(std::memory_order_acquire) == -1
+          && size - cur_start < EpochClient::g_splitting_threshold
+          && lock.TryLock(&qnode)) {
+        AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
+        lock.Unlock(&qnode);
+        return;
+      }
 
-    if (buf_pos.load(std::memory_order_acquire) == -1
-        && size - cur_start < EpochClient::g_splitting_threshold
-        && lock.TryLock(&qnode)) {
-      AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
-      lock.Unlock(&qnode);
-      return;
-    }
-
-    handle = util::Instance<BatchAppender>().GetOrInstall((VHandle *) this);
-    if (handle.prealloc_ptr) {
-      handle.Append((VHandle *) this, sid, epoch_nr, is_ondemand_split);
-      return;
+      handle = util::Instance<ContentionManager>().GetOrInstall((VHandle *) this);
+      if (handle.prealloc_ptr) {
+        handle.Append((VHandle *) this, sid, epoch_nr, is_ondemand_split);
+        return;
+      }
+    } else if (Options::kOnDemandSplitting) {
+      // Even if batch append is off, we still create a buf_pos for splitting.
+      if (buf_pos.load(std::memory_order_acquire) == -1
+          && size - cur_start >= EpochClient::g_splitting_threshold)
+        util::Instance<ContentionManager>().GetOrInstall((VHandle *) this);
     }
 
  slowpath:

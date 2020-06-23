@@ -164,8 +164,8 @@ class Txn : public BaseTxn {
     auto &conf = util::Instance<NodeConfiguration>();
     new (future) FutureType;
 
-    if (Options::kVHandleBatchAppend && Options::kOnDemandSplitting) {
-      auto &appender = util::Instance<BatchAppender>();
+    if (Options::kOnDemandSplitting) {
+      auto &appender = util::Instance<ContentionManager>();
       if (row->contention_affinity() == -1 || (node != 0 && conf.node_id() != node))
         goto nosplit;
 

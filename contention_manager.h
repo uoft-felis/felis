@@ -15,12 +15,12 @@ struct VersionBufferHandle {
 
 struct VersionBufferHead;
 
-class BatchAppender {
+class ContentionManager {
   friend class VersionBufferHead;
   std::array<VersionBufferHead *, NodeConfiguration::kMaxNrThreads> buffer_heads;
 
  public:
-  BatchAppender();
+  ContentionManager();
   VersionBufferHandle GetOrInstall(VHandle *handle);
   void FinalizeFlush(uint64_t epoch_nr);
   void Reset();
@@ -37,9 +37,9 @@ class BatchAppender {
 
 namespace util {
 
-template <> struct InstanceInit<felis::BatchAppender> {
+template <> struct InstanceInit<felis::ContentionManager> {
   static constexpr bool kHasInstance = true;
-  static inline felis::BatchAppender *instance;
+  static inline felis::ContentionManager *instance;
   InstanceInit();
 };
 

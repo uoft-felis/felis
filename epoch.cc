@@ -51,8 +51,8 @@ void EpochCallback::operator()(unsigned long cnt)
     };
     abort_if(go::Scheduler::Current()->current_routine() == &client->control,
              "Cannot call control thread from itself");
-    if (Options::kVHandleBatchAppend)
-      util::Instance<BatchAppender>().Reset();
+    if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting)
+      util::Instance<ContentionManager>().Reset();
 
     client->control.Reset(phase_mem_funcs[p]);
     go::Scheduler::Current()->WakeUp(&client->control);
@@ -61,9 +61,9 @@ void EpochCallback::operator()(unsigned long cnt)
 
 void EpochCallback::PreComplete()
 {
-  if (Options::kVHandleBatchAppend) {
+  if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting) {
     if (phase == EpochPhase::Initialize || phase == EpochPhase::Insert) {
-      util::Instance<BatchAppender>().FinalizeFlush(
+      util::Instance<ContentionManager>().FinalizeFlush(
           util::Instance<EpochManager>().current_epoch_nr());
     }
   }

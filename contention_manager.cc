@@ -18,7 +18,7 @@ struct VersionBuffer {
 
 static_assert(sizeof(VersionBuffer) % 64 == 0);
 
-size_t BatchAppender::g_prealloc_count = 256_K;
+size_t ContentionManager::g_prealloc_count = 256_K;
 
 // Per-core buffer for each row. Each row needs a fixed size per core
 // buffer. This class represent all buffer for all rows for only one core.
@@ -35,11 +35,11 @@ struct VersionPrealloc {
     return (uint64_t *) ptr;
   }
   VersionBuffer *version_buffers() {
-    return (VersionBuffer *)(ptr + BatchAppender::g_prealloc_count / 8);
+    return (VersionBuffer *)(ptr + ContentionManager::g_prealloc_count / 8);
   }
 
   static size_t PhysicalSize() {
-    return BatchAppender::g_prealloc_count / 8 + sizeof(VersionBuffer) * BatchAppender::g_prealloc_count;
+    return ContentionManager::g_prealloc_count / 8 + sizeof(VersionBuffer) * ContentionManager::g_prealloc_count;
   }
 };
 
@@ -82,8 +82,8 @@ struct VersionBufferHead {
     prealloc.bitmap()[abs_pos / 64] &= ~(1ULL << (abs_pos % 64));
   }
 
-  long GetOrInstallBufferPos(BatchAppender *appender, VHandle *handle);
-  VersionBufferHandle GetOrInstallBuffer(BatchAppender *appender, VHandle *handle) {
+  long GetOrInstallBufferPos(ContentionManager *appender, VHandle *handle);
+  VersionBufferHandle GetOrInstallBuffer(ContentionManager *appender, VHandle *handle) {
     auto p = GetOrInstallBufferPos(appender, handle);
     return p == -1 ? VersionBufferHandle{nullptr, 0} : VersionBufferHandle{get_prealloc(), p};
   }
@@ -160,7 +160,7 @@ void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, un
   prealloc.bitmap()[pos / 64] &= ~(1ULL << (pos % 64));
 }
 
-long VersionBufferHead::GetOrInstallBufferPos(BatchAppender *appender, VHandle *handle)
+long VersionBufferHead::GetOrInstallBufferPos(ContentionManager *appender, VHandle *handle)
 {
   long p = handle->buf_pos.load();
   if (p != -1) return p;
@@ -224,7 +224,7 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
   } while (retry > 0);
 }
 
-BatchAppender::BatchAppender()
+ContentionManager::ContentionManager()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
   auto nr_slots = g_prealloc_count / nr_threads;
@@ -256,13 +256,13 @@ BatchAppender::BatchAppender()
   Reset();
 }
 
-VersionBufferHandle BatchAppender::GetOrInstall(VHandle *handle)
+VersionBufferHandle ContentionManager::GetOrInstall(VHandle *handle)
 {
   int core = go::Scheduler::CurrentThreadPoolId() - 1;
   return buffer_heads[core]->GetOrInstallBuffer(this, handle);
 }
 
-void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
+void ContentionManager::FinalizeFlush(uint64_t epoch_nr)
 {
   int core = go::Scheduler::CurrentThreadPoolId() - 1;
   auto nr_threads = NodeConfiguration::g_nr_threads;
@@ -282,7 +282,7 @@ void BatchAppender::FinalizeFlush(uint64_t epoch_nr)
 void Binpack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit);
 void PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label);
 
-void BatchAppender::Reset()
+void ContentionManager::Reset()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
   unsigned int sum = 0, nr_cleared = 0, nr_splitted = 0;
@@ -378,7 +378,7 @@ void BatchAppender::Reset()
   delete [] knapsacks;
 }
 
-size_t BatchAppender::BinPack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit)
+size_t ContentionManager::BinPack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit)
 {
   if (limit == 0) return 0;
 
@@ -424,7 +424,7 @@ size_t BatchAppender::BinPack(VHandle **knapsacks, unsigned int nr_knapsack, int
   return maxcap;
 }
 
-void BatchAppender::PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label)
+void ContentionManager::PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label)
 {
   printf("Binpack left:");
   for (int i = 0; i < nr_knapsack; i++) {
@@ -440,9 +440,9 @@ void BatchAppender::PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, 
 
 namespace util {
 
-InstanceInit<felis::BatchAppender>::InstanceInit()
+InstanceInit<felis::ContentionManager>::InstanceInit()
 {
-  instance = new felis::BatchAppender();
+  instance = new felis::ContentionManager();
 }
 
 }

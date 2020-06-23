@@ -51,7 +51,7 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class GC;
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
-  friend class BatchAppender;
+  friend class ContentionManager;
   friend class HashtableIndex;
 
   util::MCSSpinLock lock;
