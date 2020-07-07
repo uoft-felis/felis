@@ -2,6 +2,7 @@
 #include <syscall.h>
 #include "vhandle.h"
 #include "vhandle_sync.h"
+#include "priority.h"
 
 namespace felis {
 
@@ -103,6 +104,7 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
   while (true) {
     if (!IsPendingVal(oldval)) {
       logger->critical("strange oldval {0:x}", oldval);
+      std::abort();
     }
 
     uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);

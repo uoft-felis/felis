@@ -461,6 +461,7 @@ void EpochClient::OnExecuteComplete()
   }
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
+    PriorityTxnService::PrintStats();
     InitializeEpoch();
   } else {
     // End of the experiment.
@@ -471,6 +472,7 @@ void EpochClient::OnExecuteComplete()
                  stats.insert_time_ms, stats.initialize_time_ms, stats.execution_time_ms);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
+    auto pri_result = PriorityTxnService::PrintStats(true);
 
     if (Options::kOutputDir) {
       json11::Json::object result {
@@ -481,6 +483,10 @@ void EpochClient::OnExecuteComplete()
         {"initialize_time", stats.initialize_time_ms},
         {"execution_time", stats.execution_time_ms},
       };
+      if (NodeConfiguration::g_priority_txn) {
+        for (auto &pair : pri_result)
+          result.insert(pair);
+      }
       auto node_name = util::Instance<NodeConfiguration>().config().name;
       time_t tm;
       char now[80];
@@ -649,7 +655,7 @@ void EpochExecutionDispatchService::Add(int core_id, PriorityTxn *txn)
   tq.end.fetch_add(1, std::memory_order_release);
   lock.Unlock();
 
-  printf("[pri] scheduler added txn %p on core %d at pos %zu !!!!!!\n", txn, core_id, pos);
+  // debug(TRACE_PRIORITY "Priority txn {:p} - copied to queue {} at pos {}", (void*)txn, core_id, pos);
 }
 
 bool
@@ -803,16 +809,53 @@ again:
   return false;
 }
 
-bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn &txn)
+bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn)
 {
   if (!NodeConfiguration::g_priority_txn)
+    return false;
+
+  // hacks: for the time being we don't have occ yet, so only run priority txns
+  //        during execution phase's pieces execution.
+  // hack 1: if still during issuing, don't run
+  if (!IsReady(core_id)) {
+    return false;
+  }
+  // hack 2: if this phase's execution phase hasn't start, don't run
+  uint64_t prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+  if (prog >> 32 != util::Instance<EpochManager>().current_epoch_nr())
+    return false;
+
+  // hack 3: make sure pq doesn't get run after this core has no piece to run
+  auto &pq = queues[core_id]->pq;
+  if (pq.len == 0)
     return false;
 
   auto &tq = queues[core_id]->tq;
   auto tstart = tq.start.load(std::memory_order_acquire);
   if (tstart < tq.end.load(std::memory_order_acquire)) {
+    PriorityTxn *candidate = tq.q + tstart;
+    auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    if (candidate->epoch != epoch_nr) {
+
+      // hack 4: if a priority txn is from a previous epoch, skip it
+      if (candidate->epoch < epoch_nr) {
+        auto from = tstart;
+        while (candidate->epoch < util::Instance<EpochManager>().current_epoch_nr())
+          candidate = tq.q + ++tstart;
+        tq.start.store(tstart, std::memory_order_release);
+        // debug(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
+      }
+
+      return false;
+    }
+
+    if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
+      return false;
     tq.start.store(tstart + 1, std::memory_order_relaxed);
-    txn = tq.q[tstart];
+    txn = candidate;
+    EpochClient::g_workload_client->completion_object()->Increment(1);
+
+    // debug(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
     return true;
   }
   return false;
@@ -874,7 +917,7 @@ int EpochExecutionDispatchService::TraceDependency(uint64_t key)
         printf("found %lu in the pending area of %d\n", key, core_id);
       }
     }
-    for (auto i = 0; i < q.end.load(); i++) {
+    for (auto i = 0; i < q.start.load(); i++) {
       if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
         printf("found %lu in the consumed pending area of %d\n", key, core_id);
       }

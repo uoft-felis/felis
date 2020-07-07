@@ -414,7 +414,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Add(int core_id, PriorityTxn *txn) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
-  bool Peek(int core_id, PriorityTxn &txn) final override;
+  bool Peek(int core_id, PriorityTxn *&txn) final override;
   bool Preempt(int core_id, BasePromise::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id) final override;

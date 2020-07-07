@@ -3,9 +3,12 @@
 
 namespace tpcc {
 
+// Pre-generate priority txns for the benchmark before the experiment starts
+void GeneratePriorityTxn();
+
 // STOCK transaction: a priority txn, add stock to certain items in a warehouse
 struct StockTxnInput {
-  static constexpr int kStockMaxItems = 5;
+  static constexpr int kStockMaxItems = 20;
   uint warehouse_id;
   uint nr_items;
 

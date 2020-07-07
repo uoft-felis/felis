@@ -1,6 +1,7 @@
 #include "table_decl.h"
 
 #include "tpcc.h"
+#include "benchmark/tpcc/tpcc_priority.h"
 #include "epoch.h"
 #include "log.h"
 #include "util.h"
@@ -72,6 +73,7 @@ class TPCCModule : public Module<WorkloadModule> {
     LoadTPCCDataSet();
 
     tpcc::TxnFactory::Initialize();
+    tpcc::GeneratePriorityTxn();
 
     EpochClient::g_workload_client = new tpcc::Client();
   }

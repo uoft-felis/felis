@@ -4,6 +4,7 @@
 #define VHANDLE_H
 
 #include <atomic>
+#include <shared_mutex>
 #include "gopp/gopp.h"
 #include "felis_probes.h"
 #include "mem.h"
@@ -15,6 +16,7 @@ namespace felis {
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
 const uintptr_t kIgnoreValue = 0xFE19C02EFFFFFFFF;
+const uintptr_t kRetryValue = 0xFE3E737EFFFFFFFF;
 
 class VHandleSyncService {
  public:
@@ -22,7 +24,7 @@ class VHandleSyncService {
   virtual void ClearWaitCountStats() = 0;
   virtual long GetWaitCountStat(int core) = 0;
   // virtual void Notify(uint64_t bitmap) = 0;
-  // virtual bool IsPendingVal(uintptr_t val) = 0;
+  virtual bool IsPendingVal(uintptr_t val) = 0;
   virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;
   virtual void OfferData(volatile uintptr_t *addr, uintptr_t obj) = 0;
 };
@@ -38,6 +40,37 @@ class BaseVHandle {
   VHandleSyncService &sync();
 };
 
+class SortedArrayVHandle;
+
+class ExtraVersionArray {
+  friend class SortedArrayVHandle;
+
+  util::MCSSpinLock lock;  // 8
+  short alloc_by_regionid; // 2
+  short this_coreid;       // 2
+  unsigned int capacity;   // 4
+  uint64_t *versions;      // 8
+  std::atomic_uint size;   // 4
+
+ public:
+  static void *operator new(size_t nr_bytes) {
+    return BaseVHandle::pool.Alloc();
+  }
+  static void operator delete(void *ptr) {
+    ExtraVersionArray *phandle = (ExtraVersionArray *) ptr;
+    BaseVHandle::pool.Free(ptr, phandle->this_coreid);
+  }
+
+  ExtraVersionArray();
+  ExtraVersionArray(ExtraVersionArray &&rhs) = delete;
+
+  bool AppendNewVersion(uint64_t sid);
+  VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj);
+};
+
+// static_assert(sizeof(ExtraVersionArray) <= 64, "ExtraVersionArray is larger than a cache line");
+
 class RowEntity;
 class SliceManager;
 class VersionBuffer;
@@ -51,6 +84,7 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
   friend class BatchAppender;
+  friend class ExtraVersionArray;
 
   util::MCSSpinLock lock;
   short alloc_by_regionid;
@@ -64,7 +98,8 @@ class SortedArrayVHandle : public BaseVHandle {
   // versions: ptr to the version array.
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
-  util::OwnPtr<RowEntity> row_entity;
+  // util::OwnPtr<RowEntity> row_entity;
+  std::atomic<ExtraVersionArray*> extra_arr;
   std::atomic_long buf_pos = -1;
   uint64_t last_gc_mark_epoch = 0;
  public:
@@ -80,7 +115,7 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
 
   bool ShouldScanSkip(uint64_t sid);
-  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr);
+  bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool priority = false);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);

@@ -27,6 +27,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   // value_mark = 0;
   size = 0;
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+  extra_arr = nullptr;
 
   versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
   latest_version.store(0);
@@ -126,11 +127,29 @@ unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsign
 }
 
 // Insert a new version into the version array, with value pending.
-void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
+// return value only has meaning for priority txns (bcz it's inserting during execution)
+bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool priority)
 {
   if (likely(!VHandleSyncService::g_lock_elision)) {
     util::MCSSpinLock::QNode qnode;
     VersionBufferHandle handle;
+
+    if (priority) {
+      auto old = extra_arr.load();
+      if (old == nullptr) {
+        // did not exist, allocate
+        auto temp = new ExtraVersionArray();
+        auto succ = extra_arr.compare_exchange_strong(old, temp);
+        if (succ)
+          old = temp;
+        else
+          delete temp; // somebody else allocated and CASed their ptr first, just use that
+      }
+      if (old != nullptr)
+        return old->AppendNewVersion(sid); // all to avoid an extra atomic load
+      else
+        return extra_arr.load()->AppendNewVersion(sid);
+    }
 
     if (sid == 0) goto slowpath;
     if (!Options::kVHandleBatchAppend) goto slowpath;
@@ -139,13 +158,13 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
         && lock.TryLock(&qnode)) {
       AppendNewVersionNoLock(sid, epoch_nr);
       lock.Unlock(&qnode);
-      return;
+      return true;
     }
 
     handle = util::Instance<BatchAppender>().GetOrInstall((VHandle *) this);
     if (handle.prealloc_ptr) {
       handle.Append((VHandle *) this, sid, epoch_nr);
-      return;
+      return true;
     }
 
  slowpath:
@@ -155,6 +174,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr)
   } else {
     AppendNewVersionNoLock(sid, epoch_nr);
   }
+  return true;
 }
 
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
@@ -178,8 +198,6 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 
   p = std::lower_bound(start, end, sid);
   if (p == versions) {
-    logger->critical("ReadWithVersion() {} cannot found for sid {} start is {} begin is {}",
-                     (void *) this, sid, *start, *versions);
     return nullptr;
   }
 found:
@@ -197,13 +215,22 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   abort_if(sid == -1, "sid == -1");
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
-  if (!addr) return nullptr;
+
+  // check extra array. If the version in the extra array is closer to the sid than the
+  // version in this original version array, read from that instead.
+  uint64_t ver = (addr == nullptr) ? 0 : versions[pos];
+  auto extra = extra_arr.load();
+  VarStr* extra_result = extra ? extra->ReadWithVersion(sid, ver, this) : nullptr;
+  if (extra_result)
+    return extra_result;
+
+  if (!addr) {
+    logger->critical("ReadWithVersion() {} cannot find for sid {} begin is {}",
+                     (void *) this, sid, *versions);
+    return nullptr;
+  }
 
   sync().WaitForData(addr, sid, versions[pos], (void *) this);
-
-  if (*addr == kIgnoreValue) {
-    return ReadWithVersion(versions[pos]);
-  }
 
   return (VarStr *) *addr;
 }
@@ -227,6 +254,12 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   // Finding the exact location
   auto it = std::lower_bound(versions, versions + size, sid);
   if (unlikely(it == versions + size || *it != sid)) {
+    auto extra = extra_arr.load();
+    if (extra) {
+      // go to extra array to find version. if still not found, doomed
+      if (extra->WriteWithVersion(sid, obj))
+        return true;
+    }
     // sid is greater than all the versions, or the located lower_bound isn't sid version
     logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
                      sid, it - versions, size);
@@ -298,6 +331,132 @@ void BaseVHandle::InitPool()
 {
   pool = mem::ParallelSlabPool(mem::VhandlePool, 64, 4);
   pool.Register();
+}
+
+ExtraVersionArray::ExtraVersionArray()
+{
+  capacity = 4;
+  size.store(0);
+  this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+
+  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
+}
+
+bool ExtraVersionArray::AppendNewVersion(uint64_t sid)
+{
+  util::MCSSpinLock::QNode qnode;
+  lock.Lock(&qnode);
+
+  if (size > 0 && versions[size - 1] >= sid) {
+    lock.Unlock(&qnode);
+    return false;
+  }
+
+  size++;
+  if (unlikely(size >= capacity)) {
+    auto current_regionid = mem::ParallelPool::CurrentAffinity();
+    auto new_cap = 1U << (32 - __builtin_clz((unsigned int) size));
+    // ensure the pending reads doesn't stuck on old pending address
+    auto objects = versions + capacity;
+    for (int i = 0; i < size; ++i) {
+      if (util::Impl<VHandleSyncService>().IsPendingVal(objects[i])) {
+        util::Impl<VHandleSyncService>().OfferData(&objects[i], kRetryValue);
+      }
+    }
+    auto new_versions = EnlargePair64Array(versions, capacity, alloc_by_regionid, new_cap);
+    if (new_versions == nullptr) {
+      logger->critical("Memory allocation failure for extra array");
+      std::abort();
+    }
+    auto new_objects = new_versions + new_cap;
+    for (int i = 0; i < size; ++i) {
+      if (new_objects[i] == kRetryValue) {
+        new_objects[i] = kPendingValue;
+      }
+    }
+    versions = new_versions;
+    capacity = new_cap;
+    alloc_by_regionid = current_regionid;
+  }
+  std::fill(versions + capacity + size - 1, versions + capacity + size, kPendingValue);
+
+  versions[size - 1] = sid;
+
+  // no need to insertion sort, extra array is always appending in the back
+  // TODO: GC
+
+  // debug(TRACE_PRIORITY "txn sid {} - append on extra Vhandle {:p}, current size {}", sid, (void*)this, size.load());
+  lock.Unlock(&qnode);
+  return true;
+}
+
+// sid: txn's sid
+// ver: the version we found in the original version array
+// return: if the version in extra array is closer, the VarStr we read; else, nullptr
+VarStr *ExtraVersionArray::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
+{
+  util::MCSSpinLock::QNode qnode;
+  lock.Lock(&qnode);
+
+  uint64_t *p = versions;
+  uint64_t *start = versions;
+  uint64_t *end = versions + size;
+
+  p = std::lower_bound(start, end, sid);
+  if (p == versions) {
+    lock.Unlock(&qnode);
+    return nullptr;
+  }
+
+  int pos = --p - versions;
+  auto ver_extra = versions[pos];
+  if (ver_extra > ver) {
+    auto addr = versions + capacity + pos;
+    lock.Unlock(&qnode);
+    util::Impl<VHandleSyncService>().WaitForData(addr, sid, ver_extra, (void*) this);
+    auto varstr_ptr = *addr;
+    if (varstr_ptr == kIgnoreValue)
+      return handle->ReadWithVersion(ver_extra);
+    else if (varstr_ptr == kRetryValue) {
+      // debug(TRACE_PRIORITY "RETRY ACTUALLY HAPPENED! sid {} pos {} ver {} old versions {:p}", sid, pos, ver_extra, (void *)versions);
+      return this->ReadWithVersion(sid, ver, handle);
+    }
+    else
+      return (VarStr *) varstr_ptr;
+  } else {
+    lock.Unlock(&qnode);
+    return nullptr;
+  }
+}
+
+bool ExtraVersionArray::WriteWithVersion(uint64_t sid, VarStr *obj)
+{
+  util::MCSSpinLock::QNode qnode;
+  lock.Lock(&qnode);
+
+  // Finding the exact location
+  auto it = std::lower_bound(versions, versions + size, sid);
+  if (unlikely(it == versions + size || *it != sid)) {
+    // sid is greater than all the versions, or the located lower_bound isn't sid version
+    logger->critical("Diverging outcomes on extra array {}! sid {} pos {}/{}", (void *) this,
+                     sid, it - versions, size);
+    std::stringstream ss;
+    for (int i = 0; i < size; i++) {
+      ss << versions[i] << ' ';
+    }
+    logger->critical("Versions: {}", ss.str());
+    lock.Unlock(&qnode);
+    return false;
+  }
+
+  auto objects = versions + capacity;
+  volatile uintptr_t *addr = &objects[it - versions];
+
+  // Writing to exact location
+  util::Impl<VHandleSyncService>().OfferData(addr, (uintptr_t) obj);
+
+  lock.Unlock(&qnode);
+  return true;
 }
 
 #ifdef LL_REPLAY

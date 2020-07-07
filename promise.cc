@@ -267,24 +267,34 @@ void BasePromise::ExecutionRoutine::Run()
 
 
   unsigned long cnt = 0x01F;
-  bool hasTxn;
-  PriorityTxn txn;
+  bool hasTxn, hasPiece;
+  PriorityTxn *txn;
 
   do {
-    while ((hasTxn = svc.Peek(core_id, txn)) | svc.Peek(core_id, should_pop)) {
+    while ((hasTxn = svc.Peek(core_id, txn)) | (hasPiece = svc.Peek(core_id, should_pop))) {
+      // running priority: pieces from priority txn > issue of priority txn > pieces from batched txn
+      if (hasTxn && !hasPiece) {
+        txn->Run();
+        svc.Complete(core_id);
+        continue;
+      }
+
       cnt++;
       // Periodic flush
       if ((cnt & 0x01F) == 0) {
         transport.PeriodicIO(core_id);
       }
 
-      if (hasTxn) {
-        txn.Run();
-      }
-
       auto [rt, in] = next_r;
       if (rt->sched_key != 0)
         debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+
+      bool pieceFromPriTxn = PriorityTxnService::isPriorityTxn(rt->sched_key);
+      if (hasTxn && !pieceFromPriTxn) {
+        // if piece is from batched txn, priority txn issue runs before piece exec
+        txn->Run();
+        svc.Complete(core_id);
+      }
 
       if (NodeConfiguration::g_priority_txn) {
         util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
@@ -292,6 +302,12 @@ void BasePromise::ExecutionRoutine::Run()
 
       RunPromiseRoutine(rt, in);
       svc.Complete(core_id);
+
+      if (hasTxn && pieceFromPriTxn) {
+        // priority txn issue runs after piece exec
+        txn->Run();
+        svc.Complete(core_id);
+      }
     }
   } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 

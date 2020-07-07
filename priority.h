@@ -3,16 +3,20 @@
 
 #include "epoch.h"
 #include "masstree_index_impl.h"
+#include "json11/json11.hpp"
 
 namespace felis {
 
 class PriorityTxn;
 
 class PriorityTxnService {
- private:
+  friend class PriorityTxn;
   // per-core progress, the maximum piece sid each core has started executing
   std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> exec_progress;
   std::atomic_int core;
+  std::atomic_ulong epoch_nr;
+  uint64_t last_sid;
+  util::SpinLock lock;
 
  public:
   // total number of priority txn queue length
@@ -20,57 +24,84 @@ class PriorityTxnService {
   // extra percentage of slots to add. say we have 100 batched txns, % is 20,
   // then we add 20 slots, making the serial_id space 120.
   static size_t g_slot_percentage;
+  // in strawman approach, how many distance we are going to backoff
+  static size_t g_backoff_distance;
+  // the following two is usually calculated using Priority txn incoming rate.
+  static size_t g_nr_priority_txn;       // number of priority txns per epoch
+  static size_t g_interval_priority_txn; // interval of priority txn, in microseconds
 
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);
-
-  inline bool UpdateProgress(int core_id, uint64_t progress) {
-    abort_if(exec_progress[core_id] == nullptr, "priority service init failure");
-    if (progress > *exec_progress[core_id])
-      *exec_progress[core_id] = progress;
-    return true;
-  }
-
-  uint64_t GetMaxProgress(void) {
-    uint64_t max = 0;
-    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i)
-      max = (*exec_progress[i] > max) ? *exec_progress[i] : max;
-    return max;
-  }
-
-  bool HasProgressPassed(uint64_t sid) {
-    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
-      if (*exec_progress[i] > sid)
-        return true;
-    }
-    return false;
-  }
-
-  void PrintProgress(void) {
-    for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
-      printf("progress on core %2d: node_id %lu, epoch %lu, txn sequence %lu\n",
-             i, *exec_progress[i] & 0x000000FF, *exec_progress[i] >> 32,
-             *exec_progress[i] >> 8 & 0xFFFFFF);
-    }
-  }
+  void UpdateProgress(int core_id, uint64_t progress);
+  void PrintProgress(void);
+  uint64_t GetMaxProgress(void);
+  uint64_t GetProgress(int core_id);
+  bool MaxProgressPassed(uint64_t sid);
+  static bool isPriorityTxn(uint64_t sid);
 
  private:
-  uint64_t GetSIDLowerBound();
+  uint64_t SIDLowerBound();
+  uint64_t GetSID();
+
  public:
-  uint64_t GetAvailableSID();
+  static json11::Json::object PrintStats(bool json = false);
+  static unsigned long long g_tsc;
+  static unsigned long long *g_max_init_queue[32];
+  static unsigned long long *g_max_init_fail[32];
+  static unsigned long long *g_max_init_succ[32];
+  static unsigned long long *g_max_exec_issue[32];
+  static unsigned long long *g_max_exec_queue[32];
+  static unsigned long long *g_max_exec[32];
+  static unsigned long long *g_max_rdn[32];
+  static unsigned long long *g_t_init_queue[32];
+  static unsigned long long *g_t_init_fail[32];
+  static unsigned long long *g_t_init_succ[32];
+  static unsigned long long *g_t_exec_issue[32];
+  static unsigned long long *g_t_exec_queue[32];
+  static unsigned long long *g_t_exec[32];
+  static unsigned long long *g_t_rdn[32];
+  static int *g_cnt_init_queue[32];
+  static int *g_cnt_init_fail[32];
+  static int *g_cnt_init_succ[32];
+  static int *g_cnt_exec_issue[32];
+  static int *g_cnt_exec_queue[32];
+  static int *g_cnt_exec[32];
+  static int *g_cnt_rdn[32];
 };
 
 
 class PriorityTxn {
+ friend class BasePromise::ExecutionRoutine;
  private:
-  bool (*callback)(PriorityTxn *);
+  uint64_t sid;
   bool initialized; // meaning the registered VHandles would be valid
   std::vector<VHandle*> update_handles;
-  uint64_t sid;
+  bool (*callback)(PriorityTxn *);
 
  public:
-  PriorityTxn(bool (*func)(PriorityTxn *)): sid(-1), initialized(false),
+  std::atomic_int piece_count;
+  uint64_t epoch; // pre-generate. which epoch is this txn in
+  uint64_t delay; // pre-generate. tsc delay w.r.t. the start of execution, in tsc
+  uint64_t measure_tsc;
+  PriorityTxn(bool (*func)(PriorityTxn *)): sid(-1), initialized(false), piece_count(0),
                                             update_handles(), callback(func) {}
+  PriorityTxn& operator=(const PriorityTxn& rhs) {
+    if (&rhs == this)
+      return *this;
+
+    // assign only happens when the rhs is never ran, so set init value
+    this->update_handles.clear();
+    this->piece_count.store(0);
+
+    this->sid = rhs.sid;
+    this->initialized = rhs.initialized;
+    this->callback = rhs.callback;
+    this->epoch = rhs.epoch;
+    this->delay = rhs.delay;
+    this->measure_tsc = rhs.measure_tsc;
+    // logger->info("from {:p} to {:p}", (void*)&rhs, (void*)this);
+    return *this;
+  }
   PriorityTxn() : PriorityTxn(nullptr) {}
 
   bool Run() {
@@ -95,6 +126,7 @@ class PriorityTxn {
       auto handle = rel.SearchOrDefault(keyVarStr, [] { std::abort(); return nullptr; });
       // it's an update, you should always find it
 
+      // debug(TRACE_PRIORITY "Priority txn {:p} - will update handle {:p}", (void *)this, (void *) handle);
       this->update_handles.push_back(handle);
       handles.push_back(handle);
     }
@@ -110,15 +142,14 @@ class PriorityTxn {
 
   template <typename T>
   T Read(VHandle* handle) {
-    if (!initialized)
-      std::abort(); // you must call Init() before you use the VHandle
+    // you must call Init() before you use the VHandle
+    abort_if(!initialized, "before Read, vhandle must be initialized, this {:p}", (void*) this)
     return handle->ReadWithVersion(this->sid)->ToType<T>();
   }
 
   template <typename T>
   bool Write(VHandle* handle, const T &o) {
-    if (!initialized)
-      std::abort();
+    abort_if(!initialized, "before Write, vhandle must be initialized, this {:p}", (void*) this)
     return handle->WriteWithVersion(sid, o.Encode(), sid >> 32);
   }
 
@@ -153,13 +184,11 @@ class PriorityTxn {
     PromiseRoutineWithInput tuple = std::make_tuple(routine, *empty_input);
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
     util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &tuple, 1);
-    logger->info("I think I have put the lambda into the PQ!");
   }
 
   // if doing OCC, check write set and commit and stuff
   bool Commit() {
-    if (!initialized)
-      std::abort();
+    abort_if(!initialized, "before Commit, vhandle must be initialized, this {:p}", (void*) this)
     return true;
   }
 };
