@@ -46,27 +46,6 @@ class PriorityTxnService {
  public:
   static json11::Json::object PrintStats(bool json = false);
   static unsigned long long g_tsc;
-  static unsigned long long *g_max_init_queue[32];
-  static unsigned long long *g_max_init_fail[32];
-  static unsigned long long *g_max_init_succ[32];
-  static unsigned long long *g_max_exec_issue[32];
-  static unsigned long long *g_max_exec_queue[32];
-  static unsigned long long *g_max_exec[32];
-  static unsigned long long *g_max_rdn[32];
-  static unsigned long long *g_t_init_queue[32];
-  static unsigned long long *g_t_init_fail[32];
-  static unsigned long long *g_t_init_succ[32];
-  static unsigned long long *g_t_exec_issue[32];
-  static unsigned long long *g_t_exec_queue[32];
-  static unsigned long long *g_t_exec[32];
-  static unsigned long long *g_t_rdn[32];
-  static int *g_cnt_init_queue[32];
-  static int *g_cnt_init_fail[32];
-  static int *g_cnt_init_succ[32];
-  static int *g_cnt_exec_issue[32];
-  static int *g_cnt_exec_queue[32];
-  static int *g_cnt_exec[32];
-  static int *g_cnt_rdn[32];
 };
 
 

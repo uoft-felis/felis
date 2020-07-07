@@ -50,10 +50,7 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
   uint64_t diff = start_tsc - (txn->delay + felis::PriorityTxnService::g_tsc);
-  *felis::PriorityTxnService::g_t_init_queue[core_id] += diff;
-  (*felis::PriorityTxnService::g_cnt_init_queue[core_id])++;
-  if (diff > *felis::PriorityTxnService::g_max_init_queue[core_id])
-    *felis::PriorityTxnService::g_max_init_queue[core_id] = diff;
+  felis::probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
 
   // generate txn input
   StockTxnInput txnInput = dynamic_cast<tpcc::Client*>
@@ -63,11 +60,6 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
     stock_keys.push_back(Stock::Key::New(txnInput.warehouse_id,
                                          txnInput.detail.item_id[i]));
   }
-  *felis::PriorityTxnService::g_t_rdn[core_id] += __rdtsc() - start_tsc;
-  (*felis::PriorityTxnService::g_cnt_rdn[core_id])++;
-  if (diff > *felis::PriorityTxnService::g_max_rdn[core_id])
-    *felis::PriorityTxnService::g_max_rdn[core_id] = diff;
-
   // hack, subtract random gen time
   start_tsc = __rdtsc();
 
@@ -80,18 +72,12 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   uint64_t fail_tsc = start_tsc;
   while (!txn->Init()) {
     fail_tsc = __rdtsc();
-    (*felis::PriorityTxnService::g_cnt_init_fail[core_id])++;
+    // TODO: record fail count
   }
   uint64_t succ_tsc = __rdtsc();
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  *felis::PriorityTxnService::g_t_init_fail[core_id] += fail;
-  *felis::PriorityTxnService::g_t_init_succ[core_id] += succ;
-  (*felis::PriorityTxnService::g_cnt_init_succ[core_id])++;
-  if (fail > *felis::PriorityTxnService::g_max_init_fail[core_id])
-    *felis::PriorityTxnService::g_max_init_fail[core_id] = fail;
-  if (succ > *felis::PriorityTxnService::g_max_init_succ[core_id])
-    *felis::PriorityTxnService::g_max_init_succ[core_id] = succ;
   // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
+  felis::probes::PriInitTime{succ / 2200, fail / 2200, txn->serial_id()}();
 
 
   struct Context {
@@ -114,14 +100,8 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
           // record exec queue time
           if (piece_id == ctx.nr_items) {
             auto queue_tsc = __rdtsc();
-            auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-            if (queue_tsc > ctx.txn->measure_tsc) {
-              auto diff = queue_tsc - ctx.txn->measure_tsc;
-              *felis::PriorityTxnService::g_t_exec_queue[core_id] += diff;
-              (*felis::PriorityTxnService::g_cnt_exec_queue[core_id])++;
-              if (diff > *felis::PriorityTxnService::g_max_exec_queue[core_id])
-                *felis::PriorityTxnService::g_max_exec_queue[core_id] = diff;
-            }
+            auto diff = queue_tsc - ctx.txn->measure_tsc;
+            felis::probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
             ctx.txn->measure_tsc = queue_tsc;
           }
 
@@ -133,12 +113,9 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
           // record exec time
           if (piece_id == 1) {
             auto exec_tsc = __rdtsc();
-            auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-            auto diff = exec_tsc - ctx.txn->measure_tsc;
-            *felis::PriorityTxnService::g_t_exec[core_id] += diff;
-            (*felis::PriorityTxnService::g_cnt_exec[core_id])++;
-            if (diff > *felis::PriorityTxnService::g_max_exec[core_id])
-              *felis::PriorityTxnService::g_max_exec[core_id] = diff;
+            auto exec = exec_tsc - ctx.txn->measure_tsc;
+            auto total = exec_tsc - (ctx.txn->delay + felis::PriorityTxnService::g_tsc);
+            felis::probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
           }
         };
     Context ctx{txnInput.warehouse_id,
@@ -154,11 +131,8 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   // record exec issue time
   uint64_t issue_tsc = __rdtsc();
   diff = issue_tsc - succ_tsc;
-  *felis::PriorityTxnService::g_t_exec_issue[core_id] += diff;
-  (*felis::PriorityTxnService::g_cnt_exec_issue[core_id])++;
   txn->measure_tsc = issue_tsc;
-  if (diff > *felis::PriorityTxnService::g_max_exec_issue[core_id])
-    *felis::PriorityTxnService::g_max_exec_issue[core_id] = diff;
+  felis::probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
 
   return txn->Commit();
 }

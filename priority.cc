@@ -10,28 +10,6 @@ size_t PriorityTxnService::g_nr_priority_txn;
 size_t PriorityTxnService::g_interval_priority_txn;
 
 unsigned long long PriorityTxnService::g_tsc = 0;
-unsigned long long *PriorityTxnService::g_max_init_queue[32];
-unsigned long long *PriorityTxnService::g_max_init_fail[32];
-unsigned long long *PriorityTxnService::g_max_init_succ[32];
-unsigned long long *PriorityTxnService::g_max_exec_issue[32];
-unsigned long long *PriorityTxnService::g_max_exec_queue[32];
-unsigned long long *PriorityTxnService::g_max_exec[32];
-unsigned long long *PriorityTxnService::g_max_rdn[32];
-unsigned long long *PriorityTxnService::g_t_init_queue[32];
-unsigned long long *PriorityTxnService::g_t_init_fail[32];
-unsigned long long *PriorityTxnService::g_t_init_succ[32];
-unsigned long long *PriorityTxnService::g_t_exec_issue[32];
-unsigned long long *PriorityTxnService::g_t_exec_queue[32];
-unsigned long long *PriorityTxnService::g_t_exec[32];
-unsigned long long *PriorityTxnService::g_t_rdn[32];
-int *PriorityTxnService::g_cnt_init_queue[32];
-int *PriorityTxnService::g_cnt_init_fail[32];
-int *PriorityTxnService::g_cnt_init_succ[32];
-int *PriorityTxnService::g_cnt_exec_issue[32];
-int *PriorityTxnService::g_cnt_exec_queue[32];
-int *PriorityTxnService::g_cnt_exec[32];
-int *PriorityTxnService::g_cnt_rdn[32];
-
 
 PriorityTxnService::PriorityTxnService()
 {
@@ -71,38 +49,6 @@ PriorityTxnService::PriorityTxnService()
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
       exec_progress[i] = new uint64_t(0);
-    });
-    r->set_urgent(true);
-    go::GetSchedulerFromPool(i + 1)->WakeUp(r);
-  }
-  // measurement
-  for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
-    auto r = go::Make([this, i] {
-      if (PriorityTxnService::g_t_init_queue[i] == nullptr) {
-        PriorityTxnService::g_max_init_queue[i] = new unsigned long long(0);
-        PriorityTxnService::g_max_init_succ[i] = new unsigned long long(0);
-        PriorityTxnService::g_max_init_fail[i] = new unsigned long long(0);
-        PriorityTxnService::g_max_exec_issue[i] = new unsigned long long(0);
-        PriorityTxnService::g_max_exec_queue[i] = new unsigned long long(0);
-        PriorityTxnService::g_max_exec[i] = new unsigned long long(0);
-        PriorityTxnService::g_max_rdn[i] = new unsigned long long(0);
-
-        PriorityTxnService::g_t_init_queue[i] = new unsigned long long(0);
-        PriorityTxnService::g_t_init_fail[i] = new unsigned long long(0);
-        PriorityTxnService::g_t_init_succ[i] = new unsigned long long(0);
-        PriorityTxnService::g_t_exec_issue[i] = new unsigned long long(0);
-        PriorityTxnService::g_t_exec_queue[i] = new unsigned long long(0);
-        PriorityTxnService::g_t_exec[i] = new unsigned long long(0);
-        PriorityTxnService::g_t_rdn[i] = new unsigned long long(0);
-
-        PriorityTxnService::g_cnt_init_queue[i] = new int(0);
-        PriorityTxnService::g_cnt_init_succ[i] = new int(0);
-        PriorityTxnService::g_cnt_init_fail[i] = new int(0);
-        PriorityTxnService::g_cnt_exec_issue[i] = new int(0);
-        PriorityTxnService::g_cnt_exec_queue[i] = new int(0);
-        PriorityTxnService::g_cnt_exec[i] = new int(0);
-        PriorityTxnService::g_cnt_rdn[i] = new int(0);
-      }
     });
     r->set_urgent(true);
     go::GetSchedulerFromPool(i + 1)->WakeUp(r);
@@ -187,89 +133,6 @@ json11::Json::object PriorityTxnService::PrintStats(bool json) {
   if (!NodeConfiguration::g_priority_txn)
     return result;
 
-  // OUTPUT aggregate
-  unsigned long long g_max_init_queue = 0;
-  unsigned long long g_max_init_fail = 0;
-  unsigned long long g_max_init_succ = 0;
-  unsigned long long g_max_exec_issue = 0;
-  unsigned long long g_max_exec_queue = 0;
-  unsigned long long g_max_exec = 0;
-  unsigned long long g_max_rdn = 0;
-  unsigned long long g_t_init_queue = 0;
-  unsigned long long g_t_init_fail = 0;
-  unsigned long long g_t_init_succ = 0;
-  unsigned long long g_t_exec_issue = 0;
-  unsigned long long g_t_exec_queue = 0;
-  unsigned long long g_t_exec = 0;
-  unsigned long long g_t_rdn = 0;
-  int g_cnt_init_queue = 0;
-  int g_cnt_init_fail = 0;
-  int g_cnt_init_succ = 0;
-  int g_cnt_exec_issue = 0;
-  int g_cnt_exec_queue = 0;
-  int g_cnt_exec = 0;
-  int g_cnt_rdn = 0;
-  for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
-    if (*PriorityTxnService::g_max_init_queue[i] > g_max_init_queue)
-      g_max_init_queue = *PriorityTxnService::g_max_init_queue[i];
-    if (*PriorityTxnService::g_max_init_succ[i] > g_max_init_succ)
-      g_max_init_succ = *PriorityTxnService::g_max_init_succ[i];
-    if (*PriorityTxnService::g_max_init_fail[i] > g_max_init_fail)
-      g_max_init_fail = *PriorityTxnService::g_max_init_fail[i];
-    if (*PriorityTxnService::g_max_exec_issue[i] > g_max_exec_issue)
-      g_max_exec_issue = *PriorityTxnService::g_max_exec_issue[i];
-    if (*PriorityTxnService::g_max_exec_queue[i] > g_max_exec_queue)
-      g_max_exec_queue = *PriorityTxnService::g_max_exec_queue[i];
-    if (*PriorityTxnService::g_max_exec[i] > g_max_exec)
-      g_max_exec = *PriorityTxnService::g_max_exec[i];
-    if (*PriorityTxnService::g_max_rdn[i] > g_max_rdn)
-      g_max_rdn = *PriorityTxnService::g_max_rdn[i];
-    g_t_init_queue += *PriorityTxnService::g_t_init_queue[i];
-    g_t_init_fail += *PriorityTxnService::g_t_init_fail[i];
-    g_t_init_succ += *PriorityTxnService::g_t_init_succ[i];
-    g_t_exec_issue += *PriorityTxnService::g_t_exec_issue[i];
-    g_t_exec_queue += *PriorityTxnService::g_t_exec_queue[i];
-    g_t_exec += *PriorityTxnService::g_t_exec[i];
-    g_t_rdn += *PriorityTxnService::g_t_rdn[i];
-    g_cnt_init_queue += *PriorityTxnService::g_cnt_init_queue[i];
-    g_cnt_init_fail += *PriorityTxnService::g_cnt_init_fail[i];
-    g_cnt_init_succ += *PriorityTxnService::g_cnt_init_succ[i];
-    g_cnt_exec_issue += *PriorityTxnService::g_cnt_exec_issue[i];
-    g_cnt_exec_queue += *PriorityTxnService::g_cnt_exec_queue[i];
-    g_cnt_exec += *PriorityTxnService::g_cnt_exec[i];
-    g_cnt_rdn += *PriorityTxnService::g_cnt_rdn[i];
-  }
-
-  if (g_cnt_init_succ != 0) {
-    auto init_queue = g_t_init_queue / g_cnt_init_queue;
-    auto init_fail = g_t_init_fail / g_cnt_init_succ;
-    double init_fail_times = g_cnt_init_fail / g_cnt_init_succ;
-    auto init_succ = g_t_init_succ / g_cnt_init_succ;
-    auto exec_issue = g_t_exec_issue / g_cnt_exec_issue;
-    auto exec_queue = g_t_exec_queue / g_cnt_exec_queue;
-    auto exec = g_t_exec / g_cnt_exec;
-    logger->info("[Pri-Stat] init queue {} us (max {} us, cnt {}),",                init_queue / 2200, g_max_init_queue / 2200, g_cnt_init_queue);
-    logger->info("[Pri-Stat] init fail  {} us (max {} us, cnt {}), avg. {} times",  init_fail / 2200, g_max_init_fail / 2200, g_cnt_init_fail, init_fail_times);
-    logger->info("[Pri-Stat] init succ  {} us (max {} us, cnt {})",                 init_succ / 2200, g_max_init_succ / 2200, g_cnt_init_succ);
-    logger->info("[Pri-Stat] exec issue {} us (max {} us, cnt {})",                 exec_issue / 2200, g_max_exec_issue / 2200, g_cnt_exec_issue);
-    logger->info("[Pri-Stat] exec queue {} us (max {} us, cnt {})",                 exec_queue / 2200, g_max_exec_queue / 2200, g_cnt_exec_queue);
-    logger->info("[Pri-Stat] exec       {} us (max {} us, cnt {})",                 exec / 2200, g_max_exec / 2200, g_cnt_exec);
-    logger->info("[Pri-Stat] total      {} us",
-                 (init_queue + init_fail + init_succ + exec_issue + exec_queue + exec) / 2200);
-
-    result.insert({"init_queue", static_cast<int>(init_queue / 2200)});
-    result.insert({"init_fail", static_cast<int>(init_fail / 2200)});
-    result.insert({"init_succ", static_cast<int>(init_succ / 2200)});
-    result.insert({"exec_issue", static_cast<int>(exec_issue / 2200)});
-    result.insert({"exec_queue", static_cast<int>(exec_queue / 2200)});
-    result.insert({"exec", static_cast<int>(exec / 2200)});
-    result.insert({"abort_cnt", static_cast<int>(g_cnt_init_fail)});
-    result.insert({"pri_txn_cnt", static_cast<int>(g_cnt_exec)});
-  }
-  if (g_cnt_rdn != 0) {
-    auto rdn = g_t_rdn / g_cnt_rdn;
-    logger->info("[Pri-Stat] random     {} ns (max {} ns, cnt {})", rdn / 2.2, g_max_rdn / 2.2, g_cnt_rdn);
-  }
   logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}", g_nr_priority_txn, g_interval_priority_txn);
   return result;
 }

@@ -94,7 +94,63 @@ struct Average {
 
 static inline std::ostream &operator<<(std::ostream &out, const Average &avg)
 {
+  if (avg.cnt == 0) {
+    out << "NaN";
+    return out;
+  }
   out << 1.0l * avg.sum / avg.cnt;
+  return out;
+}
+
+template <typename Type>
+struct Max {
+  uint64_t max = 0;
+  Type properties;
+  Max &operator<<(uint64_t value) {
+    if (value > max)
+      max = value;
+    return *this;
+  }
+  void addData(uint64_t value, Type _properties) {
+    if (value > max) {
+      max = value;
+      properties = _properties;
+    }
+  }
+  Max &operator<<(const Max &rhs) {
+    if (rhs.max > max) {
+      max = rhs.max;
+      properties = rhs.properties;
+    }
+    return *this;
+  }
+};
+
+template <typename Type>
+static inline std::ostream &operator<<(std::ostream &out, const Max<Type> &max)
+{
+  out << max.max;
+  return out;
+}
+
+std::string format_sid(uint64_t sid)
+{
+  return "node_id " + std::to_string(sid & 0x000000FF) +
+         ", epoch " + std::to_string(sid >> 32) +
+         ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
+}
+
+template <>
+std::ostream &operator<<(std::ostream &out, const Max<uint64_t> &max)
+{
+  out << max.max << " us, " << format_sid(max.properties);
+  return out;
+}
+
+template <>
+std::ostream &operator<<(std::ostream &out, const Max<std::tuple<uint64_t, uint64_t>> &max)
+{
+  out << max.max << " us, at epoch " << std::get<0>(max.properties) << ", delay " << std::get<1>(max.properties) / 2200 << " us";
   return out;
 }
 
@@ -107,6 +163,7 @@ struct Histogram {
   Histogram &operator<<(long value) {
     long idx = (value - Offset) / Bucket;
     if (idx >= 0 && idx < N) hist[idx]++;
+    else if (idx >= N) hist[N-1]++; // larger than max is put in last bucket
     return *this;
   }
   Histogram &operator<<(const Histogram &rhs) {
@@ -147,6 +204,34 @@ std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& 
       }
     }
   }
+
+  // percentile calc
+  long sum = 0, accu = 0;
+  for (int i = 0;  i < N; ++i)
+    sum += h.hist[i];
+  if (sum == 0) return out;
+
+  const int pct_size = 4;
+  double percentages[pct_size] = {50, 90, 99, 99.9};
+  int lvls[pct_size];
+  for (int i = 0; i < pct_size; ++i)
+    lvls[i] = -1;
+
+  for (int i = 0; i < N; ++i) {
+    accu += h.hist[i];
+    auto accu_pct = (double)accu * 100 / sum;
+    for (int j = 0; j < pct_size; ++j)
+      if (lvls[j] == -1 && accu_pct > percentages[j])
+        lvls[j] = i;
+  }
+
+  for (int i = 0; i < pct_size; ++i)
+    if (lvls[i] != -1)
+      out << std::setw(6) << percentages[i] << " percentile:  "
+          << "[" << lvls[i] * Bucket + Offset
+          << ", " << lvls[i] * Bucket + Offset + Bucket << "), "
+          << "bucket " << lvls[i] + 1 << "/" << N << ",   "
+          << std::endl;
   return out;
 }
 

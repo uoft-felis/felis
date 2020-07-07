@@ -25,6 +25,40 @@ struct WaitCounters {
   void operator()() const;
 };
 
+struct PriInitQueueTime {
+  uint64_t time;
+  uint64_t epoch_nr;
+  uint64_t delay;
+  void operator()() const;
+};
+
+struct PriInitTime {
+  uint64_t succ_time;
+  uint64_t fail_time;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct PriExecIssueTime {
+  uint64_t time;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct PriExecQueueTime {
+  uint64_t time;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct PriExecTime {
+  uint64_t time;
+  uint64_t total_latency;
+  uint64_t sid;
+  void operator()() const;
+};
+
+
 }
 }
 
@@ -32,5 +66,10 @@ struct WaitCounters {
   PROBE_PROXY(felis::probes::NumVersionsOnGC);  \
   PROBE_PROXY(felis::probes::VersionRead);      \
   PROBE_PROXY(felis::probes::WaitCounters);     \
+  PROBE_PROXY(felis::probes::PriInitQueueTime); \
+  PROBE_PROXY(felis::probes::PriInitTime); \
+  PROBE_PROXY(felis::probes::PriExecIssueTime); \
+  PROBE_PROXY(felis::probes::PriExecQueueTime); \
+  PROBE_PROXY(felis::probes::PriExecTime); \
 
 #endif /* FELIS_PROBES_H */
