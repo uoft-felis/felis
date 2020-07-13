@@ -19,37 +19,54 @@ void BaseTxn::InitBrk(long nr_epochs)
   }
 }
 
-void BaseTxn::TxnVHandle::AppendNewVersion(bool is_ondemand_split)
+void BaseTxn::BaseTxnRow::AppendNewVersion(bool is_ondemand_split)
 {
   if (!EpochClient::g_enable_granola) {
-    api->AppendNewVersion(sid, epoch_nr, is_ondemand_split);
+    vhandle->AppendNewVersion(sid, epoch_nr, is_ondemand_split);
   } else {
-    if (api->nr_versions() == 0) {
-      api->AppendNewVersion(sid, epoch_nr);
-      api->WriteExactVersion(0, nullptr, epoch_nr);
+    if (vhandle->nr_versions() == 0) {
+      vhandle->AppendNewVersion(sid, epoch_nr);
+      vhandle->WriteExactVersion(0, nullptr, epoch_nr);
     }
   }
 }
 
-VarStr *BaseTxn::TxnVHandle::ReadVarStr()
+VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
 {
-  return api->ReadWithVersion(sid);
+  return vhandle->ReadWithVersion(sid);
 }
 
-bool BaseTxn::TxnVHandle::WriteVarStr(VarStr *obj)
+bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
 {
   if (!EpochClient::g_enable_granola) {
-    return api->WriteWithVersion(sid, obj, epoch_nr);
+    return vhandle->WriteWithVersion(sid, obj, epoch_nr);
   } else {
-    auto p = api->ReadExactVersion(0);
+    auto p = vhandle->ReadExactVersion(0);
     size_t nr_bytes = 0;
-    util::Instance<GC>().FreeIfGarbage(api, p, obj);
-    return api->WriteExactVersion(0, obj, epoch_nr);
+    util::Instance<GC>().FreeIfGarbage(vhandle, p, obj);
+    return vhandle->WriteExactVersion(0, obj, epoch_nr);
   }
 }
 
-BaseTxn::TxnIndexOpContext::TxnIndexOpContext(
-    TxnHandle handle, EpochObject state,
+int64_t BaseTxn::UpdateForKeyAffinity(int node, VHandle *row)
+{
+  if (Options::kOnDemandSplitting) {
+    auto &cmgr = util::Instance<ContentionManager>();
+    auto &conf = util::Instance<NodeConfiguration>();
+    if (row->contention_affinity() == -1 || (node != 0 && conf.node_id() != node))
+      goto nosplit;
+
+    auto &mgr = EpochClient::g_workload_client->get_contention_locality_manager();
+    auto aff = mgr.GetScheduleCore(row->contention_affinity());
+    return aff;
+  }
+
+nosplit:
+  return -1;
+}
+
+BaseTxn::BaseTxnIndexOpContext::BaseTxnIndexOpContext(
+    BaseTxnHandle handle, EpochObject state,
     uint16_t keys_bitmap, VarStr **keys,
     uint16_t slices_bitmap, int16_t *slices,
     uint16_t rels_bitmap, int16_t *rels)
@@ -74,7 +91,7 @@ BaseTxn::TxnIndexOpContext::TxnIndexOpContext(
       });
 }
 
-size_t BaseTxn::TxnIndexOpContext::EncodeSize() const
+size_t BaseTxn::BaseTxnIndexOpContext::EncodeSize() const
 {
     size_t sum = 0;
     int nr_keys = __builtin_popcount(keys_bitmap);
@@ -86,7 +103,7 @@ size_t BaseTxn::TxnIndexOpContext::EncodeSize() const
     return kHeaderSize + sum;
 }
 
-uint8_t *BaseTxn::TxnIndexOpContext::EncodeTo(uint8_t *buf) const
+uint8_t *BaseTxn::BaseTxnIndexOpContext::EncodeTo(uint8_t *buf) const
 {
   memcpy(buf, this, kHeaderSize);
   uint8_t *p = buf + kHeaderSize;
@@ -109,7 +126,7 @@ uint8_t *BaseTxn::TxnIndexOpContext::EncodeTo(uint8_t *buf) const
   return p;
 }
 
-const uint8_t *BaseTxn::TxnIndexOpContext::DecodeFrom(const uint8_t *buf)
+const uint8_t *BaseTxn::BaseTxnIndexOpContext::DecodeFrom(const uint8_t *buf)
 {
   memcpy(this, buf, kHeaderSize);
 
@@ -133,9 +150,10 @@ const uint8_t *BaseTxn::TxnIndexOpContext::DecodeFrom(const uint8_t *buf)
   return p;
 }
 
-BaseTxn::TxnIndexLookupOpImpl::TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx, int idx)
+BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpContext &ctx, int idx)
 {
   auto tbl = util::Instance<TableManager>().GetTable(ctx.relation_ids[idx]);
+  BaseTxn::LookupRowResult result;
   result.fill(nullptr);
 
   if (ctx.slice_ids[idx] >= 0 || ctx.slice_ids[idx] == kReadOnlySliceId) {
@@ -152,9 +170,10 @@ BaseTxn::TxnIndexLookupOpImpl::TxnIndexLookupOpImpl(const TxnIndexOpContext &ctx
       result[i] = it->row();
     }
   }
+  return result;
 }
 
-BaseTxn::TxnIndexInsertOpImpl::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx, int idx)
+VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx)
 {
   auto tbl = util::Instance<TableManager>().GetTable(ctx.relation_ids[idx]);
 
@@ -163,7 +182,7 @@ BaseTxn::TxnIndexInsertOpImpl::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx
            ctx.keys_bitmap, ctx.slices_bitmap);
   VarStr key(ctx.key_len[idx], 0, ctx.key_data[idx]);
   bool created = false;
-  result = tbl->SearchOrCreate(
+  VHandle *result = tbl->SearchOrCreate(
       &key, &created);
 
   if (created) {
@@ -173,6 +192,7 @@ BaseTxn::TxnIndexInsertOpImpl::TxnIndexInsertOpImpl(const TxnIndexOpContext &ctx
     util::Instance<felis::SliceManager>().OnNewRow(
         ctx.slice_ids[idx], ctx.relation_ids[idx], kstr, result);
   }
+  return result;
 }
 
 uint64_t BaseTxn::AffinityFromRows(uint64_t bitmap, VHandle *const *it)

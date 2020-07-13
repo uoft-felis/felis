@@ -276,14 +276,14 @@ void NewOrderTxn::Run()
         for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
           if ((bitmap & (1 << i)) == 0) continue;
 
-          UpdateForKey(
-              &state->stock_futures[i], node, state->stocks[i],
-              [](const auto &ctx, VHandle *row) -> VHandle * {
+          state->stock_futures[i] = UpdateForKey(
+              node, state->stocks[i],
+              [](const auto &ctx, VHandle *row) {
                 auto &[state, index_handle, quantity, remote, i] = ctx;
                 debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
                       index_handle.serial_id(), i, (void *) row);
 
-                TxnVHandle vhandle = index_handle(row);
+                TxnRow vhandle = index_handle(row);
                 auto stock = vhandle.Read<Stock::Value>();
 
                 probes::TpccNewOrder{2, 1}();
@@ -300,8 +300,6 @@ void NewOrderTxn::Run()
                 debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
                       index_handle.serial_id(), i,
                       (void *) row);
-
-                return row;
               },
               params.quantities[i],
               (bool) (params.supplier_warehouses[i] != warehouse_id),
@@ -315,13 +313,17 @@ void NewOrderTxn::Run()
         }
 
         root->Then(
-            MakeContext(bitmap), node,
+            MakeContext(bitmap, warehouse_id, params), node,
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto &[state, index_handle, bitmap] = ctx;
+              auto &[state, index_handle, bitmap, warehouse_id, params] = ctx;
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
                 if ((bitmap & (1 << i)) == 0) continue;
 
-                state->stock_futures[i].Invoke(&state, index_handle);
+                state->stock_futures[i].Invoke(
+                    state, index_handle,
+                    params.quantities[i],
+                    params.supplier_warehouses[i] != warehouse_id,
+                    i);
               }
               return nullopt;
             }, aff);
@@ -334,7 +336,7 @@ void NewOrderTxn::Run()
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
                 if ((bitmap & (1 << i)) == 0) continue;
 
-                TxnVHandle vhandle = index_handle(state->stocks[i]);
+                TxnRow vhandle = index_handle(state->stocks[i]);
                 auto stock = vhandle.Read<Stock::Value>();
 
                 probes::TpccNewOrder{2, 1}();
@@ -387,7 +389,7 @@ void NewOrderTxn::Run()
                 debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
                       index_handle.serial_id(), i, (void *) state->stocks[i]);
 
-                TxnVHandle vhandle = index_handle(state->stocks[i]);
+                TxnRow vhandle = index_handle(state->stocks[i]);
                 auto stock = vhandle.Read<Stock::Value>();
 
                 probes::TpccNewOrder{2, 1}();

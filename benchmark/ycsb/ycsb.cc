@@ -24,8 +24,10 @@ struct RMWStruct {
 
 struct RMWState {
   VHandle *rows[kTotal];
-  unsigned long signal; // Used only if g_dependency
-  FutureValue<VHandle *> futures[kTotal];
+  InvokeHandle<RMWState> futures[kTotal];
+
+  std::atomic_ulong signal; // Used only if g_dependency
+  FutureValue<void> deps; // Used only if g_dependency
 
   struct LookupCompletion : public TxnStateCompletion<RMWState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
@@ -74,8 +76,8 @@ class RMWTxn : public Txn<RMWState>, public RMWStruct {
   void Run() override final;
   void Prepare() override final;
   void PrepareInsert() override final {}
-  static void WriteRow(TxnVHandle vhandle);
-  static void ReadRow(TxnVHandle vhandle);
+  static void WriteRow(TxnRow vhandle);
+  static void ReadRow(TxnRow vhandle);
 
   template <typename Func>
   void RunOnPartition(Func f) {
@@ -128,7 +130,7 @@ void RMWTxn::Prepare()
   }
 }
 
-void RMWTxn::WriteRow(TxnVHandle vhandle)
+void RMWTxn::WriteRow(TxnRow vhandle)
 {
   auto dbv = vhandle.Read<Ycsb::Value>();
   dbv.v.assign(Client::zero_data, 100);
@@ -136,22 +138,27 @@ void RMWTxn::WriteRow(TxnVHandle vhandle)
   vhandle.Write(dbv);
 }
 
-void RMWTxn::ReadRow(TxnVHandle vhandle)
+void RMWTxn::ReadRow(TxnRow vhandle)
 {
   vhandle.Read<Ycsb::Value>();
 }
 
 void RMWTxn::Run()
 {
+  if (Client::g_dependency)
+    state->signal = 0;
+
   if (!Client::g_enable_partition) {
     auto bitmap = 1ULL << (kTotal - Client::g_extra_read - 1);
     for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-      UpdateForKey(
-          &state->futures[i], 1, state->rows[i],
-          [](const auto &ctx, VHandle *row) -> VHandle * {
+      state->futures[i] = UpdateForKey(
+          1, state->rows[i],
+          [](const auto &ctx, VHandle *row) {
             auto &[state, index_handle] = ctx;
             WriteRow(index_handle(row));
-            return row;
+            if (Client::g_dependency
+                && state->signal.fetch_add(1) + 1 == kTotal - Client::g_extra_read - 1)
+              state->deps.Signal();
           });
 
       if (state->futures[i].has_callback())
@@ -165,12 +172,10 @@ void RMWTxn::Run()
         [](const auto &ctx, auto _) -> Optional<VoidValue> {
           auto &[state, index_handle] = ctx;
           for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-            state->futures[i].Invoke(&state, index_handle);
+            state->futures[i].Invoke(state, index_handle);
           }
           if (Client::g_dependency) {
-            for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-              state->futures[i].Wait();
-            }
+            state->deps.Wait();
           }
           WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
           for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
@@ -181,9 +186,6 @@ void RMWTxn::Run()
         aff);
 
   } else {
-    if (Client::g_dependency)
-      state->signal = 0;
-
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->Then(
@@ -205,7 +207,7 @@ void RMWTxn::Run()
                   state->rows[i] = rel.Search(dbk.EncodeFromRoutine());
                 }
 
-                TxnVHandle vhandle = handle(state->rows[i]);
+                TxnRow vhandle = handle(state->rows[i]);
                 auto dbv = vhandle.Read<Ycsb::Value>();
 
                 static thread_local volatile char buffer[100];
@@ -216,7 +218,7 @@ void RMWTxn::Run()
                   vhandle.Write(dbv);
                   if (Client::g_enable_granola && Client::g_dependency
                       && i < kTotal - Client::g_extra_read - 1) {
-                    __sync_fetch_and_add(&state->signal, 1);
+                    state->signal.fetch_add(1);
                   }
                 }
                 return nullopt;

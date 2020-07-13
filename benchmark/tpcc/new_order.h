@@ -64,8 +64,6 @@ struct NewOrderState {
   VHandle *neworder; // insert
   VHandle *cididx; // insert
 
-  FutureValue<VHandle *> oorder_future, neworder_future;
-
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     OOrder::Value args;
     void operator()(int id, VHandle *row) __attribute__((noinline)) {
@@ -86,7 +84,7 @@ struct NewOrderState {
   NodeBitmap other_inserts_nodes;
 
   VHandle *stocks[15]; // update
-  FutureValue<VHandle *> stock_futures[15];
+  InvokeHandle<NewOrderState, unsigned int, bool, int> stock_futures[15];
   struct StocksLookupCompletion : public TxnStateCompletion<NewOrderState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) __attribute__((noinline)) {
       debug(DBG_WORKLOAD "AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());

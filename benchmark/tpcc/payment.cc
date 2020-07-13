@@ -77,43 +77,40 @@ void PaymentTxn::Run()
     std::array<int, 2> filters;
 
     if (conf.node_id() == node) {
-      UpdateForKey(
-          &state->warehouse_future, node, state->warehouse,
-          [](const auto &ctx, VHandle *row) -> VHandle * {
+      state->warehouse_future = UpdateForKey(
+          node, state->warehouse,
+          [](const auto &ctx, VHandle *row) {
             auto &[state, index_handle, payment_amount] = ctx;
-            TxnVHandle vhandle = index_handle(state->warehouse);
+            TxnRow vhandle = index_handle(state->warehouse);
             auto w = vhandle.Read<Warehouse::CommonValue>();
             w.w_ytd += payment_amount;
             vhandle.Write(w);
             ClientBase::OnUpdateRow(state->warehouse);
-            return row;
           }, payment_amount);
 
-      UpdateForKey(
-          &state->district_future, node, state->district,
-          [](const auto &ctx, VHandle *row) -> VHandle * {
+      state->district_future = UpdateForKey(
+          node, state->district,
+          [](const auto &ctx, VHandle *row) {
             auto &[state, index_handle, payment_amount] = ctx;
-            TxnVHandle vhandle = index_handle(state->district);
+            TxnRow vhandle = index_handle(state->district);
             auto d = vhandle.Read<District::CommonValue>();
             d.d_ytd += payment_amount;
             vhandle.Write(d);
             ClientBase::OnUpdateRow(state->district);
-            return row;
           }, payment_amount);
 
 
-      UpdateForKey(
-          &state->customer_future, node, state->customer,
-          [](const auto &ctx, VHandle *row) -> VHandle * {
+      state->customer_future = UpdateForKey(
+          node, state->customer,
+          [](const auto &ctx, VHandle *row) {
             auto &[state, index_handle, payment_amount] = ctx;
-            TxnVHandle vhandle = index_handle(state->customer);
+            TxnRow vhandle = index_handle(state->customer);
             auto c = vhandle.Read<Customer::CommonValue>();
             c.c_balance -= payment_amount;
             c.c_ytd_payment += payment_amount;
             c.c_payment_cnt++;
             vhandle.Write(c);
             ClientBase::OnUpdateRow(state->customer);
-            return row;
           }, payment_amount);
 
       if (!state->warehouse_future.has_callback()
@@ -140,22 +137,22 @@ void PaymentTxn::Run()
         }
 
         root->Then(
-            MakeContext(bitmap, filter), node,
+            MakeContext(payment_amount, bitmap, filter), node,
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto &[state, index_handle, bitmap, filter] = ctx;
+              auto &[state, index_handle, payment_amount, bitmap, filter] = ctx;
 
               probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
 
               if ((bitmap & 0x01) && (filter & 0x01)) {
-                state->warehouse_future.Invoke(&state, index_handle);
+                state->warehouse_future.Invoke(state, index_handle, payment_amount);
               }
 
               if ((bitmap & 0x02) && (filter & 0x01)) {
-                state->district_future.Invoke(&state, index_handle);
+                state->district_future.Invoke(state, index_handle, payment_amount);
               }
 
               if ((bitmap & 0x04) && (filter & 0x02)) {
-                state->customer_future.Invoke(&state, index_handle);
+                state->customer_future.Invoke(state, index_handle, payment_amount);
               }
               return nullopt;
             },
@@ -168,7 +165,7 @@ void PaymentTxn::Run()
             auto &[state, index_handle, bitmap, payment_amount] = ctx;
 
             if (bitmap & 0x01) {
-              TxnVHandle vhandle = index_handle(state->warehouse);
+              TxnRow vhandle = index_handle(state->warehouse);
               auto w = vhandle.Read<Warehouse::CommonValue>();
               w.w_ytd += payment_amount;
               vhandle.Write(w);
@@ -176,7 +173,7 @@ void PaymentTxn::Run()
             }
 
             if (bitmap & 0x02) {
-              TxnVHandle vhandle = index_handle(state->district);
+              TxnRow vhandle = index_handle(state->district);
               auto d = vhandle.Read<District::CommonValue>();
               d.d_ytd += payment_amount;
               vhandle.Write(d);
@@ -184,7 +181,7 @@ void PaymentTxn::Run()
             }
 
             if (bitmap & 0x04) {
-              TxnVHandle vhandle = index_handle(state->customer);
+              TxnRow vhandle = index_handle(state->customer);
               auto c = vhandle.Read<Customer::CommonValue>();
               c.c_balance -= payment_amount;
               c.c_ytd_payment += payment_amount;

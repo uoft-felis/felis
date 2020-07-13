@@ -5,6 +5,7 @@
 #include "sqltypes.h"
 #include "epoch.h"
 #include "txn.h"
+#include "contention_manager.h"
 
 namespace felis {
 
@@ -59,7 +60,7 @@ class NodeBitmap {
   using Pair = std::tuple<int16_t, uint16_t>;
  private:
   uint8_t len;
-  Pair pairs[BaseTxn::TxnIndexOpContext::kMaxPackedKeys];
+  Pair pairs[BaseTxn::BaseTxnIndexOpContext::kMaxPackedKeys];
  public:
   NodeBitmap() : len(0) {}
   NodeBitmap(const NodeBitmap &rhs) : len(rhs.len) {
@@ -75,24 +76,20 @@ class NodeBitmap {
   }
 };
 
-template <typename T, size_t ClosureSize = 40>
-class FutureValue {
- public:
+template <typename T> class FutureValue;
+
+template <>
+class FutureValue<void> {
   std::atomic_bool ready = false;
-  T value;
-  void (*fp)(const void *, const BaseTxn::TxnHandle &, void *) = nullptr;
-  uint8_t closure_data[ClosureSize];
  public:
-  using ValueType = T;
-
   FutureValue() {}
-
-  FutureValue(const FutureValue &rhs) : ready(rhs.ready.load()), value(rhs.value), fp(rhs.fp) {
-    __builtin_memcpy(closure_data, rhs.closure_data, ClosureSize);
+  FutureValue(const FutureValue &rhs) : ready(rhs.ready.load()) {}
+  const FutureValue<void> &operator=(const FutureValue &rhs) {
+    ready = rhs.ready.load();
+    return *this;
   }
-
-  void Signal(T v) { value = v; ready = true; }
-  T &Wait() {
+  void Signal() { ready = true; }
+  void Wait() {
     long wait_cnt = 0;
     while (!ready) {
       wait_cnt++;
@@ -104,19 +101,59 @@ class FutureValue {
       }
       _mm_pause();
     }
+  }
+};
+
+template <typename T>
+class FutureValue : public FutureValue<void> {
+  std::atomic_bool ready = false;
+  T value;
+ public:
+  using ValueType = T;
+
+  FutureValue() {}
+
+  FutureValue(const FutureValue &rhs) : ready(rhs.ready.load()), value(rhs.value) {}
+
+  void Signal(T v) {
+    value = v;
+    FutureValue<void>::Signal();
+  }
+  T &Wait() {
+    FutureValue<void>::Wait();
     return value;
   }
+};
 
-  template <typename G>
-  void Attach(void (*func)(const void *, const BaseTxn::TxnHandle &, void *), G closure) {
-    static_assert(sizeof(G) <= ClosureSize);
-    __builtin_memcpy(closure_data, &closure, sizeof(G));
-    fp = func;
+template <typename TxnState> class Txn;
+
+template <typename TxnState, typename ...Types>
+struct InvokeHandle {
+  using Context = typename Txn<TxnState>::template ContextType<Types...>;
+  using RowFuncPtr = void (*)(const Context&, VHandle *);
+
+  RowFuncPtr rowfunc = nullptr;
+  VHandle *row = nullptr;
+
+  void ClearCallback() {
+    row = nullptr;
+    rowfunc = nullptr;
   }
 
-  bool has_callback() const { return fp != nullptr; }
-  void Invoke(const void *state, const BaseTxn::TxnHandle &handle) {
-    if (fp) fp(state, handle, closure_data);
+  bool has_callback() const {
+    return row && rowfunc;
+  }
+
+  void InvokeWithContext(const Context& ctx) const {
+    if (has_callback())
+      rowfunc(ctx, row);
+  }
+
+  void Invoke(const typename Txn<TxnState>::State &state,
+              const typename Txn<TxnState>::TxnHandle &index_handle,
+              Types... args) const {
+    if (has_callback())
+      InvokeWithContext(Context(state, index_handle, args...));
   }
 };
 
@@ -129,6 +166,93 @@ class Txn : public BaseTxn {
   Promise<DummyValue> *root;
   State state;
  public:
+
+  class TxnRow : public BaseTxnRow {
+   public:
+    using BaseTxnRow::BaseTxnRow;
+
+    template <typename T> T Read() {
+      return ReadVarStr()->template ToType<T>();
+    }
+    template <typename T> bool Write(const T &o) {
+      return WriteVarStr(o.Encode());
+    }
+
+    template <typename T> bool WriteTryInline(const T &o) {
+      return WriteVarStr(o.EncodeFromPtrOrDefault(vhandle->AllocFromInline(o.EncodeSize())));
+    }
+  };
+
+  class TxnHandle : public BaseTxnHandle {
+   public:
+    using BaseTxnHandle::BaseTxnHandle;
+    TxnHandle(const BaseTxnHandle &rhs) : BaseTxnHandle(rhs) {}
+
+    TxnRow operator()(VHandle *vhandle) const { return TxnRow(sid, epoch_nr, vhandle); }
+  };
+
+  TxnHandle index_handle() const { return TxnHandle(sid, epoch->id()); }
+
+  struct TxnIndexOpContext : public BaseTxn::BaseTxnIndexOpContext {
+   private:
+    template <typename R>
+    int _FromKeyParam(uint16_t bitmap, int bitshift, int shift, R param) {
+      auto rel_id = R::kRelationId;
+      for (int i = bitshift; i < kMaxPackedKeys && i < bitshift + param.size(); i++) {
+        if (bitmap & (1 << i)) {
+          auto varstr = param[i - bitshift].EncodeFromRoutine();
+          key_len[shift] = varstr->len;
+          key_data[shift] = varstr->data;
+          relation_ids[shift] = rel_id;
+          slice_ids[shift] = param.EncodeToSliceId(i - bitshift);
+
+          shift++;
+        }
+      }
+      return shift;
+    }
+    template <typename R, typename ...T>
+    void _FromKeyParam(uint16_t bitmap, int bitshift, int shift, R param, T ...rest) {
+      shift = _FromKeyParam(bitmap, bitshift, shift, param);
+      _FromKeyParam(bitmap, bitshift + param.size(), shift, rest...);
+    }
+   public:
+    template <typename ...T>
+    TxnIndexOpContext(BaseTxnHandle handle, EpochObject state, uint16_t bitmap, T ...params) {
+      this->handle = handle;
+      this->state = state;
+      this->keys_bitmap = this->slices_bitmap = this->rels_bitmap = bitmap;
+
+      _FromKeyParam(bitmap, 0, 0, params...);
+    }
+
+    TxnIndexOpContext() {}
+  };
+
+  template <typename Extra>
+  struct TxnIndexOpContextEx : public TxnIndexOpContext, public Extra {
+    using TxnIndexOpContext::TxnIndexOpContext;
+
+    void set_extra(const Extra &rhs) {
+      (Extra &)(*this) = rhs;
+    }
+
+    size_t EncodeSize() const {
+      return TxnIndexOpContext::EncodeSize() + Extra::EncodeSize();
+    }
+    uint8_t *EncodeTo(uint8_t *buf) const {
+      return Extra::EncodeTo(TxnIndexOpContext::EncodeTo(buf));
+    }
+    const uint8_t *DecodeFrom(const uint8_t *buf) {
+      return Extra::DecodeFrom(TxnIndexOpContext::DecodeFrom(buf));
+    }
+  };
+
+  template <>
+  struct TxnIndexOpContextEx<void> : public TxnIndexOpContext {
+    using TxnIndexOpContext::TxnIndexOpContext;
+  };
+
   Txn(uint64_t serial_id) : BaseTxn(serial_id) {}
 
   BasePromise *root_promise() override final { return root; }
@@ -156,75 +280,28 @@ class Txn : public BaseTxn {
         func);
   }
 
-  template <typename FutureType, typename RowFunc, typename ...Types>
-  FutureType *UpdateForKey(FutureType *future,
-                           int node,
-                           VHandle *row, RowFunc rowfunc, Types... params) {
-    using RowFuncPtr = typename FutureType::ValueType (*)(const ContextType<Types...>&, VHandle *);
+  template <typename ...Types>
+  InvokeHandle<TxnState, Types...> UpdateForKey(
+      int node, VHandle *row,
+      typename InvokeHandle<TxnState, Types...>::RowFuncPtr rowfunc,
+      Types... params) {
     auto &conf = util::Instance<NodeConfiguration>();
-    new (future) FutureType;
+    auto aff = UpdateForKeyAffinity(node, row);
+    InvokeHandle<TxnState, Types...> invoke_handle{rowfunc, row};
 
-    if (Options::kOnDemandSplitting) {
-      auto &appender = util::Instance<ContentionManager>();
-      if (row->contention_affinity() == -1 || (node != 0 && conf.node_id() != node))
-        goto nosplit;
-
-#if 0
-      static thread_local util::XORRandom64 local_rand;
-      auto lower = row->contention_weight() - appender.contention_weight_begin();
-
-      auto upper = lower + w;
-      auto aff = lower * NodeConfiguration::g_nr_threads / total_scale;
-      auto upper_aff = (upper - 1) * NodeConfiguration::g_nr_threads / total_scale;
-      if (aff != upper_aff) {
-        if (aff / mem::kNrCorePerNode != upper_aff / mem::kNrCorePerNode) {
-          // They belong to different sockets
-          auto numa_node = (lower + upper - 1) * NodeConfiguration::g_nr_threads
-                           / 2 / total_scale / mem::kNrCorePerNode;
-          if (aff / mem::kNrCorePerNode != numa_node) {
-            lower = numa_node * mem::kNrCorePerNode * total_scale / NodeConfiguration::g_nr_threads;
-          }
-          if (upper_aff / mem::kNrCorePerNode != numa_node) {
-            upper = ((numa_node + 1) * mem::kNrCorePerNode) * total_scale / NodeConfiguration::g_nr_threads;
-          }
-        }
-        aff = local_rand.NextRange(lower, upper) * NodeConfiguration::g_nr_threads / total_scale;
-      }
-#endif
-      auto &mgr = EpochClient::g_workload_client->get_contention_locality_manager();
-      auto aff = mgr.GetScheduleCore(row->contention_affinity());
+    if (aff != -1) {
       root->Then(
-          sql::MakeTuple(future, (RowFuncPtr) rowfunc, row, MakeContext(params...)),
+          sql::MakeTuple(invoke_handle, MakeContext(params...)),
           node,
           [](const auto &t, auto _) -> Optional<VoidValue> {
-            auto &[future, rowfunc, row, ctx] = t;
-            future->Signal(rowfunc(ctx, row));
+            auto &[invoke_handle, ctx] = t;
+            invoke_handle.InvokeWithContext(ctx);
             return nullopt;
           },
           aff);
-      return future;
+      invoke_handle.ClearCallback();
     }
-
- nosplit:
-      future->Attach(
-          [](const void *state, const TxnHandle &index_handle, void *p) {
-            auto *pclosure = (sql::Tuple<FutureType *, RowFuncPtr, VHandle *, Types...> *) p;
-            auto future = pclosure->template _<0>();
-            auto rowfunc = pclosure->template _<1>();
-            auto row = pclosure->template _<2>();
-            if constexpr(sizeof...(Types) > 0) {
-              ContextType<Types...> ctx;
-              (sql::Tuple<Types...>) ctx = (sql::Tuple<Types...>) *pclosure;
-              ctx.template set<0>(*(State *) state);
-              ctx.template set<1>(index_handle);
-              future->Signal(rowfunc(ctx, row));
-            } else {
-              future->Signal(rowfunc(ContextType<Types...>(*(State *) state, index_handle), row));
-            }
-          },
-          sql::MakeTuple(future, (RowFuncPtr) rowfunc, row, params...));
-
-    return future;
+    return invoke_handle;
   }
 
  private:
@@ -299,7 +376,7 @@ class Txn : public BaseTxn {
           completion.args = (OnCompleteParam) op_ctx;
         }
 
-        completion.handle = op_ctx.handle;
+        completion.handle = TxnHandle(op_ctx.handle);
         completion.state = State(op_ctx.state);
 
         TxnIndexOpContext::ForEachWithBitmap(
@@ -327,13 +404,25 @@ class Txn : public BaseTxn {
   }
 
  public:
+  struct TxnIndexLookupOpImpl {
+    LookupRowResult result;
+    TxnIndexLookupOpImpl(const BaseTxnIndexOpContext &ctx, int idx) {
+      result = BaseTxnIndexOpLookup(ctx, idx);
+    }
+  };
+  struct TxnIndexInsertOpImpl {
+    VHandle *result;
+    TxnIndexInsertOpImpl(const BaseTxnIndexOpContext &ctx, int idx) {
+      result = BaseTxnIndexOpInsert(ctx, idx);
+    }
+  };
   template <typename Router,
             typename Completion,
             typename CompletionParam = void,
             typename ...KParams>
   NodeBitmap TxnIndexLookup(CompletionParam *pp,
                             KParams ...params) {
-    return TxnIndexOp<BaseTxn::TxnIndexLookupOpImpl,
+    return TxnIndexOp<TxnIndexLookupOpImpl,
                       Router,
                       CompletionParam,
                       Completion,
@@ -346,7 +435,7 @@ class Txn : public BaseTxn {
             typename ...KParams>
   NodeBitmap TxnIndexInsert(CompletionParam *pp,
                             KParams ...params) {
-    return TxnIndexOp<BaseTxn::TxnIndexInsertOpImpl,
+    return TxnIndexOp<TxnIndexInsertOpImpl,
                       Router,
                       CompletionParam,
                       Completion,
@@ -358,7 +447,7 @@ template <typename TxnState>
 class TxnStateCompletion {
  protected:
   friend class Txn<TxnState>;
-  BaseTxn::TxnHandle handle;
+  typename Txn<TxnState>::TxnHandle handle;
   GenericEpochObject<TxnState> state;
 };
 

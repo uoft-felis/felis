@@ -26,9 +26,9 @@ struct PaymentState {
 
   NodeBitmap nodes;
 
-  FutureValue<VHandle *, 32> warehouse_future;
-  FutureValue<VHandle *, 32> district_future;
-  FutureValue<VHandle *, 32> customer_future;
+  InvokeHandle<PaymentState, int> warehouse_future;
+  InvokeHandle<PaymentState, int> district_future;
+  InvokeHandle<PaymentState, int> customer_future;
   struct Completion : public TxnStateCompletion<PaymentState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       if (id == 0) {
