@@ -67,12 +67,17 @@ bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
 int64_t BaseTxn::UpdateForKeyAffinity(int node, VHandle *row)
 {
   if (Options::kOnDemandSplitting) {
-    auto &cmgr = util::Instance<ContentionManager>();
     auto &conf = util::Instance<NodeConfiguration>();
     if (row->contention_affinity() == -1 || (node != 0 && conf.node_id() != node))
       goto nosplit;
 
-    auto &mgr = EpochClient::g_workload_client->get_contention_locality_manager();
+    auto client = EpochClient::g_workload_client;
+    auto commit_buffer = client->commit_buffer;
+
+    if (commit_buffer->LookupDuplicate(row, sid))
+      goto nosplit;
+
+    auto &mgr = client->get_contention_locality_manager();
     auto aff = mgr.GetScheduleCore(row->contention_affinity());
     return aff;
   }
