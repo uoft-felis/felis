@@ -71,7 +71,6 @@ struct Options {
 
   static inline const auto kOnDemandSplitting = Option("OnDemandSplitting");
 
-  // Wishy washy.
   static inline const auto kBinpackSplitting = Option("BinpackSplitting", false);
 
   static inline const auto kTpccWarehouses = Option("TpccWarehouses");

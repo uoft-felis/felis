@@ -1,7 +1,7 @@
 #include <vector>
 #include <thread>
 
-#include "vhandle_batchappender.h"
+#include "contention_manager.h"
 #include "gc.h"
 #include "node_config.h"
 #include "opts.h"

@@ -3,6 +3,7 @@
 #include "util/objects.h"
 #include "literals.h"
 #include "gc.h"
+#include "commit_buffer.h"
 
 namespace felis {
 
@@ -22,7 +23,10 @@ void BaseTxn::InitBrk(long nr_epochs)
 void BaseTxn::BaseTxnRow::AppendNewVersion(bool is_ondemand_split)
 {
   if (!EpochClient::g_enable_granola) {
-    vhandle->AppendNewVersion(sid, epoch_nr, is_ondemand_split);
+    auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
+    auto is_dup = commit_buffer->AddRef(go::Scheduler::CurrentThreadPoolId() - 1, vhandle, sid);
+    if (!is_dup)
+      vhandle->AppendNewVersion(sid, epoch_nr, is_ondemand_split);
   } else {
     if (vhandle->nr_versions() == 0) {
       vhandle->AppendNewVersion(sid, epoch_nr);
@@ -33,12 +37,24 @@ void BaseTxn::BaseTxnRow::AppendNewVersion(bool is_ondemand_split)
 
 VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
 {
-  return vhandle->ReadWithVersion(sid);
+  auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
+  auto ent = commit_buffer->LookupDuplicate(vhandle, sid);
+  if (ent && ent->u.value != (VarStr *) kPendingValue)
+    return ent->u.value;
+  else
+    return vhandle->ReadWithVersion(sid);
 }
 
 bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
 {
   if (!EpochClient::g_enable_granola) {
+    auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
+    auto ent = commit_buffer->LookupDuplicate(vhandle, sid);
+    if (ent) {
+      ent->u.value = obj;
+      if (ent->wcnt.fetch_sub(1) - 1 > 0)
+        return true;
+    }
     return vhandle->WriteWithVersion(sid, obj, epoch_nr);
   } else {
     auto p = vhandle->ReadExactVersion(0);

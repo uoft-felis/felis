@@ -37,7 +37,7 @@ db_headers = [
     'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'promise.h',
     'masstree_index_impl.h', 'hashtable_index_impl.h', 'varstr.h', 'sqltypes.h',
     'txn.h', 'txn_cc.h', 'vhandle.h', 'vhandle_sync.h', 'contention_manager.h', 'locality_manager.h',
-    'shipping.h', 'completion.h', 'entity.h',
+    'commit_buffer.h', 'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
     'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h'
 ]
@@ -47,7 +47,7 @@ db_srcs = [
     'gc.cc', 'index.cc', 'mem.cc',
     'promise.cc', 'masstree_index_impl.cc', 'hashtable_index_impl.cc',
     'node_config.cc', 'console.cc', 'console_client.cc',
-    'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
+    'commit_buffer.cc', 'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
     'felis_probes.cc',
     'json11/json11.cpp',
     'spdlog/src/spdlog.cpp', 'spdlog/src/fmt.cpp', 'spdlog/src/stdout_sinks.cpp', 'spdlog/src/async.cpp', 'spdlog/src/cfg.cpp', 'spdlog/src/color_sinks.cpp', 'spdlog/src/file_sinks.cpp',

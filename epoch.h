@@ -112,6 +112,8 @@ struct EpochTxnSet {
   ~EpochTxnSet();
 };
 
+class CommitBuffer;
+
 class EpochClient {
   friend class EpochCallback;
   friend class RunTxnPromiseWorker;
@@ -134,6 +136,8 @@ class EpochClient {
   PerfLog perf;
   EpochControl control;
   EpochWorkers *workers[NodeConfiguration::kMaxNrThreads];
+
+  CommitBuffer *commit_buffer;
  public:
   static EpochClient *g_workload_client;
   static bool g_enable_granola;

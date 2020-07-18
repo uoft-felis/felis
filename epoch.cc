@@ -8,11 +8,12 @@
 #include "txn.h"
 #include "log.h"
 #include "vhandle.h"
-#include "vhandle_batchappender.h"
+#include "contention_manager.h"
 #include "console.h"
 #include "mem.h"
 #include "gc.h"
 #include "opts.h"
+#include "commit_buffer.h"
 
 #include "literals.h"
 #include "util/os.h"
@@ -158,6 +159,8 @@ EpochClient::EpochClient()
   if (Options::kOnDemandSplitting) {
     g_splitting_threshold = Options::kOnDemandSplitting.ToInt();
   }
+
+  commit_buffer = new CommitBuffer();
 }
 
 EpochTxnSet::EpochTxnSet()
@@ -220,6 +223,7 @@ void AllocStateTxnWorker::Run()
     // client->insert_lmgr.PrintLoads();
     comp.fetch_sub(1);
   }
+  client->commit_buffer->Clear(t);
 }
 
 void CallTxnsWorker::Run()
@@ -374,6 +378,7 @@ void EpochClient::InitializeEpoch()
 
   util::Instance<GC>().PrepareGCForAllCores();
 
+  commit_buffer->Reset();
   AllocStateTxnWorker::comp = nr_threads + 1;
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->alloc_state_worker;

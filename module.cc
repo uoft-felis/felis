@@ -13,7 +13,7 @@
 #include "txn.h"
 #include "gc.h"
 #include "vhandle_sync.h"
-#include "vhandle_batchappender.h"
+#include "contention_manager.h"
 #include "util/os.h"
 
 #include "gopp/gopp.h"
