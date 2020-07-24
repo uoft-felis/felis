@@ -44,7 +44,7 @@ class PriorityTxnService {
   uint64_t GetSID();
 
  public:
-  static json11::Json::object PrintStats(bool json = false);
+  static json11::Json::object PrintStats();
   static unsigned long long g_tsc;
 };
 

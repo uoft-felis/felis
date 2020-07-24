@@ -9,11 +9,11 @@ static struct ProbeMain {
 
   agg::Agg<agg::Average> init_queue_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, uint64_t>>> init_queue_max;
-  agg::Agg<agg::Histogram<128, 0, 2>> init_queue_hist;
+  agg::Agg<agg::Histogram<512, 0, 3>> init_queue_hist;
 
   agg::Agg<agg::Average> init_fail_avg;
   agg::Agg<agg::Max<uint64_t>> init_fail_max;
-  agg::Agg<agg::Histogram<128, 0, 2>> init_fail_hist;
+  agg::Agg<agg::Histogram<512, 0, 2>> init_fail_hist;
 
   agg::Agg<agg::Average> init_succ_avg;
   agg::Agg<agg::Max<uint64_t>> init_succ_max;
@@ -25,7 +25,7 @@ static struct ProbeMain {
 
   agg::Agg<agg::Average> exec_queue_avg;
   agg::Agg<agg::Max<uint64_t>> exec_queue_max;
-  agg::Agg<agg::Histogram<128, 0, 4>> exec_queue_hist;
+  agg::Agg<agg::Histogram<512, 0, 3>> exec_queue_hist;
 
   agg::Agg<agg::Average> exec_avg;
   agg::Agg<agg::Max<uint64_t>> exec_max;
@@ -33,7 +33,7 @@ static struct ProbeMain {
 
   agg::Agg<agg::Average> total_latency_avg;
   agg::Agg<agg::Max<uint64_t>> total_latency_max;
-  agg::Agg<agg::Histogram<256, 0, 4>> total_latency_hist;
+  agg::Agg<agg::Histogram<512, 0, 6>> total_latency_hist;
 
   ~ProbeMain();
 } global;
@@ -90,7 +90,6 @@ template <> void OnProbe(felis::probes::PriInitTime p)
   statcnt.init_succ_hist << p.succ_time;
 }
 
-
 template <> void OnProbe(felis::probes::PriExecIssueTime p)
 {
   statcnt.exec_issue_avg << p.time;
@@ -114,38 +113,77 @@ template <> void OnProbe(felis::probes::PriExecTime p)
   statcnt.total_latency_hist << p.total_latency;
   statcnt.total_latency_max.addData(p.total_latency, p.sid);
 }
+enum PriTxnMeasureType : int{
+  InitQueue,
+  InitFail,
+  InitSucc,
+  ExecIssue,
+  ExecQueue,
+  Exec,
+  Total,
+  NumPriTxnMeasureType,
+};
 
 ProbeMain::~ProbeMain()
 {
-  std::cout << "[Pri-stat] init queue " << global.init_queue_avg() << " us, "
-            << "max " << global.init_queue_max() << std::endl;
-  std::cout << global.init_queue_hist() << std::endl << std::endl;
+  std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
+            << "(max: " << global.init_queue_max() << ")" << std::endl;
+  std::cout << global.init_queue_hist();
 
-  std::cout << "[Pri-stat] init fail " << global.init_fail_avg() << " us, "
-            << "max " << global.init_fail_max() << std::endl;
-  std::cout << global.init_fail_hist() << std::endl << std::endl;
+  std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
+            << "(max: " << global.init_fail_max() << ")" << std::endl;
+  std::cout << global.init_fail_hist();
 
-  std::cout << "[Pri-stat] init succ " << global.init_succ_avg() << " us, "
-            << "max " << global.init_succ_max() << std::endl;
-  std::cout << global.init_succ_hist() << std::endl << std::endl;
+  std::cout << "[Pri-stat] init_succ " << global.init_succ_avg() << " us "
+            << "(max: " << global.init_succ_max() << ")" << std::endl;
+  std::cout << global.init_succ_hist();
 
-  std::cout << "[Pri-stat] exec_issue " << global.exec_issue_avg() << " us, "
-            << "max " << global.exec_issue_max() << std::endl;
-  std::cout << global.exec_issue_hist() << std::endl << std::endl;
+  std::cout << "[Pri-stat] exec_issue " << global.exec_issue_avg() << " us "
+            << "(max: " << global.exec_issue_max() << ")" << std::endl;
+  std::cout << global.exec_issue_hist();
 
-  std::cout << "[Pri-stat] exec_queue " << global.exec_queue_avg() << " us, "
-            << "max " << global.exec_queue_max() << std::endl;
-  std::cout << global.exec_queue_hist() << std::endl << std::endl;
+  std::cout << "[Pri-stat] exec_queue " << global.exec_queue_avg() << " us "
+            << "(max: " << global.exec_queue_max() << ")" << std::endl;
+  std::cout << global.exec_queue_hist();
 
-  std::cout << "[Pri-stat] exec " << global.exec_avg() << " us, "
-            << "max " << global.exec_max() << std::endl;
-  std::cout << global.exec_hist() << std::endl << std::endl;
+  std::cout << "[Pri-stat] exec " << global.exec_avg() << " us "
+            << "(max: " << global.exec_max() << ")" << std::endl;
+  std::cout << global.exec_hist();
 
-  std::cout << "[Pri-stat] total " << global.total_latency_avg() << " us, "
-            << "max " << global.total_latency_max() << std::endl;
-  std::cout << global.total_latency_hist() << std::endl << std::endl;
+  std::cout << "[Pri-stat] total_latency " << global.total_latency_avg() << " us "
+            << "(max: " << global.total_latency_max() << ")" << std::endl;
+  std::cout << global.total_latency_hist();
 
   // std::cout << global.wait_cnt() << std::endl;
+}
+
+const std::string kPriTxnMeasureTypeLabel[] = {
+  "init_queue",
+  "init_fail",
+  "init_succ",
+  "exec_issue",
+  "exec_queue",
+  "exec",
+  "total_latency",
+};
+
+namespace felis {
+namespace probes {
+
+json11::Json::object GetPriTxnStats() {
+  const int size = PriTxnMeasureType::NumPriTxnMeasureType;
+  agg::Agg<agg::Average> *arr[size] = {
+    &global.init_queue_avg, &global.init_fail_avg, &global.init_succ_avg,
+    &global.exec_issue_avg, &global.exec_queue_avg, &global.exec_avg,
+    &global.total_latency_avg,
+  };
+  json11::Json::object result;
+  for (int i = 0; i < size; ++i)
+    result.insert({kPriTxnMeasureTypeLabel[i], arr[i]->getAvg()});
+  return result;
+}
+
+}
 }
 
 PROBE_LIST;

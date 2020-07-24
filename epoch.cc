@@ -461,7 +461,6 @@ void EpochClient::OnExecuteComplete()
   }
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
-    PriorityTxnService::PrintStats();
     InitializeEpoch();
   } else {
     // End of the experiment.
@@ -472,7 +471,7 @@ void EpochClient::OnExecuteComplete()
                  stats.insert_time_ms, stats.initialize_time_ms, stats.execution_time_ms);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
-    auto pri_result = PriorityTxnService::PrintStats(true);
+    auto pri_result = PriorityTxnService::PrintStats();
 
     if (Options::kOutputDir) {
       json11::Json::object result {

@@ -3,6 +3,7 @@
 #define FELIS_PROBES_H
 
 #include <cstdint>
+#include "json11/json11.hpp"
 
 namespace felis {
 namespace probes {
@@ -24,6 +25,8 @@ struct WaitCounters {
   uint64_t version_id;
   void operator()() const;
 };
+
+json11::Json::object GetPriTxnStats();
 
 struct PriInitQueueTime {
   uint64_t time;
@@ -57,7 +60,6 @@ struct PriExecTime {
   uint64_t sid;
   void operator()() const;
 };
-
 
 }
 }

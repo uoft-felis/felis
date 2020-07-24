@@ -90,6 +90,7 @@ struct Average {
     cnt += rhs.cnt;
     return *this;
   }
+  double getAvg() { return (cnt == 0) ? 0 : (1.0l * sum / cnt); }
 };
 
 static inline std::ostream &operator<<(std::ostream &out, const Average &avg)
@@ -117,6 +118,7 @@ struct Max {
       properties = _properties;
     }
   }
+  uint64_t getMax() { return this->max; }
   Max &operator<<(const Max &rhs) {
     if (rhs.max > max) {
       max = rhs.max;
@@ -143,7 +145,7 @@ std::string format_sid(uint64_t sid)
 template <>
 std::ostream &operator<<(std::ostream &out, const Max<uint64_t> &max)
 {
-  out << max.max << " us, " << format_sid(max.properties);
+  out << max.max << " us, at txn " << format_sid(max.properties);
   return out;
 }
 
@@ -181,6 +183,7 @@ std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& 
   for (int i = 0; i < N; i++)
     if (unit < h.hist[i] / 100) unit = h.hist[i] / 100;
 
+  /*
   for (int i = 0; i < N; i++) {
     if (last != h.hist[i]) {
       long start = i * Bucket + Offset;
@@ -204,6 +207,7 @@ std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& 
       }
     }
   }
+  */
 
   // percentile calc
   long sum = 0, accu = 0;

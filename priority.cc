@@ -128,12 +128,13 @@ bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
   return false;
 }
 
-json11::Json::object PriorityTxnService::PrintStats(bool json) {
+json11::Json::object PriorityTxnService::PrintStats() {
   json11::Json::object result;
   if (!NodeConfiguration::g_priority_txn)
     return result;
 
-  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}", g_nr_priority_txn, g_interval_priority_txn);
+  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}  BackOffDist: {}", g_nr_priority_txn, g_interval_priority_txn, g_backoff_distance);
+  result = felis::probes::GetPriTxnStats();
   return result;
 }
 
