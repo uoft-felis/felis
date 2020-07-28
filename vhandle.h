@@ -40,11 +40,12 @@ class BaseVHandle {
   VHandleSyncService &sync();
 };
 
+// select extra vhandle
+// #define ARRAY_EXTRA_VHANDLE
+
+#ifdef ARRAY_EXTRA_VHANDLE
 class SortedArrayVHandle;
-
-class ExtraVersionArray {
-  friend class SortedArrayVHandle;
-
+class ArrayExtraVHandle {
   util::MCSSpinLock lock;  // 8
   short alloc_by_regionid; // 2
   short this_coreid;       // 2
@@ -57,19 +58,74 @@ class ExtraVersionArray {
     return BaseVHandle::pool.Alloc();
   }
   static void operator delete(void *ptr) {
-    ExtraVersionArray *phandle = (ExtraVersionArray *) ptr;
+    ArrayExtraVHandle *phandle = (ArrayExtraVHandle *) ptr;
     BaseVHandle::pool.Free(ptr, phandle->this_coreid);
   }
 
-  ExtraVersionArray();
-  ExtraVersionArray(ExtraVersionArray &&rhs) = delete;
+  ArrayExtraVHandle();
+  ArrayExtraVHandle(ArrayExtraVHandle &&rhs) = delete;
 
   bool AppendNewVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
 };
+#else
+class SortedArrayVHandle;
+class LinkedListExtraVHandle {
+  // newest to oldest (meaning sid decreasing)
+  short alloc_by_regionid; // 2
+  short this_coreid;       // 2
+  int size;                // 4
+  // util::MCSSpinLock lock;  // 8
 
-// static_assert(sizeof(ExtraVersionArray) <= 64, "ExtraVersionArray is larger than a cache line");
+  struct Entry {
+    struct Entry *next;
+    uint64_t version;
+    uintptr_t object;
+    int this_coreid;
+
+    // Entry() : next(nullptr), version(0), object(0),
+    //           this_coreid(mem::ParallelPool::CurrentAffinity()) {}
+
+    static void *operator new(size_t nr_bytes) {
+      return BaseVHandle::pool.Alloc();
+    }
+
+    static void operator delete(void *ptr) {
+      Entry *phandle = (Entry *) ptr;
+      BaseVHandle::pool.Free(ptr, phandle->this_coreid);
+    }
+  };
+  static_assert(sizeof(Entry) <= 32, "LinkedListExtraVHandle Entry is too large");
+
+  std::atomic<Entry*> head;
+
+ public:
+  static void *operator new(size_t nr_bytes) {
+    return BaseVHandle::pool.Alloc();
+  }
+  static void operator delete(void *ptr) {
+    LinkedListExtraVHandle *phandle = (LinkedListExtraVHandle *) ptr;
+    BaseVHandle::pool.Free(ptr, phandle->this_coreid);
+  }
+
+  LinkedListExtraVHandle();
+  LinkedListExtraVHandle(LinkedListExtraVHandle &&rhs) = delete;
+
+  bool AppendNewVersion(uint64_t sid);
+  VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
+  bool WriteWithVersion(uint64_t sid, VarStr *obj);
+};
+#endif
+
+
+#ifdef ARRAY_EXTRA_VHANDLE
+class ExtraVHandle : public ArrayExtraVHandle {};
+#else
+class ExtraVHandle : public LinkedListExtraVHandle {};
+#endif
+static_assert(sizeof(ExtraVHandle) <= 64, "ExtraVHandle is larger than a cache line");
+
 
 class RowEntity;
 class SliceManager;
@@ -84,7 +140,6 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
   friend class BatchAppender;
-  friend class ExtraVersionArray;
 
   util::MCSSpinLock lock;
   short alloc_by_regionid;
@@ -99,7 +154,7 @@ class SortedArrayVHandle : public BaseVHandle {
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
   // util::OwnPtr<RowEntity> row_entity;
-  std::atomic<ExtraVersionArray*> extra_arr;
+  std::atomic<ExtraVHandle*> extra_vhandle;
   std::atomic_long buf_pos = -1;
   uint64_t last_gc_mark_epoch = 0;
  public:

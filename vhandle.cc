@@ -27,7 +27,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   // value_mark = 0;
   size = 0;
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
-  extra_arr = nullptr;
+  extra_vhandle = nullptr;
 
   versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
   latest_version.store(0);
@@ -135,11 +135,11 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
     VersionBufferHandle handle;
 
     if (priority) {
-      auto old = extra_arr.load();
+      auto old = extra_vhandle.load();
       if (old == nullptr) {
         // did not exist, allocate
-        auto temp = new ExtraVersionArray();
-        auto succ = extra_arr.compare_exchange_strong(old, temp);
+        auto temp = new ExtraVHandle();
+        auto succ = extra_vhandle.compare_exchange_strong(old, temp);
         if (succ)
           old = temp;
         else
@@ -148,7 +148,7 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
       if (old != nullptr)
         return old->AppendNewVersion(sid); // all to avoid an extra atomic load
       else
-        return extra_arr.load()->AppendNewVersion(sid);
+        return extra_vhandle.load()->AppendNewVersion(sid);
     }
 
     if (sid == 0) goto slowpath;
@@ -219,7 +219,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   // check extra array. If the version in the extra array is closer to the sid than the
   // version in this original version array, read from that instead.
   uint64_t ver = (addr == nullptr) ? 0 : versions[pos];
-  auto extra = extra_arr.load();
+  auto extra = extra_vhandle.load();
   VarStr* extra_result = extra ? extra->ReadWithVersion(sid, ver, this) : nullptr;
   if (extra_result)
     return extra_result;
@@ -254,7 +254,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   // Finding the exact location
   auto it = std::lower_bound(versions, versions + size, sid);
   if (unlikely(it == versions + size || *it != sid)) {
-    auto extra = extra_arr.load();
+    auto extra = extra_vhandle.load();
     if (extra) {
       // go to extra array to find version. if still not found, doomed
       if (extra->WriteWithVersion(sid, obj))
@@ -333,7 +333,8 @@ void BaseVHandle::InitPool()
   pool.Register();
 }
 
-ExtraVersionArray::ExtraVersionArray()
+#ifdef ARRAY_EXTRA_VHANDLE
+ArrayExtraVHandle::ArrayExtraVHandle()
 {
   capacity = 4;
   size.store(0);
@@ -342,7 +343,7 @@ ExtraVersionArray::ExtraVersionArray()
   versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
 }
 
-bool ExtraVersionArray::AppendNewVersion(uint64_t sid)
+bool ArrayExtraVHandle::AppendNewVersion(uint64_t sid)
 {
   util::MCSSpinLock::QNode qnode;
   lock.Lock(&qnode);
@@ -393,7 +394,7 @@ bool ExtraVersionArray::AppendNewVersion(uint64_t sid)
 // sid: txn's sid
 // ver: the version we found in the original version array
 // return: if the version in extra array is closer, the VarStr we read; else, nullptr
-VarStr *ExtraVersionArray::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
+VarStr *ArrayExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
 {
   util::MCSSpinLock::QNode qnode;
   lock.Lock(&qnode);
@@ -429,7 +430,7 @@ VarStr *ExtraVersionArray::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArr
   }
 }
 
-bool ExtraVersionArray::WriteWithVersion(uint64_t sid, VarStr *obj)
+bool ArrayExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
 {
   util::MCSSpinLock::QNode qnode;
   lock.Lock(&qnode);
@@ -458,6 +459,66 @@ bool ExtraVersionArray::WriteWithVersion(uint64_t sid, VarStr *obj)
   lock.Unlock(&qnode);
   return true;
 }
+#else
+LinkedListExtraVHandle::LinkedListExtraVHandle()
+    : head(nullptr), size(0)
+{
+  this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+}
+
+bool LinkedListExtraVHandle::AppendNewVersion(uint64_t sid)
+{
+  Entry *old, *n;
+  do {
+    old = head.load();
+    if (old && old->version >= sid)
+      return false;
+    n = new Entry {old, sid, kPendingValue, mem::ParallelPool::CurrentAffinity()};
+  } while (!head.compare_exchange_strong(old, n));
+
+  size++;
+  // TODO: GC
+  return true;
+}
+
+// return: if the version in extra array is closer, the VarStr we read; else, nullptr
+VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
+{
+  Entry *p = head;
+  while (p && p->version >= sid)
+    p = p->next;
+
+  if (!p)
+    return nullptr;
+
+  auto ver_extra = p->version;
+  if (ver_extra < ver)
+    return nullptr;
+  volatile uintptr_t *addr = &p->object;
+  util::Impl<VHandleSyncService>().WaitForData(addr, sid, ver_extra, (void *) this);
+  auto varstr_ptr = *addr;
+  if (varstr_ptr == kIgnoreValue)
+    return handle->ReadWithVersion(ver_extra);
+  return (VarStr *) varstr_ptr;
+}
+
+bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
+{
+  Entry *p = head;
+  while (p && p->version != sid)
+    p = p->next;
+
+  if (!p) {
+    logger->critical("Diverging outcomes! sid {}", sid);
+    return false;
+  }
+
+  volatile uintptr_t *addr = &p->object;
+  util::Impl<VHandleSyncService>().OfferData(addr, (uintptr_t) obj);
+  return true;
+}
+
+#endif
 
 #ifdef LL_REPLAY
 
