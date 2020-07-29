@@ -242,6 +242,8 @@ ContentionManager::ContentionManager()
     t.join();
   }
 
+  est_split = 0;
+
   auto nr_numa_zone = nr_threads / mem::kNrCorePerNode;
 
   auto cap = g_prealloc_count / nr_numa_zone / VersionBufferHead::kMaxPos;
@@ -310,6 +312,8 @@ void ContentionManager::Reset()
   if (sum < NodeConfiguration::g_nr_threads) {
     sum = 0;
   }
+
+  est_split = sum;
 
   VHandle **knapsacks = nullptr;
   size_t nr_knapsacks = 0;

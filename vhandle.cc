@@ -11,7 +11,7 @@
 #include "gc.h"
 
 #include "opts.h"
-#include "vhandle_batchappender.h"
+#include "contention_manager.h"
 
 #include "literals.h"
 

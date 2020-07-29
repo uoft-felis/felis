@@ -9,6 +9,8 @@
 #include "log.h"
 #include "vhandle.h"
 #include "contention_manager.h"
+#include "threshold_autotune.h"
+
 #include "console.h"
 #include "mem.h"
 #include "gc.h"
@@ -39,8 +41,6 @@ void EpochCallback::operator()(unsigned long cnt)
     perf.Show(label);
     printf("\n");
 
-    if (phase == EpochPhase::Initialize)
-      logger->info("Callback handler on core {}", go::Scheduler::CurrentThreadPoolId() - 1);
     // TODO: We might Reset() the PromiseAllocationService, which would free the
     // current go::Routine. Is it necessary to run some function in the another
     // go::Routine?
@@ -52,8 +52,6 @@ void EpochCallback::operator()(unsigned long cnt)
     };
     abort_if(go::Scheduler::Current()->current_routine() == &client->control,
              "Cannot call control thread from itself");
-    if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting)
-      util::Instance<ContentionManager>().Reset();
 
     client->control.Reset(phase_mem_funcs[p]);
     go::Scheduler::Current()->WakeUp(&client->control);
@@ -114,6 +112,8 @@ long EpochClient::WaitCountPerMS()
   long dur = (after - before) / (freq_mhz * 1000);
   return wait_cnt / dur;
 }
+
+static ThresholdAutoTuneController g_threshold_autotune;
 
 EpochClient::EpochClient()
     : control(this),
@@ -422,12 +422,16 @@ void EpochClient::OnInitializeComplete()
       new felis::RowScannerRoutine());
   }
 
+  if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting) {
+    util::Instance<ContentionManager>().Reset();
+  }
+
   util::Impl<VHandleSyncService>().ClearWaitCountStats();
   exec_lmgr.Balance();
   // exec_lmgr.PrintLoads();
   if (!Options::kBinpackSplitting) {
     cont_lmgr.Balance();
-    cont_lmgr.PrintLoads();
+    // cont_lmgr.PrintLoads();
   }
 
   auto &mgr = util::Instance<EpochManager>();
@@ -481,6 +485,14 @@ void EpochClient::OnExecuteComplete()
   }
 
   probes::EndOfPhase{cur_epoch_nr, 2}();
+
+  if (Options::kAutoTuneThreshold) {
+    g_splitting_threshold = g_threshold_autotune.GetNextThreshold(
+        g_splitting_threshold,
+        util::Instance<ContentionManager>().estimated_splits(),
+        callback.perf.duration_ms());
+    logger->info("Autotune threshold={}", g_splitting_threshold);
+  }
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
     InitializeEpoch();

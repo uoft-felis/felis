@@ -18,6 +18,7 @@ struct VersionBufferHead;
 class ContentionManager {
   friend class VersionBufferHead;
   std::array<VersionBufferHead *, NodeConfiguration::kMaxNrThreads> buffer_heads;
+  size_t est_split;
 
  public:
   ContentionManager();
@@ -25,6 +26,8 @@ class ContentionManager {
   void FinalizeFlush(uint64_t epoch_nr);
   void Reset();
   int GetRowContentionAffinity(VHandle *row) const;
+
+  size_t estimated_splits() const { return est_split; }
 
   static size_t g_prealloc_count;
 

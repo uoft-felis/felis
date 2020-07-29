@@ -70,6 +70,7 @@ struct Options {
   static inline const auto kCoreScaling = Option("CoreScaling");
 
   static inline const auto kOnDemandSplitting = Option("OnDemandSplitting");
+  static inline const auto kAutoTuneThreshold = Option("AutoTuneThreshold", false);
 
   static inline const auto kBinpackSplitting = Option("BinpackSplitting", false);
 
