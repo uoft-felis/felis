@@ -468,12 +468,14 @@ LinkedListExtraVHandle::LinkedListExtraVHandle()
 
 bool LinkedListExtraVHandle::AppendNewVersion(uint64_t sid)
 {
-  Entry *old, *n;
+  Entry *old, *n = new Entry(sid, kPendingValue, mem::ParallelPool::CurrentAffinity());
   do {
     old = head.load();
-    if (old && old->version >= sid)
+    if (old && old->version >= sid) {
+      delete n;
       return false;
-    n = new Entry {old, sid, kPendingValue, mem::ParallelPool::CurrentAffinity()};
+    }
+    n->next = old;
   } while (!head.compare_exchange_strong(old, n));
 
   size++;

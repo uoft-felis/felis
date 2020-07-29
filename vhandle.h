@@ -76,7 +76,6 @@ class LinkedListExtraVHandle {
   short alloc_by_regionid; // 2
   short this_coreid;       // 2
   int size;                // 4
-  // util::MCSSpinLock lock;  // 8
 
   struct Entry {
     struct Entry *next;
@@ -84,8 +83,8 @@ class LinkedListExtraVHandle {
     uintptr_t object;
     int this_coreid;
 
-    // Entry() : next(nullptr), version(0), object(0),
-    //           this_coreid(mem::ParallelPool::CurrentAffinity()) {}
+    Entry(uint64_t _version, uintptr_t _object, int _coreid) :
+      next(nullptr), version(_version), object(_object), this_coreid(_coreid) {}
 
     static void *operator new(size_t nr_bytes) {
       return BaseVHandle::pool.Alloc();
