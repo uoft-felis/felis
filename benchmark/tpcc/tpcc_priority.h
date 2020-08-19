@@ -1,3 +1,6 @@
+#ifndef TPCC_PRIORITY_H
+#define TPCC_PRIORITY_H
+
 #include "priority.h"
 #include "benchmark/tpcc/tpcc.h"
 
@@ -24,3 +27,5 @@ StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>();
 bool StockTxn_Run(felis::PriorityTxn *txn);
 
 }
+
+#endif /* TPCC_PRIORITY_H */

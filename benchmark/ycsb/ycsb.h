@@ -5,7 +5,7 @@
 #include "epoch.h"
 #include "slice.h"
 
-#include "zipfian_random.h"
+#include "benchmark/ycsb/zipfian_random.h"
 
 namespace ycsb {
 

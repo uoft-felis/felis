@@ -2,6 +2,8 @@
 #include "module.h"
 #include "opts.h"
 
+#include "benchmark/ycsb/ycsb_priority.h"
+
 namespace felis {
 
 class YcsbModule : public Module<WorkloadModule> {
@@ -33,6 +35,7 @@ class YcsbModule : public Module<WorkloadModule> {
     auto loader = new ycsb::YcsbLoader();
     go::GetSchedulerFromPool(1)->WakeUp(loader);
     loader->Wait();
+    ycsb::GeneratePriorityTxn();
 
     EpochClient::g_workload_client = new ycsb::Client();
   }

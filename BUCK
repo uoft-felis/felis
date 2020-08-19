@@ -23,11 +23,13 @@ tpcc_srcs = [
 ycsb_headers = [
     'benchmark/ycsb/table_decl.h',
     'benchmark/ycsb/ycsb.h',
+    'benchmark/ycsb/ycsb_priority.h',
 ]
 
 ycsb_srcs = [
     'benchmark/ycsb/ycsb.cc',
     'benchmark/ycsb/ycsb_workload.cc',
+    'benchmark/ycsb/ycsb_priority.cc',
 ]
 
 db_headers = [
