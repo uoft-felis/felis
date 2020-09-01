@@ -38,7 +38,7 @@ struct PaymentState {
       } else if (id == 2) {
         state->customer = rows[0];
       }
-      handle(rows[0]).AppendNewVersion(true);
+      handle(rows[0]).AppendNewVersion(1);
     }
   };
 };

@@ -75,7 +75,7 @@ class BaseTxn {
 
     uint64_t serial_id() const { return sid; }
 
-    void AppendNewVersion(bool is_ondemand_split = false);
+    void AppendNewVersion(int ondemand_split_weight = 0);
     VarStr *ReadVarStr();
     bool WriteVarStr(VarStr *obj);
     bool Delete() { return WriteVarStr(nullptr); }

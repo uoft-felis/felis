@@ -89,7 +89,7 @@ struct NewOrderState {
     void operator()(int id, BaseTxn::LookupRowResult rows) __attribute__((noinline)) {
       debug(DBG_WORKLOAD "AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
       state->stocks[id] = rows[0];
-      handle(rows[0]).AppendNewVersion(true);
+      handle(rows[0]).AppendNewVersion(1);
     }
   };
   NodeBitmap stocks_nodes;

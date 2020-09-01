@@ -20,13 +20,13 @@ void BaseTxn::InitBrk(long nr_epochs)
   }
 }
 
-void BaseTxn::BaseTxnRow::AppendNewVersion(bool is_ondemand_split)
+void BaseTxn::BaseTxnRow::AppendNewVersion(int ondemand_split_weight)
 {
   if (!EpochClient::g_enable_granola) {
     auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
     auto is_dup = commit_buffer->AddRef(go::Scheduler::CurrentThreadPoolId() - 1, vhandle, sid);
     if (!is_dup)
-      vhandle->AppendNewVersion(sid, epoch_nr, is_ondemand_split);
+      vhandle->AppendNewVersion(sid, epoch_nr, ondemand_split_weight);
   } else {
     if (vhandle->nr_versions() == 0) {
       vhandle->AppendNewVersion(sid, epoch_nr);

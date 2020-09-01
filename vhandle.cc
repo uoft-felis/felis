@@ -141,9 +141,9 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
   }
 }
 
-void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split)
+void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight)
 {
-  if (is_ondemand_split) nr_ondsplt++;
+  if (ondemand_split_weight) nr_ondsplt += ondemand_split_weight;
 
   // append this version at the end of version array
   IncreaseSize(1, epoch_nr);
@@ -184,7 +184,7 @@ unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsign
 }
 
 // Insert a new version into the version array, with value pending.
-void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split)
+void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight)
 {
   probes::VHandleAppend{this, sid, alloc_by_regionid}();
 
@@ -197,14 +197,14 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
       if (buf_pos.load(std::memory_order_acquire) == -1
           && size - cur_start < EpochClient::g_splitting_threshold
           && lock.TryLock(&qnode)) {
-        AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
+        AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
         lock.Unlock(&qnode);
         return;
       }
 
       handle = util::Instance<ContentionManager>().GetOrInstall((VHandle *) this);
       if (handle.prealloc_ptr) {
-        handle.Append((VHandle *) this, sid, epoch_nr, is_ondemand_split);
+        handle.Append((VHandle *) this, sid, epoch_nr, ondemand_split_weight);
         return;
       }
     } else if (Options::kOnDemandSplitting) {
@@ -216,10 +216,10 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
 
  slowpath:
     lock.Lock(&qnode);
-    AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
+    AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
     lock.Unlock(&qnode);
   } else {
-    AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
+    AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
   }
 }
 

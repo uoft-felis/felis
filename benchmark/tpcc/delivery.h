@@ -25,6 +25,7 @@ struct DeliveryState {
   VHandle *customers[10];
 
   NodeBitmap nodes[10];
+  InvokeHandle<DeliveryState, int, uint32_t> customer_future[10];
   struct Completion : public TxnStateCompletion<DeliveryState> {
     Tuple<int> args;
     void operator()(int id, BaseTxn::LookupRowResult rows) {
@@ -46,7 +47,7 @@ struct DeliveryState {
         handle(rows[0]).AppendNewVersion();
       } else if (id == 3) {
         state->customers[i] = rows[0];
-        handle(rows[0]).AppendNewVersion();
+        handle(rows[0]).AppendNewVersion(2);
       } else if (id == 4) {
         state->new_orders[i] = rows[0];
         // abort_if(rows[0]->ShouldScanSkip(handle.serial_id()), "sid {} row {}", handle.serial_id(), (void *) rows[0]);

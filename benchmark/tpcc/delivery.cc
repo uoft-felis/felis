@@ -157,12 +157,52 @@ void DeliveryTxn::Run()
       }
       valid_rows[nr_valid_rows++] = state->customers[i];
 
-      auto next = root->Then(
-          MakeContext(bitmap, i, ts), node,
-          [](const auto &ctx, auto args) -> Optional<Tuple<int>> {
-            auto &[state, index_handle, bitmap, i, ts] = ctx;
+#ifndef SPLIT_CUSTOMER_PIECE
+      state->customer_future[i] = UpdateForKey(
+          node, state->customers[i],
+          [](const auto &ctx, VHandle *row) {
+            auto &[state, index_handle, i, ts] = ctx;
+            int sum = 0;
+            for (int j = 0; j < 15; j++) {
+              if (state->order_lines[i][j] == nullptr) break;
+              auto handle = index_handle(state->order_lines[i][j]);
+              auto ol = handle.template Read<OrderLine::Value>();
+              sum += ol.ol_amount;
+              ol.ol_delivery_d = ts;
 
-            if (bitmap & (1 << 0)) {
+              probes::TpccDelivery{1, 1}();
+
+              handle.WriteTryInline(ol);
+              ClientBase::OnUpdateRow(state->order_lines[i][j]);
+            }
+
+            probes::TpccDelivery{1, 1}();
+            auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
+            customer.c_balance = sum;
+            index_handle(state->customers[i]).Write(customer);
+            ClientBase::OnUpdateRow(state->customers[i]);
+          }, i, ts);
+      if (state->customer_future[i].has_callback()) {
+        root->Then(
+            MakeContext(i, ts), node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, i, ts] = ctx;
+              state->customer_future[i].Invoke(state, index_handle, i, ts);
+
+              return nullopt;
+            });
+      }
+#endif
+
+#ifdef SPLIT_CUSTOMER_PIECE
+      // Under hash sharding, we need to split an intra-txn dependency because
+      // customer table may on a different machine.
+      if (node == sum_node) {
+        root->Then(
+            MakeContext(bitmap, i, ts), node,
+            [](const auto &ctx, auto args) -> Optional<Tuple<int>> {
+              auto &[state, index_handle, bitmap, i, ts] = ctx;
+
               int sum = 0;
               for (int j = 0; j < 15; j++) {
                 if (state->order_lines[i][j] == nullptr) break;
@@ -177,36 +217,21 @@ void DeliveryTxn::Run()
                 ClientBase::OnUpdateRow(state->order_lines[i][j]);
               }
 
-#ifdef SPLIT_CUSTOMER_PIECE
               return Tuple<int>(sum);
-#else
-              probes::TpccDelivery{1, 1}();
+            }, aff)->Then(
+                MakeContext(i), customer_node,
+                [](const auto &ctx, auto args) -> Optional<VoidValue> {
+                  auto [sum] = args;
+                  auto &[state, index_handle, i] = ctx;
 
-              auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
-              customer.c_balance = sum;
-              index_handle(state->customers[i]).Write(customer);
-              ClientBase::OnUpdateRow(state->customers[i]);
-#endif
-            }
+                  probes::TpccDelivery{1, 1}();
+                  auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
+                  customer.c_balance = sum;
+                  index_handle(state->customers[i]).Write(customer);
+                  ClientBase::OnUpdateRow(state->customers[i]);
 
-            return nullopt;
-          }, aff);
-
-#ifdef SPLIT_CUSTOMER_PIECE
-      if (node == sum_node) {
-        next->Then(
-            MakeContext(i), customer_node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto [sum] = args;
-              auto &[state, index_handle, i] = ctx;
-
-              auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
-              customer.c_balance = sum;
-              index_handle(state->customers[i]).Write(customer);
-              ClientBase::OnUpdateRow(state->customers[i]);
-
-              return nullopt;
-            });
+                  return nullopt;
+                });
       }
 #endif
     }

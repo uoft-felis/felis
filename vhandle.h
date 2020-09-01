@@ -88,7 +88,7 @@ class SortedArrayVHandle : public BaseVHandle {
   static SortedArrayVHandle *NewInline();
 
   bool ShouldScanSkip(uint64_t sid);
-  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split = false);
+  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight = 0);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
@@ -136,7 +136,7 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t object_coreid() const { return this_coreid; }
   int8_t contention_affinity() const { return cont_affinity; }
  private:
-  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, bool is_ondemand_split);
+  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight);
   unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
   void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
     versions[pos] = sid;

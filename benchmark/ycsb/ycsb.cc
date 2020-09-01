@@ -34,7 +34,7 @@ struct RMWState {
       state->rows[id] = rows[0];
       if (id < kTotal - Client::g_extra_read) {
         bool last = (id == kTotal - Client::g_extra_read - 1);
-        handle(rows[0]).AppendNewVersion(!last);
+        handle(rows[0]).AppendNewVersion(last ? 0 : 1);
       }
     }
   };
