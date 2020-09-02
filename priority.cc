@@ -100,6 +100,19 @@ uint64_t PriorityTxnService::GetMaxProgress(void)
   return max;
 }
 
+int PriorityTxnService::GetFastestCore(void)
+{
+  uint64_t max = 0;
+  int core = -1;
+  for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+    if (*exec_progress[i] > max) {
+      max = *exec_progress[i];
+      core = i;
+    }
+  }
+  return core;
+}
+
 uint64_t PriorityTxnService::GetProgress(int core_id)
 {
   return *exec_progress[core_id];

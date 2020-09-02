@@ -117,7 +117,8 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
                 txnInput.keys[i],
                 rows[i],
                 txn};
-    txn->IssuePromise(ctx, lambda);
+    int core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
+    txn->IssuePromise(ctx, lambda, core_id);
     // debug(TRACE_PRIORITY "Priority txn {:p} (MW) - Issued lambda into PQ", (void *)txn);
   }
 

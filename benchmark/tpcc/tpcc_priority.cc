@@ -45,8 +45,6 @@ std::string format_sid(uint64_t sid)
 
 bool StockTxn_Run(felis::PriorityTxn *txn)
 {
-  auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
   uint64_t diff = start_tsc - (txn->delay + felis::PriorityTxnService::g_tsc);
@@ -75,6 +73,7 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
     // TODO: record fail count
   }
   uint64_t succ_tsc = __rdtsc();
+  txn->measure_tsc = succ_tsc;
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
   // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
   felis::probes::PriInitTime{succ / 2200, fail / 2200, txn->serial_id()}();
@@ -83,50 +82,45 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   struct Context {
     uint warehouse_id;
     uint nr_items;
-    uint item_id;
-    uint stock_quantities;
-    felis::VHandle* stock_row;
     felis::PriorityTxn *txn;
+    uint stock_quantities[StockTxnInput::kStockMaxItems];
+    felis::VHandle* stock_rows[StockTxnInput::kStockMaxItems];
   };
 
   // issue promise
-  txn->piece_count.store(txnInput.nr_items);
-  for (int i = 0; i < txnInput.nr_items; ++i) {
-    auto lambda =
-        [](std::tuple<Context> capture) {
-          auto [ctx] = capture;
-          auto piece_id = ctx.txn->piece_count.fetch_sub(1);
+  int core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
+  // int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  auto lambda =
+      [](std::tuple<Context> capture) {
+        auto [ctx] = capture;
+        auto piece_id = ctx.txn->piece_count.fetch_sub(1);
 
-          // record exec queue time
-          if (piece_id == ctx.nr_items) {
-            auto queue_tsc = __rdtsc();
-            auto diff = queue_tsc - ctx.txn->measure_tsc;
-            felis::probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
-            ctx.txn->measure_tsc = queue_tsc;
-          }
+        // record exec queue time
+        auto queue_tsc = __rdtsc();
+        auto diff = queue_tsc - ctx.txn->measure_tsc;
+        felis::probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
+        ctx.txn->measure_tsc = queue_tsc;
 
-          auto stock = ctx.txn->Read<Stock::Value>(ctx.stock_row);
-          stock.s_quantity += ctx.stock_quantities;
-          ctx.txn->Write(ctx.stock_row, stock);
-          ClientBase::OnUpdateRow(ctx.stock_row);
+        for (int i = 0; i < ctx.nr_items; ++i) {
+          auto stock = ctx.txn->Read<Stock::Value>(ctx.stock_rows[i]);
+          stock.s_quantity += ctx.stock_quantities[i];
+          ctx.txn->Write(ctx.stock_rows[i], stock);
+          ClientBase::OnUpdateRow(ctx.stock_rows[i]);
+        }
 
-          // record exec time
-          if (piece_id == 1) {
-            auto exec_tsc = __rdtsc();
-            auto exec = exec_tsc - ctx.txn->measure_tsc;
-            auto total = exec_tsc - (ctx.txn->delay + felis::PriorityTxnService::g_tsc);
-            felis::probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
-          }
-        };
-    Context ctx{txnInput.warehouse_id,
-                txnInput.nr_items,
-                txnInput.detail.item_id[i],
-                txnInput.detail.stock_quantities[i],
-                stock_rows[i],
-                txn};
-    txn->IssuePromise(ctx, lambda);
-    // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
-  }
+        // record exec time
+        auto exec_tsc = __rdtsc();
+        auto exec = exec_tsc - ctx.txn->measure_tsc;
+        auto total = exec_tsc - (ctx.txn->delay + felis::PriorityTxnService::g_tsc);
+        felis::probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
+      };
+  Context ctx{txnInput.warehouse_id,
+              txnInput.nr_items,
+              txn};
+  memcpy(ctx.stock_quantities, txnInput.detail.stock_quantities, sizeof(uint) * ctx.nr_items);
+  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(felis::VHandle*) * ctx.nr_items);
+  txn->IssuePromise(ctx, lambda, core_id);
+  // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
 
   // record exec issue time
   uint64_t issue_tsc = __rdtsc();

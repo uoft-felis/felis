@@ -35,6 +35,7 @@ class PriorityTxnService {
   void UpdateProgress(int core_id, uint64_t progress);
   void PrintProgress(void);
   uint64_t GetMaxProgress(void);
+  int GetFastestCore(void);
   uint64_t GetProgress(int core_id);
   bool MaxProgressPassed(uint64_t sid);
   static bool isPriorityTxn(uint64_t sid);
@@ -134,7 +135,7 @@ class PriorityTxn {
 
 
   template <typename T, typename Lambda>
-  void IssuePromise(T input, Lambda lambda) {
+  void IssuePromise(T input, Lambda lambda, int core_id) {
     auto capture = std::make_tuple(input);
     auto empty_input = felis::VarStr::FromAlloca(alloca(sizeof(felis::VarStr)), sizeof(felis::VarStr));
 
@@ -156,12 +157,12 @@ class PriorityTxn {
     auto routine = PromiseRoutine::CreateFromCapture(serializer::EncodeSize(&capture));
     routine->callback = static_func;
     routine->sched_key = this->serial_id();
+    routine->affinity = core_id;
     serializer::EncodeTo(routine->capture_data, &capture);
 
     // put PromiseRoutineWithInput into PQ
     EpochClient::g_workload_client->completion_object()->Increment(1);
     PromiseRoutineWithInput tuple = std::make_tuple(routine, *empty_input);
-    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
     util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &tuple, 1);
   }
 
