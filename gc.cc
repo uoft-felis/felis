@@ -181,7 +181,9 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 
   for (auto j = 0; j < i; j++) {
     if (objects[j] == kIgnoreValue) continue;
-    delete (VarStr *) objects[j];
+    VarStr *o = (VarStr *) objects[j];
+    o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
+    delete o;
   }
   std::move(objects + i, objects + handle->size, objects);
   std::move(versions + i, versions + handle->size, versions);

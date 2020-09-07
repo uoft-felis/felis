@@ -232,7 +232,14 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 
   sync().WaitForData(addr, sid, versions[pos], (void *) this);
 
-  return (VarStr *) *addr;
+  // mark read bit
+  uintptr_t varstr_ptr = *addr;
+  if (!(varstr_ptr & kReadBitMask)) {
+    *addr = varstr_ptr | kReadBitMask;
+  }
+  varstr_ptr = varstr_ptr & ~kReadBitMask;
+
+  return (VarStr *) varstr_ptr;
 }
 
 // Read the exact version. version_idx is the version offset in the array, not serial id
@@ -246,7 +253,14 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
   volatile uintptr_t *addr = &objects[version_idx];
   assert(addr);
 
-  return (VarStr *) *addr;
+  // mark read bit
+  uintptr_t varstr_ptr = *addr;
+  if (!(varstr_ptr & kReadBitMask)) {
+    *addr = varstr_ptr | kReadBitMask;
+  }
+  varstr_ptr = varstr_ptr & ~kReadBitMask;
+
+  return (VarStr *) varstr_ptr;
 }
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
@@ -311,6 +325,7 @@ void SortedArrayVHandle::GarbageCollect()
 
   for (int i = 0; i < size - 1; i++) {
     VarStr *o = (VarStr *) objects[i];
+    o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
     delete o;
   }
 
