@@ -86,15 +86,26 @@ struct NewOrderState {
   VHandle *stocks[15]; // update
   InvokeHandle<NewOrderState, unsigned int, bool, int> stock_futures[15];
   struct StocksLookupCompletion : public TxnStateCompletion<NewOrderState> {
-    void operator()(int id, BaseTxn::LookupRowResult rows) __attribute__((noinline)) {
+    Tuple<int> args = Tuple<int>(-1);
+    void operator()(int id, BaseTxn::LookupRowResult rows) {
       debug(DBG_WORKLOAD "AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
-      state->stocks[id] = rows[0];
-      handle(rows[0]).AppendNewVersion(1);
+      auto [bitmap]= args;
+      if (bitmap == -1) {
+        state->stocks[id] = rows[0];
+        handle(rows[0]).AppendNewVersion(1);
+      } else {
+        int idx = 0, oldid = id;
+        do {
+          idx = __builtin_ctz(bitmap);
+          bitmap &= ~(1 << idx);
+        } while (id-- > 0);
+
+        state->stocks[idx] = rows[0];
+        handle(rows[0]).AppendNewVersion();
+      }
     }
   };
   NodeBitmap stocks_nodes;
-
-  uint16_t insert_aff, initialize_aff;
 };
 
 }

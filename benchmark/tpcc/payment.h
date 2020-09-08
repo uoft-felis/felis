@@ -22,7 +22,6 @@ struct PaymentState {
   VHandle *warehouse;
   VHandle *district;
   VHandle *customer;
-  uint16_t initialize_aff;
 
   NodeBitmap nodes;
 
@@ -30,7 +29,11 @@ struct PaymentState {
   InvokeHandle<PaymentState, int> district_future;
   InvokeHandle<PaymentState, int> customer_future;
   struct Completion : public TxnStateCompletion<PaymentState> {
+    Tuple<int> args = Tuple<int>(0);
     void operator()(int id, BaseTxn::LookupRowResult rows) {
+      auto [offset] = args;
+      id += offset;
+
       if (id == 0) {
         state->warehouse = rows[0];
       } else if (id == 1) {

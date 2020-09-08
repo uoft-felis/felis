@@ -54,6 +54,12 @@ unsigned int Config::max_slice_id() const
     return kRandomShardingMaxSliceId;
 }
 
+bool Config::IsWarehousePinnable()
+{
+  auto &conf = Instance<NodeConfiguration>();
+  return nr_warehouses % (conf.nr_nodes() * conf.g_nr_threads) == 0;
+}
+
 // install the TPC-C slices into the global SliceManager
 void InitializeSliceManager()
 {
@@ -103,11 +109,15 @@ void InitializeTPCC()
   if (felis::Options::kTpccHashShard)
     g_tpcc_config.shard_by_warehouse = false;
 
+  logger->info("Warehouses {}, Pin? {}",
+               g_tpcc_config.nr_warehouses,
+               g_tpcc_config.IsWarehousePinnable());
+
   logger->info("Hot Warehouses are {:x} (bitmap), load {} %",
                g_tpcc_config.hotspot_warehouse_bitmap,
                g_tpcc_config.hotspot_load_percentage);
 
-  /*
+    /*
   auto conf = Instance<Console>().FindConfigSection("tpcc").object_items();
   auto it = conf.find("hot_warehouses");
   if (it != conf.end()) {

@@ -33,6 +33,15 @@ class TpccSliceRouter {
   static int SliceToCoreId(int16_t slice_id);
 };
 
+// Some tables doesn't have district_id, bohm need to partition them in a
+// separate partition. So far, we have Stock(0), Warehouse(1)
+// tables.
+static constexpr int kBohmExtraPartitions = 2;
+
+#define ASSERT_BOHM_CONT                                            \
+abort_if(g_tpcc_config.nr_warehouses != 1,                          \
+           "Bohm only support single warehouse for contention experiments")
+
 struct Config {
   bool uniform_item_distribution;
 
@@ -58,6 +67,7 @@ struct Config {
   static unsigned int WarehouseToCoreId(int w) {
     return TpccSliceRouter::SliceToCoreId(WarehouseToSliceId(w));
   }
+  bool IsWarehousePinnable();
 
   template <typename T, int Suffix = 0>
   unsigned int HashKeyToSliceId(const T &k) const {

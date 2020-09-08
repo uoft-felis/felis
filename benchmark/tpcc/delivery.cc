@@ -86,6 +86,10 @@ void DeliveryTxn::PrepareImpl()
     auto dest_neworder_key = NewOrder::Key::New(
         warehouse_id, district_id, oid, customer_id);
 
+    if (VHandleSyncService::g_lock_elision && !g_tpcc_config.IsWarehousePinnable()) {
+      txn_indexop_affinity = (district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
+    }
+
     auto args = Tuple<int>(i);
     state->nodes[i] =
         TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
@@ -96,11 +100,8 @@ void DeliveryTxn::PrepareImpl()
             KeyParam<NewOrder>(dest_neworder_key));
   }
 
-  if (g_tpcc_config.nr_warehouses != 1) {
-    state->initialize_aff = client->get_initialization_locality_manager().GetScheduleCore(
-        Config::WarehouseToCoreId(warehouse_id));
-
-    root->AssignAffinity(state->initialize_aff);
+  if (g_tpcc_config.IsWarehousePinnable()) {
+    root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
   }
 }
 
@@ -123,8 +124,8 @@ void DeliveryTxn::Run()
       if (bitmap == (1 << 3)) continue;
       auto aff = std::numeric_limits<uint64_t>::max();
 
-      if (!Client::g_enable_granola && g_tpcc_config.nr_warehouses != 1)
-        aff = state->initialize_aff;
+      if (!Client::g_enable_granola && g_tpcc_config.IsWarehousePinnable())
+        aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
 
       root->Then(
           MakeContext(bitmap, i, o_carrier_id), node,

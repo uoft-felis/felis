@@ -70,9 +70,22 @@ class NodeBitmap {
   uint8_t size() const { return len; }
   Pair *begin() { return pairs; }
   Pair *end() { return pairs + len; }
+  const Pair *begin() const { return pairs; }
+  const Pair *end() const { return pairs + len; }
 
   void Add(int16_t node, uint16_t bitmap) {
     pairs[len++] = Pair(node, bitmap);
+  }
+
+  void MergeOrAdd(int16_t node, uint16_t bitmap) {
+    for (int i = 0; i < len; i++) {
+      auto [n, oldbitmap] = pairs[i];
+      if (n == node) {
+        pairs[i] = Pair(node, oldbitmap | bitmap);
+        return;
+      }
+    }
+    Add(node, bitmap);
   }
 };
 
@@ -334,6 +347,9 @@ class Txn : public BaseTxn {
     return nodes_bitmap;
   }
 
+  // Bohm only!
+  uint64_t txn_indexop_affinity = std::numeric_limits<uint64_t>::max();
+
   template <typename IndexOp,
             typename OnCompleteParam,
             typename OnComplete,
@@ -369,7 +385,8 @@ class Txn : public BaseTxn {
                     completion(i, op.result);
                   });
               return nullopt;
-            });
+            },
+            txn_indexop_affinity);
       } else {
         auto completion = OnComplete();
         if constexpr (!std::is_void<OnCompleteParam>()) {

@@ -844,7 +844,6 @@ done:
   return can_preempt;
 }
 
-
 void EpochExecutionDispatchService::Complete(int core_id)
 {
   auto &state = queues[core_id]->state;

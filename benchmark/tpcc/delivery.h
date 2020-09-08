@@ -18,7 +18,6 @@ struct DeliveryStruct {
 };
 
 struct DeliveryState {
-  uint16_t initialize_aff;
   VHandle *new_orders[10]; // NewOrder per-district
   VHandle *order_lines[10][15]; // OrderLines per NewOrder
   VHandle *oorders[10];

@@ -44,11 +44,6 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
         NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
         client(client)
   {}
-  void PrepareState() override final {
-    Txn<NewOrderState>::PrepareState();
-    client->get_insert_locality_manager().PlanLoad(warehouse_id - 1, detail.nr_items);
-    client->get_initialization_locality_manager().PlanLoad(warehouse_id - 1, 5);
-  }
   void Run() override final;
   void Prepare() override final {
     if (!Client::g_enable_granola)
@@ -108,34 +103,78 @@ void NewOrderTxn::PrepareInsertImpl()
           KeyParam<NewOrder>(neworder_key),
           KeyParam<OOrderCIdIdx>(cididx_key));
 
-  if (g_tpcc_config.nr_warehouses != 1) {
-    state->insert_aff = client->get_insert_locality_manager().GetScheduleCore(
-        Config::WarehouseToCoreId(warehouse_id));
-    root->AssignAffinity(state->insert_aff);
+  if (g_tpcc_config.IsWarehousePinnable()) {
+    root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+  } else if (VHandleSyncService::g_lock_elision) {
+    ASSERT_BOHM_CONT;
+    // Bohm partitions by district id only when there isn't enough
+    // warehouses. Here, luckily, all keys have the same district.
+    root->AssignAffinity((district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads);
   }
 }
 
 void NewOrderTxn::PrepareImpl()
 {
   Stock::Key stock_keys[kNewOrderMaxItems];
-  auto nr_items = detail.nr_items;
-  for (int i = 0; i < nr_items; i++) {
-    stock_keys[i] =
-        Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
-  }
-
   INIT_ROUTINE_BRK(8192);
 
-  // abort_if(nr_items < 5, "WTF {}", nr_items);
-  state->stocks_nodes =
-      TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
-          nullptr,
-          KeyParam<Stock>(stock_keys, nr_items));
+  if (!VHandleSyncService::g_lock_elision) {
+    auto nr_items = detail.nr_items;
+    for (int i = 0; i < nr_items; i++) {
+      stock_keys[i] =
+          Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
+    }
 
-  if (g_tpcc_config.nr_warehouses != 1) {
-    state->initialize_aff = client->get_initialization_locality_manager().GetScheduleCore(
-        Config::WarehouseToCoreId(warehouse_id));
-    root->AssignAffinity(state->initialize_aff);
+    // abort_if(nr_items < 5, "WTF {}", nr_items);
+    state->stocks_nodes =
+        TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
+            nullptr,
+            KeyParam<Stock>(stock_keys, nr_items));
+
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+    }
+  } else {
+    // Bohm partitions the initialization phase! We don't support multiple-nodes
+    // under Bohm, because we don't want to keep a per-core partitioning result
+    // in NodeBitmap.
+    unsigned int w = 0;
+    int istart = 0, iend = 0;
+    uint32_t picked = 0;
+
+    state->stocks_nodes = NodeBitmap();
+
+    while (true) {
+      uint32_t old_bitmap = picked;
+      for (int i = 0; i < detail.nr_items; i++) {
+        if ((picked & (1 << i)) == 0) {
+          if (w == 0) w = detail.supplier_warehouse_id[i];
+          else if (w != detail.supplier_warehouse_id[i]) continue;
+
+          stock_keys[iend++] =
+              Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
+          picked |= (1 << i);
+        }
+      }
+      if (istart == iend) break;
+
+      if (!g_tpcc_config.IsWarehousePinnable()) {
+        ASSERT_BOHM_CONT;
+        // In this situation, w - 1 means the Stock(0) partition anyway.
+      }
+
+      txn_indexop_affinity = w - 1;
+
+      auto args = Tuple<int>(picked ^ old_bitmap);
+      TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, Tuple<int>>(
+          &args,
+          KeyParam<Stock>(stock_keys + istart, iend - istart));
+
+      w = 0;
+      istart = iend;
+    }
+    abort_if(iend != detail.nr_items, "Bug in NewOrder Prepare() Bohm partitioning");
+    state->stocks_nodes.MergeOrAdd(1, (1 << detail.nr_items) - 1);
   }
 }
 
@@ -158,7 +197,6 @@ void NewOrderTxn::Run()
 
   params.warehouse = warehouse_id;
   auto nr_items = detail.nr_items;
-
 
   bool all_local = true;
   for (auto i = 0; i < nr_items; i++) {
@@ -198,11 +236,6 @@ void NewOrderTxn::Run()
           });
     }
 
-    auto aff = std::numeric_limits<uint64_t>::max();
-    if (!Client::g_enable_granola && g_tpcc_config.nr_warehouses != 1) {
-      aff = AffinityFromRows(bitmap, {state->oorder, state->neworder, state->cididx});
-    }
-
     root->Then(
         MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
         [](const auto &ctx, auto args) -> Optional<VoidValue> {
@@ -224,8 +257,7 @@ void NewOrderTxn::Run()
           }
 
           return nullopt;
-        },
-        aff);
+        });
   }
 
   for (auto &p: state->orderlines_nodes) {
@@ -308,9 +340,8 @@ void NewOrderTxn::Run()
 
         auto aff = std::numeric_limits<uint64_t>::max();
 
-        if (g_tpcc_config.nr_warehouses != 1) {
-          aff = state->initialize_aff;
-        }
+        if (g_tpcc_config.IsWarehousePinnable())
+          aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
 
         root->Then(
             MakeContext(bitmap, warehouse_id, params), node,
@@ -326,7 +357,8 @@ void NewOrderTxn::Run()
                     i);
               }
               return nullopt;
-            }, aff);
+            },
+            aff);
       } else {
         // Remote piece
         root->Then(

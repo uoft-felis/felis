@@ -52,17 +52,50 @@ void PaymentTxn::PrepareImpl()
   auto customer_key = Customer::Key::New(
       customer_warehouse_id, customer_district_id, customer_id);
 
-  state->nodes =
-      TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
-          nullptr,
-          KeyParam<Warehouse>(warehouse_key),
-          KeyParam<District>(district_key),
-          KeyParam<Customer>(customer_key));
+  if (!VHandleSyncService::g_lock_elision) {
+    state->nodes =
+        TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
+            nullptr,
+            KeyParam<Warehouse>(warehouse_key),
+            KeyParam<District>(district_key),
+            KeyParam<Customer>(customer_key));
 
-  if (g_tpcc_config.nr_warehouses != 1) {
-    state->initialize_aff = client->get_initialization_locality_manager().GetScheduleCore(
-        Config::WarehouseToCoreId(warehouse_id));
-    root->AssignAffinity(state->initialize_aff);
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+    }
+  } else {
+    // Bohm partitioning
+
+    state->nodes = NodeBitmap();
+    auto offset = Tuple<int>(0);
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      txn_indexop_affinity = warehouse_id - 1;
+      TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, Tuple<int>>(
+          &offset, KeyParam<Warehouse>(warehouse_key), KeyParam<District>(district_key));
+
+      offset = Tuple<int>(2);
+      txn_indexop_affinity = customer_warehouse_id - 1;
+      TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, Tuple<int>>(
+          &offset, KeyParam<Customer>(customer_key));
+    } else {
+      ASSERT_BOHM_CONT;
+
+      txn_indexop_affinity = 1; // Warehouse(1) partition
+      TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, Tuple<int>>(
+          &offset, KeyParam<Warehouse>(warehouse_key));
+
+      offset = Tuple<int>(1);
+      txn_indexop_affinity = (district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
+      TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, Tuple<int>>(
+          &offset, KeyParam<District>(district_key));
+
+      offset = Tuple<int>(2);
+      txn_indexop_affinity = (customer_district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
+      TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, Tuple<int>>(
+          &offset, KeyParam<Customer>(customer_key));
+    }
+
+    state->nodes.MergeOrAdd(1, 0x07);
   }
 }
 
@@ -132,8 +165,8 @@ void PaymentTxn::Run()
         } else if (filter == 0x02) {
           aff = customer_warehouse_id - 1;
         } else {
-          if (g_tpcc_config.nr_warehouses != 1)
-            aff = state->initialize_aff;
+          if (g_tpcc_config.IsWarehousePinnable())
+            aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
         }
 
         root->Then(

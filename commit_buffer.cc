@@ -16,11 +16,12 @@ CommitBuffer::CommitBuffer()
   dup_hashtable = (std::atomic<Entry *> *) mem::AllocMemory(
       mem::MemAllocType::GenericMemory, dup_hashtable_size * sizeof(Entry *));
   clear_refcnt = NodeConfiguration::g_nr_threads;
+
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+    auto lmt = EpochClient::g_txn_per_epoch * 6_K / NodeConfiguration::g_nr_threads;
     int numa_node = i / mem::kNrCorePerNode;
-    static constexpr size_t brklimit = 2_M;
     entbrks[i] = mem::Brk::New(
-        mem::AllocMemory(mem::MemAllocType::GenericMemory, brklimit, numa_node), brklimit);
+        mem::AllocMemory(mem::MemAllocType::GenericMemory, lmt, numa_node), lmt);
     entbrks[i]->set_thread_safe(false);
   }
 }
