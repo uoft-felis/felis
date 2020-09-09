@@ -14,6 +14,7 @@ static struct ProbeMain {
   agg::Agg<agg::Average> init_fail_avg;
   agg::Agg<agg::Max<uint64_t>> init_fail_max;
   agg::Agg<agg::Histogram<512, 0, 2>> init_fail_hist;
+  agg::Agg<agg::Sum> init_fail_cnt;
 
   agg::Agg<agg::Average> init_succ_avg;
   agg::Agg<agg::Max<uint64_t>> init_succ_max;
@@ -47,6 +48,7 @@ thread_local struct ProbePerCore {
   AGG(init_fail_avg);
   AGG(init_fail_max);
   AGG(init_fail_hist);
+  AGG(init_fail_cnt);
   AGG(init_succ_avg);
   AGG(init_succ_max);
   AGG(init_succ_hist);
@@ -82,6 +84,8 @@ template <> void OnProbe(felis::probes::PriInitQueueTime p)
 
 template <> void OnProbe(felis::probes::PriInitTime p)
 {
+  if (p.fail_time != 0)
+    statcnt.init_fail_cnt << p.fail_cnt;
   statcnt.init_fail_avg << p.fail_time;
   statcnt.init_fail_max.addData(p.fail_time, p.sid);
   statcnt.init_fail_hist << p.fail_time;
@@ -131,6 +135,7 @@ ProbeMain::~ProbeMain()
   std::cout << global.init_queue_hist();
 
   std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
+            << "(failed txn cnt: " << global.init_fail_cnt() << ") "
             << "(max: " << global.init_fail_max() << ")" << std::endl;
   std::cout << global.init_fail_hist();
 

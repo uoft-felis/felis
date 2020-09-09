@@ -38,6 +38,7 @@ struct PriInitQueueTime {
 struct PriInitTime {
   uint64_t succ_time;
   uint64_t fail_time;
+  int fail_cnt;
   uint64_t sid;
   void operator()() const;
 };

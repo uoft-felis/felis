@@ -67,15 +67,16 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
     return false;
   }
   uint64_t fail_tsc = start_tsc;
+  int fail_cnt = 0;
   while (!txn->Init()) {
     fail_tsc = __rdtsc();
-    // TODO: record fail count
+    ++fail_cnt;
   }
   uint64_t succ_tsc = __rdtsc();
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
   // fail = ((util::Instance<felis::PriorityTxnService>().GetMaxProgress() -  util::Instance<felis::PriorityTxnService>().GetProgress(core_id)) & 0xFFFFFFFF) >> 8;
   // debug(TRACE_PRIORITY "Priority txn {:p} (MW) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  felis::probes::PriInitTime{succ / 2200, fail / 2200, txn->serial_id()}();
+  felis::probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
 
 
   struct Context {

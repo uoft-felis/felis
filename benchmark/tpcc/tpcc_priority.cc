@@ -68,15 +68,16 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
     return false;
   }
   uint64_t fail_tsc = start_tsc;
+  int fail_cnt = 0;
   while (!txn->Init()) {
     fail_tsc = __rdtsc();
-    // TODO: record fail count
+    ++fail_cnt;
   }
   uint64_t succ_tsc = __rdtsc();
   txn->measure_tsc = succ_tsc;
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
   // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  felis::probes::PriInitTime{succ / 2200, fail / 2200, txn->serial_id()}();
+  felis::probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
 
 
   struct Context {
