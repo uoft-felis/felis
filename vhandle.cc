@@ -516,6 +516,13 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
   auto varstr_ptr = *addr;
   if (varstr_ptr == kIgnoreValue)
     return handle->ReadWithVersion(ver_extra);
+
+  // mark read bit
+  if (!(varstr_ptr & kReadBitMask)) {
+    *addr = varstr_ptr | kReadBitMask;
+  }
+  varstr_ptr = varstr_ptr & ~kReadBitMask;
+
   return (VarStr *) varstr_ptr;
 }
 
