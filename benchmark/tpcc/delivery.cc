@@ -124,8 +124,10 @@ void DeliveryTxn::Run()
       if (bitmap == (1 << 3)) continue;
       auto aff = std::numeric_limits<uint64_t>::max();
 
-      if (!Client::g_enable_granola && g_tpcc_config.IsWarehousePinnable())
+      if (g_tpcc_config.IsWarehousePinnable())
         aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+      else if (Options::kEnablePartition)
+        aff = (i + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
 
       root->Then(
           MakeContext(bitmap, i, o_carrier_id), node,
@@ -191,7 +193,8 @@ void DeliveryTxn::Run()
               state->customer_future[i].Invoke(state, index_handle, i, ts);
 
               return nullopt;
-            });
+            },
+            aff);
       }
 #endif
 
@@ -236,9 +239,6 @@ void DeliveryTxn::Run()
       }
 #endif
     }
-  }
-  if (Client::g_enable_granola) {
-    root->AssignAffinity(warehouse_id - 1);
   }
 }
 

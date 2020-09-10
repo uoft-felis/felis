@@ -107,7 +107,6 @@ void PaymentTxn::Run()
   auto &conf = util::Instance<NodeConfiguration>();
   for (auto &p: state->nodes) {
     auto [node, bitmap] = p;
-    std::array<int, 2> filters;
 
     if (conf.node_id() == node) {
       state->warehouse_future = UpdateForKey(
@@ -151,22 +150,33 @@ void PaymentTxn::Run()
           && !state->customer_future.has_callback())
         continue;
 
-      if (!Client::g_enable_granola) {
-        filters = {0x03, 0};
+      std::array<int, 3> filters;
+      if (!Options::kEnablePartition) {
+        filters = {0x07, 0, 0};
+      } else if (g_tpcc_config.IsWarehousePinnable()) {
+        filters = {0x03, 0x04, 0};
       } else {
-        filters = {0x01, 0x02};
+        filters = {0x01, 0x02, 0x04};
       }
 
       for (auto filter: filters) {
         if (filter == 0) continue;
         auto aff = std::numeric_limits<uint64_t>::max();
-        if (filter == 0x01) {
-          aff = warehouse_id - 1;
-        } else if (filter == 0x02) {
-          aff = customer_warehouse_id - 1;
-        } else {
-          if (g_tpcc_config.IsWarehousePinnable())
-            aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+
+        if (g_tpcc_config.IsWarehousePinnable()) {
+          if (filter & 0x01) {
+            aff = warehouse_id - 1;
+          } else if (filter == 0x04) {
+            aff = customer_warehouse_id - 1;
+          }
+        } else if (Options::kEnablePartition) {
+          if (filter & 0x01) {
+            aff = 1; // Warehouse(1) partition
+          } else if (filter & 0x02) {
+            aff = (district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
+          } else if (filter & 0x04) {
+            aff = (customer_district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
+          }
         }
 
         root->Then(
@@ -180,11 +190,11 @@ void PaymentTxn::Run()
                 state->warehouse_future.Invoke(state, index_handle, payment_amount);
               }
 
-              if ((bitmap & 0x02) && (filter & 0x01)) {
+              if ((bitmap & 0x02) && (filter & 0x02)) {
                 state->district_future.Invoke(state, index_handle, payment_amount);
               }
 
-              if ((bitmap & 0x04) && (filter & 0x02)) {
+              if ((bitmap & 0x04) && (filter & 0x04)) {
                 state->customer_future.Invoke(state, index_handle, payment_amount);
               }
               return nullopt;

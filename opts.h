@@ -64,6 +64,7 @@ struct Options {
   static inline const auto kEpochQueueLength = Option("EpochQueueLength");
   static inline const auto kVHandleLockElision = Option("VHandleLockElision", false);
   static inline const auto kVHandleBatchAppend = Option("VHandleBatchAppend", false);
+  static inline const auto kEnablePartition = Option("EnablePartition", false);
   static inline const auto kBatchAppendAlloc = Option("BatchAppendAlloc");
 
   // In 0.001 of txns per-epoch
@@ -81,7 +82,6 @@ struct Options {
 
   static inline const auto kYcsbContentionKey = Option("YcsbContentionKey");
   static inline const auto kYcsbSkewFactor = Option("YcsbSkewFactor");
-  static inline const auto kYcsbEnablePartition = Option("YcsbEnablePartition", false);
   static inline const auto kYcsbReadOnly = Option("YcsbReadOnly");
   static inline const auto kYcsbDependency = Option("YcsbDependency", false);
 

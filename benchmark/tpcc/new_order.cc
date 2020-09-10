@@ -301,7 +301,7 @@ void NewOrderTxn::Run()
   for (auto &p: state->stocks_nodes) {
     auto [node, bitmap] = p;
 
-    if (!Client::g_enable_granola) {
+    if (!Options::kEnablePartition) {
       auto &conf = util::Instance<NodeConfiguration>();
       if (node == conf.node_id()) {
         // Local
@@ -387,36 +387,33 @@ void NewOrderTxn::Run()
       }
 
     } else {
-      // Granola needs partitioning, that's why we need to split this into
-      // multiple pieces even if this piece could totally be executed on the same
-      // node.
-      std::array<int, NewOrderStruct::kNewOrderMaxItems> warehouse_filters;
-      int nr_warehouse_filters = 0;
-      warehouse_filters.fill(0);
+      std::array<int, NewOrderStruct::kNewOrderMaxItems> unique_warehouses;
+      int nr_unique_warehouses = 0;
+      unique_warehouses.fill(0);
 
       for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
         if ((bitmap & (1 << i)) == 0) continue;
 
         auto supp_warehouse = detail.supplier_warehouse_id[i];
-        if (std::find(warehouse_filters.begin(), warehouse_filters.begin() + nr_warehouse_filters,
-                      supp_warehouse) == warehouse_filters.begin() + nr_warehouse_filters) {
-          warehouse_filters[nr_warehouse_filters++] = supp_warehouse;
+        if (std::find(unique_warehouses.begin(), unique_warehouses.begin() + nr_unique_warehouses,
+                      supp_warehouse) == unique_warehouses.begin() + nr_unique_warehouses) {
+          unique_warehouses[nr_unique_warehouses++] = supp_warehouse;
         }
       }
-      for (int f = 0; f < nr_warehouse_filters; f++) {
-        auto filter = warehouse_filters[f];
+      for (int f = 0; f < nr_unique_warehouses; f++) {
+        auto w = unique_warehouses[f];
         auto aff = std::numeric_limits<uint64_t>::max();
 
-        aff = filter - 1;
+        aff = w - 1;
 
         root->Then(
-            MakeContext(bitmap, params, filter), node,
+            MakeContext(bitmap, params, w), node,
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
-              auto &[state, index_handle, bitmap, params, filter] = ctx;
+              auto &[state, index_handle, bitmap, params, w] = ctx;
 
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
                 if ((bitmap & (1 << i)) == 0) continue;
-                if (filter > 0 && params.supplier_warehouses[i] != filter) continue;
+                if (w > 0 && params.supplier_warehouses[i] != w) continue;
 
                 debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
                       index_handle.serial_id(), i, (void *) state->stocks[i]);

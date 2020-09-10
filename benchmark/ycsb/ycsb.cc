@@ -100,7 +100,7 @@ void RMWTxn::Prepare()
   if (Client::g_enable_granola)
     return;
 
-  if (!Client::g_enable_lock_elision) {
+  if (!Options::kVHandleLockElision) {
     Ycsb::Key dbk[kTotal];
     for (int i = 0; i < kTotal; i++) dbk[i].k = keys[i];
     INIT_ROUTINE_BRK(8192);
@@ -148,7 +148,7 @@ void RMWTxn::Run()
   if (Client::g_dependency)
     state->signal = 0;
 
-  if (!Client::g_enable_partition) {
+  if (!Options::kEnablePartition) {
     auto bitmap = 1ULL << (kTotal - Client::g_extra_read - 1);
     for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
       state->futures[i] = UpdateForKey(
@@ -283,8 +283,6 @@ void YcsbLoader::Run()
 
 size_t Client::g_table_size = 10000000;
 double Client::g_theta = 0.00;
-bool Client::g_enable_partition = false;
-bool Client::g_enable_lock_elision = false;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;
 bool Client::g_dependency = false;
