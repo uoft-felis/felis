@@ -91,6 +91,12 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   // issue promise
   int core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
   // int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  uint64_t cur_prog = util::Instance<felis::PriorityTxnService>().GetProgress(core_id) >> 8;
+  uint64_t seq = (txn->serial_id() >> 8);
+  uint64_t diff_to_cur_progress = (seq > cur_prog) ? (seq - cur_prog) : 0;
+  felis::probes::Distance{diff_to_cur_progress, txn->serial_id()}();
+  // distance: how many txn sids from the acquired sid to the core's current progress
+
   auto lambda =
       [](std::tuple<Context> capture) {
         auto [ctx] = capture;

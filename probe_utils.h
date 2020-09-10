@@ -99,7 +99,7 @@ static inline std::ostream &operator<<(std::ostream &out, const Average &avg)
     out << "NaN";
     return out;
   }
-  out << 1.0l * avg.sum / avg.cnt;
+  out << 1.0l * avg.sum / avg.cnt << " (cnt " << avg.cnt << ")";
   return out;
 }
 

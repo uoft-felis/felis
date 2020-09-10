@@ -62,6 +62,17 @@ struct PriExecTime {
   void operator()() const;
 };
 
+struct PieceTime {
+  uint64_t time;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct Distance {
+  uint64_t dist;
+  uint64_t sid;
+  void operator()() const;
+};
 }
 }
 
@@ -74,5 +85,7 @@ struct PriExecTime {
   PROBE_PROXY(felis::probes::PriExecIssueTime); \
   PROBE_PROXY(felis::probes::PriExecQueueTime); \
   PROBE_PROXY(felis::probes::PriExecTime); \
+  PROBE_PROXY(felis::probes::PieceTime); \
+  PROBE_PROXY(felis::probes::Distance); \
 
 #endif /* FELIS_PROBES_H */

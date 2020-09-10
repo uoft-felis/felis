@@ -36,6 +36,13 @@ static struct ProbeMain {
   agg::Agg<agg::Max<uint64_t>> total_latency_max;
   agg::Agg<agg::Histogram<512, 0, 6>> total_latency_hist;
 
+  agg::Agg<agg::Average> piece_avg;
+  agg::Agg<agg::Max<uint64_t>> piece_max;
+  agg::Agg<agg::Histogram<512, 0, 10>> piece_hist;
+
+  agg::Agg<agg::Average> dist_avg;
+  agg::Agg<agg::Max<uint64_t>> dist_max;
+  agg::Agg<agg::Histogram<512, 0, 1>> dist_hist;
   ~ProbeMain();
 } global;
 
@@ -64,6 +71,12 @@ thread_local struct ProbePerCore {
   AGG(total_latency_avg);
   AGG(total_latency_max);
   AGG(total_latency_hist);
+  AGG(piece_avg);
+  AGG(piece_max);
+  AGG(piece_hist);
+  AGG(dist_avg);
+  AGG(dist_max);
+  AGG(dist_hist);
 } statcnt;
 
 // Default for all probes
@@ -117,6 +130,21 @@ template <> void OnProbe(felis::probes::PriExecTime p)
   statcnt.total_latency_hist << p.total_latency;
   statcnt.total_latency_max.addData(p.total_latency, p.sid);
 }
+
+template <> void OnProbe(felis::probes::PieceTime p)
+{
+  statcnt.piece_avg << p.time;
+  statcnt.piece_hist << p.time;
+  statcnt.piece_max.addData(p.time, p.sid);
+}
+
+template <> void OnProbe(felis::probes::Distance p)
+{
+  statcnt.dist_avg << p.dist;
+  statcnt.dist_hist << p.dist;
+  statcnt.dist_max.addData(p.dist, p.sid);
+}
+
 enum PriTxnMeasureType : int{
   InitQueue,
   InitFail,
@@ -130,6 +158,10 @@ enum PriTxnMeasureType : int{
 
 ProbeMain::~ProbeMain()
 {
+  std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << "  us "
+            << "(max: " << global.piece_max() << ")" << std::endl;
+  std::cout << global.piece_hist();
+
   std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
             << "(max: " << global.init_queue_max() << ")" << std::endl;
   std::cout << global.init_queue_hist();
@@ -158,6 +190,10 @@ ProbeMain::~ProbeMain()
   std::cout << "[Pri-stat] total_latency " << global.total_latency_avg() << " us "
             << "(max: " << global.total_latency_max() << ")" << std::endl;
   std::cout << global.total_latency_hist();
+
+  std::cout << "[Pri-stat] dist " << global.dist_avg() << " sids "
+            << "(max: " << global.dist_max() << ")" << std::endl;
+  std::cout << global.dist_hist();
 
   // std::cout << global.wait_cnt() << std::endl;
 }

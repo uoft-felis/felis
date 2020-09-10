@@ -300,7 +300,11 @@ void BasePromise::ExecutionRoutine::Run()
         util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
       }
 
+      auto tsc = __rdtsc();
       RunPromiseRoutine(rt, in);
+      auto diff = (__rdtsc() - tsc) / 2200;
+      if (rt->sched_key != 0)
+        felis::probes::PieceTime{diff, rt->sched_key}();
       svc.Complete(core_id);
 
       if (hasTxn && pieceFromPriTxn) {
