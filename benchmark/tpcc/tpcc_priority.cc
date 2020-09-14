@@ -8,10 +8,10 @@ void GeneratePriorityTxn() {
   int txn_per_epoch = felis::PriorityTxnService::g_nr_priority_txn;
   for (auto i = 1; i < felis::EpochClient::g_max_epoch; ++i) {
     for (auto j = 1; j <= txn_per_epoch; ++j) {
-      felis::PriorityTxn *txn = new felis::PriorityTxn(&StockTxn_Run);
-      txn->epoch = i;
-      txn->delay = 2200 * felis::PriorityTxnService::g_interval_priority_txn * j;
-      util::Instance<felis::PriorityTxnService>().PushTxn(txn);
+      felis::PriorityTxn txn(&StockTxn_Run);
+      txn.epoch = i;
+      txn.delay = 2200 * felis::PriorityTxnService::g_interval_priority_txn * j;
+      util::Instance<felis::PriorityTxnService>().PushTxn(&txn);
     }
   }
   logger->info("[Pri-init] pri txns pre-generated, {} per epoch", txn_per_epoch);

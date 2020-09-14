@@ -61,7 +61,7 @@ void PriorityTxnService::PushTxn(PriorityTxn* txn) {
            "[pri] Priority txn is turned off. Why are you trying to push a PriorityTxn?");
   int core_id = this->core.fetch_add(1) % NodeConfiguration::g_nr_threads;
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
-  svc.Add(core_id, txn);
+  svc.Add(core_id, txn); // txn is copied to the core it's adding to
 }
 
 std::string format_sid(uint64_t sid)
