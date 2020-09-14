@@ -3,6 +3,7 @@
 
 namespace felis {
 
+bool PriorityTxnService::g_read_bit = false;
 size_t PriorityTxnService::g_queue_length = 32_K;
 size_t PriorityTxnService::g_slot_percentage = 0;
 size_t PriorityTxnService::g_backoff_distance = 100;
@@ -13,6 +14,8 @@ unsigned long long PriorityTxnService::g_tsc = 0;
 
 PriorityTxnService::PriorityTxnService()
 {
+  if (Options::kReadBit)
+    g_read_bit = true;
   if (Options::kTxnQueueLength)
     g_queue_length = Options::kTxnQueueLength.ToLargeNumber();
   if (Options::kSlotPercentage)

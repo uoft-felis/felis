@@ -82,6 +82,7 @@ struct Options {
   static inline const auto kEnableGranola = Option("EnableGranola");
 
   static inline const auto kPriorityTxn = Option("PriorityTxn");
+  static inline const auto kReadBit = Option("ReadBit");
   static inline const auto kTxnQueueLength = Option("TxnQueueLength");
   static inline const auto kSlotPercentage = Option("SlotPercentage");
   static inline const auto kBackoffDist = Option("BackoffDist");

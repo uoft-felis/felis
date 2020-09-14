@@ -19,6 +19,7 @@ class PriorityTxnService {
   util::SpinLock lock;
 
  public:
+  static bool g_read_bit;
   // total number of priority txn queue length
   static size_t g_queue_length;
   // extra percentage of slots to add. say we have 100 batched txns, % is 20,
