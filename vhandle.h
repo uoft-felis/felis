@@ -15,8 +15,8 @@
 namespace felis {
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
-const uintptr_t kIgnoreValue = 0xFE19C02EFFFFFFFF;
-const uintptr_t kRetryValue = 0xFE3E737EFFFFFFFF;
+static const uintptr_t kIgnoreValue = 0xFE19C02EFFFFFFFF;
+static const uintptr_t kRetryValue = 0xFE3E737EFFFFFFFF;
 const uint64_t kReadBitMask = 1ULL << 56;
 
 class VHandleSyncService {
@@ -114,6 +114,7 @@ class LinkedListExtraVHandle {
 
   bool AppendNewVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
+  bool CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
 };
 #endif
@@ -173,6 +174,7 @@ class SortedArrayVHandle : public BaseVHandle {
   bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool priority = false);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
+  bool CheckReadBit(uint64_t sid);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
   void GarbageCollect();

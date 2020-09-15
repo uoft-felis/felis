@@ -43,7 +43,7 @@ class PriorityTxnService {
 
  private:
   uint64_t SIDLowerBound();
-  uint64_t GetSID();
+  uint64_t GetSID(PriorityTxn* txn);
 
  public:
   static json11::Json::object PrintStats();
@@ -53,6 +53,7 @@ class PriorityTxnService {
 
 class PriorityTxn {
  friend class BasePromise::ExecutionRoutine;
+ friend class PriorityTxnService;
  private:
   uint64_t sid;
   bool initialized; // meaning the registered VHandles would be valid

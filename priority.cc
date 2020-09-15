@@ -169,16 +169,18 @@ uint64_t PriorityTxnService::SIDLowerBound()
 }
 
 // B. find a serial id for the calling priority txn
-// TODO: scheme 2, scan txn write set
-uint64_t PriorityTxnService::GetSID()
+uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 {
+  if (g_read_bit) {
+    // TODO
+  }
   lock.Lock();
   uint64_t lb = SIDLowerBound();
   if (last_sid > lb) lb = last_sid;
   // debug(TRACE_PRIORITY "lower_bound: {}", format_sid(lb));
   uint64_t node_id = lb & 0xFF, epoch_nr = lb >> 32, seq = lb >> 8 & 0xFFFFFF;
 
-  // scheme 1: leave empty slots
+  // leave empty slots
   //   every k serial id has 1 slot reserved for priority txn in the back
   //   e.g. percentage=20, then k=6 (1~5 is batched txns, 6 is the slot reserved)
   abort_if(PriorityTxnService::g_slot_percentage <= 0, "pri % is {}",
@@ -199,7 +201,7 @@ bool PriorityTxn::Init()
   if (this->initialized)
     return false; // you must call Init() after the register calls, once and only once
 
-  sid = util::Instance<PriorityTxnService>().GetSID();
+  sid = util::Instance<PriorityTxnService>().GetSID(this);
   // debug(TRACE_PRIORITY "sid:         {}", format_sid(sid));
   if (sid == -1)
     return false; // hack
@@ -217,7 +219,13 @@ bool PriorityTxn::Init()
       revert_cnt = i;
       break;
     }
-    if (util::Instance<PriorityTxnService>().MaxProgressPassed(sid)) {
+
+    bool current_failed;
+    if (PriorityTxnService::g_read_bit)
+      current_failed = update_handles[i]->CheckReadBit(sid);
+    else
+      current_failed = util::Instance<PriorityTxnService>().MaxProgressPassed(sid);
+    if (current_failed) {
       // debug(TRACE_PRIORITY "Priority txn {:p} - epoch {} txn {} progress passed after appending row #{}", (void *)this, sid >> 32, sid >> 8 & 0xFFFFFF, revert_cnt);
       failed = true;
       revert_cnt = i + 1;

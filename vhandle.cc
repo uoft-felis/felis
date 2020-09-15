@@ -142,13 +142,12 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
         auto succ = extra_vhandle.compare_exchange_strong(old, temp);
         if (succ)
           old = temp;
-        else
+        else {
           delete temp; // somebody else allocated and CASed their ptr first, just use that
+          old = extra_vhandle.load(); // all to avoid an extra atomic load
+        }
       }
-      if (old != nullptr)
-        return old->AppendNewVersion(sid); // all to avoid an extra atomic load
-      else
-        return extra_vhandle.load()->AppendNewVersion(sid);
+      return old->AppendNewVersion(sid);
     }
 
     if (sid == 0) goto slowpath;
@@ -261,6 +260,30 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
   varstr_ptr = varstr_ptr & ~kReadBitMask;
 
   return (VarStr *) varstr_ptr;
+}
+
+// return true if sid's previous version has been read
+bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
+  abort_if(sid == -1, "sid == -1");
+  int pos;
+  volatile uintptr_t *addr = WithVersion(sid, pos);
+
+  uint64_t ver = (addr == nullptr) ? 0 : versions[pos];
+  auto extra = extra_vhandle.load();
+  bool is_in = false;
+  bool extra_result = extra ? extra->CheckReadBit(sid, ver, this, is_in) : false;
+  if (is_in) // if the previous version is in Extra VHandle, just use the result
+    return extra_result;
+
+  if (!addr) {
+    logger->critical("CheckReadBit() {} cannot find for sid {} begin is {}",
+                     (void *) this, sid, *versions);
+    return false;
+  }
+
+  if (*addr == kPendingValue)
+    return false; // if it's not written, it couldn't be read
+  return *addr & kReadBitMask;
 }
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
@@ -524,6 +547,30 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
   varstr_ptr = varstr_ptr & ~kReadBitMask;
 
   return (VarStr *) varstr_ptr;
+}
+
+// bool& is_in:  true if the previous version is indeed in the extra array
+// return value: true if read bit is set
+bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in) {
+  is_in = false;
+  Entry *p = head;
+  while (p && p->version >= sid)
+    p = p->next;
+
+  if (!p)
+    return false;
+
+  auto ver_extra = p->version;
+  if (ver_extra < ver)
+    return false;
+
+  is_in = true;
+  auto varstr_ptr = p->object;
+  if (varstr_ptr == kPendingValue)
+    return false; // if it's not written, it couldn't be read
+  if (varstr_ptr == kIgnoreValue)
+    return handle->CheckReadBit(ver_extra);
+  return varstr_ptr & kReadBitMask;
 }
 
 bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
