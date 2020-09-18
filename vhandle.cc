@@ -10,6 +10,7 @@
 #include "opts.h"
 #include "vhandle_batchappender.h"
 
+#include "priority.h"
 #include "literals.h"
 
 namespace felis {
@@ -284,6 +285,56 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
   if (*addr == kPendingValue)
     return false; // if it's not written, it couldn't be read
   return *addr & kReadBitMask;
+}
+
+// @param prev Previous lower bound of other rows.
+// @return the lower bound of the last consecutive unread versions
+//         for example: 5R  7  11R  33  35  39, return 33
+//         if answer found is smaller than prev, return prev
+//         if answer found is larger than max_progress, return max_progress
+uint64_t SortedArrayVHandle::FindUnreadVersionLowerBound(uint64_t prev)
+{
+  // use max progress to help speed up finding the last read bit version
+  int upper_pos;
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
+  volatile uintptr_t *ptr_obj = WithVersion(max_prog, upper_pos);
+  // logger->info("vhandle {}, max {}, prev {}, pos {}", (void*)this, max_prog, prev, upper_pos);
+
+  volatile uintptr_t *ptr_ver = &versions[upper_pos];
+  if (*ptr_ver < prev)
+    return prev;
+
+  if (*ptr_obj & kReadBitMask)
+    return max_prog;
+
+  while (!(*ptr_obj & kReadBitMask) && ptr_ver != versions) {
+    ptr_ver--;
+    ptr_obj--;
+    if (*ptr_ver <= prev)
+      return prev;
+  } // this while will at least happen once
+
+  if (ptr_ver == versions)
+    if (!(*ptr_obj & kReadBitMask)) {
+      return versions[0];
+    }
+
+  return *(ptr_ver + 1);
+}
+
+// according to read bit, get sid lower bound this row can use
+uint64_t SortedArrayVHandle::GetAvailableSID(uint64_t prev)
+{
+  // eg:    extra       6r          12      14r      16  18
+  //        vhandle 5r      7  11r     13r      15          19
+  // 1. in extra, find unread versions' lower bound: 16
+  // 2. in vhandle, try to find unread versions' lower bound, 15<16, don't look further
+  // 3. return 16
+  prev = this->FindUnreadVersionLowerBound(prev);
+  auto extra = extra_vhandle.load();
+  if (extra)
+    prev = extra->FindUnreadVersionLowerBound(prev);
+  return prev;
 }
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
@@ -571,6 +622,21 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
   if (varstr_ptr == kIgnoreValue)
     return handle->CheckReadBit(ver_extra);
   return varstr_ptr & kReadBitMask;
+}
+
+uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t prev)
+{
+  Entry dummy(0, 0, 0);
+  dummy.next = head;
+  Entry *cur = &dummy;
+  while (cur->next && !(cur->next->object & kReadBitMask)) {
+    cur = cur->next;
+    if (cur->version <= prev)
+      return prev;
+  }
+  if (cur == &dummy)
+    return util::Instance<PriorityTxnService>().GetMaxProgress();
+  return cur->version;
 }
 
 bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)

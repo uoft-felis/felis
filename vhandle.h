@@ -115,6 +115,7 @@ class LinkedListExtraVHandle {
   bool AppendNewVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
   bool CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in);
+  uint64_t FindUnreadVersionLowerBound(uint64_t prev);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
 };
 #endif
@@ -175,6 +176,8 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);
+  uint64_t FindUnreadVersionLowerBound(uint64_t prev);
+  uint64_t GetAvailableSID(uint64_t prev);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
   void GarbageCollect();

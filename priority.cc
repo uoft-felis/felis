@@ -171,11 +171,19 @@ uint64_t PriorityTxnService::SIDLowerBound()
 // B. find a serial id for the calling priority txn
 uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 {
-  if (g_read_bit) {
-    // TODO
-  }
   lock.Lock();
   uint64_t lb = SIDLowerBound();
+  if (g_read_bit) {
+    uint64_t prev = 0;
+    for (int i = 0; i < txn->update_handles.size(); ++i)
+      prev = txn->update_handles[i]->GetAvailableSID(prev);
+    if (prev < lb) {
+      if (prev == 0 || prev >> 32 < lb >> 32)
+        lb = lb & 0xFFFFFFFF000000FF;
+      else
+        lb = prev;
+    }
+  }
   if (last_sid > lb) lb = last_sid;
   // debug(TRACE_PRIORITY "lower_bound: {}", format_sid(lb));
   uint64_t node_id = lb & 0xFF, epoch_nr = lb >> 32, seq = lb >> 8 & 0xFFFFFF;
@@ -201,17 +209,25 @@ bool PriorityTxn::Init()
   if (this->initialized)
     return false; // you must call Init() after the register calls, once and only once
 
+  // acquire row lock in order (here addr order) to prevent deadlock
+  std::sort(update_handles.begin(), update_handles.end());
+
   sid = util::Instance<PriorityTxnService>().GetSID(this);
   // debug(TRACE_PRIORITY "sid:         {}", format_sid(sid));
   if (sid == -1)
     return false; // hack
 
-  // acquire row lock in order (here addr order) to prevent deadlock
-  std::sort(update_handles.begin(), update_handles.end());
-
   bool failed = false;
   int revert_cnt = 0; // if failed, # of handles we need to set to kIgnoreValue
   for (int i = 0; i < update_handles.size(); ++i) {
+    if (PriorityTxnService::g_read_bit)
+      if (update_handles[i]->CheckReadBit(sid)) {
+        failed = true;
+        revert_cnt = i;
+        break;
+      }
+
+
     bool succ = update_handles[i]->AppendNewVersion(sid, sid >> 32, true);
     if (!succ) {
       // debug(TRACE_PRIORITY "Priority txn {:p} - epoch {} txn {} append failed on VHandle {:p} (#{})", (void *)this, sid >> 32, sid >> 8 & 0xFFFFFF, (void*)update_handles[i], revert_cnt);
