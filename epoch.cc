@@ -482,10 +482,6 @@ void EpochClient::OnExecuteComplete()
         {"initialize_time", stats.initialize_time_ms},
         {"execution_time", stats.execution_time_ms},
       };
-      if (NodeConfiguration::g_priority_txn) {
-        for (auto &pair : pri_result)
-          result.insert(pair);
-      }
       auto node_name = util::Instance<NodeConfiguration>().config().name;
       time_t tm;
       char now[80];

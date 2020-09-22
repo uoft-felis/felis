@@ -1,8 +1,11 @@
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
 
 #include "felis_probes.h"
 #include "probe_utils.h"
+#include "opts.h"
+#include "node_config.h"
 
 static struct ProbeMain {
   agg::Agg<agg::LogHistogram<16>> wait_cnt;
@@ -156,6 +159,16 @@ enum PriTxnMeasureType : int{
   NumPriTxnMeasureType,
 };
 
+const std::string kPriTxnMeasureTypeLabel[] = {
+  "1init_queue",
+  "2init_fail",
+  "3init_succ",
+  "4exec_issue",
+  "5exec_queue",
+  "6exec",
+  "7total_latency",
+};
+
 ProbeMain::~ProbeMain()
 {
   std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << "  us "
@@ -195,33 +208,38 @@ ProbeMain::~ProbeMain()
             << "(max: " << global.dist_max() << ")" << std::endl;
   std::cout << global.dist_hist();
 
+  if (felis::NodeConfiguration::g_priority_txn && felis::Options::kOutputDir) {
+    json11::Json::object result;
+    const int size = PriTxnMeasureType::NumPriTxnMeasureType;
+    agg::Agg<agg::Average> *arr[size] = {
+      &global.init_queue_avg, &global.init_fail_avg, &global.init_succ_avg,
+      &global.exec_issue_avg, &global.exec_queue_avg, &global.exec_avg,
+      &global.total_latency_avg,
+    };
+
+    for (int i = 0; i < size; ++i) {
+      result.insert({kPriTxnMeasureTypeLabel[i], arr[i]->getAvg()});
+    }
+    result.insert({"8init_fail_cnt", std::to_string(global.init_fail_cnt.sum)});
+
+    auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
+    time_t tm;
+    char now[80];
+    time(&tm);
+    strftime(now, 80, "-%F-%X", localtime(&tm));
+    std::ofstream result_output(
+        felis::Options::kOutputDir.Get() + "/pri_" + node_name + now + ".json");
+    result_output << json11::Json(result).dump() << std::endl;
+  }
+
+
   // std::cout << global.wait_cnt() << std::endl;
 }
-
-const std::string kPriTxnMeasureTypeLabel[] = {
-  "init_queue",
-  "init_fail",
-  "init_succ",
-  "exec_issue",
-  "exec_queue",
-  "exec",
-  "total_latency",
-};
 
 namespace felis {
 namespace probes {
 
 json11::Json::object GetPriTxnStats() {
-  const int size = PriTxnMeasureType::NumPriTxnMeasureType;
-  agg::Agg<agg::Average> *arr[size] = {
-    &global.init_queue_avg, &global.init_fail_avg, &global.init_succ_avg,
-    &global.exec_issue_avg, &global.exec_queue_avg, &global.exec_avg,
-    &global.total_latency_avg,
-  };
-  json11::Json::object result;
-  for (int i = 0; i < size; ++i)
-    result.insert({kPriTxnMeasureTypeLabel[i], arr[i]->getAvg()});
-  return result;
 }
 
 }
