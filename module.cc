@@ -136,7 +136,7 @@ class CoroutineModule : public Module<CoreModule> {
     };
    public:
     CoroutineStackAllocator() {
-      auto nr_numa_nodes = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
+      auto nr_numa_nodes = (NodeConfiguration::g_nr_threads - 1) / mem::kNrCorePerNode + 1;
       for (int node = 0; node < nr_numa_nodes; node++) {
         pools[node] = mem::Pool(
             mem::Coroutine,

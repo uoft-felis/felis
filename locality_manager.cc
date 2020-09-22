@@ -14,7 +14,7 @@ LocalityManager::LocalityManager()
 {
   auto wd_size = util::Align(
       sizeof(WeightDist) + sizeof(long) * NodeConfiguration::g_nr_threads, 64);
-  for (int node = 0; node < NodeConfiguration::g_nr_threads / mem::kNrCorePerNode; node++) {
+  for (int node = 0; node < (NodeConfiguration::g_nr_threads - 1) / mem::kNrCorePerNode + 1; node++) {
     auto p = (uint8_t *) mem::AllocMemory(
         mem::MemAllocType::Epoch, wd_size * mem::kNrCorePerNode, node);
     for (int i = 0; i < mem::kNrCorePerNode; i++) {
@@ -26,7 +26,7 @@ LocalityManager::LocalityManager()
 
 LocalityManager::~LocalityManager()
 {
-  for (int node = 0; node < NodeConfiguration::g_nr_threads / mem::kNrCorePerNode; node++) {
+  for (int node = 0; node < (NodeConfiguration::g_nr_threads - 1) / mem::kNrCorePerNode + 1; node++) {
     // Free
   }
 }

@@ -8,7 +8,7 @@ namespace felis {
 
 static void *AllocateBuffer()
 {
-  auto nr_zone = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
+  auto nr_zone = (NodeConfiguration::g_nr_threads - 1) / mem::kNrCorePerNode + 1;
   auto p = (uint8_t *) mmap(
       nullptr,
       4096 * nr_zone,

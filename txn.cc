@@ -12,7 +12,7 @@ int BaseTxn::g_cur_numa_node = 0;
 
 void BaseTxn::InitBrk(long nr_epochs)
 {
-  auto nr_numa_nodes = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
+  auto nr_numa_nodes = (NodeConfiguration::g_nr_threads - 1) / mem::kNrCorePerNode + 1;
   auto lmt = 24_M * nr_epochs / nr_numa_nodes;
   for (auto n = 0; n < nr_numa_nodes; n++) {
     auto numa_node = n;
