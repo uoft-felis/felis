@@ -34,6 +34,8 @@ void OrderStatusTxn::Run()
 
   if (g_tpcc_config.IsWarehousePinnable()) {
     aff = Config::WarehouseToCoreId(warehouse_id);
+  } else if (Options::kEnablePartition) {
+    aff = (kBohmExtraPartitions + district_id) % NodeConfiguration::g_nr_threads;
   }
 
   root->Then(

@@ -45,6 +45,8 @@ void StockLevelTxn::Run()
   auto aff = std::numeric_limits<uint64_t>::max();
   if (g_tpcc_config.IsWarehousePinnable()) {
     aff = Config::WarehouseToCoreId(warehouse_id);
+  } else if (Options::kEnablePartition) {
+    aff = (kBohmExtraPartitions + district_id) % NodeConfiguration::g_nr_threads;
   }
   root->Then(
       MakeContext(warehouse_id, district_id, threshold), 0,

@@ -185,7 +185,7 @@ void RMWTxn::Run()
         },
         aff);
 
-  } else {
+  } else if (Client::g_enable_granola) {
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->Then(
@@ -193,11 +193,8 @@ void RMWTxn::Run()
               [](auto &ctx, auto _) -> Optional<VoidValue> {
                 auto [k, i, state, handle] = ctx;
 
-                if (Client::g_enable_granola && Client::g_dependency
-                    && i == kTotal - Client::g_extra_read - 1) {
-                  while (state->signal != i) {
-                    _mm_pause();
-                  }
+                if (Client::g_dependency && i == kTotal - Client::g_extra_read - 1) {
+                  while (state->signal != i) _mm_pause();
                 }
 
                 if (Client::g_enable_granola) {
@@ -216,14 +213,58 @@ void RMWTxn::Run()
                 if (i < kTotal - Client::g_extra_read) {
                   dbv.v.resize_junk(90);
                   vhandle.Write(dbv);
-                  if (Client::g_enable_granola && Client::g_dependency
-                      && i < kTotal - Client::g_extra_read - 1) {
+                  if (Client::g_dependency && i < kTotal - Client::g_extra_read - 1) {
                     state->signal.fetch_add(1);
                   }
                 }
                 return nullopt;
               },
               part);
+        });
+  } else {
+    // Bohm
+    RunOnPartition(
+        [this](auto part, auto root, const auto &t) {
+          const auto &[k, i, _1, _2] = t;
+          if (i > kTotal - Client::g_extra_read) return;
+
+          static thread_local volatile char buffer[100];
+
+          if (i == kTotal - Client::g_extra_read) {
+            // All reads here
+            root->Then(
+                t, 1,
+                [](auto &ctx, auto _) -> Optional<VoidValue> {
+                  auto [k, i, state, handle] = ctx;
+
+                  TxnRow vhandle = handle(state->rows[i]);
+                  auto v = vhandle.Read<Ycsb::Value>();
+                  std::copy(v.v.data(), v.v.data() + 100, buffer);
+
+                  return nullopt;
+                });
+          } else {
+            root->Then(
+                t, 1,
+                [](auto &ctx, auto _) -> Optional<VoidValue> {
+                  auto [k, i, state, handle] = ctx;
+                  // Last write
+                  if (Client::g_dependency && i == kTotal - Client::g_extra_read - 1) {
+                    while (state->signal != i) _mm_pause();
+                  }
+
+                  TxnRow vhandle = handle(state->rows[i]);
+                  auto v = vhandle.Read<Ycsb::Value>();
+
+                  std::copy(v.v.data(), v.v.data() + 100, buffer);
+
+                  v.v.resize_junk(90);
+                  vhandle.Write(v);
+                  state->signal.fetch_add(1);
+
+                  return nullopt;
+                }, part);
+          }
         });
   }
 }

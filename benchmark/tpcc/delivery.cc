@@ -181,7 +181,7 @@ void DeliveryTxn::Run()
 
             probes::TpccDelivery{1, 1}();
             auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
-            customer.c_balance = sum;
+            customer.c_balance += sum;
             index_handle(state->customers[i]).Write(customer);
             ClientBase::OnUpdateRow(state->customers[i]);
           }, i, ts);
@@ -230,7 +230,7 @@ void DeliveryTxn::Run()
 
                   probes::TpccDelivery{1, 1}();
                   auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
-                  customer.c_balance = sum;
+                  customer.c_balance += sum;
                   index_handle(state->customers[i]).Write(customer);
                   ClientBase::OnUpdateRow(state->customers[i]);
 
