@@ -4,6 +4,8 @@
 namespace felis {
 
 bool PriorityTxnService::g_read_bit = false;
+bool PriorityTxnService::g_fastest_core = false;
+bool PriorityTxnService::g_negative_distance = false;
 size_t PriorityTxnService::g_queue_length = 32_K;
 size_t PriorityTxnService::g_slot_percentage = 0;
 size_t PriorityTxnService::g_backoff_distance = 100;
@@ -16,6 +18,10 @@ PriorityTxnService::PriorityTxnService()
 {
   if (Options::kReadBit)
     g_read_bit = true;
+  if (Options::kFastestCore)
+    g_fastest_core = true;
+  if (Options::kNegativeDistance)
+    g_negative_distance = true;
   if (Options::kTxnQueueLength)
     g_queue_length = Options::kTxnQueueLength.ToLargeNumber();
   if (Options::kSlotPercentage)
@@ -144,14 +150,10 @@ bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
   return false;
 }
 
-json11::Json::object PriorityTxnService::PrintStats() {
-  json11::Json::object result;
+void PriorityTxnService::PrintStats() {
   if (!NodeConfiguration::g_priority_txn)
-    return result;
-
+    return;
   logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}  BackOffDist: {}", g_nr_priority_txn, g_interval_priority_txn, g_backoff_distance);
-  result = felis::probes::GetPriTxnStats();
-  return result;
 }
 
 // A. how far ahead should we put the priority txn
@@ -163,7 +165,16 @@ uint64_t PriorityTxnService::SIDLowerBound()
   // debug(TRACE_PRIORITY "max prog:    {}", format_sid(max));
 
   // scheme 1: backoff fixed distance
-  uint64_t new_seq = seq + g_backoff_distance;
+  uint64_t new_seq;
+  // default false
+  if (g_negative_distance) {
+    if (seq > g_backoff_distance)
+      new_seq = seq - g_backoff_distance;
+    else
+      new_seq = 0;
+  } else {
+    new_seq = seq + g_backoff_distance;
+  }
 
   return (epoch_nr << 32) | (new_seq << 8) | node_id;
 }
@@ -173,6 +184,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 {
   lock.Lock();
   uint64_t lb = SIDLowerBound();
+  /* using read bit to acquire SID is way too slow
   if (g_read_bit) {
     uint64_t prev = 0;
     for (int i = 0; i < txn->update_handles.size(); ++i)
@@ -184,6 +196,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
         lb = prev;
     }
   }
+  */
   if (last_sid > lb) lb = last_sid;
   // debug(TRACE_PRIORITY "lower_bound: {}", format_sid(lb));
   uint64_t node_id = lb & 0xFF, epoch_nr = lb >> 32, seq = lb >> 8 & 0xFFFFFF;

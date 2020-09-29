@@ -26,8 +26,6 @@ struct WaitCounters {
   void operator()() const;
 };
 
-json11::Json::object GetPriTxnStats();
-
 struct PriInitQueueTime {
   uint64_t time;
   uint64_t epoch_nr;

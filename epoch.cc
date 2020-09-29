@@ -471,7 +471,7 @@ void EpochClient::OnExecuteComplete()
                  stats.insert_time_ms, stats.initialize_time_ms, stats.execution_time_ms);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
-    auto pri_result = PriorityTxnService::PrintStats();
+    PriorityTxnService::PrintStats();
 
     if (Options::kOutputDir) {
       json11::Json::object result {

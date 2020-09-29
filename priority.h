@@ -20,6 +20,8 @@ class PriorityTxnService {
 
  public:
   static bool g_read_bit;
+  static bool g_fastest_core;
+  static bool g_negative_distance;
   // total number of priority txn queue length
   static size_t g_queue_length;
   // extra percentage of slots to add. say we have 100 batched txns, % is 20,
@@ -46,7 +48,7 @@ class PriorityTxnService {
   uint64_t GetSID(PriorityTxn* txn);
 
  public:
-  static json11::Json::object PrintStats();
+  static void PrintStats();
   static unsigned long long g_tsc;
 };
 
@@ -137,7 +139,12 @@ class PriorityTxn {
 
 
   template <typename T, typename Lambda>
-  void IssuePromise(T input, Lambda lambda, int core_id) {
+  void IssuePromise(T input, Lambda lambda) {
+    int core_id;
+    if (PriorityTxnService::g_fastest_core)
+      core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
+    else
+      core_id = go::Scheduler::CurrentThreadPoolId() - 1;
     auto capture = std::make_tuple(input);
     auto empty_input = felis::VarStr::FromAlloca(alloca(sizeof(felis::VarStr)), sizeof(felis::VarStr));
 

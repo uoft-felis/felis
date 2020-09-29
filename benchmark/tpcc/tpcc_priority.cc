@@ -126,7 +126,7 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
               txn};
   memcpy(ctx.stock_quantities, txnInput.detail.stock_quantities, sizeof(uint) * ctx.nr_items);
   memcpy(ctx.stock_rows, &stock_rows[0], sizeof(felis::VHandle*) * ctx.nr_items);
-  txn->IssuePromise(ctx, lambda, core_id);
+  txn->IssuePromise(ctx, lambda);
   // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
 
   // record exec issue time

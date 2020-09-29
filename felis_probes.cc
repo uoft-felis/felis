@@ -171,6 +171,10 @@ const std::string kPriTxnMeasureTypeLabel[] = {
 
 ProbeMain::~ProbeMain()
 {
+  // std::cout << global.wait_cnt() << std::endl;
+
+  if (!felis::NodeConfiguration::g_priority_txn)
+    return;
   std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << "  us "
             << "(max: " << global.piece_max() << ")" << std::endl;
   std::cout << global.piece_hist();
@@ -232,17 +236,7 @@ ProbeMain::~ProbeMain()
     result_output << json11::Json(result).dump() << std::endl;
   }
 
-
-  // std::cout << global.wait_cnt() << std::endl;
 }
 
-namespace felis {
-namespace probes {
-
-json11::Json::object GetPriTxnStats() {
-}
-
-}
-}
 
 PROBE_LIST;
