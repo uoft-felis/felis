@@ -36,12 +36,14 @@ void StockLevelTxn::PrepareInsert()
   auto &mgr = util::Instance<TableManager>();
   auto auto_inc_zone = warehouse_id * 10 + district_id;
   state->current_oid = mgr.Get<OOrder>().GetCurrentAutoIncrement(auto_inc_zone);
-
-  client->get_execution_locality_manager().PlanLoad(Config::WarehouseToCoreId(warehouse_id), 150);
+  // client->get_execution_locality_manager().PlanLoad(Config::WarehouseToCoreId(warehouse_id), 150);
 }
 
 void StockLevelTxn::Run()
 {
+  if (client->g_enable_granola)
+    PrepareInsert();
+
   auto aff = std::numeric_limits<uint64_t>::max();
   if (g_tpcc_config.IsWarehousePinnable()) {
     aff = Config::WarehouseToCoreId(warehouse_id);

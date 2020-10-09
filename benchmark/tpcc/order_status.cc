@@ -23,7 +23,7 @@ class OrderStatusTxn : public Txn<OrderStatusState>, public OrderStatusStruct {
   void Run() override final;
   void PrepareInsert() override final {}
   void Prepare() override final {
-    client->get_execution_locality_manager().PlanLoad(warehouse_id - 1, 4);
+    // client->get_execution_locality_manager().PlanLoad(warehouse_id - 1, 4);
   }
 };
 
