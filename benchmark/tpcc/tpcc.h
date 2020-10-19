@@ -109,7 +109,7 @@ struct Customer {
     return *v;
   }
   static constexpr auto kTable = TableType::Customer;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 8 << 20);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 8 << 20, false);
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::CustomerKey;
   using Value = sql::CustomerValue;
@@ -120,7 +120,7 @@ struct Customer {
 
 struct CustomerNameIdx {
   static constexpr auto kTable = TableType::CustomerNameIdx;
-  static constexpr auto kIndexArgs = std::make_tuple();
+  static constexpr auto kIndexArgs = std::make_tuple(false);
   using IndexBackend = felis::MasstreeIndex;
   using Key = sql::CustomerNameIdxKey;
   using Value = sql::CustomerNameIdxValue;
@@ -133,7 +133,7 @@ struct District {
     return (((k->data[3] - 1) << 4) | (k->data[7] - 1)) << 9;
   }
   static constexpr auto kTable = TableType::District;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 4096 << 9);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 4096 << 9, false);
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::DistrictKey;
   using Value = sql::DistrictValue;
@@ -142,7 +142,7 @@ struct District {
 
 struct History {
   static constexpr auto kTable = TableType::History;
-  static constexpr auto kIndexArgs = std::make_tuple();
+  static constexpr auto kIndexArgs = std::make_tuple(false);
   using IndexBackend = felis::MasstreeIndex;
   using Key = sql::HistoryKey;
   using Value = sql::HistoryValue;
@@ -155,7 +155,7 @@ struct Item {
   }
 
   static constexpr auto kTable = TableType::Item;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 2 << 20);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 2 << 20, true);
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::ItemKey;
   using Value = sql::ItemValue;
@@ -163,7 +163,7 @@ struct Item {
 
 struct NewOrder {
   static constexpr auto kTable = TableType::NewOrder;
-  static constexpr auto kIndexArgs = std::make_tuple();
+  static constexpr auto kIndexArgs = std::make_tuple(true);
   using IndexBackend = felis::MasstreeIndex;
   using Key = sql::NewOrderKey;
   using Value = sql::NewOrderValue;
@@ -179,7 +179,7 @@ struct OOrder {
   */
   static constexpr auto kTable = TableType::OOrder;
   // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 32 << 20);
-  static constexpr auto kIndexArgs = std::make_tuple();
+  static constexpr auto kIndexArgs = std::make_tuple(true);
   using IndexBackend = felis::MasstreeIndex;
   using Key = sql::OOrderKey;
   using Value = sql::OOrderValue;
@@ -187,7 +187,7 @@ struct OOrder {
 
 struct OOrderCIdIdx {
   static constexpr auto kTable = TableType::OOrderCIdIdx;
-  static constexpr auto kIndexArgs = std::make_tuple();
+  static constexpr auto kIndexArgs = std::make_tuple(true);
   using IndexBackend = felis::MasstreeIndex;
   using Key = sql::OOrderCIdIdxKey;
   using Value = sql::OOrderCIdIdxValue;
@@ -195,7 +195,7 @@ struct OOrderCIdIdx {
 
 struct OrderLine {
   static constexpr auto kTable = TableType::OrderLine;
-  static constexpr auto kIndexArgs = std::make_tuple();
+  static constexpr auto kIndexArgs = std::make_tuple(true);
   using IndexBackend = felis::MasstreeIndex;
   using Key = sql::OrderLineKey;
   using Value = sql::OrderLineValue;
@@ -207,7 +207,7 @@ struct Stock {
     return *(uint32_t *) x;
   }
   static constexpr auto kTable = TableType::Stock;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 16 << 20);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 16 << 20, false);
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::StockKey;
   using Value = sql::StockValue;
@@ -230,7 +230,7 @@ struct Warehouse {
   }
 
   static constexpr auto kTable = TableType::Warehouse;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, false);
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::WarehouseKey;
   using Value = sql::WarehouseValue;

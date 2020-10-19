@@ -28,6 +28,8 @@ class VHandleSyncService {
 
 class BaseVHandle {
  public:
+  static constexpr size_t kSize = 128;
+  static constexpr size_t kInlinedSize = 256;
   static mem::ParallelSlabPool pool;
 
   // Cicada uses inline data to reduce cache misses. These inline rows are much

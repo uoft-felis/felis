@@ -37,9 +37,9 @@ static_assert(sizeof(HashEntry) == 32);
 class HashtableIndex final : public Table {
   HashFunc hash;
   size_t nr_buckets;
-  std::atomic<HashEntry *> *table;
+  uint8_t *table;
  public:
-  HashtableIndex(std::tuple<HashFunc, size_t> conf);
+  HashtableIndex(std::tuple<HashFunc, size_t, bool> conf);
 
   VHandle *SearchOrCreate(const VarStr *k, bool *created) override;
   VHandle *SearchOrCreate(const VarStr *k) override;

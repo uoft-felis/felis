@@ -84,9 +84,10 @@ bool MasstreeMap::Iterator<MasstreeMap::reverse_scan_iterator_impl>::IsValid() c
     return !this->terminated && !(cur_key < *end_key);
 }
 
-MasstreeIndex::MasstreeIndex(std::tuple<> conf) noexcept
+MasstreeIndex::MasstreeIndex(std::tuple<bool> conf) noexcept
     : Table()
 {
+  enable_inline = std::get<0>(conf);
   auto tree = new (get_map()) MasstreeMap();
   auto ti = GetThreadInfo();
   tree->initialize(*ti);

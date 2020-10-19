@@ -147,12 +147,6 @@ void InitializeTPCC()
   mgr.Create<Customer, District, History, Item, NewOrder, OOrder, OOrderCIdIdx,
              OrderLine, Stock, Warehouse>();
 
-  mgr.Get<Item>().set_enable_inline(true);
-  mgr.Get<NewOrder>().set_enable_inline(true);
-  mgr.Get<OOrder>().set_enable_inline(true);
-  mgr.Get<OOrderCIdIdx>().set_enable_inline(true);
-  mgr.Get<OrderLine>().set_enable_inline(true);
-
   logger->info("TPCC Table schemas created");
 }
 

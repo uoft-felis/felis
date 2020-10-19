@@ -64,33 +64,57 @@ VHandle *HashEntry::value() const
   return (VHandle *) ((uint8_t *) this - 96);
 }
 
-HashtableIndex::HashtableIndex(std::tuple<HashFunc, size_t> conf)
+static HashEntry *kNextForUninitialized = (HashEntry *) 0;
+static HashEntry *kNextForInitializing = (HashEntry *) 0xdeadbeef00000000;
+static HashEntry *kNextForEnd = (HashEntry *) 0xEDEDEDEDEDEDEDED;
+
+HashtableIndex::HashtableIndex(std::tuple<HashFunc, size_t, bool> conf)
+    : Table()
 {
   hash = std::get<0>(conf);
   nr_buckets = std::get<1>(conf);
+  enable_inline = std::get<2>(conf);
 
   // Instead pre-allocate the table from the beginning, we'll use fine on-demand
   // paging for the bucket. In this way, the insertion CPU will allocate the
   // page from its local NUMA zone. As long as the hash function can generate
   // NUMA friendly hash function, we can make sure all pages are accessed from
   // local NUMA zone.
-  auto nrpg = ((nr_buckets * sizeof(HashEntry *) - 1) >> 12) + 1;
-  table = (std::atomic<HashEntry *> *)
+  auto nrpg = ((nr_buckets * row_size() - 1) >> 12) + 1;
+  table = (uint8_t *)
           mmap(nullptr, nrpg << 12, PROT_READ | PROT_WRITE,
                MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  printf("addr %p %p\n", table, table + (nrpg << 12));
 }
+
+static constexpr size_t kOffset = 96;
 
 VHandle *HashtableIndex::SearchOrCreate(const VarStr *k, bool *created)
 {
   auto idx = hash(k) % nr_buckets;
-  std::atomic<HashEntry *> *parent = &table[idx];
+  HashEntry *first = (HashEntry *) (table + idx * row_size() + kOffset);
 
-  HashEntry *p = parent->load(), *newentry = nullptr;
+  if (first->next == kNextForUninitialized) {
+    HashEntry *old = kNextForUninitialized;
+    if (first->next.compare_exchange_strong(old, kNextForInitializing)) {
+      first->key = HashEntry::Convert(k);
+      auto row = first->value();
+      new (row) SortedArrayVHandle();
+      row->capacity = 1;
+      first->next = kNextForEnd;
+      *created = true;
+      return row;
+    }
+  }
+  while (first->next == kNextForInitializing) _mm_pause();
+
+  HashEntry *p = first, *newentry = nullptr;
+  std::atomic<HashEntry *> *parent = nullptr;
   auto x = HashEntry::Convert(k);
   VHandle *row = nullptr;
 
   do {
-    while (p != nullptr) {
+    while (p != kNextForEnd) {
       if (p->Compare(x)) {
         if (row) delete row;
         *created = false;
@@ -105,7 +129,7 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStr *k, bool *created)
       row->capacity = 1;
       newentry = (HashEntry *) ((uint8_t *) row + 96);
       newentry->key = x;
-      newentry->next = nullptr;
+      newentry->next = kNextForEnd;
     }
 
   } while (!parent->compare_exchange_strong(p, newentry));
@@ -122,11 +146,15 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStr *k)
 VHandle *HashtableIndex::Search(const VarStr *k)
 {
   auto idx = hash(k) % nr_buckets;
-  auto p = table[idx].load();
+  auto p = (HashEntry *) (table + idx * row_size() + kOffset);
   auto x = HashEntry::Convert(k);
   unsigned int cnt = 0;
 
-  while (p) {
+  if (p->next == kNextForUninitialized) return nullptr;
+
+  while (p->next == kNextForInitializing) _mm_pause();
+
+  while (p != kNextForEnd) {
     cnt++;
     if (p->Compare(x)) {
       // if (cnt > 1) printf("table id %d\n", relation_id()); std::abort();

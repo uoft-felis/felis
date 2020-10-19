@@ -37,10 +37,12 @@ class Table {
   int id;
   bool read_only;
   size_t key_len;
-  std::atomic_uint64_t auto_increment_cnt[kAutoIncrementZones];
+  std::atomic_uint64_t *auto_increment_cnt;
   bool enable_inline;
  public:
-  Table() : id(-1), read_only(false) {}
+  Table() : id(-1), read_only(false) {
+    auto_increment_cnt = new std::atomic_uint64_t[kAutoIncrementZones];
+  }
 
   void set_id(int relation_id) { id = relation_id; }
   int relation_id() { return id; }
@@ -51,7 +53,6 @@ class Table {
   void set_read_only(bool v) { read_only = v; }
   bool is_read_only() const { return read_only; }
 
-  void set_enable_inline(bool v) { enable_inline = v; }
   bool is_enable_inline() const { return enable_inline; }
 
   // In a distributed environment, we may need to generate a AutoIncrement key
@@ -102,6 +103,10 @@ class Table {
   }
 
   VHandle *NewRow();
+  size_t row_size() const {
+    if (is_enable_inline()) return VHandle::kInlinedSize;
+    else return VHandle::kSize;
+  }
 };
 
 class TableManager {

@@ -22,11 +22,6 @@ class MasstreeIndex final : public Table {
 
   static threadinfo *GetThreadInfo();
 
-  struct {
-    uint64_t add_cnt;
-    uint64_t del_cnt;
-  } nr_keys [NodeConfiguration::kMaxNrThreads]; // scalable counting
-
   MasstreeMap *get_map() {
     // Let's reduce cache miss
     return (MasstreeMap *) ((uint8_t *) (this + 1));
@@ -37,7 +32,7 @@ class MasstreeIndex final : public Table {
  public:
   static void ResetThreadInfo();
 
-  MasstreeIndex(std::tuple<> conf) noexcept; // no configuration required
+  MasstreeIndex(std::tuple<bool> conf) noexcept; // no configuration required
 
   static void *operator new(size_t sz);
   static void operator delete(void *p);
@@ -49,18 +44,8 @@ class MasstreeIndex final : public Table {
   Table::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) override;
   Table::Iterator *IndexReverseIterator(const VarStr *start, const VarStr *end = nullptr) override;
 
-  size_t nr_unique_keys() const {
-    size_t rs = 0;
-    for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-      rs += nr_keys[i].add_cnt - nr_keys[i].del_cnt;
-    }
-    return rs;
-  }
   void ImmediateDelete(const VarStr *k);
-  void FakeDelete(const VarStr *k) {
-    // delete an object, this won't be checkpointed
-    nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++;
-  }
+
 };
 
 }
