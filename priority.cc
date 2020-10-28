@@ -216,7 +216,8 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 
 
 
-// C. do the ad hoc initialization
+// do the ad hoc initialization
+// including 1) acquire SID  2) apply changes  3) validate  4) success/rollback
 bool PriorityTxn::Init()
 {
   if (this->initialized)
@@ -225,56 +226,82 @@ bool PriorityTxn::Init()
   // acquire row lock in order (here addr order) to prevent deadlock
   std::sort(update_handles.begin(), update_handles.end());
 
+  // 1) acquire SID
   sid = util::Instance<PriorityTxnService>().GetSID(this);
   // debug(TRACE_PRIORITY "sid:         {}", format_sid(sid));
   if (sid == -1)
     return false; // hack
 
-  bool failed = false;
-  int revert_cnt = 0; // if failed, # of handles we need to set to kIgnoreValue
+  // 2) apply changes, 3) validate, 4) rollback
+  int update_cnt = 0, delete_cnt = 0, insert_cnt = 0; // count for rollback
+  // updates
   for (int i = 0; i < update_handles.size(); ++i) {
-    if (PriorityTxnService::g_read_bit)
-      if (update_handles[i]->CheckReadBit(sid)) {
-        failed = true;
-        revert_cnt = i;
-        break;
+    // pre-checking
+    if (PriorityTxnService::g_read_bit && CheckUpdateConflict(update_handles[i])) {
+      Rollback(update_cnt, delete_cnt, insert_cnt);
+      return false;
+    }
+    // apply changes
+    if (!update_handles[i]->AppendNewVersion(sid, sid >> 32, true)) {
+      Rollback(update_cnt, delete_cnt, insert_cnt);
+      return false;
+    }
+    update_cnt++;
+    if (CheckUpdateConflict(update_handles[i])) {
+      Rollback(update_cnt, delete_cnt, insert_cnt);
+      return false;
+    }
+  }
+  // deletes
+  for (int i = 0; i < delete_handles.size(); ++i) {
+    if (PriorityTxnService::g_read_bit) {
+      // pre-checking
+      if (CheckDeleteConflict(delete_handles[i])) {
+        Rollback(update_cnt, delete_cnt, insert_cnt);
+        return false;
       }
-
-
-    bool succ = update_handles[i]->AppendNewVersion(sid, sid >> 32, true);
-    if (!succ) {
-      // debug(TRACE_PRIORITY "Priority txn {:p} - epoch {} txn {} append failed on VHandle {:p} (#{})", (void *)this, sid >> 32, sid >> 8 & 0xFFFFFF, (void*)update_handles[i], revert_cnt);
-      failed = true;
-      revert_cnt = i;
-      break;
     }
-
-    bool current_failed;
-    if (PriorityTxnService::g_read_bit)
-      current_failed = update_handles[i]->CheckReadBit(sid);
-    else
-      current_failed = util::Instance<PriorityTxnService>().MaxProgressPassed(sid);
-    if (current_failed) {
-      // debug(TRACE_PRIORITY "Priority txn {:p} - epoch {} txn {} progress passed after appending row #{}", (void *)this, sid >> 32, sid >> 8 & 0xFFFFFF, revert_cnt);
-      failed = true;
-      revert_cnt = i + 1;
-      break;
+    // apply changes
+    delete_cnt++;
+    if (!delete_handles[i]->InitDelete(sid)) {
+      Rollback(update_cnt, delete_cnt, insert_cnt);
+      return false;
+    }
+    if (CheckDeleteConflict(delete_handles[i])) {
+      Rollback(update_cnt, delete_cnt, insert_cnt);
+      return false;
     }
   }
-  // or, we only check MaxProgressPassed() once, which would be here
-
-  if (failed) {
-  // set inserted version to "kIgnoreValue"
-    for (int i = 0; i < revert_cnt; ++i) {
-      update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
-      // debug(TRACE_PRIORITY "Priority txn {:p} - reverted handle {:p}", (void *)this, (void *)update_handles[i]);
-    }
-    // debug(TRACE_PRIORITY "Priority txn {:p} - total reverted {} rows", (void *)this, revert_cnt);
-    return false;
-  }
+  // inserts: TODO
 
   this->initialized = true;
   return true;
+}
+
+// return TRUE if update's initialization has conflict with batched txns
+bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
+  if (PriorityTxnService::g_read_bit)
+    return handle->CheckReadBit(this->sid);
+  return util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);
+}
+
+bool PriorityTxn::CheckDeleteConflict(VHandle* handle) {
+  if (PriorityTxnService::g_read_bit)
+    return handle->CheckReadBit(this->sid);
+  return util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);
+}
+
+bool PriorityTxn::CheckInsertConflict(VHandle* handle) {
+  return true; // TODO
+}
+
+void PriorityTxn::Rollback(int update_cnt, int delete_cnt, int insert_cnt) {
+  for (int i = 0; i < update_cnt; ++i)
+    update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
+  for (int i = 0; i < delete_cnt; ++i) {
+    delete_handles[i]->RevertInitDelete(sid);
+  }
+  // inserts: TODO
 }
 
 } // namespace felis

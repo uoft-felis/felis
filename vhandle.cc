@@ -337,6 +337,55 @@ uint64_t SortedArrayVHandle::GetAvailableSID(uint64_t prev)
   return prev;
 }
 
+// for priority txn's delete, append new version for delete, and mark versions
+// behind it as kDeletePendingValue
+bool SortedArrayVHandle::InitDelete(uint64_t sid) {
+  if (!AppendNewVersion(sid, sid >> 32, true))
+    return false;
+
+  // mark versions in original array
+  int pos;
+  WithVersion(sid, pos);
+  uintptr_t *objects = versions + capacity;
+  for (++pos; pos < size; ++pos) {
+    if (!sync().IsPendingVal(objects[pos]))
+      return false;
+    sync().OfferData(objects + pos, (uintptr_t)kDeletePendingValue);
+    if (!sync().IsDeletePendingVal(objects[pos]))
+      return false;
+  }
+  // mark versions in extra array
+  auto extra = extra_vhandle.load();
+  if (extra == nullptr)
+    return true;
+  return extra->InitDelete(sid);
+}
+
+void SortedArrayVHandle::RevertInitDelete(uint64_t sid) {
+  int pos;
+  WithVersion(sid, pos);
+  uintptr_t *objects = versions + capacity;
+  for (++pos; pos < size; ++pos) {
+    if (sync().IsDeletePendingVal(objects[pos]))
+      sync().OfferData(objects + pos, (uintptr_t)kPendingValue);
+  }
+  auto extra = extra_vhandle.load();
+  if (extra)
+    extra->RevertInitDelete(sid);
+}
+
+void SortedArrayVHandle::PriorityDelete(uint64_t sid) {
+  int pos;
+  WithVersion(sid, pos);
+  uintptr_t *objects = versions + capacity;
+  for (++pos; pos < size; ++pos) {
+    sync().OfferData(objects + pos, (uintptr_t)nullptr);
+  }
+  auto extra = extra_vhandle.load();
+  if (extra)
+    extra->PriorityDelete(sid);
+}
+
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
   // Finding the exact location
@@ -622,6 +671,35 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
   if (varstr_ptr == kIgnoreValue)
     return handle->CheckReadBit(ver_extra);
   return varstr_ptr & kReadBitMask;
+}
+
+bool LinkedListExtraVHandle::InitDelete(uint64_t sid) {
+  // mark versions in extra versions
+  Entry *p = head;
+  while (p && p->version > sid) {
+    if (!util::Impl<VHandleSyncService>().IsPendingVal(p->object))
+      return false;
+    util::Impl<VHandleSyncService>().OfferData(&p->object, (uintptr_t)kDeletePendingValue);
+    if (!util::Impl<VHandleSyncService>().IsDeletePendingVal(p->object))
+      return false;
+  }
+  return true;
+}
+
+void LinkedListExtraVHandle::RevertInitDelete(uint64_t sid) {
+  Entry *p = head;
+  while (p && p->version > sid) {
+    if (util::Impl<VHandleSyncService>().IsDeletePendingVal(p->object))
+      util::Impl<VHandleSyncService>().OfferData(&p->object, (uintptr_t)kDeletePendingValue);
+  }
+}
+
+void LinkedListExtraVHandle::PriorityDelete(uint64_t sid) {
+  Entry *p = head;
+  while (p && p->version > sid) {
+    if (util::Impl<VHandleSyncService>().IsDeletePendingVal(p->object))
+      util::Impl<VHandleSyncService>().OfferData(&p->object, (uintptr_t)nullptr);
+  }
 }
 
 uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t prev)

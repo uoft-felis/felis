@@ -100,9 +100,21 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
   auto oldval = *addr;
   auto newval = obj;
 
+  if (IsPendingVal(oldval) && IsDeletePendingVal(newval))
+    newval = (0xFFFFFFFF00000000 & newval) | (((1ULL << 32) - 1) & oldval);
+
+  if (IsDeletePendingVal(oldval) && IsPendingVal(newval))
+    newval = (0xFFFFFFFF00000000 & newval) | (((1ULL << 32) - 1) & oldval);
+
   // installing newval
   while (true) {
     if (!IsPendingVal(oldval)) {
+      if (IsDeletePendingVal(oldval) && (!IsPendingVal(newval) || newval != (uintptr_t)nullptr))
+        continue; // spin
+      if (oldval == (uintptr_t)nullptr)
+        std::abort(); // batched txn's write is onto a deleted version, abort
+      if (IsPendingVal(newval))
+        return; // other core's write beats kDeletePendingVal's install
       logger->critical("strange oldval {0:x}", oldval);
       std::abort();
     }

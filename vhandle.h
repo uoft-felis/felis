@@ -17,6 +17,7 @@ namespace felis {
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
 static const uintptr_t kIgnoreValue = 0xFE19C02EFFFFFFFF;
 static const uintptr_t kRetryValue = 0xFE3E737EFFFFFFFF;
+static const uintptr_t kDeletePendingValue = 0xFEDE1E7EFFFFFFFF;
 const uint64_t kReadBitMask = 1ULL << 56;
 
 class VHandleSyncService {
@@ -26,6 +27,9 @@ class VHandleSyncService {
   virtual long GetWaitCountStat(int core) = 0;
   // virtual void Notify(uint64_t bitmap) = 0;
   virtual bool IsPendingVal(uintptr_t val) = 0;
+  bool IsDeletePendingVal(uintptr_t val) {
+    return (val >> 32) == (kDeletePendingValue >> 32);
+  }
   virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;
   virtual void OfferData(volatile uintptr_t *addr, uintptr_t obj) = 0;
 };
@@ -115,6 +119,9 @@ class LinkedListExtraVHandle {
   bool AppendNewVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
   bool CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in);
+  bool InitDelete(uint64_t sid);
+  void RevertInitDelete(uint64_t sid);
+  void PriorityDelete(uint64_t sid);
   uint64_t FindUnreadVersionLowerBound(uint64_t prev);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
 };
@@ -178,6 +185,9 @@ class SortedArrayVHandle : public BaseVHandle {
   bool CheckReadBit(uint64_t sid);
   uint64_t FindUnreadVersionLowerBound(uint64_t prev);
   uint64_t GetAvailableSID(uint64_t prev);
+  bool InitDelete(uint64_t sid);
+  void RevertInitDelete(uint64_t sid);
+  void PriorityDelete(uint64_t sid);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
   void GarbageCollect();

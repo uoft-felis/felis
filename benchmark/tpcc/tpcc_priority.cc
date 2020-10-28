@@ -63,9 +63,13 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
 
   // init
   std::vector<felis::VHandle*> stock_rows;
-  if (!(txn->InitRegisterUpdate<tpcc::Stock>(stock_keys, stock_rows))) {
-    // debug(TRACE_PRIORITY "init register failed!");
-    return false;
+  for (auto key : stock_keys) {
+    felis::VHandle* row = nullptr;
+    if (!(txn->InitRegisterUpdate<tpcc::Stock>(key, row))) {
+      // debug(TRACE_PRIORITY "init register failed!");
+      std::abort();
+    }
+    stock_rows.push_back(row);
   }
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;

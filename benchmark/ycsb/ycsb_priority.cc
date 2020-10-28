@@ -62,9 +62,13 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
 
   // init
   std::vector<felis::VHandle*> rows;
-  if (!(txn->InitRegisterUpdate<ycsb::Ycsb>(keys, rows))) {
-    // debug(TRACE_PRIORITY "init register failed!");
-    return false;
+  for (auto key : keys) {
+    felis::VHandle* row = nullptr;
+    if (!(txn->InitRegisterUpdate<ycsb::Ycsb>(key, row))) {
+      // debug(TRACE_PRIORITY "init register failed!");
+      std::abort();
+    }
+    rows.push_back(row);
   }
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;

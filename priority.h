@@ -60,6 +60,8 @@ class PriorityTxn {
   uint64_t sid;
   bool initialized; // meaning the registered VHandles would be valid
   std::vector<VHandle*> update_handles;
+  std::vector<VHandle*> delete_handles;
+  std::vector<VHandle*> insert_handles;
   bool (*callback)(PriorityTxn *);
 
  public:
@@ -73,7 +75,7 @@ class PriorityTxn {
     if (&rhs == this)
       return *this;
 
-    // assign only happens when the rhs is never ran, so set init value
+    // assign only happens when the rhs is never Run(), so set init value
     this->update_handles.clear();
     this->piece_count.store(0);
 
@@ -95,34 +97,46 @@ class PriorityTxn {
  public: // APIs for the callback to use
   uint64_t serial_id() { return sid; }
 
-  // find the VHandle in Masstree, store it, return success or not
   template <typename Table>
-  bool InitRegisterUpdate(std::vector<typename Table::Key> keys,
-                          std::vector<VHandle*>& handles) {
+  VHandle* SearchExistingRow(typename Table::Key key) {
+    int table = static_cast<int>(Table::kTable);
+    auto &rel = util::Instance<RelationManager>()[table];
+    auto keyVarStr = key.Encode();
+    return rel.SearchOrDefault(keyVarStr, [] { std::abort(); return nullptr; });
+  }
+
+  template <typename Table>
+  bool InitRegisterUpdate(typename Table::Key key, VHandle*& handle) {
     if (this->initialized)
-      return false;
-
-    for (auto key : keys) {
-      int table = static_cast<int>(Table::kTable);
-      auto &rel = util::Instance<RelationManager>()[table];
-      auto keyVarStr = key.Encode();
-
-      auto handle = rel.SearchOrDefault(keyVarStr, [] { std::abort(); return nullptr; });
-      // it's an update, you should always find it
-
-      // debug(TRACE_PRIORITY "Priority txn {:p} - will update handle {:p}", (void *)this, (void *) handle);
-      this->update_handles.push_back(handle);
-      handles.push_back(handle);
-    }
+      std::abort();
+    handle = SearchExistingRow<Table>(key);
+    abort_if(!handle, "Registring Update: found nullptr");
+    this->update_handles.push_back(handle);
     return true;
   }
 
   template <typename Table>
-  bool InitRegisterInsert(std::vector<typename Table::Key> keys,
-                          std::vector<VHandle*>& handles);
+  bool InitRegisterDelete(typename Table::Key key, VHandle*& handle) {
+    if (this->initialized)
+      std::abort();
+    handle = SearchExistingRow<Table>(key);
+    abort_if(!handle, "Registring Delete: found nullptr");
+    this->delete_handles.push_back(handle);
+    return true;
+  }
+
+  template <typename Table>
+  bool InitRegisterInsert(typename Table::Key key, VHandle*& handle) {
+    return false; // TODO
+  }
 
   bool Init();
 
+  bool CheckDeleteConflict(VHandle* handle);
+
+  bool CheckUpdateConflict(VHandle* handle);
+  bool CheckInsertConflict(VHandle* handle);
+  void Rollback(int update_cnt, int delete_cnt, int insert_cnt);
 
   template <typename T>
   T Read(VHandle* handle) {
@@ -137,6 +151,15 @@ class PriorityTxn {
     return handle->WriteWithVersion(sid, o.Encode(), sid >> 32);
   }
 
+  template <typename T>
+  bool Delete(VHandle* handle) {
+    abort_if(!initialized, "before Delete, vhandle must be initialized, this {:p}", (void*) this)
+    if (!handle->WriteWithVersion(sid, nullptr, sid >> 32))
+      return false;
+    // mark all the versions after it as nullptr as well
+    handle->PriorityDelete(sid);
+    return true;
+  }
 
   template <typename T, typename Lambda>
   void IssuePromise(T input, Lambda lambda) {
