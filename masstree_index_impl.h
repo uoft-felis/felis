@@ -72,7 +72,8 @@ class MasstreeIndex {
     return SearchOrDefaultImpl(k, SearchOrDefaultHandlerImpl(default_func));
   }
 
-  VHandle *Search(const VarStr *k);
+  VHandle *Search(const VarStr *k, uint64_t sid = 0);
+  VHandle *PriorityInsert(const VarStr *k, uint64_t sid);
 
   Iterator IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) __attribute__((noinline));
 

@@ -94,16 +94,20 @@ class PriorityTxn {
     return this->callback(this);
   }
 
- public: // APIs for the callback to use
-  uint64_t serial_id() { return sid; }
-
   template <typename Table>
   VHandle* SearchExistingRow(typename Table::Key key) {
     int table = static_cast<int>(Table::kTable);
     auto &rel = util::Instance<RelationManager>()[table];
     auto keyVarStr = key.Encode();
-    return rel.SearchOrDefault(keyVarStr, [] { std::abort(); return nullptr; });
+    return rel.Search(keyVarStr, this->sid);
   }
+
+  bool CheckUpdateConflict(VHandle* handle);
+  bool CheckDeleteConflict(VHandle* handle);
+  bool CheckInsertConflict(VHandle* handle);
+
+ public: // APIs for the callback to use
+  uint64_t serial_id() { return sid; }
 
   template <typename Table>
   bool InitRegisterUpdate(typename Table::Key key, VHandle*& handle) {
@@ -132,10 +136,6 @@ class PriorityTxn {
 
   bool Init();
 
-  bool CheckDeleteConflict(VHandle* handle);
-
-  bool CheckUpdateConflict(VHandle* handle);
-  bool CheckInsertConflict(VHandle* handle);
   void Rollback(int update_cnt, int delete_cnt, int insert_cnt);
 
   template <typename T>

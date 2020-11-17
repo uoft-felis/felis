@@ -9,6 +9,7 @@
 #include "masstree/kvthread.hh"
 #include "masstree/timestamp.hh"
 #include "masstree/masstree.hh"
+#include "masstree/masstree_struct.hh"
 
 volatile mrcu_epoch_type active_epoch;
 volatile mrcu_epoch_type globalepoch = 1;
@@ -96,14 +97,29 @@ VHandle *MasstreeIndex::SearchOrDefaultImpl(const VarStr *k,
   return result;
 }
 
-VHandle *MasstreeIndex::Search(const VarStr *k)
+VHandle *MasstreeIndex::Search(const VarStr *k, uint64_t sid)
 {
   auto ti = GetThreadInfo();
   VHandle *result = nullptr;
-  map->get(lcdf::Str(k->data, k->len), result, *ti);
+  map->get(lcdf::Str(k->data, k->len), result, *ti, sid);
   return result;
 }
 
+VHandle *MasstreeIndex::PriorityInsert(const VarStr *k, uint64_t sid)
+{
+  auto ti = GetThreadInfo();
+  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
+  bool found = cursor.find_locked(*ti);
+  if (found || cursor.node()->read_sid > sid || cursor.node()->write_sid > sid)
+    return nullptr; // mechanism C, D, E, F
+  found = cursor.find_insert(*ti);
+  assert(!found);
+  cursor.value() = new VHandle();
+  VHandle *result = cursor.value();
+  cursor.finish(1, *ti);
+  assert(result != nullptr);
+  return result;
+}
 
 static __thread threadinfo *TLSThreadInfo;
 

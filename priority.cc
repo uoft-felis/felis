@@ -225,6 +225,7 @@ bool PriorityTxn::Init()
 
   // acquire row lock in order (here addr order) to prevent deadlock
   std::sort(update_handles.begin(), update_handles.end());
+  std::sort(delete_handles.begin(), delete_handles.end());
 
   // 1) acquire SID
   sid = util::Instance<PriorityTxnService>().GetSID(this);
