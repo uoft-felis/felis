@@ -108,10 +108,12 @@ VHandle *MasstreeIndex::Search(const VarStr *k, uint64_t sid)
 VHandle *MasstreeIndex::PriorityInsert(const VarStr *k, uint64_t sid)
 {
   auto ti = GetThreadInfo();
-  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
-  bool found = cursor.find_locked(*ti);
-  if (found || cursor.node()->read_sid > sid || cursor.node()->write_sid > sid)
+  typename MasstreeMap::unlocked_cursor_type ucursor(*map, lcdf::Str(k->data, k->len));
+  bool found = ucursor.find_unlocked(*ti);
+  if (found || ucursor.node()->read_sid > sid || ucursor.node()->write_sid > sid)
     return nullptr; // mechanism C, D, E, F
+
+  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
   found = cursor.find_insert(*ti);
   assert(!found);
   cursor.value() = new VHandle();

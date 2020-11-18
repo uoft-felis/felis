@@ -273,8 +273,18 @@ bool PriorityTxn::Init()
       return false;
     }
   }
-  // inserts: TODO
-
+  // inserts
+  for (int i = 0; i < insert_keys.size(); ++i) {
+    // apply changes
+    VHandle *handle = nullptr;
+    if ((handle = insert_keys[i]->Insert(sid)) == nullptr) {
+      Rollback(update_cnt, delete_cnt, insert_cnt);
+      return false;
+    }
+    insert_cnt++;
+    insert_handles.push_back(handle);
+    handle->AppendNewVersion(sid, sid >> 32, true); // does VHandle come with some original version?
+  }
   this->initialized = true;
   return true;
 }

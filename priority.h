@@ -52,6 +52,22 @@ class PriorityTxnService {
   static unsigned long long g_tsc;
 };
 
+struct BaseInsertKey {
+  BaseInsertKey() { }
+  virtual VHandle* Insert(uint64_t sid) = 0;
+};
+
+template <typename Table>
+struct InsertKey : public BaseInsertKey {
+  typename Table::Key key;
+  InsertKey(typename Table::Key _key) : key(_key) { }
+
+  virtual VHandle* Insert(uint64_t sid) final override{
+    int table = static_cast<int>(Table::kTable);
+    auto &rel = util::Instance<felis::RelationManager>()[table];
+    return rel.PriorityInsert(key.Encode(), sid);
+  }
+};
 
 class PriorityTxn {
  friend class BasePromise::ExecutionRoutine;
@@ -61,6 +77,7 @@ class PriorityTxn {
   bool initialized; // meaning the registered VHandles would be valid
   std::vector<VHandle*> update_handles;
   std::vector<VHandle*> delete_handles;
+  std::vector<BaseInsertKey*> insert_keys;
   std::vector<VHandle*> insert_handles;
   bool (*callback)(PriorityTxn *);
 
@@ -130,8 +147,10 @@ class PriorityTxn {
   }
 
   template <typename Table>
-  bool InitRegisterInsert(typename Table::Key key, VHandle*& handle) {
-    return false; // TODO
+  bool InitRegisterInsert(typename Table::Key key, BaseInsertKey*& ptr) {
+    ptr = new felis::InsertKey<Table>(key);
+    this->insert_keys.push_back(ptr);
+    return true;
   }
 
   bool Init();
