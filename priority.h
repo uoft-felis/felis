@@ -121,7 +121,6 @@ class PriorityTxn {
 
   bool CheckUpdateConflict(VHandle* handle);
   bool CheckDeleteConflict(VHandle* handle);
-  bool CheckInsertConflict(VHandle* handle);
 
  public: // APIs for the callback to use
   uint64_t serial_id() { return sid; }
@@ -151,6 +150,11 @@ class PriorityTxn {
     ptr = new felis::InsertKey<Table>(key);
     this->insert_keys.push_back(ptr);
     return true;
+  }
+
+  VHandle* InsertKeyToVHandle(BaseInsertKey* key) {
+    auto it = std::find(insert_keys.begin(), insert_keys.end(), key);
+    return insert_handles[it - insert_keys.begin()];
   }
 
   bool Init();

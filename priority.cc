@@ -302,10 +302,6 @@ bool PriorityTxn::CheckDeleteConflict(VHandle* handle) {
   return util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);
 }
 
-bool PriorityTxn::CheckInsertConflict(VHandle* handle) {
-  return true; // TODO
-}
-
 void PriorityTxn::Rollback(int update_cnt, int delete_cnt, int insert_cnt) {
   for (int i = 0; i < update_cnt; ++i)
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
