@@ -25,6 +25,7 @@ template <>
 StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>();
 
 bool StockTxn_Run(felis::PriorityTxn *txn);
+bool NewOrderTxn_Run(felis::PriorityTxn *txn);
 
 }
 
