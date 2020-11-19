@@ -124,6 +124,13 @@ class LinkedListExtraVHandle {
   void PriorityDelete(uint64_t sid);
   uint64_t FindUnreadVersionLowerBound(uint64_t prev);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
+
+  uint64_t first_version() {
+    Entry *p = head.load();
+    while (p->next != nullptr)
+      p = p->next;
+    return p->version;
+  }
 };
 #endif
 
@@ -195,7 +202,14 @@ class SortedArrayVHandle : public BaseVHandle {
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   const size_t nr_versions() const { return size; }
-  uint64_t first_version() const { return versions[0]; }
+  uint64_t first_version() const {
+    ExtraVHandle *handle = extra_vhandle.load();
+    if (handle != nullptr) {
+      auto extra = handle->first_version();
+      return (versions[0] < extra) ? versions[0] : extra;
+    }
+    return versions[0];
+  }
   uint64_t last_version() const { return versions[size - 1]; }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed); }
   short region_id() const { return alloc_by_regionid; }
