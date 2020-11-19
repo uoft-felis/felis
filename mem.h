@@ -455,6 +455,9 @@ PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();
 void *AllocMemory(mem::MemAllocType alloc_type, size_t length,
                   int numa_node = -1, bool on_demand = false);
+
+void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length,
+                  int numa_node = -1, bool on_demand = false);
 long TotalMemoryAllocated();
 
 }
