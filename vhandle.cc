@@ -179,7 +179,7 @@ bool SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool 
 
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
-  assert(size > 0);
+  if (size == 0) return nullptr;
 
   uint64_t *p = versions;
   uint64_t *start = versions;
@@ -725,6 +725,13 @@ bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
 
   if (!p) {
     logger->critical("Diverging outcomes! sid {}", sid);
+    std::stringstream ss;
+    Entry *p = head;
+    while (p) {
+      ss << "{" << p->version << ", 0x" << std::hex << p->object << "}->";
+      p = p->next;
+    }
+    logger->critical("Extra Linked list: {}nullptr", ss.str());
     return false;
   }
 

@@ -2,16 +2,18 @@
 
 namespace ycsb {
 
+using namespace felis;
+
 void GeneratePriorityTxn() {
-  if (!felis::NodeConfiguration::g_priority_txn)
+  if (!NodeConfiguration::g_priority_txn)
     return;
-  int txn_per_epoch = felis::PriorityTxnService::g_nr_priority_txn;
-  for (auto i = 1; i < felis::EpochClient::g_max_epoch; ++i) {
+  int txn_per_epoch = PriorityTxnService::g_nr_priority_txn;
+  for (auto i = 1; i < EpochClient::g_max_epoch; ++i) {
     for (auto j = 1; j <= txn_per_epoch; ++j) {
-      felis::PriorityTxn txn(&MWTxn_Run);
+      PriorityTxn txn(&MWTxn_Run);
       txn.epoch = i;
-      txn.delay = 2200 * felis::PriorityTxnService::g_interval_priority_txn * j;
-      util::Instance<felis::PriorityTxnService>().PushTxn(&txn);
+      txn.delay = 2200 * PriorityTxnService::g_interval_priority_txn * j;
+      util::Instance<PriorityTxnService>().PushTxn(&txn);
     }
   }
   logger->info("[Pri-init] pri txns pre-generated, {} per epoch", txn_per_epoch);
@@ -41,18 +43,18 @@ std::string format_sid(uint64_t sid)
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
 }
 
-bool MWTxn_Run(felis::PriorityTxn *txn)
+bool MWTxn_Run(PriorityTxn *txn)
 {
   auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
 
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t diff = start_tsc - (txn->delay + felis::PriorityTxnService::g_tsc);
-  felis::probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
+  probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
 
   // generate txn input
   MWTxnInput txnInput = dynamic_cast<ycsb::Client*>
-      (felis::EpochClient::g_workload_client)->GenerateTransactionInput<MWTxnInput>();
+      (EpochClient::g_workload_client)->GenerateTransactionInput<MWTxnInput>();
   std::vector<Ycsb::Key> keys;
   for (int i = 0; i < txnInput.nr; ++i) {
     keys.push_back(Ycsb::Key::New(txnInput.keys[i]));
@@ -61,9 +63,9 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
   start_tsc = __rdtsc();
 
   // init
-  std::vector<felis::VHandle*> rows;
+  std::vector<VHandle*> rows;
   for (auto key : keys) {
-    felis::VHandle* row = nullptr;
+    VHandle* row = nullptr;
     if (!(txn->InitRegisterUpdate<ycsb::Ycsb>(key, row))) {
       // debug(TRACE_PRIORITY "init register failed!");
       std::abort();
@@ -78,16 +80,16 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
   }
   uint64_t succ_tsc = __rdtsc();
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  // fail = ((util::Instance<felis::PriorityTxnService>().GetMaxProgress() -  util::Instance<felis::PriorityTxnService>().GetProgress(core_id)) & 0xFFFFFFFF) >> 8;
+  // fail = ((util::Instance<PriorityTxnService>().GetMaxProgress() -  util::Instance<PriorityTxnService>().GetProgress(core_id)) & 0xFFFFFFFF) >> 8;
   // debug(TRACE_PRIORITY "Priority txn {:p} (MW) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  felis::probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
 
 
   struct Context {
     int nr;
     uint64_t key;
-    felis::VHandle* row;
-    felis::PriorityTxn *txn;
+    VHandle* row;
+    PriorityTxn *txn;
   };
 
   // issue promise
@@ -102,7 +104,7 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
           if (piece_id == ctx.nr) {
             auto queue_tsc = __rdtsc();
             auto diff = queue_tsc - ctx.txn->measure_tsc;
-            felis::probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
+            probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
             ctx.txn->measure_tsc = queue_tsc;
           }
 
@@ -114,8 +116,8 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
           if (piece_id == 1) {
             auto exec_tsc = __rdtsc();
             auto exec = exec_tsc - ctx.txn->measure_tsc;
-            auto total = exec_tsc - (ctx.txn->delay + felis::PriorityTxnService::g_tsc);
-            felis::probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
+            auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
+            probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
           }
         };
     Context ctx{txnInput.nr,
@@ -130,7 +132,7 @@ bool MWTxn_Run(felis::PriorityTxn *txn)
   uint64_t issue_tsc = __rdtsc();
   diff = issue_tsc - succ_tsc;
   txn->measure_tsc = issue_tsc;
-  felis::probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
 
   return txn->Commit();
 }

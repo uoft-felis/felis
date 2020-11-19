@@ -3,21 +3,23 @@
 
 namespace tpcc {
 
+using namespace felis;
+
 void GeneratePriorityTxn() {
   if (!NodeConfiguration::g_priority_txn)
     return;
-  int txn_per_epoch = felis::PriorityTxnService::g_nr_priority_txn;
-  for (auto i = 1; i < felis::EpochClient::g_max_epoch; ++i) {
-    felis::PriorityTxn txn(&NewOrderTxn_Run);
+  int txn_per_epoch = PriorityTxnService::g_nr_priority_txn;
+  for (auto i = 1; i < EpochClient::g_max_epoch; ++i) {
+    PriorityTxn txn(&NewOrderTxn_Run);
     txn.epoch = i;
-    txn.delay = 2200 * felis::PriorityTxnService::g_interval_priority_txn;
-    util::Instance<felis::PriorityTxnService>().PushTxn(&txn);
+    txn.delay = 2200 * PriorityTxnService::g_interval_priority_txn;
+    util::Instance<PriorityTxnService>().PushTxn(&txn);
 
     for (auto j = 2; j <= txn_per_epoch; ++j) {
-      felis::PriorityTxn txn(&StockTxn_Run);
+      PriorityTxn txn(&StockTxn_Run);
       txn.epoch = i;
-      txn.delay = 2200 * felis::PriorityTxnService::g_interval_priority_txn * j;
-      util::Instance<felis::PriorityTxnService>().PushTxn(&txn);
+      txn.delay = 2200 * PriorityTxnService::g_interval_priority_txn * j;
+      util::Instance<PriorityTxnService>().PushTxn(&txn);
     }
   }
   logger->info("[Pri-init] pri txns pre-generated, {} per epoch", txn_per_epoch);
@@ -49,16 +51,16 @@ std::string format_sid(uint64_t sid)
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
 }
 
-bool StockTxn_Run(felis::PriorityTxn *txn)
+bool StockTxn_Run(PriorityTxn *txn)
 {
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t diff = start_tsc - (txn->delay + felis::PriorityTxnService::g_tsc);
-  felis::probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
+  probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
 
   // generate txn input
   StockTxnInput txnInput = dynamic_cast<tpcc::Client*>
-      (felis::EpochClient::g_workload_client)->GenerateTransactionInput<StockTxnInput>();
+      (EpochClient::g_workload_client)->GenerateTransactionInput<StockTxnInput>();
   std::vector<Stock::Key> stock_keys;
   for (int i = 0; i < txnInput.nr_items; ++i) {
     stock_keys.push_back(Stock::Key::New(txnInput.warehouse_id,
@@ -68,13 +70,10 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   start_tsc = __rdtsc();
 
   // init
-  std::vector<felis::VHandle*> stock_rows;
+  std::vector<VHandle*> stock_rows;
   for (auto key : stock_keys) {
-    felis::VHandle* row = nullptr;
-    if (!(txn->InitRegisterUpdate<tpcc::Stock>(key, row))) {
-      // debug(TRACE_PRIORITY "init register failed!");
-      std::abort();
-    }
+    VHandle* row = nullptr;
+    abort_if(!txn->InitRegisterUpdate<Stock>(key, row), "init register failed!");
     stock_rows.push_back(row);
   }
   uint64_t fail_tsc = start_tsc;
@@ -87,24 +86,24 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   txn->measure_tsc = succ_tsc;
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
   // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  felis::probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
 
 
   struct Context {
     uint warehouse_id;
     uint nr_items;
-    felis::PriorityTxn *txn;
+    PriorityTxn *txn;
     uint stock_quantities[StockTxnInput::kStockMaxItems];
-    felis::VHandle* stock_rows[StockTxnInput::kStockMaxItems];
+    VHandle* stock_rows[StockTxnInput::kStockMaxItems];
   };
 
   // issue promise
-  int core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
+  int core_id = util::Instance<PriorityTxnService>().GetFastestCore();
   // int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-  uint64_t cur_prog = util::Instance<felis::PriorityTxnService>().GetProgress(core_id) >> 8;
+  uint64_t cur_prog = util::Instance<PriorityTxnService>().GetProgress(core_id) >> 8;
   uint64_t seq = (txn->serial_id() >> 8);
   uint64_t diff_to_cur_progress = (seq > cur_prog) ? (seq - cur_prog) : 0;
-  felis::probes::Distance{diff_to_cur_progress, txn->serial_id()}();
+  probes::Distance{diff_to_cur_progress, txn->serial_id()}();
   // distance: how many txn sids from the acquired sid to the core's current progress
 
   auto lambda =
@@ -115,7 +114,7 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
         // record exec queue time
         auto queue_tsc = __rdtsc();
         auto diff = queue_tsc - ctx.txn->measure_tsc;
-        felis::probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
+        probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
         ctx.txn->measure_tsc = queue_tsc;
 
         for (int i = 0; i < ctx.nr_items; ++i) {
@@ -128,14 +127,14 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
         // record exec time
         auto exec_tsc = __rdtsc();
         auto exec = exec_tsc - ctx.txn->measure_tsc;
-        auto total = exec_tsc - (ctx.txn->delay + felis::PriorityTxnService::g_tsc);
-        felis::probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
+        auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
+        probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
       };
   Context ctx{txnInput.warehouse_id,
               txnInput.nr_items,
               txn};
   memcpy(ctx.stock_quantities, txnInput.detail.stock_quantities, sizeof(uint) * ctx.nr_items);
-  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(felis::VHandle*) * ctx.nr_items);
+  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * ctx.nr_items);
   txn->IssuePromise(ctx, lambda);
   // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
 
@@ -143,21 +142,21 @@ bool StockTxn_Run(felis::PriorityTxn *txn)
   uint64_t issue_tsc = __rdtsc();
   diff = issue_tsc - succ_tsc;
   txn->measure_tsc = issue_tsc;
-  felis::probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
 
   return txn->Commit();
 }
 
-bool NewOrderTxn_Run(felis::PriorityTxn *txn)
+bool NewOrderTxn_Run(PriorityTxn *txn)
 {
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t diff = start_tsc - (txn->delay + felis::PriorityTxnService::g_tsc);
-  felis::probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
+  probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
 
   // generate txn input
-  NewOrderStruct input = dynamic_cast<tpcc::Client*>
-      (felis::EpochClient::g_workload_client)->GenerateTransactionInput<NewOrderStruct>();
+  NewOrderStruct input = dynamic_cast<Client*>
+      (EpochClient::g_workload_client)->GenerateTransactionInput<NewOrderStruct>();
   std::vector<Stock::Key> stock_keys;
   for (int i = 0; i < input.nr_items; ++i) {
     stock_keys.push_back(Stock::Key::New(input.detail.supplier_warehouse_id[i],
@@ -167,19 +166,16 @@ bool NewOrderTxn_Run(felis::PriorityTxn *txn)
   start_tsc = __rdtsc();
 
   // register update
-  std::vector<felis::VHandle*> stock_rows;
+  std::vector<VHandle*> stock_rows;
   for (auto key : stock_keys) {
-    felis::VHandle* row = nullptr;
-    if (!(txn->InitRegisterUpdate<tpcc::Stock>(key, row))) {
-      // debug(TRACE_PRIORITY "init register failed!");
-      std::abort();
-    }
+    VHandle* row = nullptr;
+    abort_if(!txn->InitRegisterUpdate<Stock>(key, row), "init register failed!");
     stock_rows.push_back(row);
   }
 
   // register insert
   auto auto_inc_zone = input.warehouse_id * 10 +  input.district_id;
-  auto oorder_id = dynamic_cast<tpcc::Client*>(felis::EpochClient::g_workload_client)->
+  auto oorder_id = dynamic_cast<Client*>(EpochClient::g_workload_client)->
                    relation(OOrder::kTable).AutoIncrement(auto_inc_zone);
 
   auto oorder_key = OOrder::Key::New(input.warehouse_id, input.district_id, oorder_id);
@@ -188,11 +184,11 @@ bool NewOrderTxn_Run(felis::PriorityTxn *txn)
   for (int i = 0; i < input.nr_items; i++)
     orderline_keys[i] = OrderLine::Key::New(input.warehouse_id, input.district_id, oorder_id, i + 1);
 
-  felis::BaseInsertKey *oorder_ikey, *neworder_ikey, *orderline_ikeys[input.kNewOrderMaxItems];
-  txn->InitRegisterInsert<tpcc::OOrder>(oorder_key, oorder_ikey);
-  txn->InitRegisterInsert<tpcc::NewOrder>(neworder_key, neworder_ikey);
+  BaseInsertKey *oorder_ikey, *neworder_ikey, *orderline_ikeys[input.kNewOrderMaxItems];
+  txn->InitRegisterInsert<OOrder>(oorder_key, oorder_ikey);
+  txn->InitRegisterInsert<NewOrder>(neworder_key, neworder_ikey);
   for (int i = 0; i < input.nr_items; i++)
-    txn->InitRegisterInsert<tpcc::OrderLine>(orderline_keys[i], orderline_ikeys[i]);
+    txn->InitRegisterInsert<OrderLine>(orderline_keys[i], orderline_ikeys[i]);
 
   // init
   uint64_t fail_tsc = start_tsc;
@@ -205,24 +201,24 @@ bool NewOrderTxn_Run(felis::PriorityTxn *txn)
   txn->measure_tsc = succ_tsc;
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
   // debug(TRACE_PRIORITY "Priority txn {:p} (neworder) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  felis::probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
 
 
   struct Context {
     NewOrderStruct in;
-    felis::PriorityTxn *txn;
-    felis::BaseInsertKey *oorder_ikey;
-    felis::BaseInsertKey *neworder_ikey;
-    felis::BaseInsertKey *orderline_ikeys[NewOrderStruct::kNewOrderMaxItems];
-    felis::VHandle* stock_rows[NewOrderStruct::kNewOrderMaxItems];
+    PriorityTxn *txn;
+    BaseInsertKey *oorder_ikey;
+    BaseInsertKey *neworder_ikey;
+    BaseInsertKey *orderline_ikeys[NewOrderStruct::kNewOrderMaxItems];
+    VHandle* stock_rows[NewOrderStruct::kNewOrderMaxItems];
   };
   // issue promise
-  int core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
+  int core_id = util::Instance<PriorityTxnService>().GetFastestCore();
   // int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-  uint64_t cur_prog = util::Instance<felis::PriorityTxnService>().GetProgress(core_id) >> 8;
+  uint64_t cur_prog = util::Instance<PriorityTxnService>().GetProgress(core_id) >> 8;
   uint64_t seq = (txn->serial_id() >> 8);
   uint64_t diff_to_cur_progress = (seq > cur_prog) ? (seq - cur_prog) : 0;
-  felis::probes::Distance{diff_to_cur_progress, txn->serial_id()}();
+  probes::Distance{diff_to_cur_progress, txn->serial_id()}();
   // distance: how many txn sids from the acquired sid to the core's current progress
 
   auto lambda =
@@ -233,7 +229,7 @@ bool NewOrderTxn_Run(felis::PriorityTxn *txn)
         // record exec queue time
         auto queue_tsc = __rdtsc();
         auto diff = queue_tsc - ctx.txn->measure_tsc;
-        felis::probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
+        probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
         ctx.txn->measure_tsc = queue_tsc;
 
         // update stock
@@ -272,12 +268,12 @@ bool NewOrderTxn_Run(felis::PriorityTxn *txn)
         // record exec time
         auto exec_tsc = __rdtsc();
         auto exec = exec_tsc - ctx.txn->measure_tsc;
-        auto total = exec_tsc - (ctx.txn->delay + felis::PriorityTxnService::g_tsc);
-        felis::probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
+        auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
+        probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
       };
   Context ctx {input, txn, oorder_ikey, neworder_ikey};
-  memcpy(ctx.orderline_ikeys, orderline_ikeys, sizeof(felis::BaseInsertKey) * input.kNewOrderMaxItems);
-  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(felis::VHandle*) * input.nr_items);
+  memcpy(ctx.orderline_ikeys, orderline_ikeys, sizeof(BaseInsertKey) * input.kNewOrderMaxItems);
+  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * input.nr_items);
   txn->IssuePromise(ctx, lambda);
   // debug(TRACE_PRIORITY "Priority txn {:p} (neworder) - Issued lambda into PQ", (void *)txn);
 
@@ -285,7 +281,7 @@ bool NewOrderTxn_Run(felis::PriorityTxn *txn)
   uint64_t issue_tsc = __rdtsc();
   diff = issue_tsc - succ_tsc;
   txn->measure_tsc = issue_tsc;
-  felis::probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
 
   return txn->Commit();
 }

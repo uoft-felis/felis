@@ -106,6 +106,7 @@ class PriorityTxn {
     return *this;
   }
   PriorityTxn() : PriorityTxn(nullptr) {}
+  void SetCallback(bool (*func)(PriorityTxn *)) { this->callback = func; }
 
   bool Run() {
     return this->callback(this);
@@ -154,6 +155,7 @@ class PriorityTxn {
 
   VHandle* InsertKeyToVHandle(BaseInsertKey* key) {
     auto it = std::find(insert_keys.begin(), insert_keys.end(), key);
+    abort_if(it == insert_keys.end(), "InsertKey {:p} not found", (void*)key);
     return insert_handles[it - insert_keys.begin()];
   }
 
@@ -174,7 +176,6 @@ class PriorityTxn {
     return handle->WriteWithVersion(sid, o.Encode(), sid >> 32);
   }
 
-  template <typename T>
   bool Delete(VHandle* handle) {
     abort_if(!initialized, "before Delete, vhandle must be initialized, this {:p}", (void*) this)
     if (!handle->WriteWithVersion(sid, nullptr, sid >> 32))
