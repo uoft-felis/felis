@@ -10,6 +10,12 @@
 #include "util/arch.h"
 #include "os.h"
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+
 namespace util {
 
 Cpu::Cpu()
@@ -63,6 +69,36 @@ void *OSMemory::Alloc(size_t length, int numa_node, bool on_demand)
   if (mem == MAP_FAILED)
     return nullptr;
 
+  if (numa_node != -1) BindMemory(mem, length, numa_node);
+  if (!on_demand) LockMemory(mem, length);
+
+  return mem;
+}
+
+void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_demand)
+{
+  int flags = MAP_PRIVATE;
+  int prot = PROT_READ | PROT_WRITE;
+  length = AlignLength(length);
+  if (length >= 2 << 20) flags |= MAP_HUGETLB;
+
+  // create file, and extend(ftruncate) size to length bytes filled with 0s.
+  // ftruncate should result in a sparse file
+  int pmem_fd = open(filename, O_RDWR|O_CREAT);
+  printf("pmem_fd = %d\n", pmem_fd);
+  if (pmem_fd < 0)
+  {
+    printf("fd error: %s", strerror(errno));
+  }
+  ftruncate(pmem_fd, length);
+
+  void *mem = mmap(nullptr, length, prot, flags, pmem_fd, 0);
+  // can close file after mmap
+  close(pmem_fd);
+  if (mem == MAP_FAILED){
+    return nullptr;
+  }
+  
   if (numa_node != -1) BindMemory(mem, length, numa_node);
   if (!on_demand) LockMemory(mem, length);
 

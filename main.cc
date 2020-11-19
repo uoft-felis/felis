@@ -9,6 +9,7 @@
 #include "log.h"
 #include "epoch.h"
 #include "opts.h"
+#include "pmem_mgr.h"
 
 void show_usage(const char *progname)
 {
@@ -87,6 +88,9 @@ int main(int argc, char *argv[])
   util::InstanceInit<NodeConfiguration>();
   util::Instance<NodeConfiguration>().SetupNodeName(node_name);
   util::InstanceInit<TcpNodeTransport>();
+
+  // init pmem
+  util::InstanceInit<PmemManager>();
 
   // init tables from the workload module
   Module<WorkloadModule>::InitModule(workload_name);

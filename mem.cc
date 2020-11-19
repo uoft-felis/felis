@@ -19,6 +19,9 @@ static std::atomic_llong g_mem_tracker[NumMemTypes];
 static std::mutex g_ps_lock;
 static std::vector<PoolStatistics *> g_ps[NumMemTypes];
 
+// keep track of number of pmem files we have for each type
+static std::atomic_uint memAllocTypeCount[NumMemTypes];
+
 WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap,
                    int numa_node)
     : WeakPool(alloc_type, chunk_size, cap, AllocMemory(alloc_type, cap * chunk_size, numa_node))
@@ -493,7 +496,14 @@ ParallelSlabPool::ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, u
     auto numa_node = i / kNrCorePerNode;
     auto numa_offset = i % kNrCorePerNode;
     if (numa_offset == 0) {
-      mem = (uint8_t *) AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+      //SHIRLEY: put the check here for now. everything for these types go in pmem.
+      if ((alloc_type == EntityPool) || (alloc_type == VhandlePool) || (alloc_type == RegionPool))
+      {
+        mem = (uint8_t *) AllocPersistentMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+      }
+      else{
+        mem = (uint8_t *) AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+      }
     }
 
     auto p = mem + numa_offset * kHeaderSize;
@@ -703,6 +713,24 @@ void *AllocMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, bo
   void *p = util::OSMemory::g_default.Alloc(length, numa_node, on_demand);
   if (p == nullptr) {
     printf("Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());
+    PrintMemStats();
+    return nullptr;
+  }
+  g_mem_tracker[alloc_type].fetch_add(length);
+  return p;
+}
+
+void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, bool on_demand)
+{
+  //file name
+  char pmem_file_name[50];
+  sprintf(pmem_file_name, "/mnt/mypmem/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
+//  sprintf(pmem_file_name, "m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
+
+  void *p = util::OSMemory::g_default.PmemAlloc(pmem_file_name, length, numa_node, on_demand);
+
+  if (p == nullptr) {
+    printf("Pmem Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());
     PrintMemStats();
     return nullptr;
   }
