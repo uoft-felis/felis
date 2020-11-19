@@ -25,8 +25,12 @@ void BaseTxn::BaseTxnRow::AppendNewVersion(int ondemand_split_weight)
   if (!EpochClient::g_enable_granola) {
     auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
     auto is_dup = commit_buffer->AddRef(go::Scheduler::CurrentThreadPoolId() - 1, vhandle, sid);
-    if (!is_dup)
+    if (!is_dup) {
       vhandle->AppendNewVersion(sid, epoch_nr, ondemand_split_weight);
+    } else {
+      // This should be rare. Let's warn the user.
+      logger->warn("Duplicate write detected in sid {} on row {}", sid, (void *) vhandle);
+    }
   } else {
     if (vhandle->nr_versions() == 0) {
       vhandle->AppendNewVersion(sid, epoch_nr);
@@ -214,24 +218,6 @@ VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx
         ctx.slice_ids[idx], ctx.relation_ids[idx], kstr, result);
   }
   return result;
-}
-
-uint64_t BaseTxn::AffinityFromRows(uint64_t bitmap, VHandle *const *it)
-{
-  auto row = LocalityManager::SelectRow(bitmap, it);
-  if (row == nullptr)
-    return std::numeric_limits<uint64_t>::max();
-  auto client = EpochClient::g_workload_client;
-  return client->get_execution_locality_manager().GetScheduleCore(
-      row->object_coreid(), __builtin_popcount(bitmap));
-}
-
-uint64_t BaseTxn::AffinityFromRow(VHandle *row)
-{
-  auto client = EpochClient::g_workload_client;
-  // This is prepared for the non-on-demand-splitted pieces anyway.
-  return client->get_execution_locality_manager().GetScheduleCore(
-      row->object_coreid());
 }
 
 }

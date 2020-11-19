@@ -18,7 +18,7 @@ class CommitBuffer {
  public:
   struct Entry {
     VHandle *vhandle;
-    uint32_t seq_id;
+    uint32_t short_sid; // sid inside the epoch.
     std::atomic_int32_t wcnt;
     union {
       std::atomic<Entry *> dup = nullptr;
@@ -26,7 +26,7 @@ class CommitBuffer {
     } u;
     std::atomic<Entry *> next = nullptr;
 
-    Entry(VHandle *vhandle, uint32_t seq) : vhandle(vhandle), seq_id(seq), wcnt(1) {}
+    Entry(VHandle *vhandle, uint32_t sid) : vhandle(vhandle), short_sid(sid), wcnt(1) {}
   };
  private:
   std::atomic<Entry *> *ref_hashtable;

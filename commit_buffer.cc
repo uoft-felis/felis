@@ -57,6 +57,7 @@ void CommitBuffer::EnsureReady()
 
 bool CommitBuffer::AddRef(int core_id, VHandle *vhandle, uint64_t sid)
 {
+  uint32_t short_sid = sid;
   uint32_t seq = ((1 << 24) - 1) & (((uint32_t) sid >> 8) - 1);
   uintptr_t r = ((uintptr_t) vhandle) >> 6;
   uint32_t hash = seq * kPerTxnHashSize;
@@ -73,7 +74,7 @@ bool CommitBuffer::AddRef(int core_id, VHandle *vhandle, uint64_t sid)
 
 again:
   while (p) {
-    if (p->seq_id == seq && p->vhandle == vhandle) {
+    if (p->short_sid == short_sid && p->vhandle == vhandle) {
       if ((tail = p->u.dup.load()))
         goto done;
       pp = &p->u.dup;
@@ -117,11 +118,12 @@ done:
 
 CommitBuffer::Entry *CommitBuffer::LookupDuplicate(VHandle *vhandle, uint64_t sid)
 {
+  uint32_t short_sid = sid;
   uint32_t seq = ((1 << 24) - 1) & (((uint32_t) sid >> 8) - 1);
   Entry *p = dup_hashtable[seq % dup_hashtable_size].load();
 
   while (p) {
-    if (p->vhandle == vhandle && p->seq_id == seq)
+    if (p->vhandle == vhandle && p->short_sid == short_sid)
       break;
     p = p->next.load();
   }
