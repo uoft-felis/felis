@@ -58,12 +58,6 @@ class BaseTxn {
   uint64_t serial_id() const { return sid; }
   uint64_t epoch_nr() const { return sid >> 32; }
 
-  uint64_t AffinityFromRow(VHandle *row);
-  uint64_t AffinityFromRows(uint64_t bitmap, VHandle *const *it);
-  uint64_t AffinityFromRows(uint64_t bitmap, std::initializer_list<VHandle *> con) {
-    return AffinityFromRows(bitmap, con.begin());
-  }
-
   class BaseTxnRow {
    protected:
     uint64_t sid;

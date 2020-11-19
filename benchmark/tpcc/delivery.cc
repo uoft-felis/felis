@@ -26,9 +26,7 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
     if (!EpochClient::g_enable_granola)
       PrepareImpl();
   }
-  void PrepareInsert() override final {
-    client->get_initialization_locality_manager().PlanLoad(warehouse_id - 1, 40);
-  }
+  void PrepareInsert() override final {}
   void PrepareImpl();
 };
 

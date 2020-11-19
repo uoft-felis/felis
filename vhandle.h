@@ -95,8 +95,9 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
-  // void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
+
+  std::string ToString() const;
 
   bool is_inlined() const { return inline_used != 0xFF; }
 

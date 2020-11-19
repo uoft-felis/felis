@@ -93,7 +93,7 @@ struct NewOrderState {
       if (bitmap == -1) {
         state->stocks[id] = rows[0];
         handle(rows[0]).AppendNewVersion(1);
-      } else {
+      } else { // Bohm partitioning
         int idx = 0, oldid = id;
         do {
           idx = __builtin_ctz(bitmap);

@@ -154,9 +154,6 @@ class EpochClient {
 
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
-  LocalityManager &get_insert_locality_manager() { return insert_lmgr; }
-  LocalityManager &get_initialization_locality_manager() { return init_lmgr; }
-  LocalityManager &get_execution_locality_manager() { return exec_lmgr; }
   LocalityManager &get_contention_locality_manager() { return cont_lmgr; }
 
   virtual unsigned int LoadPercentage() = 0;

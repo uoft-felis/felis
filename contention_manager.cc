@@ -340,7 +340,7 @@ void ContentionManager::Reset()
         s += row->nr_ondsplt;
 
         auto client = EpochClient::g_workload_client;
-        client->get_execution_locality_manager().PlanLoad(row->this_coreid, -1 * row->nr_ondsplt);
+        // client->get_execution_locality_manager().PlanLoad(row->this_coreid, -1 * row->nr_ondsplt);
         if (Options::kBinpackSplitting) {
           knapsacks[nr_knapsacks++] = row;
           continue;

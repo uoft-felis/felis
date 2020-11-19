@@ -301,12 +301,7 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   if (i == 0) return 0;
 
   if (is_trace_enabled(TRACE_GC)) {
-    fmt::memory_buffer buf;
-    for (auto j = 0; j < handle->size; j++) {
-      fmt::format_to(buf, "{}->0x{:x} ", versions[j], objects[j]);
-    }
-    trace(TRACE_GC "BeforeGC on row {} {}, i {}", (void *) handle,
-          std::string_view(buf.begin(), buf.size()), i);
+    trace(TRACE_GC "BeforeGC on row {} {}, i {}", (void *) handle, handle->ToString(), i);
   }
 
   for (auto j = 0; j < i; j++) {
@@ -322,12 +317,7 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   handle->latest_version.fetch_sub(i);
 
   if (is_trace_enabled(TRACE_GC)) {
-    fmt::memory_buffer buf;
-    for (auto j = 0; j < handle->size; j++) {
-      fmt::format_to(buf, "{}->0x{:x} ", versions[j], objects[j]);
-    }
-    trace(TRACE_GC "GC on row {} {}", (void *) handle,
-          std::string_view(buf.begin(), buf.size()));
+    trace(TRACE_GC "GC on row {} {}", (void *) handle, handle->ToString());
   }
   return i;
 }

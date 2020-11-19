@@ -74,13 +74,18 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   return new_p;
 }
 
+std::string SortedArrayVHandle::ToString() const
+{
+  fmt::memory_buffer buf;
+  auto objects = versions + capacity;
+  for (auto j = 0u; j < size; j++) {
+    fmt::format_to(buf, "{}->0x{:x} ", versions[j], objects[j]);
+  }
+  return std::string(buf.begin(), buf.size());
+}
+
 void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 {
-  if (EpochClient::g_workload_client) {
-    auto &lm = EpochClient::g_workload_client->get_execution_locality_manager();
-    lm.PlanLoad(this_coreid, (long) delta);
-  }
-
   auto &gc = util::Instance<GC>();
   auto handle = gc_handle.load(std::memory_order_relaxed);
   auto latest = latest_version.load(std::memory_order_relaxed);
@@ -127,10 +132,12 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 
     if (handle) {
       if (latest > 0)
-        gc.Collect((VHandle *) this, epoch_nr, std::min<size_t>(16_K, latest - 1));
+        gc.Collect((VHandle *) this, epoch_nr, std::min<size_t>(16_K, latest));
       gc.RemoveRow((VHandle *) this, handle);
       gc_handle.store(0, std::memory_order_relaxed);
     }
+
+    latest = latest_version.load();
 
     if (!garbage_left && latest >= 0
         && GC::IsDataGarbage((VHandle *) this, (VarStr *) objects[latest]))
@@ -178,6 +185,8 @@ unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsign
     i = std::lower_bound(versions, versions + mark, last) - versions;
 
   std::move(versions + i, versions + end, versions + i + 1 + extra_shift);
+  probes::VHandleAbsorb{this, (int) end - i}();
+
   versions[i + extra_shift] = last;
 
   return i;
@@ -216,6 +225,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
 
  slowpath:
     lock.Lock(&qnode);
+    probes::VHandleAppendSlowPath{this}();
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
     lock.Unlock(&qnode);
   } else {

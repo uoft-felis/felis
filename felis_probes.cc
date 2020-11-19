@@ -18,6 +18,10 @@ static struct ProbeMain {
   agg::Agg<agg::Histogram<32, 0, 1>> payment_cnt;
   agg::Agg<agg::Histogram<32, 0, 1>> delivery_cnt;
 
+  agg::Agg<agg::Histogram<1024, 0, 16>> absorb_memmove_size;
+  agg::Agg<agg::Average> absorb_memmove_avg;
+  agg::Agg<agg::Histogram<128, 0, 1 << 10>> msc_wait_cnt;
+
   std::vector<long> mem_usage;
   std::vector<long> expansion;
 
@@ -32,6 +36,10 @@ thread_local struct ProbePerCore {
   AGG(neworder_cnt);
   AGG(payment_cnt);
   AGG(delivery_cnt);
+
+  AGG(absorb_memmove_size);
+  AGG(absorb_memmove_avg);
+  AGG(msc_wait_cnt);
 } statcnt;
 
 // Default for all probes
@@ -48,6 +56,28 @@ static void CountUpdate(agg::Histogram<32, 0, 1> &agg, int nr_update, int core =
 ////////////////////////////////////////////////////////////////////////////////
 // Override for some enabled probes
 ////////////////////////////////////////////////////////////////////////////////
+
+#if 0
+
+template <> void OnProbe(felis::probes::VHandleAbsorb p)
+{
+  statcnt.absorb_memmove_size << p.size;
+  statcnt.absorb_memmove_avg << p.size;
+}
+
+thread_local uint64_t last_tsc;
+template <> void OnProbe(felis::probes::VHandleAppend p)
+{
+  last_tsc = __rdtsc();
+}
+
+template <> void OnProbe(felis::probes::VHandleAppendSlowPath p)
+{
+  auto msc_wait = __rdtsc() - last_tsc;
+  statcnt.msc_wait_cnt << msc_wait;
+}
+
+#endif
 
 #if 0
 thread_local uint64_t last_wait_cnt;
@@ -144,6 +174,16 @@ ProbeMain::~ProbeMain()
       fout << label << ',' << i << ',' << mem_usage[i] << std::endl;
     }
   }
+#endif
+
+#if 0
+
+  std::cout << "VHandle MSC Spin Time Distribution (in TSC)" << std::endl
+            << global.msc_wait_cnt << std::endl;
+
+  std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
+  std::cout << "Memmove/Sorting Distance Distribution:" << std::endl;
+  std::cout << global.absorb_memmove_size << std::endl;
 #endif
 }
 

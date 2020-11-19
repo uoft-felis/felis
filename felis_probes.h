@@ -40,6 +40,17 @@ struct VHandleAppend {
   void operator()() const;
 };
 
+struct VHandleAppendSlowPath {
+  void *handle;
+  void operator()() const;
+};
+
+struct VHandleAbsorb {
+  void *handle;
+  int size;
+  void operator()() const;
+};
+
 struct VHandleExpand {
   void *handle;
   unsigned int oldcap;
@@ -93,18 +104,20 @@ struct TpccDelivery {
 }
 }
 
-#define PROBE_LIST                              \
-  PROBE_PROXY(felis::probes::NumVersionsOnGC);  \
-  PROBE_PROXY(felis::probes::VersionRead);      \
-  PROBE_PROXY(felis::probes::VersionWrite);     \
-  PROBE_PROXY(felis::probes::WaitCounters);     \
-  PROBE_PROXY(felis::probes::VHandleAppend);    \
-  PROBE_PROXY(felis::probes::VHandleExpand);    \
-  PROBE_PROXY(felis::probes::LocalitySchedule); \
-  PROBE_PROXY(felis::probes::OnDemandSplit);    \
-  PROBE_PROXY(felis::probes::EndOfPhase);       \
-  PROBE_PROXY(felis::probes::TpccNewOrder);     \
-  PROBE_PROXY(felis::probes::TpccPayment);      \
-  PROBE_PROXY(felis::probes::TpccDelivery);     \
+#define PROBE_LIST                                                             \
+  PROBE_PROXY(felis::probes::NumVersionsOnGC);                                 \
+  PROBE_PROXY(felis::probes::VersionRead);                                     \
+  PROBE_PROXY(felis::probes::VersionWrite);                                    \
+  PROBE_PROXY(felis::probes::WaitCounters);                                    \
+  PROBE_PROXY(felis::probes::VHandleAppend);                                   \
+  PROBE_PROXY(felis::probes::VHandleAppendSlowPath);                           \
+  PROBE_PROXY(felis::probes::VHandleAbsorb);                                   \
+  PROBE_PROXY(felis::probes::VHandleExpand);                                   \
+  PROBE_PROXY(felis::probes::LocalitySchedule);                                \
+  PROBE_PROXY(felis::probes::OnDemandSplit);                                   \
+  PROBE_PROXY(felis::probes::EndOfPhase);                                      \
+  PROBE_PROXY(felis::probes::TpccNewOrder);                                    \
+  PROBE_PROXY(felis::probes::TpccPayment);                                     \
+  PROBE_PROXY(felis::probes::TpccDelivery);
 
 #endif /* FELIS_PROBES_H */

@@ -37,9 +37,7 @@ class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
       PrepareImpl();
   }
   void Run() override final;
-  void PrepareInsert() override final {
-    client->get_initialization_locality_manager().PlanLoad(warehouse_id - 1, 4);
-  }
+  void PrepareInsert() override final {}
   void PrepareImpl();
 };
 
