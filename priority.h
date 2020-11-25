@@ -87,7 +87,7 @@ class PriorityTxn {
   uint64_t delay; // pre-generate. tsc delay w.r.t. the start of execution, in tsc
   uint64_t measure_tsc;
   PriorityTxn(bool (*func)(PriorityTxn *)): sid(-1), initialized(false), piece_count(0),
-                                            update_handles(), callback(func) {}
+                                            update_handles(), callback(func), ptr(nullptr) {}
   PriorityTxn& operator=(const PriorityTxn& rhs) {
     if (&rhs == this)
       return *this;
@@ -101,6 +101,7 @@ class PriorityTxn {
     this->callback = rhs.callback;
     this->epoch = rhs.epoch;
     this->delay = rhs.delay;
+    this->ptr = rhs.ptr;
     this->measure_tsc = rhs.measure_tsc;
     // logger->info("from {:p} to {:p}", (void*)&rhs, (void*)this);
     return *this;
@@ -108,6 +109,7 @@ class PriorityTxn {
   PriorityTxn() : PriorityTxn(nullptr) {}
   void SetCallback(bool (*func)(PriorityTxn *)) { this->callback = func; }
 
+  void *ptr; // hack, delivery use it to store input struct
   bool Run() {
     return this->callback(this);
   }

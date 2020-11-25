@@ -9,14 +9,15 @@ void GeneratePriorityTxn() {
   if (!NodeConfiguration::g_priority_txn)
     return;
   int txn_per_epoch = PriorityTxnService::g_nr_priority_txn;
+  int stock_pct = 90, new_order_pct = (100 - stock_pct) / 2;
   for (auto i = 1; i < EpochClient::g_max_epoch; ++i) {
-    PriorityTxn txn(&NewOrderTxn_Run);
-    txn.epoch = i;
-    txn.delay = 2200 * PriorityTxnService::g_interval_priority_txn;
-    util::Instance<PriorityTxnService>().PushTxn(&txn);
-
-    for (auto j = 2; j <= txn_per_epoch; ++j) {
-      PriorityTxn txn(&StockTxn_Run);
+    for (auto j = 1; j <= txn_per_epoch; ++j) {
+      PriorityTxn txn;
+      int pct = j % 100;
+      if (pct < new_order_pct)
+        txn.SetCallback(&NewOrderTxn_Run);
+      else
+        txn.SetCallback(&StockTxn_Run);
       txn.epoch = i;
       txn.delay = 2200 * PriorityTxnService::g_interval_priority_txn * j;
       util::Instance<PriorityTxnService>().PushTxn(&txn);
@@ -283,6 +284,130 @@ bool NewOrderTxn_Run(PriorityTxn *txn)
   txn->measure_tsc = issue_tsc;
   probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
 
+  // make the next PriTxn on this core into a priority Delivery transaction
+  DeliveryTxnInput *din = new DeliveryTxnInput{input.warehouse_id, input.district_id, oorder_id,
+                                               input.customer_id, 234567/*ts*/, input.nr_items};
+  PriorityTxn* next_txn = txn + 1;
+  next_txn->SetCallback(&DeliveryTxn_Run);
+  next_txn->ptr = din;
+
+  return txn->Commit();
+}
+
+
+bool DeliveryTxn_Run(PriorityTxn *txn)
+{
+  // record pri txn init queue time
+  uint64_t start_tsc = __rdtsc();
+  uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
+  probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+
+  abort_if(txn->ptr == nullptr, "mini delivery's ptr is nullptr");
+  DeliveryTxnInput &input = *(DeliveryTxnInput*)(txn->ptr);
+  start_tsc = __rdtsc(); // hack, subtract random gen time
+
+  // register update
+  auto oorder_key = OOrder::Key::New(input.warehouse_id, input.district_id, input.oorder_id);
+  auto customer_key = Customer::Key::New(input.warehouse_id, input.district_id, input.customer_id);
+  std::vector<OrderLine::Key> orderline_keys;
+  for (int i = 0; i < input.nr_items; i++)
+    orderline_keys.push_back(OrderLine::Key::New(input.warehouse_id, input.district_id,
+                                                 input.oorder_id, i + 1));
+  VHandle *oorder_row = nullptr;
+  VHandle *customer_row = nullptr, *orderline_rows[input.nr_items];
+  abort_if(!txn->InitRegisterUpdate<OOrder>(oorder_key, oorder_row), "oorder init fail");
+  abort_if(!txn->InitRegisterUpdate<Customer>(customer_key, customer_row), "customer init fail");
+  for (int i = 0; i < input.nr_items; i++)
+    abort_if(!txn->InitRegisterUpdate<OrderLine>(orderline_keys[i], orderline_rows[i]), "ol init fail");
+
+  // register delete
+  auto neworder_key = NewOrder::Key::New(input.warehouse_id, input.district_id,
+                                         input.oorder_id, input.customer_id);
+  VHandle *neworder_row = nullptr;
+  abort_if(!txn->InitRegisterDelete<NewOrder>(neworder_key, neworder_row), "n_o init fail");
+
+  // init
+  uint64_t fail_tsc = start_tsc;
+  int fail_cnt = 0;
+  while (!txn->Init()) {
+    fail_tsc = __rdtsc();
+    ++fail_cnt;
+  }
+  uint64_t succ_tsc = __rdtsc();
+  txn->measure_tsc = succ_tsc;
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  // debug(TRACE_PRIORITY "Priority txn {:p} (delivery) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+
+  struct Context {
+    DeliveryTxnInput in;
+    PriorityTxn *txn;
+    VHandle *oorder_row;
+    VHandle *neworder_row;
+    VHandle *customer_row;
+    VHandle *orderline_rows[NewOrderStruct::kNewOrderMaxItems];
+  };
+  // issue promise
+  int core_id = util::Instance<PriorityTxnService>().GetFastestCore();
+  // int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  uint64_t cur_prog = util::Instance<PriorityTxnService>().GetProgress(core_id) >> 8;
+  uint64_t seq = (txn->serial_id() >> 8);
+  uint64_t diff_to_cur_progress = (seq > cur_prog) ? (seq - cur_prog) : 0;
+  probes::Distance{diff_to_cur_progress, txn->serial_id()}();
+  // distance: how many txn sids from the acquired sid to the core's current progress
+
+  auto lambda =
+      [](std::tuple<Context> capture) {
+        auto [ctx] = capture;
+        auto piece_id = ctx.txn->piece_count.fetch_sub(1);
+
+        // record exec queue time
+        auto queue_tsc = __rdtsc();
+        auto diff = queue_tsc - ctx.txn->measure_tsc;
+        probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
+        ctx.txn->measure_tsc = queue_tsc;
+
+        // delete neworder
+        ctx.txn->Delete(ctx.neworder_row);
+        // update oorder
+        auto oorder = ctx.txn->Read<OOrder::Value>(ctx.oorder_row);
+        oorder.o_carrier_id = 5; // random between 1 and 10
+        ctx.txn->Write(ctx.oorder_row, oorder);
+        ClientBase::OnUpdateRow(ctx.oorder_row);
+        // update orderline
+        int sum = 0;
+        for (int i = 0; i < ctx.in.nr_items; ++i) {
+          auto orderline = ctx.txn->Read<OrderLine::Value>(ctx.orderline_rows[i]);
+          sum += orderline.ol_amount;
+          orderline.ol_delivery_d = ctx.in.ts;
+          ctx.txn->Write(ctx.orderline_rows[i], orderline);
+          ClientBase::OnUpdateRow(ctx.orderline_rows[i]);
+        }
+        // update customer
+        auto cust = ctx.txn->Read<Customer::Value>(ctx.customer_row);
+        cust.c_balance += sum;
+        cust.c_delivery_cnt++;
+        ctx.txn->Write(ctx.customer_row, cust);
+        ClientBase::OnUpdateRow(ctx.customer_row);
+
+        // record exec time
+        auto exec_tsc = __rdtsc();
+        auto exec = exec_tsc - ctx.txn->measure_tsc;
+        auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
+        probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
+      };
+  Context ctx {input, txn, oorder_row, neworder_row, customer_row};
+  memcpy(ctx.orderline_rows, &orderline_rows[0], sizeof(VHandle*) * input.nr_items);
+  txn->IssuePromise(ctx, lambda);
+  // debug(TRACE_PRIORITY "Priority txn {:p} (delivery) - Issued lambda into PQ", (void *)txn);
+
+  // record exec issue time
+  uint64_t issue_tsc = __rdtsc();
+  diff = issue_tsc - succ_tsc;
+  txn->measure_tsc = issue_tsc;
+  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+
+  delete &input;
   return txn->Commit();
 }
 

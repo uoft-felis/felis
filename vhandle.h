@@ -127,6 +127,8 @@ class LinkedListExtraVHandle {
 
   uint64_t first_version() {
     Entry *p = head.load();
+    if (!p)
+      return ~0; // uint_64 max
     while (p->next != nullptr)
       p = p->next;
     return p->version;

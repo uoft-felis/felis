@@ -32,9 +32,8 @@ struct DeliveryState {
         for (int j = 0; j < 15; j++) {
           state->order_lines[i][j] = rows[j];
           if (rows[j] == nullptr) break;
-          if (rows[j]->ShouldScanSkip(handle.serial_id())) {
-            std::abort();
-          }
+          abort_if(rows[j]->ShouldScanSkip(handle.serial_id()),
+                   "row {:p} should be skipped, delivery is catching up", (void*)&rows[j]);
 
           handle(rows[j]).AppendNewVersion();
         }
