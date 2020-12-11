@@ -328,10 +328,21 @@ void SlabMemory::FreeSlab(void *slab)
 }
 
 SlabPool::SlabPool(MemAllocType alloc_type, unsigned int chunk_size,
-                   unsigned int nr_buffer, int numa_node)
+                   unsigned int nr_buffer, int numa_node, 
+                   SlabMemory *slab_mem_ptr, unsigned int slab_mem_size)
     : alloc_type(alloc_type), numa_node(numa_node), chunk_size(chunk_size),
       nr_empty(0), nr_buffer(nr_buffer)
 {
+  if (!slabmem_ptr) {
+    //using default g_slabmem
+    slabmem_ptr = g_slabmem;
+    auto nr_numa_nodes = ParallelAllocationPolicy::g_nr_cores / kNrCorePerNode;
+    slabmem_size = nr_numa_nodes;
+  }
+  else {
+    slabmem_ptr = slab_mem_ptr;
+    slabmem_size = slab_mem_size;
+  }
   stats.used = stats.watermark = 0;
   empty.Initialize();
   half_full.Initialize();
@@ -497,7 +508,7 @@ ParallelSlabPool::ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, u
     auto numa_offset = i % kNrCorePerNode;
     if (numa_offset == 0) {
       //SHIRLEY: put the check here for now. everything for these types go in pmem.
-      if ((alloc_type == EntityPool) || (alloc_type == VhandlePool) || (alloc_type == RegionPool))
+      if (0)//((alloc_type == EntityPool) || (alloc_type == VhandlePool) || (alloc_type == RegionPool))
       {
         mem = (uint8_t *) AllocPersistentMemory(alloc_type, kHeaderSize * kNrCorePerNode);
       }
@@ -724,7 +735,7 @@ void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length, int num
 {
   //file name
   char pmem_file_name[50];
-  sprintf(pmem_file_name, "/mnt/mypmem/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
+  sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
 //  sprintf(pmem_file_name, "m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
 
   void *p = util::OSMemory::g_default.PmemAlloc(pmem_file_name, length, numa_node, on_demand);
