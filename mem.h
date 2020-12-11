@@ -159,6 +159,7 @@ void InitSlab(size_t mem);
 // than 512_K, SlabPool will ask for memory from the large metaslabs. These are
 // 64_M in page size.
 class Slab;
+class SlabMemory;
 class SlabPool {
   friend class ParallelRegion;
   util::GenericListNode<Slab> empty;
@@ -169,10 +170,14 @@ class SlabPool {
   unsigned int nr_buffer;
   unsigned int chunk_size;
 
+  SlabMemory *slabmem_ptr;
+
+  unsigned int slabmem_size;
+
   PoolStatistics stats;
  public:
   SlabPool(MemAllocType alloc_type, unsigned int chunk_size,
-           unsigned int nr_buffer, int numa_node);
+           unsigned int nr_buffer, int numa_node, SlabMemory *slab_mem_ptr = nullptr, unsigned int slab_mem_size = 0);
 
   void *Alloc();
   void Free(void *ptr);
