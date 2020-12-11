@@ -80,11 +80,13 @@ void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_
   int flags = MAP_PRIVATE;
   int prot = PROT_READ | PROT_WRITE;
   length = AlignLength(length);
+
+  // this doesn't work...
   if (length >= 2 << 20) flags |= MAP_HUGETLB;
 
   // create file, and extend(ftruncate) size to length bytes filled with 0s.
   // ftruncate should result in a sparse file
-  int pmem_fd = open(filename, O_RDWR|O_CREAT);
+  int pmem_fd = open(filename, O_RDWR|O_CREAT|O_TRUNC, 0666);
   printf("pmem_fd = %d\n", pmem_fd);
   if (pmem_fd < 0)
   {
@@ -99,8 +101,8 @@ void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_
     return nullptr;
   }
   
-  if (numa_node != -1) BindMemory(mem, length, numa_node);
-  if (!on_demand) LockMemory(mem, length);
+  // if (numa_node != -1) BindMemory(mem, length, numa_node);
+  // if (!on_demand) LockMemory(mem, length); //don't do lockmemory bc it forces it to go into dram
 
   return mem;
 }
