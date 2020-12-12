@@ -77,12 +77,12 @@ void *OSMemory::Alloc(size_t length, int numa_node, bool on_demand)
 
 void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_demand)
 {
-  int flags = MAP_PRIVATE;
+  int flags = MAP_SHARED;//MAP_PRIVATE; //don't use map_private for files
   int prot = PROT_READ | PROT_WRITE;
   length = AlignLength(length);
 
-  // this doesn't work...
-  if (length >= 2 << 20) flags |= MAP_HUGETLB;
+  // shirley: this doesn't work on pmem... need to figure out
+  //if (length >= 2 << 20) flags |= MAP_HUGETLB;
 
   // create file, and extend(ftruncate) size to length bytes filled with 0s.
   // ftruncate should result in a sparse file
