@@ -348,7 +348,7 @@ class ParallelPool : public ParallelAllocator<BasicPool> {
 class ParallelSlabPool : public ParallelAllocator<SlabPool> {
  public:
   ParallelSlabPool() : ParallelAllocator() {}
-  ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, unsigned int buffer);
+  ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, unsigned int buffer, bool use_pmem = false);
   ~ParallelSlabPool();
   ParallelSlabPool(ParallelSlabPool &&rhs) : ParallelAllocator(std::move(rhs)) {}
 
