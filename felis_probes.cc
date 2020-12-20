@@ -153,8 +153,30 @@ template <> void OnProbe(felis::probes::VHandleExpand p)
 
 #endif
 
+#if 0
+
+static std::mutex pool_m;
+//number of bytes allocated for varstr
+static long long total_varstr_alloc_bytes = 0;
+static long long max_varstr_alloc_bytes = 0;
+template <> void OnProbe(felis::probes::RegionPoolVarstr p)
+{
+  std::lock_guard _(pool_m); //released automatically when lockguard variable is destroyed
+  total_varstr_alloc_bytes += p.num_bytes;
+  if (total_varstr_alloc_bytes > max_varstr_alloc_bytes)
+  {
+    max_varstr_alloc_bytes = total_varstr_alloc_bytes;
+  }
+}
+#endif
+
 ProbeMain::~ProbeMain()
 {
+#if 0
+  std::cout << "number of bytes allocated for varstr: "
+            << total_varstr_alloc_bytes << " (max " << max_varstr_alloc_bytes << ")" << std::endl;
+#endif
+
 #if 0
   std::cout
       << "waitcnt" << std::endl

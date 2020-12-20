@@ -8,6 +8,8 @@
 #include "mem.h"
 #include "spdlog/fmt/fmt.h"
 
+#include "felis_probes.h"
+
 namespace felis {
 
 class VarStrView final {
@@ -70,7 +72,9 @@ class VarStr final {
 
   static VarStr *New(uint16_t length) {
     int region_id = mem::ParallelPool::CurrentAffinity();
-    VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
+    VarStr *ins = (VarStr *) mem::GetDataRegion(true).Alloc(NewSize(length));
+    //shirley: probe
+    //probes::RegionPoolVarstr{(long long)(length + sizeof(VarStr))}();
     ins->len = length;
     ins->region_id = region_id;
     // ins->p = (uint8_t *) ins + sizeof(VarStr);
@@ -80,7 +84,10 @@ class VarStr final {
   static void operator delete(void *ptr) {
     if (ptr == nullptr) return;
     VarStr *ins = (VarStr *) ptr;
-    mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
+    // shirley: probe
+    // probes::RegionPoolVarstr{(-1 * (long long)(sizeof(VarStr) +
+    // ins->len))}();
+    mem::GetDataRegion(true).Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
   }
 
   static VarStr *FromPtr(void *ptr, uint16_t length) {

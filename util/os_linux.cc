@@ -87,7 +87,7 @@ void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_
   // create file, and extend(ftruncate) size to length bytes filled with 0s.
   // ftruncate should result in a sparse file
   int pmem_fd = open(filename, O_RDWR|O_CREAT|O_TRUNC, 0666);
-  printf("pmem_fd = %d\n", pmem_fd);
+  //printf("pmem_fd = %d\n", pmem_fd);
   if (pmem_fd < 0)
   {
     printf("fd error: %s", strerror(errno));
