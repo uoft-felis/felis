@@ -387,7 +387,7 @@ class ParallelRegion {
     proposed_caps[k] = cap;
   }
 
-  void InitPools();
+  void InitPools(bool use_pmem = false);
 
   void *Alloc(size_t sz);
   void Free(void *ptr, int alloc_core, size_t sz);
@@ -396,7 +396,7 @@ class ParallelRegion {
   void PrintUsageEachClass();
 };
 
-ParallelRegion &GetDataRegion();
+ParallelRegion &GetDataRegion(bool use_pmem = false);
 
 class Brk {
   std::atomic_size_t offset;

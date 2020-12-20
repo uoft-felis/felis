@@ -300,6 +300,7 @@ void CallTxnsWorker::Run()
     RowEntity::Quiescence();
 
     mem::GetDataRegion().Quiescence();
+    mem::GetDataRegion(true).Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
     util::Instance<GC>().RunGC();

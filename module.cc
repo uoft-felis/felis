@@ -73,6 +73,7 @@ class AllocatorModule : public Module<CoreModule> {
 
     // Legacy
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
+    mem::GetDataRegion(true).ApplyFromConf(console.FindConfigSection("mem"));
 
     if (Options::kEpochQueueLength)
       EpochExecutionDispatchService::g_max_item = Options::kEpochQueueLength.ToLargeNumber();
@@ -96,6 +97,7 @@ class AllocatorModule : public Module<CoreModule> {
 
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
+    tasks.emplace_back([]() { mem::GetDataRegion(true).InitPools(true); });
     tasks.emplace_back(VHandle::InitPool);
     tasks.emplace_back(RowEntity::InitPool);
     tasks.emplace_back(GC::InitPool);

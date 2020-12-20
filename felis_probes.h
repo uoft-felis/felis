@@ -101,6 +101,11 @@ struct TpccDelivery {
   void operator()() const;
 };
 
+struct RegionPoolVarstr {
+  long long num_bytes;
+  void operator()() const;
+};
+
 }
 }
 
@@ -118,6 +123,7 @@ struct TpccDelivery {
   PROBE_PROXY(felis::probes::EndOfPhase);                                      \
   PROBE_PROXY(felis::probes::TpccNewOrder);                                    \
   PROBE_PROXY(felis::probes::TpccPayment);                                     \
-  PROBE_PROXY(felis::probes::TpccDelivery);
+  PROBE_PROXY(felis::probes::TpccDelivery);                                    \
+  PROBE_PROXY(felis::probes::RegionPoolVarstr);
 
 #endif /* FELIS_PROBES_H */
