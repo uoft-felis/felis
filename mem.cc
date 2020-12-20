@@ -628,16 +628,16 @@ namespace mem {
     }
   }
 
-  void ParallelRegion::InitPools()
+  void ParallelRegion::InitPools(bool use_pmem)
   {
     std::vector<std::thread> tasks;
     for (int i = 0; i < kMaxPools; i++) {
       tasks.emplace_back(
-          [this, i] {
+          [this, i, use_pmem] {
             size_t chunk_size = 1ULL << (i + 5);
             size_t nr_buffer = proposed_caps[i] * chunk_size / SlabPool::PageSize(chunk_size);
             printf("chunk_size %lu nr_buffer %lu\n", chunk_size, nr_buffer);
-            pools[i] = ParallelSlabPool(mem::RegionPool, chunk_size, nr_buffer, true);
+            pools[i] = ParallelSlabPool(mem::RegionPool, chunk_size, nr_buffer, use_pmem);
           });
     }
     for (auto &th: tasks) {
@@ -671,7 +671,11 @@ namespace mem {
   }
 
   static ParallelRegion g_data_region;
-  ParallelRegion &GetDataRegion() { return g_data_region; }
+  static ParallelRegion g_data_region_pmem;
+  ParallelRegion &GetDataRegion(bool use_pmem) { 
+    if (use_pmem) return g_data_region_pmem;
+    return g_data_region;
+  }
 
 void *Brk::Alloc(size_t s)
 {
