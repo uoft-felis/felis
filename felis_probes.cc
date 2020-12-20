@@ -231,6 +231,11 @@ ProbeMain::~ProbeMain()
 #endif
 
 #if 0
+  std::cout << "number of bytes allocated for varstr: "
+            << total_varstr_alloc_bytes << " (max " << max_varstr_alloc_bytes << ")" << std::endl;
+#endif
+
+#if 0
   std::cout
       << "waitcnt" << std::endl
       << global.wait_cnt() << std::endl

@@ -98,7 +98,7 @@ class VarStr final {
     // shirley: probe
     // probes::RegionPoolVarstr{(-1 * (long long)(sizeof(VarStr) +
     // ins->len))}();
-    mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
+    mem::GetPersistentPool().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
   }
 
   static VarStr *FromPtr(void *ptr, uint16_t length) {
