@@ -178,7 +178,7 @@ void BasePromise::AssignAffinity(uint64_t aff)
 
 void BasePromise::Add(PromiseRoutine *child)
 {
-  abort_if(nr_handlers >= kMaxHandlersLimit,
+  abort_if(nr_handlers >= limit,
            "nr_handlers {} exceeding limits!", nr_handlers);
   routine(nr_handlers++) = child;
 }

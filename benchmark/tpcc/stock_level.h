@@ -14,6 +14,9 @@ struct StockLevelStruct {
 
 struct StockLevelState {
   int current_oid;
+  std::array<uint, 300> item_ids;
+  int n;
+  felis::FutureValue<void> barrier;
 };
 
 }

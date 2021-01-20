@@ -25,6 +25,9 @@ struct DeliveryState {
 
   NodeBitmap nodes[10];
   InvokeHandle<DeliveryState, int, uint32_t> customer_future[10];
+
+  FutureValue<int> sum_future_values[10];
+
   struct Completion : public TxnStateCompletion<DeliveryState> {
     Tuple<int> args;
     void operator()(int id, BaseTxn::LookupRowResult rows) {

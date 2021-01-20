@@ -55,6 +55,14 @@ class RangeParam {
   }
 };
 
+class PlaceholderParam {
+  int nr;
+ public:
+  using TableType = void;
+  PlaceholderParam(int nr = 1) : nr(nr) {}
+  int size() const { return nr; }
+};
+
 class NodeBitmap {
  public:
   using Pair = std::tuple<int16_t, uint16_t>;
@@ -87,17 +95,26 @@ class NodeBitmap {
     }
     Add(node, bitmap);
   }
+
+  NodeBitmap & operator+=(const NodeBitmap &rhs) {
+    for (Pair e: rhs) {
+      auto &[node, bitmap] = e;
+      MergeOrAdd(node, bitmap);
+    }
+    return *this;
+  }
 };
 
 template <typename T> class FutureValue;
 
 template <>
 class FutureValue<void> {
+ protected:
   std::atomic_bool ready = false;
  public:
   FutureValue() {}
-  FutureValue(const FutureValue &rhs) : ready(rhs.ready.load()) {}
-  const FutureValue<void> &operator=(const FutureValue &rhs) {
+  FutureValue(const FutureValue<void> &rhs) : ready(rhs.ready.load()) {}
+  const FutureValue<void> &operator=(const FutureValue<void> &rhs) {
     ready = rhs.ready.load();
     return *this;
   }
@@ -119,14 +136,15 @@ class FutureValue<void> {
 
 template <typename T>
 class FutureValue : public FutureValue<void> {
-  std::atomic_bool ready = false;
   T value;
  public:
   using ValueType = T;
 
   FutureValue() {}
 
-  FutureValue(const FutureValue &rhs) : ready(rhs.ready.load()), value(rhs.value) {}
+  FutureValue(const FutureValue<T> &rhs) : value(rhs.value) {
+    ready = rhs.ready.load();
+  }
 
   void Signal(T v) {
     value = v;
@@ -210,16 +228,17 @@ class Txn : public BaseTxn {
    private:
     template <typename R>
     int _FromKeyParam(uint16_t bitmap, int bitshift, int shift, R param) {
-      auto rel_id = R::kRelationId;
       for (int i = bitshift; i < kMaxPackedKeys && i < bitshift + param.size(); i++) {
-        if (bitmap & (1 << i)) {
-          auto varstr = param[i - bitshift].EncodeFromRoutine();
-          key_len[shift] = varstr->len;
-          key_data[shift] = varstr->data;
-          relation_ids[shift] = rel_id;
-          slice_ids[shift] = param.EncodeToSliceId(i - bitshift);
+        if constexpr (!std::is_void<typename R::TableType>::value) {
+          if (bitmap & (1 << i)) {
+            auto varstr = param[i - bitshift].EncodeFromRoutine();
+            key_len[shift] = varstr->len;
+            key_data[shift] = varstr->data;
+            relation_ids[shift] = R::kRelationId;
+            slice_ids[shift] = param.EncodeToSliceId(i - bitshift);
 
-          shift++;
+            shift++;
+          }
         }
       }
       return shift;
@@ -321,12 +340,14 @@ class Txn : public BaseTxn {
   template <typename Router, typename KParam, typename ...KParams>
   void KeyParamsToBitmap(uint16_t bitmap_per_node[],
                          int bitshift, KParam param, KParams ...rest) {
-    auto &locator = util::Instance<SliceLocator<typename KParam::TableType>>();
-    for (int i = 0; i < param.size(); i++) {
-      auto node = util::Instance<NodeConfiguration>().node_id();
-      auto slice_id = locator.Locate(param[i]);
-      if (slice_id >= 0) node = Router::SliceToNodeId(slice_id);
-      bitmap_per_node[node] |= 1 << (i + bitshift);
+    if constexpr (!std::is_void<typename KParam::TableType>::value) {
+      auto &locator = util::Instance<SliceLocator<typename KParam::TableType>>();
+      for (int i = 0; i < param.size(); i++) {
+        auto node = util::Instance<NodeConfiguration>().node_id();
+        auto slice_id = locator.Locate(param[i]);
+        if (slice_id >= 0) node = Router::SliceToNodeId(slice_id);
+        bitmap_per_node[node] |= 1 << (i + bitshift);
+      }
     }
     KeyParamsToBitmap<Router>(bitmap_per_node, bitshift + param.size(), rest...);
   }

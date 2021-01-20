@@ -88,28 +88,49 @@ void NewOrderTxn::PrepareInsertImpl()
   }
 
   auto args0 = Tuple<OrderDetail>(detail);
-  state->orderlines_nodes =
-      TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
-          &args0,
-          KeyParam<OrderLine>(orderline_keys, nr_items));
-
   auto args1 = OOrder::Value::New(customer_id, 0, nr_items,
                                   all_local, ts_now);
 
-  state->other_inserts_nodes =
-      TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, OOrder::Value>(
-          &args1,
-          KeyParam<OOrder>(oorder_key),
-          KeyParam<NewOrder>(neworder_key),
-          KeyParam<OOrderCIdIdx>(cididx_key));
 
-  if (g_tpcc_config.IsWarehousePinnable()) {
-    root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
-  } else if (VHandleSyncService::g_lock_elision) {
-    ASSERT_BOHM_CONT;
-    // Bohm partitions by district id only when there isn't enough
-    // warehouses. Here, luckily, all keys have the same district.
-    root->AssignAffinity((district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads);
+  if (g_tpcc_config.IsWarehousePinnable() || !VHandleSyncService::g_lock_elision) {
+    state->orderlines_nodes =
+        TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
+            &args0,
+            KeyParam<OrderLine>(orderline_keys, nr_items));
+
+    state->other_inserts_nodes =
+        TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, OOrder::Value>(
+            &args1,
+            KeyParam<OOrder>(oorder_key),
+            KeyParam<NewOrder>(neworder_key),
+            KeyParam<OOrderCIdIdx>(cididx_key));
+
+    if (g_tpcc_config.IsWarehousePinnable())
+      root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+  } else {
+    ASSERT_PWV_CONT;
+
+    txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
+
+    state->orderlines_nodes =
+        TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
+            &args0,
+            KeyParam<OrderLine>(orderline_keys, nr_items));
+
+    txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 40);
+    state->other_inserts_nodes =
+        TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, OOrder::Value>(
+            &args1,
+            KeyParam<OOrder>(oorder_key),
+            PlaceholderParam(),
+            KeyParam<OOrderCIdIdx>(cididx_key));
+
+    txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 30);
+    state->other_inserts_nodes +=
+        TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, void>(
+            nullptr,
+            PlaceholderParam(),
+            KeyParam<NewOrder>(neworder_key));
   }
 }
 
@@ -159,7 +180,7 @@ void NewOrderTxn::PrepareImpl()
       if (istart == iend) break;
 
       if (!g_tpcc_config.IsWarehousePinnable()) {
-        ASSERT_BOHM_CONT;
+        ASSERT_PWV_CONT;
         // In this situation, w - 1 means the Stock(0) partition anyway.
       }
 
@@ -386,7 +407,7 @@ void NewOrderTxn::Run()
             });
       }
 
-    } else {
+    } else { // kEnablePartition
       std::array<int, NewOrderStruct::kNewOrderMaxItems> unique_warehouses;
       int nr_unique_warehouses = 0;
       unique_warehouses.fill(0);
@@ -442,9 +463,6 @@ void NewOrderTxn::Run()
       }
     }
   }
-
-  if (Client::g_enable_granola)
-    root->AssignAffinity(warehouse_id - 1);
 }
 
 }

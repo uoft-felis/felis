@@ -84,18 +84,50 @@ void DeliveryTxn::PrepareImpl()
     auto dest_neworder_key = NewOrder::Key::New(
         warehouse_id, district_id, oid, customer_id);
 
-    if (VHandleSyncService::g_lock_elision && !g_tpcc_config.IsWarehousePinnable()) {
-      txn_indexop_affinity = (district_id - 1 + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
+    auto args = Tuple<int>(i);
+
+    if (!VHandleSyncService::g_lock_elision || g_tpcc_config.IsWarehousePinnable()) {
+      state->nodes[i] =
+          TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
+              &args,
+              RangeParam<OrderLine>(orderline_start, orderline_end),
+              KeyParam<OOrder>(oorder_key),
+              KeyParam<Customer>(customer_key),
+              KeyParam<NewOrder>(dest_neworder_key));
+    } else {
+      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
+
+      state->nodes[i] =
+          TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
+              &args,
+              RangeParam<OrderLine>(orderline_start, orderline_end));
+
+      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 30);
+      state->nodes[i] +=
+          TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
+              &args,
+              PlaceholderParam(2),
+              PlaceholderParam(),
+              PlaceholderParam(),
+              KeyParam<NewOrder>(dest_neworder_key));
+
+      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 40);
+      state->nodes[i] +=
+          TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
+              &args,
+              PlaceholderParam(2),
+              KeyParam<OOrder>(oorder_key));
+
+      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 20);
+
+      state->nodes[i] +=
+          TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
+              &args,
+              PlaceholderParam(2),
+              PlaceholderParam(),
+              KeyParam<Customer>(customer_key));
     }
 
-    auto args = Tuple<int>(i);
-    state->nodes[i] =
-        TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
-            &args,
-            RangeParam<OrderLine>(orderline_start, orderline_end),
-            KeyParam<OOrder>(oorder_key),
-            KeyParam<Customer>(customer_key),
-            KeyParam<NewOrder>(dest_neworder_key));
   }
 
   if (g_tpcc_config.IsWarehousePinnable()) {
@@ -110,6 +142,10 @@ void DeliveryTxn::Run()
   if (EpochClient::g_enable_granola)
     PrepareImpl();
 
+  if (Options::kEnablePartition && !g_tpcc_config.IsWarehousePinnable()) {
+    root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
+  }
+
   for (int i = 0; i < 10; i++) {
     int16_t sum_node = -1, customer_node = -1;
     for (auto &p: state->nodes[i]) {
@@ -122,120 +158,145 @@ void DeliveryTxn::Run()
       if (bitmap == (1 << 3)) continue;
       auto aff = std::numeric_limits<uint64_t>::max();
 
-      if (g_tpcc_config.IsWarehousePinnable())
-        aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
-      else if (Options::kEnablePartition)
-        aff = (i + kBohmExtraPartitions) % NodeConfiguration::g_nr_threads;
+      static auto constexpr DeleteNewOrder = [](auto state, auto index_handle, int i) -> void {
+        index_handle(state->new_orders[i]).Delete();
+        ClientBase::OnUpdateRow(state->new_orders[i]);
+      };
 
-      root->Then(
-          MakeContext(bitmap, i, o_carrier_id), node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, bitmap, i, carrier_id] = ctx;
+      static auto constexpr UpdateOOrder = [](auto state, auto index_handle, int i, uint carrier_id) -> void {
+        // logger->info("row {} district {} sid {}", (void *) state->oorders[i], district_id, index_handle.serial_id());
+        auto oorder = index_handle(state->oorders[i]).template Read<OOrder::Value>();
+        oorder.o_carrier_id = carrier_id;
+        index_handle(state->oorders[i]).WriteTryInline(oorder);
+        ClientBase::OnUpdateRow(state->oorders[i]);
+      };
 
-            probes::TpccDelivery{0, __builtin_popcount(bitmap)}();
+      static auto constexpr CalcSum = [](auto state, auto index_handle, int i, uint32_t ts) -> int {
+        int sum = 0;
+        for (int j = 0; j < 15; j++) {
+          if (state->order_lines[i][j] == nullptr) break;
+          auto handle = index_handle(state->order_lines[i][j]);
+          auto ol = handle.template Read<OrderLine::Value>();
+          sum += ol.ol_amount;
+          ol.ol_delivery_d = ts;
 
-            if (bitmap & (1 << 4)) {
-              index_handle(state->new_orders[i]).Delete();
-              ClientBase::OnUpdateRow(state->new_orders[i]);
-            }
+          probes::TpccDelivery{1, 1}();
 
-            if (bitmap & (1 << 2)) {
-              // logger->info("row {} district {} sid {}", (void *) state->oorders[i], district_id, index_handle.serial_id());
-              auto oorder = index_handle(state->oorders[i]).template Read<OOrder::Value>();
-              oorder.o_carrier_id = carrier_id;
-              index_handle(state->oorders[i]).WriteTryInline(oorder);
-              ClientBase::OnUpdateRow(state->oorders[i]);
-            }
+          handle.WriteTryInline(ol);
+          ClientBase::OnUpdateRow(state->order_lines[i][j]);
+        }
+        return sum;
+      };
 
-            return nullopt;
-          }, aff);
+      static auto constexpr WriteCustomer = [](auto state, auto index_handle, int i, int sum) -> void {
+        probes::TpccDelivery{1, 1}();
+        auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
+        customer.c_balance += sum;
+        index_handle(state->customers[i]).Write(customer);
+        ClientBase::OnUpdateRow(state->customers[i]);
+      };
 
-      VHandle *valid_rows[16];
-      int nr_valid_rows = 0;
-      for (int j = 0; j < 15; j++) {
-        if (state->order_lines[i][j] == nullptr) break;
-        valid_rows[nr_valid_rows++] = state->order_lines[i][j];
-      }
-      valid_rows[nr_valid_rows++] = state->customers[i];
 
+      if (!Options::kEnablePartition || g_tpcc_config.IsWarehousePinnable()) {
 #ifndef SPLIT_CUSTOMER_PIECE
-      state->customer_future[i] = UpdateForKey(
-          node, state->customers[i],
-          [](const auto &ctx, VHandle *row) {
-            auto &[state, index_handle, i, ts] = ctx;
-            int sum = 0;
-            for (int j = 0; j < 15; j++) {
-              if (state->order_lines[i][j] == nullptr) break;
-              auto handle = index_handle(state->order_lines[i][j]);
-              auto ol = handle.template Read<OrderLine::Value>();
-              sum += ol.ol_amount;
-              ol.ol_delivery_d = ts;
+        if (bitmap & 0x01) {
+          state->customer_future[i] = UpdateForKey(
+              node, state->customers[i],
+              [](const auto &ctx, VHandle *row) {
+                auto &[state, index_handle, i, ts] = ctx;
+                int sum = CalcSum(state, index_handle, i, ts);
+                WriteCustomer(state, index_handle, i, sum);
+              }, i, ts);
+        }
 
-              probes::TpccDelivery{1, 1}();
+        if (bitmap != 0x81 || state->customer_future[i].has_callback()) {
+          if (g_tpcc_config.IsWarehousePinnable())
+            aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
 
-              handle.WriteTryInline(ol);
-              ClientBase::OnUpdateRow(state->order_lines[i][j]);
-            }
+          root->Then(
+              MakeContext(bitmap, i, ts, o_carrier_id), node,
+              [](const auto &ctx, auto args) -> Optional<VoidValue> {
+                auto &[state, index_handle, bitmap, i, ts, carrier_id] = ctx;
 
-            probes::TpccDelivery{1, 1}();
-            auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
-            customer.c_balance += sum;
-            index_handle(state->customers[i]).Write(customer);
-            ClientBase::OnUpdateRow(state->customers[i]);
-          }, i, ts);
-      if (state->customer_future[i].has_callback()) {
+                probes::TpccDelivery{0, __builtin_popcount(bitmap)}();
+
+                if (bitmap & (1 << 4)) {
+                  DeleteNewOrder(state, index_handle, i);
+                }
+
+                if (bitmap & (1 << 2)) {
+                  UpdateOOrder(state, index_handle, i, carrier_id);
+                }
+
+                state->customer_future[i].Invoke(state, index_handle, i, ts);
+
+                return nullopt;
+              },
+              aff);
+        }
+#endif
+
+#ifdef SPLIT_CUSTOMER_PIECE
+        // TODO: This code isn't well designed, nor well-debugged!
+
+        // Under hash sharding, we need to split an intra-txn dependency because
+        // customer table may on a different machine.
+        if (node == sum_node) {
+          root->Then(
+              MakeContext(bitmap, i, ts), node,
+              [](const auto &ctx, auto args) -> Optional<Tuple<int>> {
+                auto &[state, index_handle, bitmap, i, ts] = ctx;
+                return Tuple<int>(CalcSum(state, index_handle, i, ts));
+              }, aff)->Then(
+                  MakeContext(i), customer_node,
+                  [](const auto &ctx, auto args) -> Optional<VoidValue> {
+                    auto [sum] = args;
+                    auto &[state, index_handle, i] = ctx;
+                    WriteCustomer(state, index_handle, i, sum);
+                    return nullopt;
+                  });
+        }
+#endif
+      } else { // kEnablePartition && !WarehousePinnable()
+        int d = i + 1;
+        aff = g_tpcc_config.PWVDistrictToCoreId(d, 30);
+        root->Then(
+            MakeContext(i), node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, i] = ctx;
+              DeleteNewOrder(state, index_handle, i);
+              return nullopt;
+            }, aff);
+
+        aff = g_tpcc_config.PWVDistrictToCoreId(d, 40);
+        root->Then(
+            MakeContext(i, o_carrier_id), node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, i, carrier_id] = ctx;
+              UpdateOOrder(state, index_handle, i, carrier_id);
+              return nullopt;
+            }, aff);
+
+        aff = g_tpcc_config.PWVDistrictToCoreId(d, 10);
+        state->sum_future_values[i] = FutureValue<int>();
         root->Then(
             MakeContext(i, ts), node,
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
               auto &[state, index_handle, i, ts] = ctx;
-              state->customer_future[i].Invoke(state, index_handle, i, ts);
-
+              state->sum_future_values[i].Signal(CalcSum(state, index_handle, i, ts));
               return nullopt;
-            },
-            aff);
-      }
-#endif
+            }, aff);
 
-#ifdef SPLIT_CUSTOMER_PIECE
-      // Under hash sharding, we need to split an intra-txn dependency because
-      // customer table may on a different machine.
-      if (node == sum_node) {
+        aff = g_tpcc_config.PWVDistrictToCoreId(d, 20);
         root->Then(
-            MakeContext(bitmap, i, ts), node,
-            [](const auto &ctx, auto args) -> Optional<Tuple<int>> {
-              auto &[state, index_handle, bitmap, i, ts] = ctx;
-
-              int sum = 0;
-              for (int j = 0; j < 15; j++) {
-                if (state->order_lines[i][j] == nullptr) break;
-                auto handle = index_handle(state->order_lines[i][j]);
-                auto ol = handle.template Read<OrderLine::Value>();
-                sum += ol.ol_amount;
-                ol.ol_delivery_d = ts;
-
-                probes::TpccDelivery{1, 1}();
-
-                handle.WriteTryInline(ol);
-                ClientBase::OnUpdateRow(state->order_lines[i][j]);
-              }
-
-              return Tuple<int>(sum);
-            }, aff)->Then(
-                MakeContext(i), customer_node,
-                [](const auto &ctx, auto args) -> Optional<VoidValue> {
-                  auto [sum] = args;
-                  auto &[state, index_handle, i] = ctx;
-
-                  probes::TpccDelivery{1, 1}();
-                  auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
-                  customer.c_balance += sum;
-                  index_handle(state->customers[i]).Write(customer);
-                  ClientBase::OnUpdateRow(state->customers[i]);
-
-                  return nullopt;
-                });
+            MakeContext(i), node,
+            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              auto &[state, index_handle, i] = ctx;
+              int sum = state->sum_future_values[i].Wait();
+              WriteCustomer(state, index_handle, i, sum);
+              return nullopt;
+            }, aff);
       }
-#endif
     }
   }
 }

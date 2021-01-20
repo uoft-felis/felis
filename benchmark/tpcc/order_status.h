@@ -15,7 +15,7 @@ struct OrderStatusStruct {
 };
 
 struct OrderStatusState {
-  // All query done insde Run()
+  FutureValue<int> oid_future;
 };
 
 }

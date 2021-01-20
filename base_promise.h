@@ -64,12 +64,13 @@ static_assert(sizeof(PromiseRoutine) == CACHE_LINE_SIZE);
 class EpochClient;
 
 class BasePromise {
+ public:
+  static constexpr size_t kInlineLimit = 6;
  protected:
   friend struct PromiseRoutine;
   int nr_handlers;
   int limit;
   PromiseRoutine **extra_handlers;
-  static constexpr size_t kInlineLimit = 6;
 
   PromiseRoutine *inline_handlers[kInlineLimit];
  public:

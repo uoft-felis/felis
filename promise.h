@@ -33,7 +33,8 @@ class Promise : public BasePromise {
  public:
   typedef T Type;
 
-  Promise(PromiseRoutine *routine = nullptr) : BasePromise() {
+  Promise(PromiseRoutine *routine = nullptr, int limit = BasePromise::kMaxHandlersLimit)
+      : BasePromise(limit) {
     if (routine) routine->next = this;
   }
 
