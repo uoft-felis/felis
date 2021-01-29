@@ -86,6 +86,7 @@ struct Options {
   static inline const auto kYcsbDependency = Option("YcsbDependency", false);
 
   static inline const auto kEnableGranola = Option("EnableGranola", false);
+  static inline const auto kEnablePWV = Option("EnablePWV", false);
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

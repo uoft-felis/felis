@@ -141,6 +141,7 @@ class EpochClient {
  public:
   static EpochClient *g_workload_client;
   static bool g_enable_granola;
+  static bool g_enable_pwv;
 
   static long g_corescaling_threshold;
   static long g_splitting_threshold;
@@ -193,8 +194,6 @@ class EpochClient {
   std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
-  LocalityManager insert_lmgr, init_lmgr;
-  LocalityManager exec_lmgr;
   LocalityManager cont_lmgr;
 
   NodeConfiguration &conf;

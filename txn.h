@@ -47,10 +47,26 @@ class BaseTxn {
   virtual void PrepareInsert() = 0;
   virtual void Run() = 0;
 
-  void RunAndAssignSchedulingKey() {
+ private:
+  // Entry functions for Epoch. Granola, PWV and Felis all have different
+  // requirements on each phase is executed (in-order vs out-of-order).
+  void Run0() {
+    if (EpochClient::g_enable_granola) {
+      Prepare();
+    }
     Run();
     root_promise()->AssignSchedulingKey(serial_id());
   }
+  void Prepare0() {
+    if (EpochClient::g_enable_granola)
+      return;
+
+    Prepare();
+  }
+  void PrepareInsert0() {
+    PrepareInsert();
+  }
+ public:
 
   virtual BasePromise *root_promise() = 0;
   virtual void ResetRoot() = 0;

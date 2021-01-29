@@ -22,7 +22,7 @@ void BaseTxn::InitBrk(long nr_epochs)
 
 void BaseTxn::BaseTxnRow::AppendNewVersion(int ondemand_split_weight)
 {
-  if (!EpochClient::g_enable_granola) {
+  if (!EpochClient::g_enable_granola && !EpochClient::g_enable_pwv) {
     auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
     auto is_dup = commit_buffer->AddRef(go::Scheduler::CurrentThreadPoolId() - 1, vhandle, sid);
     if (!is_dup) {
@@ -51,7 +51,7 @@ VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
 
 bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
 {
-  if (!EpochClient::g_enable_granola) {
+  if (!EpochClient::g_enable_granola && !EpochClient::g_enable_pwv) {
     auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
     auto ent = commit_buffer->LookupDuplicate(vhandle, sid);
     if (ent) {

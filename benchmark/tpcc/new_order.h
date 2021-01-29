@@ -45,7 +45,7 @@ struct NewOrderState {
   VHandle *orderlines[15]; // insert
   struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
     Tuple<NewOrderStruct::OrderDetail> args;
-    void operator()(int id, VHandle *row) __attribute__((noinline)) {
+    void operator()(int id, VHandle *row) {
       state->orderlines[id] = row;
       handle(row).AppendNewVersion();
 
@@ -66,7 +66,7 @@ struct NewOrderState {
 
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     OOrder::Value args;
-    void operator()(int id, VHandle *row) __attribute__((noinline)) {
+    void operator()(int id, VHandle *row) {
       handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;

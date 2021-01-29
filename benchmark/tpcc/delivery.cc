@@ -1,4 +1,5 @@
 #include "delivery.h"
+#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -9,7 +10,12 @@ DeliveryStruct ClientBase::GenerateTransactionInput<DeliveryStruct>()
   s.warehouse_id = PickWarehouse();
   s.o_carrier_id = PickDistrict();
   s.ts = GetCurrentTime();
-  auto &conf = util::Instance<NodeConfiguration>();
+
+  for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
+    auto district_id = i + 1;
+    s.oid[i] = ClientBase::AcquireLastNewOrderId(s.warehouse_id, district_id);
+  }
+
   return s;
 }
 
@@ -22,21 +28,24 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
         client(client)
   {}
   void Run() override final;
-  void Prepare() override final {
-    if (!EpochClient::g_enable_granola)
-      PrepareImpl();
-  }
-  void PrepareInsert() override final {}
-  void PrepareImpl();
+  void Prepare() override final;
+  void PrepareInsert() override final;
 };
 
-void DeliveryTxn::PrepareImpl()
+void DeliveryTxn::PrepareInsert()
 {
+}
+
+void DeliveryTxn::Prepare()
+{
+  if (Options::kEnablePartition) {
+    root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
+  }
   INIT_ROUTINE_BRK(16384);
   auto &mgr = util::Instance<TableManager>();
   for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
     auto district_id = i + 1;
-    auto oid_min = ClientBase::AcquireLastNewOrderId(warehouse_id, district_id);
+    auto oid_min = oid[i];
 
     auto neworder_start = NewOrder::Key::New(
         warehouse_id, district_id, oid_min, 0);
@@ -62,8 +71,9 @@ void DeliveryTxn::PrepareImpl()
       no_key = no_it->key().template ToType<NewOrder::Key>();
 
       if (no_it->row()->ShouldScanSkip(serial_id())) {
-        logger->warn("TPCC Delivery: skipping w {} d {} oid {} (from node {})",
-                     warehouse_id, district_id, no_key.no_o_id >> 8, no_key.no_o_id & 0xFF);
+        logger->warn("TPCC Delivery: skipping w {} d {} oid {} (from node {}), first ver {}",
+                     warehouse_id, district_id, no_key.no_o_id >> 8, no_key.no_o_id & 0xFF,
+                     no_it->row()->first_version());
         break;
       }
       goto found;
@@ -87,6 +97,9 @@ void DeliveryTxn::PrepareImpl()
     auto args = Tuple<int>(i);
 
     if (!VHandleSyncService::g_lock_elision || g_tpcc_config.IsWarehousePinnable()) {
+      if (VHandleSyncService::g_lock_elision) {
+        txn_indexop_affinity = warehouse_id - 1;
+      }
       state->nodes[i] =
           TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
               &args,
@@ -94,15 +107,25 @@ void DeliveryTxn::PrepareImpl()
               KeyParam<OOrder>(oorder_key),
               KeyParam<Customer>(customer_key),
               KeyParam<NewOrder>(dest_neworder_key));
+      if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        gm[txn_indexop_affinity]->ReserveEdge(serial_id(), 4);
+      }
     } else {
-      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
+      int parts[4] = {
+        g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
+        g_tpcc_config.PWVDistrictToCoreId(district_id, 30),
+        g_tpcc_config.PWVDistrictToCoreId(district_id, 40),
+        g_tpcc_config.PWVDistrictToCoreId(district_id, 20),
+      };
 
+      txn_indexop_affinity = parts[0];
       state->nodes[i] =
           TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
               &args,
               RangeParam<OrderLine>(orderline_start, orderline_end));
 
-      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 30);
+      txn_indexop_affinity = parts[1];
       state->nodes[i] +=
           TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
               &args,
@@ -111,23 +134,58 @@ void DeliveryTxn::PrepareImpl()
               PlaceholderParam(),
               KeyParam<NewOrder>(dest_neworder_key));
 
-      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 40);
+      txn_indexop_affinity = parts[2];
       state->nodes[i] +=
           TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
               &args,
               PlaceholderParam(2),
               KeyParam<OOrder>(oorder_key));
 
-      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 20);
-
+      txn_indexop_affinity = parts[3];
       state->nodes[i] +=
           TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
               &args,
               PlaceholderParam(2),
               PlaceholderParam(),
               KeyParam<Customer>(customer_key));
-    }
 
+      if (Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        for (auto part_id: parts)
+          gm[part_id]->ReserveEdge(serial_id());
+
+      }
+    }
+  }
+
+  if (Client::g_enable_pwv) {
+    auto &gm = util::Instance<PWVGraphManager>();
+    for (int i = 0; i < 10; i++) {
+      auto district_id = i + 1;
+      if (g_tpcc_config.IsWarehousePinnable()) {
+        for (auto row: {
+            state->order_lines[i][0], state->new_orders[i],
+            state->oorders[i], state->customers[i]}) {
+          gm[warehouse_id - 1]->AddResource(serial_id(), PWVGraph::VHandleToResource(row));
+        }
+      } else {
+        int parts[4] = {
+          g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
+          g_tpcc_config.PWVDistrictToCoreId(district_id, 30),
+          g_tpcc_config.PWVDistrictToCoreId(district_id, 40),
+          g_tpcc_config.PWVDistrictToCoreId(district_id, 20),
+        };
+
+        gm[parts[0]]->AddResource(serial_id(),
+                                  PWVGraph::VHandleToResource(state->order_lines[i][0]));
+        gm[parts[1]]->AddResource(serial_id(),
+                                  PWVGraph::VHandleToResource(state->new_orders[i]));
+        gm[parts[2]]->AddResource(serial_id(),
+                                  PWVGraph::VHandleToResource(state->oorders[i]));
+        gm[parts[3]]->AddResource(serial_id(),
+                                  PWVGraph::VHandleToResource(state->customers[i]));
+      }
+    }
   }
 
   if (g_tpcc_config.IsWarehousePinnable()) {
@@ -139,9 +197,6 @@ void DeliveryTxn::PrepareImpl()
 
 void DeliveryTxn::Run()
 {
-  if (EpochClient::g_enable_granola)
-    PrepareImpl();
-
   if (Options::kEnablePartition && !g_tpcc_config.IsWarehousePinnable()) {
     root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
   }

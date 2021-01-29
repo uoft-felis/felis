@@ -11,7 +11,7 @@ struct CreditCheckStruct {
 };
 
 template <>
-CreditCheckStruct TPCCClient::GenerateTransactionInput<CreditCheckStruct>()
+CreditCheckStruct ClientBase::GenerateTransactionInput<CreditCheckStruct>()
 {
   CreditCheckStruct s;
   s.warehouse_id = PickWarehouse();

@@ -320,6 +320,8 @@ class ClientBase {
   static std::atomic_ulong *g_last_no_start[32]; // max 32 nodes
   static std::atomic_ulong *g_last_no_end[32];
 
+ public:
+  static uint64_t *g_pwv_stock_resources;
   static felis::TableManager &tables() { return util::Instance<felis::TableManager>(); }
 
  public:

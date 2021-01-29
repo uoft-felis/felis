@@ -39,7 +39,8 @@ db_headers = [
     'txn.h', 'txn_cc.h', 'vhandle.h', 'vhandle_sync.h', 'contention_manager.h', 'locality_manager.h', 'threshold_autotune.h',
     'commit_buffer.h', 'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
-    'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h'
+    'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h',
+    'pwv_graph.h'
 ]
 
 db_srcs = [
@@ -52,6 +53,7 @@ db_srcs = [
     'json11/json11.cpp',
     'spdlog/src/spdlog.cpp', 'spdlog/src/fmt.cpp', 'spdlog/src/stdout_sinks.cpp', 'spdlog/src/async.cpp', 'spdlog/src/cfg.cpp', 'spdlog/src/color_sinks.cpp', 'spdlog/src/file_sinks.cpp',
     'xxHash/xxhash.c', 'util/os_linux.cc', 'util/locks.cc',
+    'pwv_graph.cc',
     'gopp/gopp.cc', 'gopp/channels.cc',
     'gopp/asm.S'] + [
         ('masstree/kvthread.cc', ['-include', 'masstree/build/config.h']),

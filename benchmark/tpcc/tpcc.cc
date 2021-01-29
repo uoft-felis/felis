@@ -412,6 +412,7 @@ bool ClientBase::is_warehouse_hotspot(uint wid)
 
 std::atomic_ulong *ClientBase::g_last_no_start[32];
 std::atomic_ulong *ClientBase::g_last_no_end[32];
+uint64_t *ClientBase::g_pwv_stock_resources;
 
 namespace loaders {
 
@@ -597,6 +598,12 @@ void Loader<LoaderType::District>::DoLoad()
           });
 
     }
+  }
+  if (Client::g_enable_pwv) {
+    g_pwv_stock_resources = new uint64_t[g_tpcc_config.nr_warehouses];
+    std::fill(g_pwv_stock_resources,
+              g_pwv_stock_resources + g_tpcc_config.nr_warehouses,
+              0);
   }
   // logger->info("District Loader done.");
 }

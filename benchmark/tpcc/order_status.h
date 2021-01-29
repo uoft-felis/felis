@@ -15,7 +15,9 @@ struct OrderStatusStruct {
 };
 
 struct OrderStatusState {
-  FutureValue<int> oid_future;
+  VHandle *customer;
+  VHandle *order_line[15];
+  int oid;
 };
 
 }

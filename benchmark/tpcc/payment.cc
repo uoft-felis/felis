@@ -1,4 +1,5 @@
 #include "payment.h"
+#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -32,16 +33,12 @@ class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
         client(client)
   {}
 
-  void Prepare() override final {
-    if (!Client::g_enable_granola)
-      PrepareImpl();
-  }
+  void Prepare() override final;
   void Run() override final;
   void PrepareInsert() override final {}
-  void PrepareImpl();
 };
 
-void PaymentTxn::PrepareImpl()
+void PaymentTxn::Prepare()
 {
   INIT_ROUTINE_BRK(4096);
 
@@ -76,34 +73,57 @@ void PaymentTxn::PrepareImpl()
           nullptr,
           PlaceholderParam(2),
           KeyParam<Customer>(customer_key));
+
+      if (Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        gm[warehouse_id - 1]->ReserveEdge(serial_id());
+        gm[customer_warehouse_id - 1]->ReserveEdge(serial_id());
+
+        gm[warehouse_id - 1]->AddResource(
+            serial_id(), PWVGraph::VHandleToResource(state->warehouse));
+        gm[customer_warehouse_id - 1]->AddResource(
+            serial_id(), PWVGraph::VHandleToResource(state->customer));
+      }
     } else {
       ASSERT_PWV_CONT;
 
-      txn_indexop_affinity = 1; // Warehouse(1) partition
+      int parts[3] = {
+        1,
+        g_tpcc_config.PWVDistrictToCoreId(district_id, 0),
+        g_tpcc_config.PWVDistrictToCoreId(customer_district_id, 20),
+      };
+
+      txn_indexop_affinity = parts[0]; // Warehouse(1) partition
       state->nodes = TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
           nullptr,
           KeyParam<Warehouse>(warehouse_key));
 
-      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 0);
+      txn_indexop_affinity = parts[1];
       state->nodes += TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
           nullptr,
           PlaceholderParam(),
           KeyParam<District>(district_key));
 
-      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(customer_district_id, 20);
+      txn_indexop_affinity = parts[2];
       state->nodes += TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
           nullptr,
           PlaceholderParam(2),
           KeyParam<Customer>(customer_key));
+
+      if (Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        for (auto part_id: parts)
+          gm[part_id]->ReserveEdge(serial_id());
+        gm[parts[0]]->AddResource(serial_id(), PWVGraph::VHandleToResource(state->warehouse));
+        gm[parts[1]]->AddResource(serial_id(), PWVGraph::VHandleToResource(state->district));
+        gm[parts[2]]->AddResource(serial_id(), PWVGraph::VHandleToResource(state->customer));
+      }
     }
   }
 }
 
 void PaymentTxn::Run()
 {
-  if (Client::g_enable_granola)
-    PrepareImpl();
-
   auto &conf = util::Instance<NodeConfiguration>();
   for (auto &p: state->nodes) {
     auto [node, bitmap] = p;

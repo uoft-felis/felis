@@ -14,6 +14,8 @@
 #include "gc.h"
 #include "vhandle_sync.h"
 #include "contention_manager.h"
+#include "pwv_graph.h"
+
 #include "util/os.h"
 
 #include "gopp/gopp.h"
@@ -83,7 +85,22 @@ class AllocatorModule : public Module<CoreModule> {
     if (Options::kNrEpoch)
       EpochClient::g_max_epoch = Options::kNrEpoch.ToInt();
 
-    EpochClient::g_enable_granola = Options::kEnableGranola;
+    if (Options::kEnableGranola) {
+      abort_if(!Options::kEnablePartition, "EnablePartition should also be on with Granola");
+      abort_if(!Options::kVHandleLockElision, "VHandleLockElision should also be on with Granola");
+
+      abort_if(Options::kEnablePWV, "PWV and Granola cannot be on at the same time");
+      EpochClient::g_enable_granola = true;
+    }
+
+    if (Options::kEnablePWV) {
+      abort_if(!Options::kEnablePartition, "EnablePartition should also be on with PWV");
+      abort_if(!Options::kVHandleLockElision, "VHandleLockElision should also be on with PWV");
+
+      abort_if(Options::kEnableGranola, "Granola and PWV cannot be on at the same time");
+      EpochClient::g_enable_pwv = true;
+      util::InstanceInit<PWVGraphManager>::instance = new PWVGraphManager();
+    }
 
     if (Options::kBatchAppendAlloc) {
       ContentionManager::g_prealloc_count = Options::kBatchAppendAlloc.ToLargeNumber();

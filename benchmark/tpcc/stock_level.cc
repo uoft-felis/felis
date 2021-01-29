@@ -1,4 +1,5 @@
 #include "stock_level.h"
+#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -24,45 +25,81 @@ class StockLevelTxn : public Txn<StockLevelState>, public StockLevelStruct {
   {}
 
   void PrepareInsert() override final;
-  void Prepare() override final {}
+  void Prepare() override final;
   void Run() override final;
 };
 
 void StockLevelTxn::PrepareInsert()
 {
-  if (client->g_enable_granola)
-    return;
-
   auto &mgr = util::Instance<TableManager>();
   auto auto_inc_zone = warehouse_id * 10 + district_id;
   state->current_oid = mgr.Get<OOrder>().GetCurrentAutoIncrement(auto_inc_zone);
   // client->get_execution_locality_manager().PlanLoad(Config::WarehouseToCoreId(warehouse_id), 150);
 }
 
+void StockLevelTxn::Prepare()
+{
+  auto &mgr = util::Instance<TableManager>();
+  auto lower = std::max<int>(state->current_oid - (20 << 8), 0);
+  auto upper = std::max<int>(state->current_oid, 0);
+
+  auto ol_start = OrderLine::Key::New(warehouse_id, district_id, lower, 0);
+  auto ol_end = OrderLine::Key::New(warehouse_id, district_id, upper, 0);
+
+  INIT_ROUTINE_BRK(8 << 10);
+
+  state->n = 0;
+  PWVGraph::Resource *res = nullptr;
+  int nr_res = 0;
+
+  if (Client::g_enable_pwv) {
+    res = (PWVGraph::Resource *) alloca(sizeof(PWVGraph::Resource) * 60); // maximum 60 resources
+  }
+
+  for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
+           ol_start.EncodeFromRoutine(),
+           ol_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
+    if (it->row()->ShouldScanSkip(serial_id())) continue;
+    state->items.at(state->n++) = it->row();
+    OrderLine::Key ol_key;
+    ol_key.Decode(&it->key());
+
+    if (Client::g_enable_pwv && ol_key.ol_number == 1) {
+      res[nr_res++] = PWVGraph::VHandleToResource(it->row());
+    }
+  }
+
+  if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
+    auto &gm = util::Instance<PWVGraphManager>();
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      gm[warehouse_id - 1]->ReserveEdge(serial_id(), nr_res + 1);
+
+      gm[warehouse_id - 1]->AddResources(serial_id(), res, nr_res);
+      gm[warehouse_id - 1]->AddResource(
+          serial_id(), &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
+    } else {
+      int parts[2] = {
+        g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
+        0,
+      };
+      gm[parts[0]]->ReserveEdge(serial_id(), nr_res);
+      gm[parts[1]]->ReserveEdge(serial_id());
+
+      gm[parts[0]]->AddResources(serial_id(), res, nr_res);
+      gm[parts[1]]->AddResource(
+          serial_id(), &ClientBase::g_pwv_stock_resources[0]);
+    }
+  }
+}
+
 void StockLevelTxn::Run()
 {
-  if (client->g_enable_granola)
-    PrepareInsert();
-
   static constexpr auto ScanOrderLine = [](
       auto state, auto index_handle, int warehouse_id, int district_id) -> void {
-    auto &mgr = util::Instance<TableManager>();
-    auto lower = std::max<int>(state->current_oid - (20 << 8), 0);
-    auto upper = std::max<int>(state->current_oid, 0);
-
-    auto ol_start = OrderLine::Key::New(warehouse_id, district_id, lower, 0);
-    auto ol_end = OrderLine::Key::New(warehouse_id, district_id, upper, 0);
-
-    INIT_ROUTINE_BRK(8 << 10);
-
-    for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
-             ol_start.EncodeFromRoutine(),
-             ol_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
-      if (it->row()->ShouldScanSkip(index_handle.serial_id())) continue;
-
-      auto ol = index_handle(it->row()).template Read<OrderLine::Value>();
-      state->item_ids.at(state->n++) = ol.ol_i_id;
+    for (int i = 0; i < state->n; i++) {
+      state->item_ids[i] = index_handle(state->items[i]).template Read<OrderLine::Value>().ol_i_id;
     }
+    std::sort(state->item_ids.begin(), state->item_ids.begin() + state->n);
   };
 
   static constexpr auto ScanStocks = [](

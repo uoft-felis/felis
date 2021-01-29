@@ -15,6 +15,7 @@ struct DeliveryStruct {
   uint warehouse_id;
   uint o_carrier_id;
   uint32_t ts;
+  int oid[10];
 };
 
 struct DeliveryState {

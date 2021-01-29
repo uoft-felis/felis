@@ -368,7 +368,6 @@ class Txn : public BaseTxn {
     return nodes_bitmap;
   }
 
-  // Bohm only!
   uint64_t txn_indexop_affinity = std::numeric_limits<uint64_t>::max();
 
   template <typename IndexOp,
@@ -378,23 +377,36 @@ class Txn : public BaseTxn {
   NodeBitmap TxnIndexOpWithNodeBitmap(NodeBitmap nodes_bitmap,
                                       OnCompleteParam *pp,
                                       KParams ...params) {
+    auto current_node = util::Instance<NodeConfiguration>().node_id();
     for (auto &p: nodes_bitmap) {
       auto [node, bitmap] = p;
       auto op_ctx = TxnIndexOpContextEx<OnCompleteParam>(
           index_handle(), state, bitmap, params...);
 
       if constexpr(!std::is_void<OnCompleteParam>()) {
-          op_ctx.set_extra(*pp);
-        }
+        op_ctx.set_extra(*pp);
+      }
 
-      if (!EpochClient::g_enable_granola) {
+      if ((node != 0 && current_node != node)
+          || (VHandleSyncService::g_lock_elision
+              && !EpochClient::g_enable_pwv
+              && !EpochClient::g_enable_granola)) {
+
+        // We need this only two scenarios:
+        // 1. Distributed transactions
+        // 2. g_lock_elision at the same time we need the empty versions on VHandle.
+        //
+        // Under the second case, we need both PWV and Granola off.
+        //
+        // Notice: this code may not work well under distributed transactions? I
+        // have not tuned this yet.
         root->Then(
             op_ctx, node,
             [](auto &ctx, auto _) -> Optional<VoidValue> {
               auto completion = OnComplete();
               if constexpr (!std::is_void<OnCompleteParam>()) {
-                  completion.args = (OnCompleteParam) ctx;
-                }
+                completion.args = (OnCompleteParam) ctx;
+              }
 
               completion.handle = ctx.handle;
               completion.state = State(ctx.state);

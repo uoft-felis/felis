@@ -1,5 +1,6 @@
 #include <numeric>
 #include "new_order.h"
+#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -45,20 +46,11 @@ class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
         client(client)
   {}
   void Run() override final;
-  void Prepare() override final {
-    if (!Client::g_enable_granola)
-      PrepareImpl();
-  }
-  void PrepareInsert() override final {
-    if (!Client::g_enable_granola)
-      PrepareInsertImpl();
-  }
-
-  void PrepareImpl();
-  void PrepareInsertImpl();
+  void Prepare() override final;
+  void PrepareInsert() override final;
 };
 
-void NewOrderTxn::PrepareInsertImpl()
+void NewOrderTxn::PrepareInsert()
 {
   auto &mgr = util::Instance<TableManager>();
   auto auto_inc_zone = warehouse_id * 10 + district_id;
@@ -92,7 +84,12 @@ void NewOrderTxn::PrepareInsertImpl()
                                   all_local, ts_now);
 
 
+
   if (g_tpcc_config.IsWarehousePinnable() || !VHandleSyncService::g_lock_elision) {
+    if (VHandleSyncService::g_lock_elision) {
+      txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+    }
+
     state->orderlines_nodes =
         TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
             &args0,
@@ -105,19 +102,28 @@ void NewOrderTxn::PrepareInsertImpl()
             KeyParam<NewOrder>(neworder_key),
             KeyParam<OOrderCIdIdx>(cididx_key));
 
-    if (g_tpcc_config.IsWarehousePinnable())
-      root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+    if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
+      auto &gm = util::Instance<PWVGraphManager>();
+      gm[txn_indexop_affinity]->ReserveEdge(serial_id(), 3);
+      for (auto row: {state->orderlines[0], state->oorder, state->neworder}) {
+        gm[txn_indexop_affinity]->AddResource(serial_id(), PWVGraph::VHandleToResource(row));
+      }
+    }
   } else {
     ASSERT_PWV_CONT;
+    int parts[3] = {
+          g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
+          g_tpcc_config.PWVDistrictToCoreId(district_id, 40),
+          g_tpcc_config.PWVDistrictToCoreId(district_id, 30),
+    };
 
-    txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
-
+    txn_indexop_affinity = parts[0];
     state->orderlines_nodes =
         TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
             &args0,
             KeyParam<OrderLine>(orderline_keys, nr_items));
 
-    txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 40);
+    txn_indexop_affinity = parts[1];
     state->other_inserts_nodes =
         TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, OOrder::Value>(
             &args1,
@@ -125,16 +131,30 @@ void NewOrderTxn::PrepareInsertImpl()
             PlaceholderParam(),
             KeyParam<OOrderCIdIdx>(cididx_key));
 
-    txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 30);
+    txn_indexop_affinity = parts[2];
     state->other_inserts_nodes +=
         TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, void>(
             nullptr,
             PlaceholderParam(),
             KeyParam<NewOrder>(neworder_key));
+
+
+    if (Client::g_enable_pwv) {
+      auto &gm = util::Instance<PWVGraphManager>();
+      for (auto part_id: parts) {
+        gm[part_id]->ReserveEdge(serial_id());
+      }
+      gm[parts[0]]->AddResource(handle.serial_id(),
+                                PWVGraph::VHandleToResource(state->orderlines[0]));
+      gm[parts[1]]->AddResource(handle.serial_id(),
+                                PWVGraph::VHandleToResource(state->oorder));
+      gm[parts[2]]->AddResource(handle.serial_id(),
+                                PWVGraph::VHandleToResource(state->neworder));
+    }
   }
 }
 
-void NewOrderTxn::PrepareImpl()
+void NewOrderTxn::Prepare()
 {
   Stock::Key stock_keys[kNewOrderMaxItems];
   INIT_ROUTINE_BRK(8192);
@@ -156,8 +176,8 @@ void NewOrderTxn::PrepareImpl()
       root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
     }
   } else {
-    // Bohm partitions the initialization phase! We don't support multiple-nodes
-    // under Bohm, because we don't want to keep a per-core partitioning result
+    // PWV partitions the initialization phase! We don't support multiple-nodes
+    // under PWV, because we don't want to keep a per-core partitioning result
     // in NodeBitmap.
     unsigned int w = 0;
     int istart = 0, iend = 0;
@@ -185,6 +205,11 @@ void NewOrderTxn::PrepareImpl()
       }
 
       txn_indexop_affinity = w - 1;
+      if (Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        gm[w - 1]->ReserveEdge(serial_id());
+        gm[w - 1]->AddResource(serial_id(), &ClientBase::g_pwv_stock_resources[w - 1]);
+      }
 
       auto args = Tuple<int>(picked ^ old_bitmap);
       TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, Tuple<int>>(
@@ -201,13 +226,6 @@ void NewOrderTxn::PrepareImpl()
 
 void NewOrderTxn::Run()
 {
-  if (Client::g_enable_granola) {
-    // Search the index. AppendNewVersion() is automatically Nop when
-    // g_enable_granola is on.
-    PrepareInsertImpl();
-    PrepareImpl();
-  }
-
   int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
 
   struct {

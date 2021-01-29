@@ -10,6 +10,7 @@
 #include "vhandle.h"
 #include "contention_manager.h"
 #include "threshold_autotune.h"
+#include "pwv_graph.h"
 
 #include "console.h"
 #include "mem.h"
@@ -25,6 +26,7 @@ namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
 bool EpochClient::g_enable_granola = false;
+bool EpochClient::g_enable_pwv = false;
 long EpochClient::g_corescaling_threshold = 0;
 long EpochClient::g_splitting_threshold = std::numeric_limits<long>::max();
 size_t EpochClient::g_txn_per_epoch = 100000;
@@ -214,12 +216,15 @@ uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 
 void AllocStateTxnWorker::Run()
 {
+  if (EpochClient::g_enable_pwv) {
+    util::Instance<PWVGraphManager>().local_graph()->Reset();
+  }
   for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
     auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
     txn->PrepareState();
   }
   if (comp.fetch_sub(1) == 2) {
-    client->insert_lmgr.Balance();
+    // client->insert_lmgr.Balance();
     // client->insert_lmgr.PrintLoads();
     comp.fetch_sub(1);
   }
@@ -236,7 +241,7 @@ void CallTxnsWorker::Run()
   set_urgent(true);
   auto pq = client->cur_txns.load()->per_core_txns[t];
 
-  while (AllocStateTxnWorker::comp.load() != 0);
+  while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
 
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
@@ -300,6 +305,8 @@ void CallTxnsWorker::Run()
     RowEntity::Quiescence();
 
     mem::GetDataRegion().Quiescence();
+    if (EpochClient::g_enable_pwv)
+      util::Instance<PWVGraphManager>().local_graph()->Build();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
     util::Instance<GC>().RunGC();
@@ -369,9 +376,6 @@ void EpochClient::InitializeEpoch()
   cur_txns = &all_txns[epoch_nr - 1];
   total_nr_txn = NumberOfTxns();
 
-  insert_lmgr.Reset();
-  init_lmgr.Reset();
-  exec_lmgr.Reset();
   cont_lmgr.Reset();
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
@@ -388,7 +392,7 @@ void EpochClient::InitializeEpoch()
   }
 
   callback.phase = EpochPhase::Insert;
-  CallTxns(epoch_nr, &BaseTxn::PrepareInsert, "Insert");
+  CallTxns(epoch_nr, &BaseTxn::PrepareInsert0, "Insert");
 }
 
 void EpochClient::OnInsertComplete()
@@ -400,11 +404,11 @@ void EpochClient::OnInsertComplete()
   probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 0}();
 
   stats.insert_time_ms += callback.perf.duration_ms();
-  init_lmgr.Balance();
+
   callback.phase = EpochPhase::Initialize;
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
-      &BaseTxn::Prepare,
+      &BaseTxn::Prepare0,
       "Initialization");
 }
 
@@ -427,7 +431,7 @@ void EpochClient::OnInitializeComplete()
   }
 
   util::Impl<VHandleSyncService>().ClearWaitCountStats();
-  exec_lmgr.Balance();
+
   // exec_lmgr.PrintLoads();
   if (!Options::kBinpackSplitting) {
     cont_lmgr.Balance();
@@ -438,7 +442,7 @@ void EpochClient::OnInitializeComplete()
 
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
-      &BaseTxn::RunAndAssignSchedulingKey,
+      &BaseTxn::Run0,
       "Execution");
 }
 
