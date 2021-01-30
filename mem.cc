@@ -539,15 +539,16 @@ namespace mem {
       auto numa_node = i / kNrCorePerNode;
       auto numa_offset = i % kNrCorePerNode;
       if (numa_offset == 0) {
-        // note: these pools only get the first 16KB from here. the others come from g_slabmem during RefillSlab
-        if (use_pmem) //((alloc_type == VhandlePool) || (alloc_type == RegionPool))
-        {
-          mem = (uint8_t *)AllocPersistentMemory(alloc_type, kHeaderSize * kNrCorePerNode);
-        }
-        else
-        {
-          mem = (uint8_t *)AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
-        }
+        // note: we'll always keep the info in dram, only pool memory in pmem if required
+        mem = (uint8_t *)AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+        // if (use_pmem) //((alloc_type == VhandlePool) || (alloc_type == RegionPool))
+        // {
+        //   mem = (uint8_t *)AllocPersistentMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+        // }
+        // else
+        // {
+        //   mem = (uint8_t *)AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+        // }
       }
 
       auto p = mem + numa_offset * kHeaderSize;
@@ -677,16 +678,29 @@ namespace mem {
     return g_data_region;
   }
 
-void *Brk::Alloc(size_t s)
-{
-  s = util::Align(s, 16);
-  size_t off = 0;
-  if (!thread_safe) {
-    off = offset.load(std::memory_order_relaxed);
-    offset.store(off + s, std::memory_order_relaxed);
-  } else {
-    off = offset.fetch_add(s, std::memory_order_seq_cst);
+  // transient and persistent pools
+  static ParallelBrk g_transient_pool;
+  static ParallelBrk g_persistent_pool;
+
+  ParallelBrk &GetBrkPools(bool use_pmem) { 
+    if (use_pmem) return g_persistent_pool;
+    return g_transient_pool;
   }
+
+  void InitBrkPools(size_t t_mem, size_t p_mem) {
+    g_transient_pool = ParallelBrk(t_mem, false);
+    g_persistent_pool = ParallelBrk(p_mem, true);
+  }
+
+  void *Brk::Alloc(size_t s) {
+    s = util::Align(s, 16);
+    size_t off = 0;
+    if (!thread_safe) {
+      off = offset.load(std::memory_order_relaxed);
+      offset.store(off + s, std::memory_order_relaxed);
+    } else {
+      off = offset.fetch_add(s, std::memory_order_seq_cst);
+    }
 
     if (__builtin_expect(off + s > limit, 0)) {
       fprintf(stderr, "Brk of limit %lu is not large enough!\n", limit);
@@ -694,6 +708,47 @@ void *Brk::Alloc(size_t s)
     }
     uint8_t *p = data + off;
     return p;
+  }
+
+  ParallelBrk::ParallelBrk(size_t brk_pool_size, bool use_pmem)
+  {
+    uint8_t *mem = nullptr;
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      auto numa_node = i / kNrCorePerNode;
+      auto numa_offset = i % kNrCorePerNode;
+      if (numa_offset == 0) {
+        // note: we'll always keep the info in dram, only pool memory in pmem if required
+        mem = (uint8_t *)AllocMemory(BrkPool, kHeaderSize * kNrCorePerNode);
+      }
+
+      auto p = mem + numa_offset * kHeaderSize;
+      uint8_t *p_buf;
+      if (use_pmem) {
+        p_buf = (uint8_t *)AllocPersistentMemory(PersistentPool, brk_pool_size);
+      }
+      else {
+        p_buf = (uint8_t *)AllocMemory(TransientPool, brk_pool_size);
+      }
+      
+      pools[i] = new (p) Brk(p_buf, brk_pool_size, use_pmem);
+
+      p += sizeof(Brk);
+      free_lists[i] = (uintptr_t *) p;
+
+      p += kMaxNrPools * sizeof(uintptr_t);
+      free_tails[i] = (uintptr_t *) p;
+
+      p += kMaxNrPools * sizeof(uintptr_t);
+      csld_free_lists[i] = new (p) ConsolidateFreeList();
+
+      std::fill(free_lists[i], free_lists[i] + kMaxNrPools, 0);
+      std::fill(free_tails[i], free_tails[i] + kMaxNrPools, 0);
+    }
+  }
+
+  ParallelBrk::~ParallelBrk()
+  {
+    // TODO
   }
 
   static Brk *BrkFromRoutine()
@@ -783,8 +838,8 @@ void *Brk::Alloc(size_t s)
   {
     //file name
     char pmem_file_name[50];
-    sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
-    //  sprintf(pmem_file_name, "m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
+    //sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
+    sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
 
     void *p = util::OSMemory::g_default.PmemAlloc(pmem_file_name, length, numa_node, on_demand);
 

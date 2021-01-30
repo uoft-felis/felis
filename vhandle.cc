@@ -414,8 +414,8 @@ mem::ParallelSlabPool BaseVHandle::inline_pool;
 
 void BaseVHandle::InitPool()
 {
-  pool = mem::ParallelSlabPool(mem::VhandlePool, kSize, 4);
-  inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4);
+  pool = mem::ParallelSlabPool(mem::VhandlePool, kSize, 4, false);
+  inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
   pool.Register();
   inline_pool.Register();
 }

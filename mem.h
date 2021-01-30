@@ -30,6 +30,9 @@ enum MemAllocType {
   VhandlePool,
   RegionPool,
   Coroutine,
+  BrkPool,
+  TransientPool,
+  PersistentPool,
   NumMemTypes,
 };
 
@@ -45,6 +48,9 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:vhandle",
   "^pool:region",
   "coroutine",
+  "break pool"
+  "^pool:transient mem",
+  "^pool:persistent mem",
 };
 
 struct PoolStatistics {
@@ -398,16 +404,20 @@ class ParallelRegion {
 
 ParallelRegion &GetDataRegion(bool use_pmem = false);
 
+class Brk;
+class ParallelBrk;
 class Brk {
   std::atomic_size_t offset;
   size_t limit;
   uint8_t *data;
 
   bool thread_safe;
+  
+  bool use_pmem;
 
  public:
-  Brk() : offset(0), limit(0), data(nullptr), thread_safe(false) {}
-  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), thread_safe(false) {}
+  Brk() : offset(0), limit(0), data(nullptr), thread_safe(false), use_pmem(false) {}
+  Brk(void *p, size_t limit, bool use_pmem = false) : offset(0), limit(limit), data((uint8_t *) p), thread_safe(false), use_pmem(use_pmem) {}
   ~Brk() {}
 
   Brk(Brk &&rhs) {
@@ -447,6 +457,27 @@ class Brk {
   uint8_t *ptr() const { return data; }
   size_t current_size() const { return offset; }
 };
+
+void InitBrkPools(size_t t_mem, size_t p_mem);
+
+class ParallelBrk : public ParallelAllocator<Brk> {
+
+ public:
+  ParallelBrk() : ParallelAllocator() {}
+  // change parameters for this function
+  ParallelBrk(size_t brk_pool_size, bool use_pmem = false);
+  ~ParallelBrk();
+  ParallelBrk(ParallelBrk &&rhs) : ParallelAllocator(std::move(rhs)) {}
+
+  ParallelBrk &operator=(ParallelBrk &&rhs) {
+    if (&rhs != this) {
+      this->~ParallelBrk();
+      new (this) ParallelBrk(std::move(rhs));
+    }
+    return *this;
+  }
+};
+
 
 #define NewStackBrk(sz) mem::Brk::New(alloca(sz), sz)
 #define INIT_ROUTINE_BRK(sz) go::RoutineScopedData _______(NewStackBrk(sz));
