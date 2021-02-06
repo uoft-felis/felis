@@ -48,7 +48,7 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:vhandle",
   "^pool:region",
   "coroutine",
-  "break pool"
+  "break"
   "^pool:transient mem",
   "^pool:persistent mem",
 };
@@ -458,7 +458,9 @@ class Brk {
   size_t current_size() const { return offset; }
 };
 
-void InitBrkPools(size_t t_mem, size_t p_mem);
+ParallelBrk &GetTransientPool();
+ParallelRegion &GetPersistentPool();
+void InitTransientPool(size_t t_mem);
 
 class ParallelBrk : public ParallelAllocator<Brk> {
 

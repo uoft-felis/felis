@@ -73,11 +73,12 @@ class AllocatorModule : public Module<CoreModule> {
 
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads);
     mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
-    mem::InitBrkPools(1_M, 1_M); //shirley: set larger during actual pmem // shirley: add it to command line options later
+    mem::InitTransientPool(1_M); //shirley: set larger during actual pmem // shirley: add it to command line options later
 
     // Legacy
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
-    mem::GetDataRegion(true).ApplyFromConf(console.FindConfigSection("mem"));
+    //mem::GetDataRegion(true).ApplyFromConf(console.FindConfigSection("mem"));
+    mem::GetPersistentPool().ApplyFromConf(console.FindConfigSection("mem"));
 
     if (Options::kEpochQueueLength)
       EpochExecutionDispatchService::g_max_item = Options::kEpochQueueLength.ToLargeNumber();
@@ -120,7 +121,8 @@ class AllocatorModule : public Module<CoreModule> {
 
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
-    tasks.emplace_back([]() { mem::GetDataRegion(true).InitPools(true); });
+    //tasks.emplace_back([]() { mem::GetDataRegion(true).InitPools(true); });
+    tasks.emplace_back([]() { mem::GetPersistentPool().InitPools(true); });
     tasks.emplace_back(VHandle::InitPool);
     tasks.emplace_back(RowEntity::InitPool);
     tasks.emplace_back(GC::InitPool);
