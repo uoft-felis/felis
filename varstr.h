@@ -19,7 +19,7 @@ struct VarStr {
 
   static VarStr *New(uint16_t length) {
     int region_id = mem::ParallelPool::CurrentAffinity();
-    VarStr *ins = (VarStr *) mem::GetDataRegion(true).Alloc(NewSize(length));
+    VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
     //shirley: probe
     //probes::RegionPoolVarstr{(long long)(length + sizeof(VarStr))}();
     ins->len = length;
@@ -34,7 +34,7 @@ struct VarStr {
     if (__builtin_expect(ins->data == (uint8_t *) ptr + sizeof(VarStr), 1)) {
       //shirley: probe
       //probes::RegionPoolVarstr{(-1 * (long long)(sizeof(VarStr) + ins->len))}();
-      mem::GetDataRegion(true).Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
+      mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
     } else {
       // Don't know who's gonna do that. Looks like it's a free from stack?!
       std::abort();
