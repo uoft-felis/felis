@@ -638,7 +638,12 @@ namespace mem {
             size_t chunk_size = 1ULL << (i + 5);
             size_t nr_buffer = proposed_caps[i] * chunk_size / SlabPool::PageSize(chunk_size);
             printf("chunk_size %lu nr_buffer %lu\n", chunk_size, nr_buffer);
-            pools[i] = ParallelSlabPool(mem::RegionPool, chunk_size, nr_buffer, use_pmem);
+            if (use_pmem) {
+              pools[i] = ParallelSlabPool(mem::PersistentPool, chunk_size, nr_buffer, use_pmem);
+            }
+            else {
+              pools[i] = ParallelSlabPool(mem::RegionPool, chunk_size, nr_buffer, use_pmem);
+            }
           });
     }
     for (auto &th: tasks) {
@@ -680,16 +685,17 @@ namespace mem {
 
   // transient and persistent pools
   static ParallelBrk g_transient_pool;
-  static ParallelBrk g_persistent_pool;
+  static ParallelRegion g_persistent_pool;
 
-  ParallelBrk &GetBrkPools(bool use_pmem) { 
-    if (use_pmem) return g_persistent_pool;
+  ParallelBrk &GetTransientPool() { 
     return g_transient_pool;
   }
+  ParallelRegion &GetPersistentPool() { 
+    return g_persistent_pool;
+  }
 
-  void InitBrkPools(size_t t_mem, size_t p_mem) {
+  void InitTransientPool(size_t t_mem) {
     g_transient_pool = ParallelBrk(t_mem, false);
-    g_persistent_pool = ParallelBrk(p_mem, true);
   }
 
   void *Brk::Alloc(size_t s) {
