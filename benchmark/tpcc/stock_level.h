@@ -3,6 +3,7 @@
 
 #include "txn_cc.h"
 #include "tpcc.h"
+#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -18,6 +19,9 @@ struct StockLevelState {
   std::array<uint, 300> item_ids;
   int n;
   felis::FutureValue<void> barrier;
+
+  felis::PWVGraph::Resource *res;
+  int nr_res;
 };
 
 }

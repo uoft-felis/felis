@@ -305,7 +305,7 @@ bool BasePromise::ExecutionRoutine::Preempt()
     spawn = true;
     auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
         [this, &spawn]
-        (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
+        (PromiseRoutineWithInput _, BasePromise::ExecutionRoutine *state) -> bool {
           if (state == this)
             return true;
           if (state != nullptr) {

@@ -118,8 +118,18 @@ void OrderStatusTxn::Run()
           INIT_ROUTINE_BRK(8 << 10);
 
           ReadCustomer(state, index_handle, warehouse_id, district_id, customer_id);
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                index_handle.serial_id(),
+                PWVGraph::VHandleToResource(state->customer));
+          }
           int oid = state->oid;
           ScanOrderLine(state, index_handle, warehouse_id, district_id, oid);
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                index_handle.serial_id(),
+                PWVGraph::VHandleToResource(state->order_line[0]));
+          }
 
           return nullopt;
         },
@@ -132,6 +142,11 @@ void OrderStatusTxn::Run()
           auto &[state, index_handle, warehouse_id, district_id, customer_id] = ctx;
           INIT_ROUTINE_BRK(8 << 10);
           ReadCustomer(state, index_handle, warehouse_id, district_id, customer_id);
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                index_handle.serial_id(),
+                PWVGraph::VHandleToResource(state->customer));
+          }
           return nullopt;
         },
         aff);
@@ -144,6 +159,11 @@ void OrderStatusTxn::Run()
           int oid = state->oid;
           INIT_ROUTINE_BRK(8 << 10);
           ScanOrderLine(state, index_handle, warehouse_id, district_id, oid);
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                index_handle.serial_id(),
+                PWVGraph::VHandleToResource(state->order_line[0]));
+          }
           return nullopt;
         },
         aff);

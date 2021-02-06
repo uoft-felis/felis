@@ -277,13 +277,32 @@ void DeliveryTxn::Run()
 
                 if (bitmap & (1 << 4)) {
                   DeleteNewOrder(state, index_handle, i);
+                  if (Client::g_enable_pwv) {
+                    util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                        index_handle.serial_id(),
+                        PWVGraph::VHandleToResource(state->new_orders[i]));
+                  }
                 }
 
                 if (bitmap & (1 << 2)) {
                   UpdateOOrder(state, index_handle, i, carrier_id);
+                  if (Client::g_enable_pwv) {
+                    util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                        index_handle.serial_id(),
+                        PWVGraph::VHandleToResource(state->oorders[i]));
+                  }
                 }
 
                 state->customer_future[i].Invoke(state, index_handle, i, ts);
+                if (Client::g_enable_pwv) {
+                  auto g = util::Instance<PWVGraphManager>().local_graph();
+                  g->ActivateResource(
+                      index_handle.serial_id(),
+                      PWVGraph::VHandleToResource(state->order_lines[i][0]));
+                  g->ActivateResource(
+                      index_handle.serial_id(),
+                      PWVGraph::VHandleToResource(state->customers[i]));
+                }
 
                 return nullopt;
               },
@@ -320,6 +339,11 @@ void DeliveryTxn::Run()
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
               auto &[state, index_handle, i] = ctx;
               DeleteNewOrder(state, index_handle, i);
+              if (Client::g_enable_pwv) {
+                util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                    index_handle.serial_id(),
+                    PWVGraph::VHandleToResource(state->new_orders[i]));
+              }
               return nullopt;
             }, aff);
 
@@ -329,6 +353,11 @@ void DeliveryTxn::Run()
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
               auto &[state, index_handle, i, carrier_id] = ctx;
               UpdateOOrder(state, index_handle, i, carrier_id);
+              if (Client::g_enable_pwv) {
+                util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                    index_handle.serial_id(),
+                    PWVGraph::VHandleToResource(state->oorders[i]));
+              }
               return nullopt;
             }, aff);
 
@@ -339,6 +368,11 @@ void DeliveryTxn::Run()
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
               auto &[state, index_handle, i, ts] = ctx;
               state->sum_future_values[i].Signal(CalcSum(state, index_handle, i, ts));
+              if (Client::g_enable_pwv) {
+                util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                    index_handle.serial_id(),
+                    PWVGraph::VHandleToResource(state->order_lines[i][0]));
+              }
               return nullopt;
             }, aff);
 
@@ -349,6 +383,11 @@ void DeliveryTxn::Run()
               auto &[state, index_handle, i] = ctx;
               int sum = state->sum_future_values[i].Wait();
               WriteCustomer(state, index_handle, i, sum);
+              if (Client::g_enable_pwv) {
+                util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                    index_handle.serial_id(),
+                    PWVGraph::VHandleToResource(state->customers[i]));
+              }
               return nullopt;
             }, aff);
       }

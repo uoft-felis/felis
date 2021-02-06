@@ -102,6 +102,7 @@ void NewOrderTxn::PrepareInsert()
             KeyParam<NewOrder>(neworder_key),
             KeyParam<OOrderCIdIdx>(cididx_key));
 
+#if 0 // Hmm...I don't think we need to keep track of the inserts
     if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
       auto &gm = util::Instance<PWVGraphManager>();
       gm[txn_indexop_affinity]->ReserveEdge(serial_id(), 3);
@@ -109,6 +110,8 @@ void NewOrderTxn::PrepareInsert()
         gm[txn_indexop_affinity]->AddResource(serial_id(), PWVGraph::VHandleToResource(row));
       }
     }
+#endif
+
   } else {
     ASSERT_PWV_CONT;
     int parts[3] = {
@@ -138,7 +141,7 @@ void NewOrderTxn::PrepareInsert()
             PlaceholderParam(),
             KeyParam<NewOrder>(neworder_key));
 
-
+#if 0
     if (Client::g_enable_pwv) {
       auto &gm = util::Instance<PWVGraphManager>();
       for (auto part_id: parts) {
@@ -151,6 +154,8 @@ void NewOrderTxn::PrepareInsert()
       gm[parts[2]]->AddResource(handle.serial_id(),
                                 PWVGraph::VHandleToResource(state->neworder));
     }
+#endif
+
   }
 }
 
@@ -182,6 +187,10 @@ void NewOrderTxn::Prepare()
     unsigned int w = 0;
     int istart = 0, iend = 0;
     uint32_t picked = 0;
+    // int *unique_warehouses;
+    int nr_unique_warehouses = 0;
+
+    // if (Client::g_enable_pwv) unique_warehouses = alloca(sizeof(int) * 16);
 
     state->stocks_nodes = NodeBitmap();
 
@@ -205,11 +214,13 @@ void NewOrderTxn::Prepare()
       }
 
       txn_indexop_affinity = w - 1;
+
       if (Client::g_enable_pwv) {
         auto &gm = util::Instance<PWVGraphManager>();
         gm[w - 1]->ReserveEdge(serial_id());
         gm[w - 1]->AddResource(serial_id(), &ClientBase::g_pwv_stock_resources[w - 1]);
       }
+      nr_unique_warehouses++;
 
       auto args = Tuple<int>(picked ^ old_bitmap);
       TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, Tuple<int>>(
@@ -474,6 +485,12 @@ void NewOrderTxn::Run()
                 debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
                       index_handle.serial_id(), i,
                       (void *)state->stocks[i]);
+              }
+
+              if (Client::g_enable_pwv) {
+                auto g = util::Instance<PWVGraphManager>().local_graph();
+                g->ActivateResource(
+                    index_handle.serial_id(), &ClientBase::g_pwv_stock_resources[w - 1]);
               }
               return nullopt;
             },

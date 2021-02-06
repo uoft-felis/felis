@@ -614,11 +614,11 @@ void *Brk::Alloc(size_t s)
 {
   s = util::Align(s, 16);
   size_t off = 0;
-  if (ord == std::memory_order_relaxed) {
-    off = offset.load(ord);
-    offset.store(off + s, ord);
+  if (!thread_safe) {
+    off = offset.load(std::memory_order_relaxed);
+    offset.store(off + s, std::memory_order_relaxed);
   } else {
-    off = offset.fetch_add(s, ord);
+    off = offset.fetch_add(s, std::memory_order_seq_cst);
   }
 
   if (__builtin_expect(off + s > limit, 0)) {
@@ -672,7 +672,7 @@ PoolStatistics GetMemStats(MemAllocType alloc_type)
 
 void PrintMemStats() {
   puts("General memory statistics:");
-  for (int i = 0; i < EpochQueuePool; i++) {
+  for (int i = 0; i < ContentionManagerPool; i++) {
     auto bucket = static_cast<MemAllocType>(i);
     auto size = g_mem_tracker[i].load();
     printf("   %s: %llu MB\n", MemTypeToString(bucket).c_str(), size / 1024 / 1024);
@@ -685,12 +685,12 @@ void PrintMemStats() {
 
   {
     std::lock_guard _(g_ps_lock);
-    for (int i = EpochQueuePool; i < N; i++) {
+    for (int i = ContentionManagerPool; i < N; i++) {
       stats[i] = GetMemStatsNoLock((MemAllocType) i);
     }
   }
 
-  for (int i = EpochQueuePool; i < N; i++) {
+  for (int i = ContentionManagerPool; i < N; i++) {
     auto bucket = static_cast<MemAllocType>(i);
     printf("    %s: %llu/%llu MB used (max %llu MB)\n", MemTypeToString(bucket).c_str(),
                  stats[i].used / 1024 / 1024, g_mem_tracker[bucket].load() / 1024 / 1024,

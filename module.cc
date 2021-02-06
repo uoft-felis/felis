@@ -5,6 +5,7 @@
 
 #include "node_config.h"
 #include "epoch.h"
+#include "routine_sched.h"
 #include "console.h"
 #include "index.h"
 #include "log.h"

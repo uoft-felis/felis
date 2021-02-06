@@ -235,7 +235,7 @@ ContentionManager::ContentionManager()
         [i, nr_slots, this]() {
           auto length = VersionPrealloc::PhysicalSize();
           g_preallocs[i].ptr = (uint8_t *) mem::AllocMemory(
-              mem::EpochQueuePool, length, i / mem::kNrCorePerNode);
+              mem::ContentionManagerPool, length, i / mem::kNrCorePerNode);
         });
   }
   for (auto &t: tasks) {
@@ -252,7 +252,7 @@ ContentionManager::ContentionManager()
     al.base_pos = g_prealloc_count / nr_numa_zone * i;
     al.pos = 0;
     al.owner_numa_zone = i;
-    al.pool = mem::Pool(mem::EpochQueuePool, sizeof(VersionBufferHead), cap, i);
+    al.pool = mem::Pool(mem::ContentionManagerPool, sizeof(VersionBufferHead), cap, i);
   }
   buffer_heads.fill(nullptr);
   Reset();

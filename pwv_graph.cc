@@ -14,10 +14,19 @@ PWVGraph::PWVGraph(int numa_node)
   nodes = (Node *) mem::AllocMemory(
       mem::Epoch, sizeof(Node) * EpochClient::g_txn_per_epoch, numa_node);
   brk = mem::Brk(p, 8 << 20);
+  // AddResources may be called from multiple cores! Although they work on different txns.
+  brk.set_thread_safe(true);
 }
 
 void PWVGraph::Reset()
 {
+#ifdef SAFETY_CHECK
+  for (unsigned int seq = 1; seq <= EpochClient::g_txn_per_epoch; seq++) {
+    auto node = &nodes[seq - 1];
+    if (node->nr_resources == 0) continue;
+    abort_if(node->in_degree > 0, "seq {} isn't empty!!!", seq);
+  }
+#endif
   brk.Reset();
   memset(nodes, 0, sizeof(Node) * EpochClient::g_txn_per_epoch);
 }
@@ -28,7 +37,7 @@ void PWVGraph::AddResources(uint64_t sid, Resource *res, int nr_res)
   auto s = node->nr_resources;
 
   if (node->tot_resources > Node::kInlineEdges && node->extra == nullptr) {
-    node->extra = (Edge *) brk.Alloc(sizeof(Edge) * (node->tot_resources - Node::kInlineEdges));
+    node->extra = (Edge *) brk.Alloc(sizeof(Edge) * (node->tot_resources - Node::kInlineEdges + 10));
   }
 
   node->nr_resources += nr_res;
@@ -38,7 +47,9 @@ void PWVGraph::AddResources(uint64_t sid, Resource *res, int nr_res)
   int in_degree = 0;
   for (int i = 0; i < nr_res; i++) {
     auto rc = res[i];
-    node->at(s + i)->resource = rc;
+    auto e = node->at(s + i);
+    e->resource = rc;
+    e->node = nullptr;
   }
   node->in_degree.fetch_add(in_degree);
 }
@@ -50,6 +61,9 @@ void PWVGraph::Build()
   p.Start();
   for (unsigned int seq = 1; seq <= EpochClient::g_txn_per_epoch; seq++) {
     auto node = &nodes[seq - 1];
+    if (node->nr_resources == 0)
+      continue;
+
     int in_degree = 0;
     for (int i = 0; i < node->nr_resources; i++) {
       auto rc = node->at(i)->resource;
@@ -65,9 +79,64 @@ void PWVGraph::Build()
 
       *rc = (current_epoch_nr << 32) | (seq << 8);
     }
-    node->in_degree.fetch_add(in_degree);
+    if (in_degree > 0) {
+      node->in_degree.store(in_degree);
+    } else {
+      NotifyFree(node);
+    }
   }
   p.Show("PWVGraph::Build takes");
+}
+
+void PWVGraph::NotifyFree(Node *node) const
+{
+  if (node->sched_entry)
+    node->on_node_free(node->sched_entry);
+}
+
+void PWVGraph::RegisterFreeListener(uint64_t sid, void *sched_entry, void (*on_node_free)(void *))
+{
+  auto node = from_serial_id(sid);
+  node->sched_entry = sched_entry;
+  node->on_node_free = on_node_free;
+}
+
+void PWVGraph::ActivateResources(uint64_t sid, Resource *res, int nr_res)
+{
+  auto node = from_serial_id(sid);
+  abort_if(node->in_degree > 0,
+           "node {} seq {} indegree {} shouldn't be scheduled! nr_resources {} tot_resources {}",
+           (void *) node, 0x00ffffff & (sid >> 8), node->in_degree, node->nr_resources,
+           node->tot_resources);
+
+  for (int i = 0; i < nr_res; i++) {
+    auto e = node->FindEdge(res[i]);
+    if (unlikely(e == nullptr)) {
+      fmt::memory_buffer buf = node->DumpEdges();
+      logger->error("Cannot find edge for {} with {}, resources {}. {}/{}",
+                    sid, (void *) res[i], std::string_view(buf.data(), buf.size()),
+                    i, nr_res);
+      std::abort();
+    }
+    if (unlikely(e->node == (Node *) 0xdeadbeef)) {
+      auto buf = node->DumpEdges();
+      fmt::memory_buffer res_buf;
+      for (int j = 0; j <= i; j++)
+        fmt::format_to(res_buf, "{} ", (void *) res[j]);
+
+      logger->error("Duplicate Activation on node {}, {} resources {}",
+                    (void *) node,
+                    std::string_view(res_buf.data(), res_buf.size()),
+                    std::string_view(buf.data(), buf.size()));
+    }
+    if (e->node) {
+      e->node->in_degree.fetch_sub(1);
+      if (e->node->in_degree == 0) {
+        NotifyFree(e->node);
+      }
+      e->node = (Node *) 0xdeadbeef;
+    }
+  }
 }
 
 PWVGraphManager::PWVGraphManager()

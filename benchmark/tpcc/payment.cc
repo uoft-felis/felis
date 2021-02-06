@@ -76,11 +76,13 @@ void PaymentTxn::Prepare()
 
       if (Client::g_enable_pwv) {
         auto &gm = util::Instance<PWVGraphManager>();
-        gm[warehouse_id - 1]->ReserveEdge(serial_id());
+        gm[warehouse_id - 1]->ReserveEdge(serial_id(), 2);
         gm[customer_warehouse_id - 1]->ReserveEdge(serial_id());
 
         gm[warehouse_id - 1]->AddResource(
             serial_id(), PWVGraph::VHandleToResource(state->warehouse));
+        gm[warehouse_id - 1]->AddResource(
+            serial_id(), PWVGraph::VHandleToResource(state->district));
         gm[customer_warehouse_id - 1]->AddResource(
             serial_id(), PWVGraph::VHandleToResource(state->customer));
       }
@@ -148,7 +150,6 @@ void PaymentTxn::Run()
             auto d = vhandle.Read<District::CommonValue>();
             d.d_ytd += payment_amount;
             vhandle.Write(d);
-            ClientBase::OnUpdateRow(state->district);
           }, payment_amount);
 
 
@@ -208,14 +209,33 @@ void PaymentTxn::Run()
 
               if ((bitmap & 0x01) && (filter & 0x01)) {
                 state->warehouse_future.Invoke(state, index_handle, payment_amount);
+
+                if (Client::g_enable_pwv) {
+                  util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                      index_handle.serial_id(),
+                      PWVGraph::VHandleToResource(state->warehouse));
+                }
               }
 
               if ((bitmap & 0x02) && (filter & 0x02)) {
                 state->district_future.Invoke(state, index_handle, payment_amount);
+
+                ClientBase::OnUpdateRow(state->district);
+                if (Client::g_enable_pwv) {
+                  util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                      index_handle.serial_id(),
+                      PWVGraph::VHandleToResource(state->district));
+                }
               }
 
               if ((bitmap & 0x04) && (filter & 0x04)) {
                 state->customer_future.Invoke(state, index_handle, payment_amount);
+
+                if (Client::g_enable_pwv) {
+                  util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                      index_handle.serial_id(),
+                      PWVGraph::VHandleToResource(state->customer));
+                }
               }
               return nullopt;
             },

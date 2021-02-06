@@ -137,10 +137,10 @@ struct CustomerNameIdx {
 
 struct District {
   static uint32_t HashKey(const felis::VarStr *k) {
-    return (((k->data[3] - 1) << 4) | (k->data[7] - 1)) << 9;
+    return (((k->data[3] - 1) << 9) | (k->data[7] - 1)) << 4;
   }
   static constexpr auto kTable = TableType::District;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 4096 << 9, false);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, false);
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::DistrictKey;
   using Value = sql::DistrictValue;

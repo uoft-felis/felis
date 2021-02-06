@@ -49,11 +49,10 @@ void StockLevelTxn::Prepare()
   INIT_ROUTINE_BRK(8 << 10);
 
   state->n = 0;
-  PWVGraph::Resource *res = nullptr;
-  int nr_res = 0;
 
   if (Client::g_enable_pwv) {
-    res = (PWVGraph::Resource *) alloca(sizeof(PWVGraph::Resource) * 60); // maximum 60 resources
+    state->nr_res = 0;
+    state->res = (PWVGraph::Resource *) malloc(sizeof(PWVGraph::Resource) * 60);
   }
 
   for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
@@ -65,16 +64,16 @@ void StockLevelTxn::Prepare()
     ol_key.Decode(&it->key());
 
     if (Client::g_enable_pwv && ol_key.ol_number == 1) {
-      res[nr_res++] = PWVGraph::VHandleToResource(it->row());
+      state->res[state->nr_res++] = PWVGraph::VHandleToResource(it->row());
     }
   }
 
   if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
     auto &gm = util::Instance<PWVGraphManager>();
     if (g_tpcc_config.IsWarehousePinnable()) {
-      gm[warehouse_id - 1]->ReserveEdge(serial_id(), nr_res + 1);
+      gm[warehouse_id - 1]->ReserveEdge(serial_id(), state->nr_res + 1);
 
-      gm[warehouse_id - 1]->AddResources(serial_id(), res, nr_res);
+      gm[warehouse_id - 1]->AddResources(serial_id(), state->res, state->nr_res);
       gm[warehouse_id - 1]->AddResource(
           serial_id(), &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
     } else {
@@ -82,10 +81,10 @@ void StockLevelTxn::Prepare()
         g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
         0,
       };
-      gm[parts[0]]->ReserveEdge(serial_id(), nr_res);
+      gm[parts[0]]->ReserveEdge(serial_id(), state->nr_res);
       gm[parts[1]]->ReserveEdge(serial_id());
 
-      gm[parts[0]]->AddResources(serial_id(), res, nr_res);
+      gm[parts[0]]->AddResources(serial_id(), state->res, state->nr_res);
       gm[parts[1]]->AddResource(
           serial_id(), &ClientBase::g_pwv_stock_resources[0]);
     }
@@ -128,19 +127,27 @@ void StockLevelTxn::Run()
   state->n = 0;
 
   if (!Options::kEnablePartition || g_tpcc_config.IsWarehousePinnable()) {
-    if (g_tpcc_config.IsWarehousePinnable()) {
+    if (Options::kEnablePartition) {
       aff = Config::WarehouseToCoreId(warehouse_id);
     }
+
     root->Then(
         MakeContext(warehouse_id, district_id, threshold), 0,
         [](const auto &ctx, auto _) -> Optional<VoidValue> {
           auto &[state, index_handle, warehouse_id, district_id, threshold] = ctx;
           ScanOrderLine(state, index_handle, warehouse_id, district_id);
           ScanStocks(state, index_handle, warehouse_id, district_id, threshold);
+          if (Client::g_enable_pwv) {
+            auto g = util::Instance<PWVGraphManager>().local_graph();
+            g->ActivateResources(
+                index_handle.serial_id(), state->res, state->nr_res);
+            g->ActivateResource(
+                index_handle.serial_id(), &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
+          }
           return nullopt;
         },
         aff);
-    if (!Client::g_enable_granola) {
+    if (!Client::g_enable_granola && !Client::g_enable_pwv) {
       root->AssignSchedulingKey(serial_id() + (1024ULL << 8));
     }
   } else { // kEnablePartition && !IsWarehousePinnable()
@@ -152,6 +159,13 @@ void StockLevelTxn::Run()
           auto &[state, index_handle, warehouse_id, district_id] = ctx;
           ScanOrderLine(state, index_handle, warehouse_id, district_id);
           state->barrier.Signal();
+
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>().local_graph()->ActivateResources(
+                index_handle.serial_id(),
+                state->res, state->nr_res);
+            free(state->res);
+          }
           return nullopt;
         },
         aff);
@@ -162,6 +176,11 @@ void StockLevelTxn::Run()
           auto &[state, index_handle, warehouse_id, district_id, threshold] = ctx;
           state->barrier.Wait();
           ScanStocks(state, index_handle, warehouse_id, district_id, threshold);
+
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                index_handle.serial_id(), &ClientBase::g_pwv_stock_resources[0]);
+          }
           return nullopt;
         },
         0); // Stock(0) partition

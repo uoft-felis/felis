@@ -25,7 +25,7 @@ enum MemAllocType {
   Txn,
   Promise,
   Epoch,
-  EpochQueuePool,
+  ContentionManagerPool,
   EntityPool,
   VhandlePool,
   RegionPool,
@@ -40,7 +40,7 @@ const std::string kMemAllocTypeLabel[] = {
   "txn input and state",
   "promise",
   "epoch",
-  "^pool:epoch queue",
+  "^pool:contention manager",
   "^pool:row entity",
   "^pool:vhandle",
   "^pool:region",
@@ -398,18 +398,18 @@ class Brk {
   size_t limit;
   uint8_t *data;
 
-  std::memory_order ord = std::memory_order_relaxed;
+  bool thread_safe;
 
  public:
-  Brk() : offset(0), limit(0), data(nullptr) {}
-  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p) {}
+  Brk() : offset(0), limit(0), data(nullptr), thread_safe(false) {}
+  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), thread_safe(false) {}
   ~Brk() {}
 
   Brk(Brk &&rhs) {
     data = rhs.data;
     limit = rhs.limit;
     offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    ord = rhs.ord;
+    thread_safe = rhs.thread_safe;
 
     rhs.offset = 0;
     rhs.limit = 0;
@@ -425,10 +425,7 @@ class Brk {
   }
 
   void set_thread_safe(bool safe) {
-    if (safe)
-      ord = std::memory_order_seq_cst;
-    else
-      ord = std::memory_order_relaxed;
+    thread_safe = safe;
   }
 
   // This is a special New() function. It avoids memory allocation.
