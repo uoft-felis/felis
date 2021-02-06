@@ -98,6 +98,9 @@ class VarStr final {
     // shirley: probe
     // probes::RegionPoolVarstr{(-1 * (long long)(sizeof(VarStr) +
     // ins->len))}();
+
+    //shirley: I forgot to change to persistent pool before?? Assuming always free persistent pool, don't free transient
+    //mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
     mem::GetPersistentPool().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
   }
 
