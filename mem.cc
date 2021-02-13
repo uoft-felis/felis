@@ -695,7 +695,7 @@ namespace mem {
   }
 
   void InitTransientPool(size_t t_mem) {
-    g_transient_pool = ParallelBrk(t_mem, false);
+    g_transient_pool = ParallelBrk(t_mem, true); //remember to change this to false!
   }
 
   void *Brk::Alloc(size_t s) {
@@ -724,7 +724,7 @@ namespace mem {
       auto numa_offset = i % kNrCorePerNode;
       if (numa_offset == 0) {
         // note: we'll always keep the info in dram, only pool memory in pmem if required
-        mem = (uint8_t *)AllocMemory(BrkPool, kHeaderSize * kNrCorePerNode);
+        mem = (uint8_t *)AllocMemory(TransientPool, kHeaderSize * kNrCorePerNode);
       }
 
       auto p = mem + numa_offset * kHeaderSize;

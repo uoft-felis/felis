@@ -70,9 +70,12 @@ class VarStr final {
 
   static size_t NewSize(uint16_t length) { return sizeof(VarStr) + length; }
 
-  static VarStr *New(uint16_t length) {
+  static VarStr *New(uint16_t length, bool use_pmem = true) {
     int region_id = mem::ParallelPool::CurrentAffinity();
-    VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
+    //shirley: allocate all from transient pool for now
+    VarStr *ins = (VarStr *) mem::GetTransientPool().Alloc(NewSize(length));
+    //VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
+    
     //shirley: probe
     //probes::RegionPoolVarstr{(long long)(length + sizeof(VarStr))}();
     ins->len = length;

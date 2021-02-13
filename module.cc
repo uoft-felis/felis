@@ -73,7 +73,7 @@ class AllocatorModule : public Module<CoreModule> {
 
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads);
     mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
-    mem::InitTransientPool(1_M); //shirley: set larger during actual pmem // shirley: add it to command line options later
+    mem::InitTransientPool(4_G); //shirley: set larger during actual pmem // shirley: add it to command line options later
 
     // Legacy
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
