@@ -63,6 +63,7 @@ bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
   } else {
     auto p = vhandle->ReadExactVersion(0);
     size_t nr_bytes = 0;
+    // SHIRLEY: this is for granola so don't touch this GC (?)
     util::Instance<GC>().FreeIfGarbage(vhandle, p, obj);
     return vhandle->WriteExactVersion(0, obj, epoch_nr);
   }
