@@ -30,7 +30,6 @@ enum MemAllocType {
   VhandlePool,
   RegionPool,
   Coroutine,
-  BrkPool,
   TransientPool,
   PersistentPool,
   NumMemTypes,
@@ -48,7 +47,6 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:vhandle",
   "^pool:region",
   "coroutine",
-  "break"
   "^pool:transient mem",
   "^pool:persistent mem",
 };
@@ -294,6 +292,27 @@ class ParallelAllocator : public ParallelAllocationPolicy {
 
     return pools[cur]->Alloc();
   }
+
+  //only used for ParallelBrk pool bc it takes in size as input
+  void *Alloc(size_t sz) {
+    auto cur = CurrentAffinity();
+    auto csld = csld_free_lists[cur];
+    auto &dice = csld->dice;
+    if (csld->bitmap != 0) {
+      auto n = csld->bitmap >> dice;
+      dice = (n == 0) ? __builtin_ctzll(csld->bitmap) : __builtin_ctzll(n) + dice;
+
+      auto &head = csld->heads[dice];
+      auto p = (void *) head;
+      head = *(uintptr_t *) head;
+
+      if (head == 0) csld->bitmap &= ~(1 << dice);
+      __builtin_prefetch((void *) head);
+      return p;
+    }
+    return pools[cur]->Alloc(sz);
+  }
+
   void Free(void *ptr, int alloc_core) {
     auto cur = CurrentAffinity();
     if (alloc_core < 0 || alloc_core >= kMaxNrPools) {
