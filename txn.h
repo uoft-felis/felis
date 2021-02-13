@@ -52,6 +52,7 @@ class BaseTxn {
   // requirements on each phase is executed (in-order vs out-of-order).
   void Run0() {
     if (EpochClient::g_enable_granola) {
+      PrepareInsert();
       Prepare();
     }
     Run();
@@ -61,9 +62,14 @@ class BaseTxn {
     if (EpochClient::g_enable_granola)
       return;
 
+    if (EpochClient::g_enable_pwv)
+      PrepareInsert();
+
     Prepare();
   }
   void PrepareInsert0() {
+    if (EpochClient::g_enable_granola || EpochClient::g_enable_pwv)
+      return;
     PrepareInsert();
   }
  public:

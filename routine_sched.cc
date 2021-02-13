@@ -20,7 +20,7 @@ class ConservativePriorityScheduler final : public PrioritySchedulingPolicy {
   bool ShouldPickWaiting(const WaitState &ws) override;
   PriorityQueueValue *Pick() override;
   void Consume(PriorityQueueValue *value) override;
-  void IngestPending(PriorityQueueHashEntry *hent) override;
+  void IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value) override;
   void Reset() override {
     abort_if(len > 0, "Reset() called, but len {} > 0", len);
   }
@@ -37,10 +37,13 @@ ConservativePriorityScheduler *ConservativePriorityScheduler::New(size_t maxlen,
   return new (p) ConservativePriorityScheduler();
 }
 
-void ConservativePriorityScheduler::IngestPending(PriorityQueueHashEntry *hent)
+void ConservativePriorityScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value)
 {
-  q[len++] = {hent->key, hent};
-  std::push_heap(q, q + len, Greater);
+  if (hent->values.empty()) {
+    q[len++] = {hent->key, hent};
+    std::push_heap(q, q + len, Greater);
+  }
+  value->InsertAfter(hent->values.prev);
 }
 
 bool ConservativePriorityScheduler::ShouldPickWaiting(const WaitState &ws)
@@ -73,33 +76,49 @@ class PWVScheduler final : public PrioritySchedulingPolicy {
   PWVScheduler(void *p, size_t lmt) : brk(p, lmt) {
     inactive.Initialize();
     free.Initialize();
+    rvp.Initialize();
+    nr_free = 0;
   }
   ~PWVScheduler() {}
 
   struct FreeNodeEntry : public util::GenericListNode<FreeNodeEntry> {
     PWVScheduler *sched;
     PriorityQueueHashEntry *ent;
+    bool in_rvp_queue;
   };
 
   bool ShouldPickWaiting(const WaitState &ws) override;
   PriorityQueueValue *Pick() override;
   void Consume(PriorityQueueValue *value) override;
-  void IngestPending(PriorityQueueHashEntry *hent) override;
+  void IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value) override;
   void Reset() override;
 
-  static void OnNodeFree(void *);
+  static void OnNodeFree(void *p) {
+    auto node_ent = (FreeNodeEntry *) p;
+    node_ent->sched->OnNodeFreeImpl(node_ent);
+  }
+  static void OnNodeRVPChange(void *p) {
+    auto node_ent = (FreeNodeEntry *) p;
+    node_ent->sched->OnNodeRVPChangeImpl(node_ent);
+  }
 
+  void OnNodeFreeImpl(FreeNodeEntry *p);
+  void OnNodeRVPChangeImpl(FreeNodeEntry *p);
+
+  static RVPInfo *GetRVPInfo(PriorityQueueValue *value);
  public:
   static PWVScheduler *New(size_t maxlen, int numa_node);
  private:
-  util::GenericListNode<FreeNodeEntry> inactive;
-  util::GenericListNode<FreeNodeEntry> free;
+  util::GenericListNode<FreeNodeEntry> free, inactive, rvp;
+  util::MCSSpinLock qlock;
+  std::atomic_ulong nr_free;
+
   mem::Brk brk;
 };
 
 PWVScheduler *PWVScheduler::New(size_t maxlen, int numa_node)
 {
-  size_t sz = EpochClient::g_txn_per_epoch * sizeof(FreeNodeEntry);
+  size_t sz = EpochClient::g_txn_per_epoch * util::Align(sizeof(FreeNodeEntry), 16);
   auto p = (uint8_t *) mem::AllocMemory(
       mem::EpochQueueItem,
       sizeof(PWVScheduler) + sz,
@@ -107,52 +126,133 @@ PWVScheduler *PWVScheduler::New(size_t maxlen, int numa_node)
   return new (p) PWVScheduler(p + sizeof(PWVScheduler), sz);
 }
 
-void PWVScheduler::OnNodeFree(void *p)
+void PWVScheduler::OnNodeFreeImpl(FreeNodeEntry *node_ent)
 {
-  auto node_ent = (FreeNodeEntry *) p;
+  util::MCSSpinLock::QNode qnode;
+  qlock.Acquire(&qnode);
   node_ent->Remove();
-  node_ent->InsertAfter(node_ent->sched->free.prev);
-  node_ent->sched->len++;
+  node_ent->InsertAfter(free.prev);
+  nr_free.fetch_add(1);
+  qlock.Release(&qnode);
 }
 
-void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent)
+void PWVScheduler::OnNodeRVPChangeImpl(FreeNodeEntry *node_ent)
+{
+  util::MCSSpinLock::QNode qnode;
+  qlock.Acquire(&qnode);
+  if (node_ent->in_rvp_queue) {
+    // logger->info("notify rvp change for {} !", node_ent->ent->key);
+    node_ent->Remove();
+    node_ent->InsertAfter(free.prev);
+    node_ent->in_rvp_queue = false;
+
+    // put the non-RVP piece at the head.
+    auto values = &node_ent->ent->values;
+    for (auto it = values->next; it != values; it = it->next) {
+      auto pv = it->object();
+      auto info = GetRVPInfo(pv);
+      if (!info->is_rvp || info->indegree == 0) {
+        it->Remove();
+        it->InsertAfter(values);
+        // logger->info("RVP Change sid {}", node_ent->ent->key);
+        nr_free.fetch_add(1);
+        break;
+      }
+    }
+  }
+  qlock.Release(&qnode);
+}
+
+RVPInfo *PWVScheduler::GetRVPInfo(PriorityQueueValue *value)
+{
+  return RVPInfo::FromRoutine(std::get<0>(value->promise_routine));
+}
+
+void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value)
 {
   auto g = util::Instance<PWVGraphManager>().local_graph();
-  auto node_ent = (FreeNodeEntry *) brk.Alloc(sizeof(FreeNodeEntry));
-  node_ent->sched = this;
-  node_ent->ent = hent;
-  if (g->is_node_free(hent->key)) {
-    node_ent->InsertAfter(free.prev);
+  util::MCSSpinLock::QNode qnode;
+  qlock.Acquire(&qnode);
+
+  if (hent->values.empty()) {
+    auto node_ent = (FreeNodeEntry *) brk.Alloc(sizeof(FreeNodeEntry));
+    node_ent->sched = this;
+    node_ent->ent = hent;
+    node_ent->in_rvp_queue = false;
+    node_ent->Initialize();
+
+    if (g->is_node_free(hent->key)) {
+      node_ent->InsertAfter(free.prev);
+      nr_free.fetch_add(1);
+    } else {
+      node_ent->InsertAfter(inactive.prev);
+      g->RegisterFreeListener(hent->key, &PWVScheduler::OnNodeFree);
+    }
     len++;
-  } else {
-    node_ent->InsertAfter(inactive.prev);
-    g->RegisterFreeListener(hent->key, node_ent, &PWVScheduler::OnNodeFree);
+    g->RegisterRVPListener(hent->key, &PWVScheduler::OnNodeRVPChange);
+    g->RegisterSchedEntry(hent->key, node_ent);
   }
+
+  auto info = GetRVPInfo(value);
+  if (info->is_rvp && info->indegree != 0) {
+    value->InsertAfter(hent->values.prev);
+  } else {
+    value->InsertAfter(&hent->values);
+  }
+
+  qlock.Release(&qnode);
 }
 
 bool PWVScheduler::ShouldPickWaiting(const WaitState &ws)
 {
-  if (len == 0) {
-    abort_if(!free.empty(), "PWV: len is 0, but free queue isn't empty!");
-    return true;
-  }
-  return false;
+  // util::MCSSpinLock::QNode qnode;
+  // qlock.Acquire(&qnode);
+  // if (len == 0) {
+  //   abort_if(!free.empty(), "PWV: len is 0, but free queue isn't empty!");
+  //   qlock.Release(&qnode);
+  //   return true;
+  // }
+  // qlock.Release(&qnode);
+
+  return len == 0;
 }
 
 PriorityQueueValue *PWVScheduler::Pick()
 {
-  abort_if(free.empty(), "PWV: cannot Pick() because free is empty");
-  auto free_node_ent = free.next->object();
-  auto hashent = free_node_ent->ent;
-  auto value = hashent->values.next->object();
-  // logger->info("seq {} inactive empty? {}",
+  while (true) {
+    while (nr_free.load() == 0) _mm_pause();
+    util::MCSSpinLock::QNode qnode;
+    qlock.Acquire(&qnode);
+
+    auto free_node_ent = free.next->object();
+    auto hashent = free_node_ent->ent;
+    for (auto it = hashent->values.next; it != &hashent->values; it = it->next) {
+      auto info = GetRVPInfo(it->object());
+      if (!info->is_rvp || info->indegree.load() == 0) {
+        auto result = it->object();
+        it->Remove();
+        it->InsertAfter(&hashent->values);
+        qlock.Release(&qnode);
+        return result;
+      }
+    }
+    // full of RVPs! Move it to the rvp queue
+    free_node_ent->Remove();
+    free_node_ent->InsertAfter(rvp.prev);
+    free_node_ent->in_rvp_queue = true;
+    nr_free.fetch_sub(1);
+
+    qlock.Release(&qnode);
+  }
+  // logger->info("seq {} inactive empty? {} free empty? {} len {}",
   //              0x00ffffff & (std::get<0>(value->promise_routine)->sched_key >> 8),
-  //              inactive.empty());
-  return value;
+  //              inactive.empty(), free.empty(), len);
 }
 
 void PWVScheduler::Consume(PriorityQueueValue *value)
 {
+  util::MCSSpinLock::QNode qnode;
+  qlock.Acquire(&qnode);
   abort_if(free.empty(), "PWV: cannot Consume() because free is empty");
   auto free_node_ent = free.next->object();
   auto hashent = free_node_ent->ent;
@@ -163,14 +263,20 @@ void PWVScheduler::Consume(PriorityQueueValue *value)
     hashent->Remove();
     free_node_ent->Remove();
     len--;
+    nr_free.fetch_sub(1);
   }
+
+  qlock.Release(&qnode);
 }
 
 void PWVScheduler::Reset()
 {
   abort_if(!free.empty(), "PWV: free queue isn't empty! len {}", len);
   abort_if(!inactive.empty(), "PWV: inactive queue isn't empty!");
+  abort_if(!rvp.empty(), "PWV: RVP queue isn't empty!");
   brk.Reset();
+  logger->info("free {} inactive {} rvp {} len {} nr free {}",
+               (void *) &free, (void *) &inactive, (void *) &rvp, len, nr_free);
 }
 
 size_t EpochExecutionDispatchService::g_max_item = 20_M;
@@ -327,9 +433,8 @@ EpochExecutionDispatchService::AddToPriorityQueue(
   ent->object()->values.Initialize();
   ent->InsertAfter(hl.prev);
 
-  q.sched_pol->IngestPending(ent->object());
 found:
-  node->InsertAfter(ent->object()->values.prev);
+  q.sched_pol->IngestPending(ent->object(), node);
 }
 
 void
@@ -459,7 +564,6 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePromise::ExecutionR
   if (key == 0)
     return false; // sched_key == 0 and preempt isn't supported.
 
-  // There is nothing to switch to!
   abort_if(q.waiting.len == kOutOfOrderWindow, "out-of-order scheduling window is full");
 
   auto &ws = q.waiting.states[(q.waiting.off + q.waiting.len) % kOutOfOrderWindow];
@@ -467,6 +571,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePromise::ExecutionR
   ws.sched_key = state.current_sched_key;
   ws.state = routine_state;
 
+  // There is nothing to switch to!
   if (q.waiting.len == 0 && q.sched_pol->ShouldPickWaiting(ws))
     return false;
 

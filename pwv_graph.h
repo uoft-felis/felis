@@ -14,24 +14,37 @@ namespace felis {
 
 class VHandle;
 
+// Just two bytes. We steal the space from __padding__ in PromiseRoutine!
+struct RVPInfo {
+  bool is_rvp;
+  std::atomic_uint8_t indegree;
+  static RVPInfo *FromRoutine(PromiseRoutine *r);
+  static void MarkRoutine(PromiseRoutine *r, uint8_t cnt = 1);
+};
+static_assert(sizeof(RVPInfo) == 2);
+
 class PWVGraph {
  public:
   using Resource = uint64_t *;
   static Resource VHandleToResource(VHandle *handle);
+  static size_t g_extra_node_brk_limit;
  private:
+  friend class PWVGraphManager;
   struct Node;
   struct Edge {
-    Resource resource;
-    Node *node;
+    Resource resource = nullptr;
+    Node *node = nullptr;
   };
   struct Node {
-    static constexpr auto kInlineEdges = 2;
+    static constexpr auto kInlineEdges = 1;
     std::atomic_uint in_degree;
     uint16_t nr_resources; // out_degree
     uint16_t tot_resources;
 
-    void *sched_entry;
+    std::atomic<void *> sched_entry;
     void (*on_node_free)(void *);
+    void (*on_node_rvp_change)(void *);
+    uint8_t __padding__[8];
 
     Edge *extra;
     Edge inlined[kInlineEdges];
@@ -83,7 +96,9 @@ class PWVGraph {
     return from_serial_id(sid)->in_degree == 0;
   }
 
-  void RegisterFreeListener(uint64_t sid, void *sched_entry, void (*on_node_free)(void *));
+  void RegisterSchedEntry(uint64_t sid, void *sched_entry);
+  void RegisterFreeListener(uint64_t sid, void (*on_node_free)(void *));
+  void RegisterRVPListener(uint64_t sid, void (*on_node_rvp_change)(void *));
 
   void ActivateResources(uint64_t sid, Resource *res, int nr_res);
   void ActivateResource(uint64_t sid, Resource res) {
@@ -94,12 +109,14 @@ class PWVGraph {
     return from_serial_id(sid)->DumpEdges();
   }
 
+  void NotifyRVPChange(uint64_t sid);
+
  private:
   Node *from_serial_id(uint64_t sid) const {
     int seq = 0x00FFFFFF & (sid >> 8);
     return nodes + seq - 1;
   }
-  void NotifyFree(Node *node) const;
+  static void NotifyFree(Node *node);
 };
 
 class PWVGraphManager {
@@ -108,6 +125,9 @@ class PWVGraphManager {
   PWVGraphManager();
   PWVGraph *operator[](int idx) { return graphs.at(idx); }
   PWVGraph *local_graph();
+  void NotifyRVPChange(uint64_t sid, int idx) {
+    graphs.at(idx)->NotifyRVPChange(sid);
+  }
 };
 
 }

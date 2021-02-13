@@ -1,5 +1,4 @@
 #include "order_status.h"
-#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -28,66 +27,96 @@ class OrderStatusTxn : public Txn<OrderStatusState>, public OrderStatusStruct {
 
 void OrderStatusTxn::Prepare()
 {
-  auto &mgr = util::Instance<TableManager>();
-  INIT_ROUTINE_BRK(8 << 10);
-  auto customer_key = Customer::Key::New(warehouse_id, district_id, customer_id);
-  state->customer = mgr.Get<Customer>().Search(customer_key.EncodeFromRoutine());
+  static auto constexpr LookupCustomer = [](
+      auto &state, int warehouse_id, int district_id, int customer_id) {
+    auto &mgr = util::Instance<TableManager>();
+    INIT_ROUTINE_BRK(8 << 10);
+    auto customer_key = Customer::Key::New(warehouse_id, district_id, customer_id);
+    state->customer = mgr.Get<Customer>().Search(customer_key.EncodeFromRoutine());
+  };
 
-  auto cididx_start = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id,
-                                             std::numeric_limits<int32_t>::max());
-  auto cididx_end = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id,
-                                           0);
-  int oid = -1;
-  for (auto it = mgr.Get<OOrderCIdIdx>().IndexReverseIterator(
-           cididx_start.EncodeFromRoutine(),
-           cididx_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
-    if (it->row()->ShouldScanSkip(serial_id())) continue;
-    auto cididx_key = OOrderCIdIdx::Key();
-    cididx_key.Decode(&it->key());
-    oid = cididx_key.o_o_id;
-    break;
-  }
-
-  abort_if(oid == -1, "OrderStatus cannot find oid for customer {} {} {}",
-           warehouse_id, district_id, customer_id);
-  state->oid = oid;
-
-  auto ol_start = OrderLine::Key::New(warehouse_id, district_id, oid,
-                                      0);
-  auto ol_end = OrderLine::Key::New(warehouse_id, district_id, oid,
-                                    std::numeric_limits<int32_t>::max());
-
-  int i = 0;
-  std::fill(state->order_line, state->order_line + 15, nullptr);
-  for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
-           ol_start.EncodeFromRoutine(),
-           ol_end.EncodeFromRoutine()); it->IsValid() && i < 15; it->Next()) {
-    if (it->row()->ShouldScanSkip(serial_id())) continue;
-    state->order_line[i] = it->row();
-    i++;
-  }
-
-  if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
-    auto &gm = util::Instance<PWVGraphManager>();
-    if (g_tpcc_config.IsWarehousePinnable()) {
-      gm[warehouse_id - 1]->ReserveEdge(serial_id(), 2);
-      for (auto &row: {state->customer, state->order_line[0]}) {
-        gm[warehouse_id - 1]->AddResource(serial_id(), PWVGraph::VHandleToResource(row));
-      }
-    } else {
-      int parts[2] = {
-        g_tpcc_config.PWVDistrictToCoreId(district_id, 20),
-        g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
-      };
-
-      for (auto part_id: parts) {
-        gm[part_id]->ReserveEdge(serial_id());
-      }
-      gm[parts[0]]->AddResource(serial_id(),
-                                PWVGraph::VHandleToResource(state->customer));
-      gm[parts[1]]->AddResource(serial_id(),
-                                PWVGraph::VHandleToResource(state->order_line[0]));
+  static auto constexpr ScanOrders = [](
+      auto &state, uint64_t sid, int warehouse_id, int district_id, int customer_id) {
+    auto cididx_start = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id,
+                                               std::numeric_limits<int32_t>::max());
+    auto cididx_end = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id,
+                                             0);
+    auto &mgr = util::Instance<TableManager>();
+    INIT_ROUTINE_BRK(8 << 10);
+    int oid = -1;
+    for (auto it = mgr.Get<OOrderCIdIdx>().IndexReverseIterator(
+             cididx_start.EncodeFromRoutine(),
+             cididx_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
+      if (it->row()->ShouldScanSkip(sid)) continue;
+      auto cididx_key = OOrderCIdIdx::Key();
+      cididx_key.Decode(&it->key());
+      oid = cididx_key.o_o_id;
+      break;
     }
+
+    abort_if(oid == -1, "OrderStatus cannot find oid for customer {} {} {}",
+             warehouse_id, district_id, customer_id);
+    state->oid = oid;
+
+    auto ol_start = OrderLine::Key::New(warehouse_id, district_id, oid,
+                                        0);
+    auto ol_end = OrderLine::Key::New(warehouse_id, district_id, oid,
+                                      std::numeric_limits<int32_t>::max());
+
+    int i = 0;
+    std::fill(state->order_line, state->order_line + 15, nullptr);
+    for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
+             ol_start.EncodeFromRoutine(),
+             ol_end.EncodeFromRoutine()); it->IsValid() && i < 15; it->Next()) {
+      if (it->row()->ShouldScanSkip(sid)) continue;
+      state->order_line[i] = it->row();
+      i++;
+    }
+  };
+
+  if (!VHandleSyncService::g_lock_elision) {
+    LookupCustomer(state, warehouse_id, district_id, customer_id);
+    ScanOrders(state, serial_id(), warehouse_id, district_id, customer_id);
+  } else {
+    int parts[2] = {
+      (int) warehouse_id - 1, (int) warehouse_id - 1,
+    };
+    if (!g_tpcc_config.IsWarehousePinnable()) {
+      parts[0] = g_tpcc_config.PWVDistrictToCoreId(district_id, 20);
+      parts[1] = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
+    }
+
+    if (Client::g_enable_pwv) {
+      for (auto part_id: parts) util::Instance<PWVGraphManager>()[part_id]->ReserveEdge(serial_id());
+    }
+
+    // Need to partition the index lookup!
+    root->Then(
+        MakeContext(warehouse_id, district_id, customer_id, parts[0]), 1,
+        [](auto &ctx, auto _) -> Optional<VoidValue> {
+          auto &[state, handle, warehouse_id, district_id, customer_id, p] = ctx;
+          LookupCustomer(state, warehouse_id, district_id, customer_id);
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>()[p]->AddResource(
+                handle.serial_id(),
+                PWVGraph::VHandleToResource(state->customer));
+          }
+          return nullopt;
+        },
+        parts[0]);
+    root->Then(
+        MakeContext(warehouse_id, district_id, customer_id, parts[1]), 1,
+        [](auto &ctx, auto _) -> Optional<VoidValue> {
+          auto &[state, handle, warehouse_id, district_id, customer_id, p] = ctx;
+          ScanOrders(state, handle.serial_id(), warehouse_id, district_id, customer_id);
+          if (Client::g_enable_pwv) {
+            util::Instance<PWVGraphManager>()[p]->AddResource(
+                handle.serial_id(),
+                PWVGraph::VHandleToResource(state->order_line[0]));
+          }
+          return nullopt;
+        },
+        parts[1]);
   }
 }
 

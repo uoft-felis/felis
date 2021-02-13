@@ -4,6 +4,7 @@
 #include "tpcc.h"
 #include "txn_cc.h"
 #include "promise.h"
+#include "pwv_graph.h"
 #include <tuple>
 #include <string_view>
 
@@ -26,12 +27,15 @@ struct DeliveryState {
 
   NodeBitmap nodes[10];
   InvokeHandle<DeliveryState, int, uint32_t> customer_future[10];
+  PromiseRoutine *customer_last[10];
 
   FutureValue<int> sum_future_values[10];
 
   struct Completion : public TxnStateCompletion<DeliveryState> {
     Tuple<int> args;
     void operator()(int id, BaseTxn::LookupRowResult rows) {
+      if (id == 1) return; // End of scan, we don't care here.
+
       auto [i] = args;
       if (id == 0) {
         for (int j = 0; j < 15; j++) {
@@ -57,6 +61,10 @@ struct DeliveryState {
         // abort_if(rows[0]->ShouldScanSkip(handle.serial_id()), "sid {} row {}", handle.serial_id(), (void *) rows[0]);
         handle(rows[0]).AppendNewVersion();
       }
+
+      if (Client::g_enable_pwv)
+        util::Instance<PWVGraphManager>().local_graph()->AddResource(
+            handle.serial_id(), PWVGraph::VHandleToResource(rows[0]));
     }
   };
 };

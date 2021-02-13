@@ -87,7 +87,8 @@ void NewOrderTxn::PrepareInsert()
 
   if (g_tpcc_config.IsWarehousePinnable() || !VHandleSyncService::g_lock_elision) {
     if (VHandleSyncService::g_lock_elision) {
-      txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+      // txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+      txn_indexop_affinity = std::numeric_limits<uint32_t>::max(); // magic to flatten out indexops
     }
 
     state->orderlines_nodes =
@@ -114,19 +115,21 @@ void NewOrderTxn::PrepareInsert()
 
   } else {
     ASSERT_PWV_CONT;
-    int parts[3] = {
-          g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
-          g_tpcc_config.PWVDistrictToCoreId(district_id, 40),
-          g_tpcc_config.PWVDistrictToCoreId(district_id, 30),
-    };
+    // int parts[3] = {
+    //       g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
+    //       g_tpcc_config.PWVDistrictToCoreId(district_id, 40),
+    //       g_tpcc_config.PWVDistrictToCoreId(district_id, 30),
+    // };
 
-    txn_indexop_affinity = parts[0];
+    // txn_indexop_affinity = parts[0];
+
+    txn_indexop_affinity = kIndexOpFlatten;
     state->orderlines_nodes =
         TxnIndexInsert<TpccSliceRouter, NewOrderState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
             &args0,
             KeyParam<OrderLine>(orderline_keys, nr_items));
 
-    txn_indexop_affinity = parts[1];
+    // txn_indexop_affinity = parts[1];
     state->other_inserts_nodes =
         TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, OOrder::Value>(
             &args1,
@@ -134,7 +137,7 @@ void NewOrderTxn::PrepareInsert()
             PlaceholderParam(),
             KeyParam<OOrderCIdIdx>(cididx_key));
 
-    txn_indexop_affinity = parts[2];
+    // txn_indexop_affinity = parts[2];
     state->other_inserts_nodes +=
         TxnIndexInsert<TpccSliceRouter, NewOrderState::OtherInsertCompletion, void>(
             nullptr,

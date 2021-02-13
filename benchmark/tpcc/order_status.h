@@ -3,6 +3,7 @@
 
 #include "tpcc.h"
 #include "txn_cc.h"
+#include "pwv_graph.h"
 
 namespace tpcc {
 

@@ -4,16 +4,30 @@
 #include "gopp/gopp.h"
 #include "log.h"
 #include "index_common.h"
+#include "base_promise.h"
 
 namespace felis {
 
+RVPInfo *RVPInfo::FromRoutine(PromiseRoutine *r)
+{
+  return (RVPInfo *) r->__padding__;
+}
+
+void RVPInfo::MarkRoutine(PromiseRoutine *r, uint8_t cnt)
+{
+  auto info = FromRoutine(r);
+  info->indegree = cnt;
+  info->is_rvp = true;
+}
+
+size_t PWVGraph::g_extra_node_brk_limit = 8 << 20;
+
 PWVGraph::PWVGraph(int numa_node)
 {
-  auto p = mem::AllocMemory(
-      mem::Epoch, 8 << 20, numa_node);
+  auto p = mem::AllocMemory(mem::Epoch, g_extra_node_brk_limit, numa_node);
   nodes = (Node *) mem::AllocMemory(
       mem::Epoch, sizeof(Node) * EpochClient::g_txn_per_epoch, numa_node);
-  brk = mem::Brk(p, 8 << 20);
+  brk = mem::Brk(p, g_extra_node_brk_limit);
   // AddResources may be called from multiple cores! Although they work on different txns.
   brk.set_thread_safe(true);
 }
@@ -37,21 +51,20 @@ void PWVGraph::AddResources(uint64_t sid, Resource *res, int nr_res)
   auto s = node->nr_resources;
 
   if (node->tot_resources > Node::kInlineEdges && node->extra == nullptr) {
-    node->extra = (Edge *) brk.Alloc(sizeof(Edge) * (node->tot_resources - Node::kInlineEdges + 10));
+    node->extra = (Edge *) brk.Alloc(sizeof(Edge) * (node->tot_resources - Node::kInlineEdges));
+    std::fill(node->extra, node->extra + (node->tot_resources - Node::kInlineEdges), Edge());
   }
 
   node->nr_resources += nr_res;
   abort_if(node->nr_resources > node->tot_resources,
            "sid {}'s edge isn't allocated enough {}, {}",
            sid, node->nr_resources, node->tot_resources);
-  int in_degree = 0;
   for (int i = 0; i < nr_res; i++) {
     auto rc = res[i];
     auto e = node->at(s + i);
     e->resource = rc;
     e->node = nullptr;
   }
-  node->in_degree.fetch_add(in_degree);
 }
 
 void PWVGraph::Build()
@@ -67,6 +80,7 @@ void PWVGraph::Build()
     int in_degree = 0;
     for (int i = 0; i < node->nr_resources; i++) {
       auto rc = node->at(i)->resource;
+
       auto last_sid = *rc;
       if ((last_sid >> 32) == current_epoch_nr) {
         auto e = from_serial_id(last_sid)->FindEdge(rc);
@@ -79,8 +93,9 @@ void PWVGraph::Build()
 
       *rc = (current_epoch_nr << 32) | (seq << 8);
     }
+
     if (in_degree > 0) {
-      node->in_degree.store(in_degree);
+      node->in_degree.fetch_add(in_degree);
     } else {
       NotifyFree(node);
     }
@@ -88,17 +103,32 @@ void PWVGraph::Build()
   p.Show("PWVGraph::Build takes");
 }
 
-void PWVGraph::NotifyFree(Node *node) const
+void PWVGraph::NotifyFree(Node *node)
 {
-  if (node->sched_entry)
+  if (node->sched_entry && node->on_node_free)
     node->on_node_free(node->sched_entry);
 }
 
-void PWVGraph::RegisterFreeListener(uint64_t sid, void *sched_entry, void (*on_node_free)(void *))
+void PWVGraph::RegisterSchedEntry(uint64_t sid, void *sched_entry)
+{
+  from_serial_id(sid)->sched_entry.store(sched_entry, std::memory_order_release);
+}
+
+void PWVGraph::RegisterFreeListener(uint64_t sid, void (*on_node_free)(void *))
+{
+  from_serial_id(sid)->on_node_free = on_node_free;
+}
+
+void PWVGraph::RegisterRVPListener(uint64_t sid, void (*on_node_rvp_change)(void *))
+{
+  from_serial_id(sid)->on_node_rvp_change = on_node_rvp_change;
+}
+
+void PWVGraph::NotifyRVPChange(uint64_t sid)
 {
   auto node = from_serial_id(sid);
-  node->sched_entry = sched_entry;
-  node->on_node_free = on_node_free;
+  if (node->sched_entry && node->on_node_rvp_change)
+    node->on_node_rvp_change(node->sched_entry);
 }
 
 void PWVGraph::ActivateResources(uint64_t sid, Resource *res, int nr_res)

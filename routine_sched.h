@@ -45,7 +45,7 @@ class PrioritySchedulingPolicy {
   // Consume (delete) the value from the scheduling structure.
   virtual void Consume(PriorityQueueValue *value) = 0;
 
-  virtual void IngestPending(PriorityQueueHashEntry *hent) = 0;
+  virtual void IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value) = 0;
 
   virtual void Reset() {}
 };

@@ -115,6 +115,9 @@ class BasePromise {
     else
       return extra_handlers[idx - kInlineLimit];
   }
+  PromiseRoutine *&last() {
+    return routine(nr_routines() - 1);
+  }
 };
 
 static_assert(sizeof(BasePromise) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");

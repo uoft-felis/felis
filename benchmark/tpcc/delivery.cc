@@ -1,5 +1,4 @@
 #include "delivery.h"
-#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -38,8 +37,12 @@ void DeliveryTxn::PrepareInsert()
 
 void DeliveryTxn::Prepare()
 {
-  if (Options::kEnablePartition) {
-    root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
+  if (VHandleSyncService::g_lock_elision) {
+    if (Client::g_enable_granola) {
+      root = new Promise<DummyValue>(nullptr, 128 + BasePromise::kInlineLimit);
+    } else {
+      root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
+    }
   }
   INIT_ROUTINE_BRK(16384);
   auto &mgr = util::Instance<TableManager>();
@@ -54,20 +57,16 @@ void DeliveryTxn::Prepare()
 
     auto no_key = NewOrder::Key::New(0, 0, 0, 0);
 
+    // FIXME: we have to do a scan here because the following initialization
+    // would depend on the OID scanned from this loop. This is totally fine for
+    // Felis/Caracal because of the dedicate insertion phase.
+    //
+    // But for partitioning based system, the scan maybe staled and thus
+    // non-serializable. Although this is unlikely to happen if the epoch size
+    // is small enough.
     for (auto no_it = mgr.Get<NewOrder>().IndexSearchIterator(
              neworder_start.EncodeFromRoutine(), neworder_end.EncodeFromRoutine());
          no_it->IsValid(); no_it->Next()) {
-      /*
-      if (no_it->row()->ShouldScanSkip(serial_id())) continue;
-      no_key = no_it->key().template ToType<NewOrder::Key>();
-      oid_min = ClientBase::LastNewOrderId(warehouse_id, district_id);
-      if (no_key.no_o_id <= oid_min) continue;
-      if (ClientBase::IncrementLastNewOrderId(
-              warehouse_id, district_id, oid_min, no_key.no_o_id)) {
-        // logger->info("district {} oid {} ver {} < sid {}", district_id, no_key.no_o_id, no_it.row()->first_version(), serial_id());
-        goto found;
-      }
-      */
       no_key = no_it->key().template ToType<NewOrder::Key>();
 
       if (no_it->row()->ShouldScanSkip(serial_id())) {
@@ -79,6 +78,8 @@ void DeliveryTxn::Prepare()
       goto found;
     }
     state->nodes[i] = NodeBitmap();
+    logger->warn("TPCC Delivery: sid {} oid_min {}", serial_id(), oid_min >> 8);
+    // std::abort();
     continue;
  found:
 
@@ -99,7 +100,11 @@ void DeliveryTxn::Prepare()
     if (!VHandleSyncService::g_lock_elision || g_tpcc_config.IsWarehousePinnable()) {
       if (VHandleSyncService::g_lock_elision) {
         txn_indexop_affinity = warehouse_id - 1;
+        if (Client::g_enable_pwv) {
+          util::Instance<PWVGraphManager>()[txn_indexop_affinity]->ReserveEdge(serial_id(), 4);
+        }
       }
+
       state->nodes[i] =
           TxnIndexLookup<TpccSliceRouter, DeliveryState::Completion, Tuple<int>>(
               &args,
@@ -107,10 +112,6 @@ void DeliveryTxn::Prepare()
               KeyParam<OOrder>(oorder_key),
               KeyParam<Customer>(customer_key),
               KeyParam<NewOrder>(dest_neworder_key));
-      if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
-        auto &gm = util::Instance<PWVGraphManager>();
-        gm[txn_indexop_affinity]->ReserveEdge(serial_id(), 4);
-      }
     } else {
       int parts[4] = {
         g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
@@ -118,6 +119,12 @@ void DeliveryTxn::Prepare()
         g_tpcc_config.PWVDistrictToCoreId(district_id, 40),
         g_tpcc_config.PWVDistrictToCoreId(district_id, 20),
       };
+
+      if (Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        for (auto part_id: parts)
+          gm[part_id]->ReserveEdge(serial_id());
+      }
 
       txn_indexop_affinity = parts[0];
       state->nodes[i] =
@@ -148,48 +155,7 @@ void DeliveryTxn::Prepare()
               PlaceholderParam(2),
               PlaceholderParam(),
               KeyParam<Customer>(customer_key));
-
-      if (Client::g_enable_pwv) {
-        auto &gm = util::Instance<PWVGraphManager>();
-        for (auto part_id: parts)
-          gm[part_id]->ReserveEdge(serial_id());
-
-      }
     }
-  }
-
-  if (Client::g_enable_pwv) {
-    auto &gm = util::Instance<PWVGraphManager>();
-    for (int i = 0; i < 10; i++) {
-      auto district_id = i + 1;
-      if (g_tpcc_config.IsWarehousePinnable()) {
-        for (auto row: {
-            state->order_lines[i][0], state->new_orders[i],
-            state->oorders[i], state->customers[i]}) {
-          gm[warehouse_id - 1]->AddResource(serial_id(), PWVGraph::VHandleToResource(row));
-        }
-      } else {
-        int parts[4] = {
-          g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
-          g_tpcc_config.PWVDistrictToCoreId(district_id, 30),
-          g_tpcc_config.PWVDistrictToCoreId(district_id, 40),
-          g_tpcc_config.PWVDistrictToCoreId(district_id, 20),
-        };
-
-        gm[parts[0]]->AddResource(serial_id(),
-                                  PWVGraph::VHandleToResource(state->order_lines[i][0]));
-        gm[parts[1]]->AddResource(serial_id(),
-                                  PWVGraph::VHandleToResource(state->new_orders[i]));
-        gm[parts[2]]->AddResource(serial_id(),
-                                  PWVGraph::VHandleToResource(state->oorders[i]));
-        gm[parts[3]]->AddResource(serial_id(),
-                                  PWVGraph::VHandleToResource(state->customers[i]));
-      }
-    }
-  }
-
-  if (g_tpcc_config.IsWarehousePinnable()) {
-    root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
   }
 }
 
@@ -197,7 +163,7 @@ void DeliveryTxn::Prepare()
 
 void DeliveryTxn::Run()
 {
-  if (Options::kEnablePartition && !g_tpcc_config.IsWarehousePinnable()) {
+  if (Options::kEnablePartition && !g_tpcc_config.IsWarehousePinnable() && !Client::g_enable_granola) {
     root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
   }
 
@@ -265,7 +231,7 @@ void DeliveryTxn::Run()
         }
 
         if (bitmap != 0x81 || state->customer_future[i].has_callback()) {
-          if (g_tpcc_config.IsWarehousePinnable())
+          if (Options::kEnablePartition)
             aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
 
           root->Then(
@@ -338,6 +304,7 @@ void DeliveryTxn::Run()
             MakeContext(i), node,
             [](const auto &ctx, auto args) -> Optional<VoidValue> {
               auto &[state, index_handle, i] = ctx;
+              abort_if(state->new_orders[i] == nullptr, "??? i {}", i);
               DeleteNewOrder(state, index_handle, i);
               if (Client::g_enable_pwv) {
                 util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
@@ -369,9 +336,16 @@ void DeliveryTxn::Run()
               auto &[state, index_handle, i, ts] = ctx;
               state->sum_future_values[i].Signal(CalcSum(state, index_handle, i, ts));
               if (Client::g_enable_pwv) {
-                util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                auto &gm = util::Instance<PWVGraphManager>();
+                auto g = gm.local_graph();
+                g->ActivateResource(
                     index_handle.serial_id(),
                     PWVGraph::VHandleToResource(state->order_lines[i][0]));
+                if (RVPInfo::FromRoutine(state->customer_last[i])->indegree.fetch_sub(1) == 1) {
+                  gm.NotifyRVPChange(
+                      index_handle.serial_id(),
+                      g_tpcc_config.PWVDistrictToCoreId(i + 1, 20));
+                }
               }
               return nullopt;
             }, aff);
@@ -390,6 +364,8 @@ void DeliveryTxn::Run()
               }
               return nullopt;
             }, aff);
+        state->customer_last[i] = root->last();
+        RVPInfo::MarkRoutine(root->last());
       }
     }
   }

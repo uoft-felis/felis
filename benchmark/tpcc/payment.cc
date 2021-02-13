@@ -1,5 +1,4 @@
 #include "payment.h"
-#include "pwv_graph.h"
 
 namespace tpcc {
 
@@ -62,6 +61,12 @@ void PaymentTxn::Prepare()
     // Partition
     state->nodes = NodeBitmap();
     if (g_tpcc_config.IsWarehousePinnable()) {
+      if (Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        gm[warehouse_id - 1]->ReserveEdge(serial_id(), 2);
+        gm[customer_warehouse_id - 1]->ReserveEdge(serial_id());
+      }
+
       txn_indexop_affinity = warehouse_id - 1;
       state->nodes = TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
           nullptr,
@@ -73,19 +78,6 @@ void PaymentTxn::Prepare()
           nullptr,
           PlaceholderParam(2),
           KeyParam<Customer>(customer_key));
-
-      if (Client::g_enable_pwv) {
-        auto &gm = util::Instance<PWVGraphManager>();
-        gm[warehouse_id - 1]->ReserveEdge(serial_id(), 2);
-        gm[customer_warehouse_id - 1]->ReserveEdge(serial_id());
-
-        gm[warehouse_id - 1]->AddResource(
-            serial_id(), PWVGraph::VHandleToResource(state->warehouse));
-        gm[warehouse_id - 1]->AddResource(
-            serial_id(), PWVGraph::VHandleToResource(state->district));
-        gm[customer_warehouse_id - 1]->AddResource(
-            serial_id(), PWVGraph::VHandleToResource(state->customer));
-      }
     } else {
       ASSERT_PWV_CONT;
 
@@ -94,6 +86,12 @@ void PaymentTxn::Prepare()
         g_tpcc_config.PWVDistrictToCoreId(district_id, 0),
         g_tpcc_config.PWVDistrictToCoreId(customer_district_id, 20),
       };
+
+      if (Client::g_enable_pwv) {
+        auto &gm = util::Instance<PWVGraphManager>();
+        for (auto part_id: parts)
+          gm[part_id]->ReserveEdge(serial_id());
+      }
 
       txn_indexop_affinity = parts[0]; // Warehouse(1) partition
       state->nodes = TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
@@ -111,15 +109,6 @@ void PaymentTxn::Prepare()
           nullptr,
           PlaceholderParam(2),
           KeyParam<Customer>(customer_key));
-
-      if (Client::g_enable_pwv) {
-        auto &gm = util::Instance<PWVGraphManager>();
-        for (auto part_id: parts)
-          gm[part_id]->ReserveEdge(serial_id());
-        gm[parts[0]]->AddResource(serial_id(), PWVGraph::VHandleToResource(state->warehouse));
-        gm[parts[1]]->AddResource(serial_id(), PWVGraph::VHandleToResource(state->district));
-        gm[parts[2]]->AddResource(serial_id(), PWVGraph::VHandleToResource(state->customer));
-      }
     }
   }
 }

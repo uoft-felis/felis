@@ -1,6 +1,7 @@
 #include "ycsb.h"
 #include "index.h"
 #include "txn_cc.h"
+#include "pwv_graph.h"
 #include "util/os.h"
 
 namespace ycsb {
@@ -84,7 +85,7 @@ class RMWTxn : public Txn<RMWState>, public RMWStruct {
     auto handle = index_handle();
     for (int i = 0; i < kTotal; i++) {
       auto part = (keys[i] * NodeConfiguration::g_nr_threads) / Client::g_table_size;
-      f(part, root, Tuple<unsigned long, int, decltype(state), decltype(handle)>(keys[i], i, state, handle));
+      f(part, root, Tuple<unsigned long, int, decltype(state), decltype(handle), int>(keys[i], i, state, handle, part));
     }
   }
 };
@@ -97,10 +98,7 @@ RMWTxn::RMWTxn(Client *client, uint64_t serial_id)
 
 void RMWTxn::Prepare()
 {
-  if (Client::g_enable_granola)
-    return;
-
-  if (!Options::kVHandleLockElision) {
+  if (!VHandleSyncService::g_lock_elision) {
     Ycsb::Key dbk[kTotal];
     for (int i = 0; i < kTotal; i++) dbk[i].k = keys[i];
     INIT_ROUTINE_BRK(8192);
@@ -110,23 +108,39 @@ void RMWTxn::Prepare()
         nullptr,
         KeyParam<Ycsb>(dbk, kTotal));
   } else {
+    static constexpr auto LookupIndex = [](auto k, int i, auto state, auto handle) {
+      auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
+      Ycsb::Key dbk;
+      dbk.k = k;
+      INIT_ROUTINE_BRK(1024);
+      state->rows[i] = rel.Search(dbk.EncodeFromRoutine());
+      if (i < kTotal - Client::g_extra_read)
+        handle(state->rows[i]).AppendNewVersion();
+    };
+    if (Client::g_enable_pwv) {
+      RunOnPartition(
+          [this](auto part, auto root, const auto &t) {
+            auto [_1, i, _2, _3, _part] = t;
+            util::Instance<PWVGraphManager>()[part]->ReserveEdge(serial_id());
+          });
+    }
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->Then(
               t, 1, // Always on the local node.
               [](auto &ctx, auto _) -> Optional<VoidValue> {
-                INIT_ROUTINE_BRK(1024);
-                auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
-                auto [k, i, state, handle] = ctx;
-                Ycsb::Key dbk;
-                dbk.k = k;
-                state->rows[i] = rel.Search(dbk.EncodeFromRoutine());
-                if (i < kTotal - Client::g_extra_read)
-                  handle(state->rows[i]).AppendNewVersion();
+                auto [k, i, state, handle, part] = ctx;
+                LookupIndex(k, i, state, handle);
+
+                if (Client::g_enable_pwv)
+                  util::Instance<PWVGraphManager>()[part]->AddResource(
+                      handle.serial_id(), PWVGraph::VHandleToResource(state->rows[i]));
                 return nullopt;
               },
               part); // Partitioning affinity.
+
         });
+
   }
 }
 
@@ -185,23 +199,16 @@ void RMWTxn::Run()
         },
         aff);
 
-  } else if (Client::g_enable_granola) {
+  } else if (Client::g_enable_granola || Client::g_enable_pwv) {
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->Then(
               t, 1,
               [](auto &ctx, auto _) -> Optional<VoidValue> {
-                auto [k, i, state, handle] = ctx;
+                auto [k, i, state, handle, _part] = ctx;
 
                 if (Client::g_dependency && i == kTotal - Client::g_extra_read - 1) {
                   while (state->signal != i) _mm_pause();
-                }
-
-                if (Client::g_enable_granola) {
-                  auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
-                  Ycsb::Key dbk;
-                  dbk.k = k;
-                  state->rows[i] = rel.Search(dbk.EncodeFromRoutine());
                 }
 
                 TxnRow vhandle = handle(state->rows[i]);
@@ -217,6 +224,12 @@ void RMWTxn::Run()
                     state->signal.fetch_add(1);
                   }
                 }
+
+                if (Client::g_enable_pwv) {
+                  util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
+                      handle.serial_id(), PWVGraph::VHandleToResource(state->rows[i]));
+                }
+
                 return nullopt;
               },
               part);
@@ -225,7 +238,7 @@ void RMWTxn::Run()
     // Bohm
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
-          const auto &[k, i, _1, _2] = t;
+          const auto &[k, i, _1, _2, _part] = t;
           if (i > kTotal - Client::g_extra_read) return;
 
           static thread_local volatile char buffer[100];
@@ -235,7 +248,7 @@ void RMWTxn::Run()
             root->Then(
                 t, 1,
                 [](auto &ctx, auto _) -> Optional<VoidValue> {
-                  auto [k, i, state, handle] = ctx;
+                  auto [k, i, state, handle, _part] = ctx;
 
                   TxnRow vhandle = handle(state->rows[i]);
                   auto v = vhandle.Read<Ycsb::Value>();
@@ -247,7 +260,7 @@ void RMWTxn::Run()
             root->Then(
                 t, 1,
                 [](auto &ctx, auto _) -> Optional<VoidValue> {
-                  auto [k, i, state, handle] = ctx;
+                  auto [k, i, state, handle, _part] = ctx;
                   // Last write
                   if (Client::g_dependency && i == kTotal - Client::g_extra_read - 1) {
                     while (state->signal != i) _mm_pause();

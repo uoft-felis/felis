@@ -39,55 +39,67 @@ void StockLevelTxn::PrepareInsert()
 
 void StockLevelTxn::Prepare()
 {
-  auto &mgr = util::Instance<TableManager>();
-  auto lower = std::max<int>(state->current_oid - (20 << 8), 0);
-  auto upper = std::max<int>(state->current_oid, 0);
+  state->res = nullptr;
 
-  auto ol_start = OrderLine::Key::New(warehouse_id, district_id, lower, 0);
-  auto ol_end = OrderLine::Key::New(warehouse_id, district_id, upper, 0);
+  static constexpr auto ScanOrderLine = [](
+      auto &state, uint64_t sid, int warehouse_id, int district_id) {
+    auto &mgr = util::Instance<TableManager>();
+    auto lower = std::max<int>(state->current_oid - (20 << 8), 0);
+    auto upper = std::max<int>(state->current_oid, 0);
 
-  INIT_ROUTINE_BRK(8 << 10);
+    auto ol_start = OrderLine::Key::New(warehouse_id, district_id, lower, 0);
+    auto ol_end = OrderLine::Key::New(warehouse_id, district_id, upper, 0);
 
-  state->n = 0;
+    INIT_ROUTINE_BRK(8 << 10);
 
-  if (Client::g_enable_pwv) {
-    state->nr_res = 0;
-    state->res = (PWVGraph::Resource *) malloc(sizeof(PWVGraph::Resource) * 60);
-  }
+    state->n = 0;
+    for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
+             ol_start.EncodeFromRoutine(),
+             ol_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
+      if (it->row()->ShouldScanSkip(sid)) continue;
+      state->items.at(state->n++) = it->row();
+      OrderLine::Key ol_key;
+      ol_key.Decode(&it->key());
 
-  for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
-           ol_start.EncodeFromRoutine(),
-           ol_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
-    if (it->row()->ShouldScanSkip(serial_id())) continue;
-    state->items.at(state->n++) = it->row();
-    OrderLine::Key ol_key;
-    ol_key.Decode(&it->key());
-
-    if (Client::g_enable_pwv && ol_key.ol_number == 1) {
-      state->res[state->nr_res++] = PWVGraph::VHandleToResource(it->row());
+      // Collecting resources for PWV
+      if (state->res && ol_key.ol_number == 1) {
+        state->res[state->nr_res++] = PWVGraph::VHandleToResource(it->row());
+      }
     }
-  }
-
-  if (VHandleSyncService::g_lock_elision && Client::g_enable_pwv) {
-    auto &gm = util::Instance<PWVGraphManager>();
-    if (g_tpcc_config.IsWarehousePinnable()) {
-      gm[warehouse_id - 1]->ReserveEdge(serial_id(), state->nr_res + 1);
-
-      gm[warehouse_id - 1]->AddResources(serial_id(), state->res, state->nr_res);
-      gm[warehouse_id - 1]->AddResource(
-          serial_id(), &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
-    } else {
-      int parts[2] = {
-        g_tpcc_config.PWVDistrictToCoreId(district_id, 10),
-        0,
-      };
-      gm[parts[0]]->ReserveEdge(serial_id(), state->nr_res);
-      gm[parts[1]]->ReserveEdge(serial_id());
-
-      gm[parts[0]]->AddResources(serial_id(), state->res, state->nr_res);
-      gm[parts[1]]->AddResource(
-          serial_id(), &ClientBase::g_pwv_stock_resources[0]);
+  };
+  if (!VHandleSyncService::g_lock_elision) {
+    ScanOrderLine(state, serial_id(), warehouse_id, district_id);
+  } else {
+    if (Client::g_enable_pwv) {
+      state->nr_res = 0;
+      state->res = (PWVGraph::Resource *) malloc(sizeof(PWVGraph::Resource) * 60);
     }
+
+    int part = (int) warehouse_id - 1;
+    if (!g_tpcc_config.IsWarehousePinnable()) {
+      part = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
+    }
+
+    root->Then(
+        MakeContext(warehouse_id, district_id, part), 1,
+        [](auto &ctx, auto _) -> Optional<VoidValue> {
+          auto &[state, handle, warehouse_id, distrcit_id, p] = ctx;
+          ScanOrderLine(state, handle.serial_id(), warehouse_id, distrcit_id);
+          if (Client::g_enable_pwv) {
+            auto &gm = util::Instance<PWVGraphManager>();
+            gm[p]->ReserveEdge(handle.serial_id(), state->nr_res);
+            gm[warehouse_id - 1]->ReserveEdge(handle.serial_id());
+
+            gm[p]->AddResources(
+                handle.serial_id(),
+                state->res, state->nr_res);
+            gm[warehouse_id - 1]->AddResource(
+                handle.serial_id(),
+                &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
+          }
+          return nullopt;
+        },
+        part);
   }
 }
 
@@ -143,6 +155,7 @@ void StockLevelTxn::Run()
                 index_handle.serial_id(), state->res, state->nr_res);
             g->ActivateResource(
                 index_handle.serial_id(), &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
+            free(state->res);
           }
           return nullopt;
         },
@@ -161,10 +174,14 @@ void StockLevelTxn::Run()
           state->barrier.Signal();
 
           if (Client::g_enable_pwv) {
-            util::Instance<PWVGraphManager>().local_graph()->ActivateResources(
+            auto &gm = util::Instance<PWVGraphManager>();
+            gm.local_graph()->ActivateResources(
                 index_handle.serial_id(),
                 state->res, state->nr_res);
             free(state->res);
+
+            if (RVPInfo::FromRoutine(state->last)->indegree.fetch_sub(1) == 1)
+              gm.NotifyRVPChange(index_handle.serial_id(), 0);
           }
           return nullopt;
         },
@@ -184,6 +201,8 @@ void StockLevelTxn::Run()
           return nullopt;
         },
         0); // Stock(0) partition
+    state->last = root->last();
+    RVPInfo::MarkRoutine(state->last);
   }
 }
 

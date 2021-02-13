@@ -368,6 +368,7 @@ class Txn : public BaseTxn {
     return nodes_bitmap;
   }
 
+  static constexpr uint64_t kIndexOpFlatten = std::numeric_limits<uint32_t>::max();
   uint64_t txn_indexop_affinity = std::numeric_limits<uint64_t>::max();
 
   template <typename IndexOp,
@@ -388,18 +389,7 @@ class Txn : public BaseTxn {
       }
 
       if ((node != 0 && current_node != node)
-          || (VHandleSyncService::g_lock_elision
-              && !EpochClient::g_enable_pwv
-              && !EpochClient::g_enable_granola)) {
-
-        // We need this only two scenarios:
-        // 1. Distributed transactions
-        // 2. g_lock_elision at the same time we need the empty versions on VHandle.
-        //
-        // Under the second case, we need both PWV and Granola off.
-        //
-        // Notice: this code may not work well under distributed transactions? I
-        // have not tuned this yet.
+          || (VHandleSyncService::g_lock_elision && txn_indexop_affinity != kIndexOpFlatten)) {
         root->Then(
             op_ctx, node,
             [](auto &ctx, auto _) -> Optional<VoidValue> {
@@ -455,12 +445,14 @@ class Txn : public BaseTxn {
 
  public:
   struct TxnIndexLookupOpImpl {
+    using ResultType = LookupRowResult;
     LookupRowResult result;
     TxnIndexLookupOpImpl(const BaseTxnIndexOpContext &ctx, int idx) {
       result = BaseTxnIndexOpLookup(ctx, idx);
     }
   };
   struct TxnIndexInsertOpImpl {
+    using ResultType = VHandle *;
     VHandle *result;
     TxnIndexInsertOpImpl(const BaseTxnIndexOpContext &ctx, int idx) {
       result = BaseTxnIndexOpInsert(ctx, idx);

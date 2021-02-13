@@ -100,6 +100,10 @@ class AllocatorModule : public Module<CoreModule> {
 
       abort_if(Options::kEnableGranola, "Granola and PWV cannot be on at the same time");
       EpochClient::g_enable_pwv = true;
+
+      if (Options::kPWVGraphAlloc)
+        PWVGraph::g_extra_node_brk_limit = Options::kPWVGraphAlloc.ToLargeNumber();
+
       util::InstanceInit<PWVGraphManager>::instance = new PWVGraphManager();
     }
 

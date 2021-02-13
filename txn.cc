@@ -20,11 +20,19 @@ void BaseTxn::InitBrk(long nr_epochs)
   }
 }
 
+// #define READ_OWN_WRITE
+
 void BaseTxn::BaseTxnRow::AppendNewVersion(int ondemand_split_weight)
 {
   if (!EpochClient::g_enable_granola && !EpochClient::g_enable_pwv) {
     auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
-    auto is_dup = commit_buffer->AddRef(go::Scheduler::CurrentThreadPoolId() - 1, vhandle, sid);
+    auto is_dup = false;
+
+#ifdef READ_OWN_WRITE
+    if (!VHandleSyncService::g_lock_elision)
+      is_dup = commit_buffer->AddRef(go::Scheduler::CurrentThreadPoolId() - 1, vhandle, sid);
+#endif
+
     if (!is_dup) {
       vhandle->AppendNewVersion(sid, epoch_nr, ondemand_split_weight);
     } else {
@@ -42,7 +50,10 @@ void BaseTxn::BaseTxnRow::AppendNewVersion(int ondemand_split_weight)
 VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
 {
   auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
-  auto ent = commit_buffer->LookupDuplicate(vhandle, sid);
+  CommitBuffer::Entry *ent = nullptr;
+#ifdef READ_OWN_WRITE
+  ent = commit_buffer->LookupDuplicate(vhandle, sid);
+#endif
   if (ent && ent->u.value != (VarStr *) kPendingValue)
     return ent->u.value;
   else
@@ -53,7 +64,10 @@ bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
 {
   if (!EpochClient::g_enable_granola && !EpochClient::g_enable_pwv) {
     auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
-    auto ent = commit_buffer->LookupDuplicate(vhandle, sid);
+    CommitBuffer::Entry *ent = nullptr;
+#ifdef READ_OWN_WRITE
+    ent = commit_buffer->LookupDuplicate(vhandle, sid);
+#endif
     if (ent) {
       ent->u.value = obj;
       if (ent->wcnt.fetch_sub(1) - 1 > 0)

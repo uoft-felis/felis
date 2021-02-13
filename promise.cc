@@ -29,6 +29,7 @@ PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
   r->callback = nullptr;
   r->node_func = nullptr;
   r->next = nullptr;
+  std::fill(r->__padding__, r->__padding__ + 8, 0);
   return r;
 }
 
