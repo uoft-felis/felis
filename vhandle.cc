@@ -86,13 +86,14 @@ std::string SortedArrayVHandle::ToString() const
 
 void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 {
-  auto &gc = util::Instance<GC>();
-  auto handle = gc_handle.load(std::memory_order_relaxed);
-  auto latest = latest_version.load(std::memory_order_relaxed);
-  if (size + delta > capacity && capacity >= 512_K) {
-    gc.Collect((VHandle *) this, epoch_nr, 16_K);
-    latest = latest_version.load(std::memory_order_relaxed);
-  }
+  // shirley: remove minor (?) garbage collection for now
+  // auto &gc = util::Instance<GC>();
+  // auto handle = gc_handle.load(std::memory_order_relaxed);
+  // auto latest = latest_version.load(std::memory_order_relaxed);
+  // if (size + delta > capacity && capacity >= 512_K) {
+  //   gc.Collect((VHandle *) this, epoch_nr, 16_K);
+  //   latest = latest_version.load(std::memory_order_relaxed);
+  // }
 
   size += delta;
 
@@ -125,6 +126,8 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
             objects + size,
             kPendingValue);
 
+  //SHIRLEY: remove minor (?) garbage collection for now
+  /*
   if (cur_start != latest + 1) {
     cur_start = latest + 1;
     size_t nr_bytes = 0;
@@ -146,6 +149,7 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
     if (garbage_left)
       gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
   }
+  */
 }
 
 void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight)
@@ -348,6 +352,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     nr_ondsplt = 0;
     cont_affinity = -1;
   } else {
+    //SHIRLEY: this is marking the row for GC which will be performed later?
+    /*
     if (GC::IsDataGarbage((VHandle *) this, obj) && gc_handle == 0) {
       auto &gc = util::Instance<GC>();
       auto gchdl = gc.AddRow((VHandle *) this, epoch_nr);
@@ -356,6 +362,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
         gc.RemoveRow((VHandle *) this, gchdl);
       }
     }
+    */
   }
   return true;
 }
