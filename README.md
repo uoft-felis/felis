@@ -101,9 +101,13 @@ proceed:
 curl localhost:<http_port>/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 curl 127.0.0.1:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 <<<<<<< HEAD
+<<<<<<< HEAD
 curl 142.150.234.169:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 =======
 >>>>>>> 75557035 (update readme)
+=======
+curl 142.150.234.169:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
+>>>>>>> ad9d4bd8 (remove major and minor GC)
 ```
 
 Upon receiving this, the controller would broadcast to every node to
