@@ -677,6 +677,7 @@ namespace mem {
   }
 
   static ParallelRegion g_data_region;
+  //shirley: old. not used anymore.
   static ParallelRegion g_data_region_pmem;
   ParallelRegion &GetDataRegion(bool use_pmem) { 
     if (use_pmem) return g_data_region_pmem;
