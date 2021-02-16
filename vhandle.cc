@@ -95,6 +95,10 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
   //   latest = latest_version.load(std::memory_order_relaxed);
   // }
 
+  // logger->info("MOMO in increaseSize calling myprobe");
+  probes::VersionSizeArray{size, delta}();
+  // logger->info("MOMO in increaseSize done calling myprobe");
+  
   size += delta;
 
   if (unlikely(size > capacity)) {
