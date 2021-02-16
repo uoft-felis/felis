@@ -117,13 +117,6 @@ struct VersionSizeArray {
   void operator()() const;
 };
 
-struct VersionSizeArray {
-  unsigned int cur_size;
-
-  int delta;
-  void operator()() const;
-};
-
 
 }
 }
