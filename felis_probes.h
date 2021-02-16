@@ -108,6 +108,7 @@ struct RegionPoolVarstr {
 
 struct TransientPersistentCount {
   bool isPersistent;
+  void operator()() const;
 };
 
 struct VersionSizeArray {

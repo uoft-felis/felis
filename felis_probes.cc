@@ -208,6 +208,7 @@ ProbeMain::~ProbeMain()
 {
   std::cout << "number of transient varstr: " << total_transient << std::endl;
   std::cout << "number of persistent varstr: " << total_persistent << std::endl;
+  // std::cout << "MOMO printing versionSizeArray of size: " << version_size_array.size()  << std::endl;
 
   std::cout << "MOMO printing versionSizeArray for upto size 20 out of 5000" << std::endl;
 
