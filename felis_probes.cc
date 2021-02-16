@@ -56,6 +56,29 @@ static void CountUpdate(agg::Histogram<32, 0, 1> &agg, int nr_update, int core =
 ////////////////////////////////////////////////////////////////////////////////
 // Override for some enabled probes
 ////////////////////////////////////////////////////////////////////////////////
+static std::mutex version_size_array_m;
+//MOMO what should the initial values of the vesionSize array be? How to figure that out?
+static int version_size_array[5000] = { 0 }; // all elements 0
+// static std::vector<int> version_size_array(100, 0);
+template <> void OnProbe(felis::probes::VersionSizeArray p)
+{
+  std::lock_guard _(version_size_array_m);
+  // std::cout << "MOMO p.cur_size:" << p.cur_size <<" --- p.delta:" << p.delta << std::endl;
+  
+  if (p.cur_size > 5000)
+  {
+    return;
+  }
+  
+  if(version_size_array[p.cur_size] != 0)
+  {
+    version_size_array[p.cur_size] -= 1;
+  }
+  
+  version_size_array[p.cur_size + p.delta] += 1;
+
+  // version_size_array[5] += 1;
+}
 
 #if 0
 
@@ -166,6 +189,15 @@ template <> void OnProbe(felis::probes::RegionPoolVarstr p)
 
 ProbeMain::~ProbeMain()
 {
+  // std::cout << "MOMO printing versionSizeArray of size: " << version_size_array.size()  << std::endl;
+
+  std::cout << "MOMO printing versionSizeArray for upto size 20 out of 5000" << std::endl;
+
+  for(int i = 0; i < 20; i++) {
+    std::cout << "MOMO versionSizeArray[" << i << "]:" << version_size_array[i] << std::endl;
+  }
+  std::cout << "MOMO DONE printing versionSizeArray" << std::endl;
+
 #if 0
   std::cout << "number of bytes allocated for varstr: "
             << total_varstr_alloc_bytes << " (max " << max_varstr_alloc_bytes << ")" << std::endl;

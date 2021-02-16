@@ -106,6 +106,13 @@ struct RegionPoolVarstr {
   void operator()() const;
 };
 
+struct VersionSizeArray {
+  unsigned int cur_size;
+
+  int delta;
+  void operator()() const;
+};
+
 }
 }
 
@@ -124,6 +131,7 @@ struct RegionPoolVarstr {
   PROBE_PROXY(felis::probes::TpccNewOrder);                                    \
   PROBE_PROXY(felis::probes::TpccPayment);                                     \
   PROBE_PROXY(felis::probes::TpccDelivery);                                    \
-  PROBE_PROXY(felis::probes::RegionPoolVarstr);
+  PROBE_PROXY(felis::probes::RegionPoolVarstr);                                \
+  PROBE_PROXY(felis::probes::VersionSizeArray);
 
 #endif /* FELIS_PROBES_H */
