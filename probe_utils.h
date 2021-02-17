@@ -113,6 +113,23 @@ struct Histogram {
     for (int i = 0; i < N; i++) hist[i] += rhs.hist[i];
     return *this;
   }
+  int CalculatePercentile(double scale) {
+    size_t total_nr = Count();
+    long medium_idx = total_nr * scale;
+    for (int i = 0; i < N; i++) {
+      medium_idx -= hist[i];
+      if (medium_idx < 0)
+        return i * Bucket + Offset;
+    }
+    return Offset; // 0?
+  }
+  int CalculateMedian() { return CalculatePercentile(0.5); }
+  size_t Count() {
+    size_t total_nr = 0;
+    for (int i = 0; i < N; i++)
+      total_nr += hist[i];
+    return total_nr;
+  }
 };
 
 template <int N, int Offset, int Bucket>

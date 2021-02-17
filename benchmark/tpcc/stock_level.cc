@@ -37,38 +37,41 @@ void StockLevelTxn::PrepareInsert()
   // client->get_execution_locality_manager().PlanLoad(Config::WarehouseToCoreId(warehouse_id), 150);
 }
 
+static void ScanOrderLineIndex(
+    const StockLevelTxn::State &state,
+    uint64_t sid, int warehouse_id, int district_id)
+{
+  auto &mgr = util::Instance<TableManager>();
+  auto lower = std::max<int>(state->current_oid - (20 << 8), 0);
+  auto upper = std::max<int>(state->current_oid, 0);
+
+  auto ol_start = OrderLine::Key::New(warehouse_id, district_id, lower, 0);
+  auto ol_end = OrderLine::Key::New(warehouse_id, district_id, upper, 0);
+
+  INIT_ROUTINE_BRK(8 << 10);
+
+  state->n = 0;
+  for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
+           ol_start.EncodeFromRoutine(),
+           ol_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
+    if (it->row()->ShouldScanSkip(sid)) continue;
+    state->items.at(state->n++) = it->row();
+    OrderLine::Key ol_key;
+    ol_key.Decode(&it->key());
+
+    // Collecting resources for PWV
+    if (state->res && ol_key.ol_number == 1) {
+      state->res[state->nr_res++] = PWVGraph::VHandleToResource(it->row());
+    }
+  }
+}
+
 void StockLevelTxn::Prepare()
 {
   state->res = nullptr;
-
-  static constexpr auto ScanOrderLine = [](
-      auto &state, uint64_t sid, int warehouse_id, int district_id) {
-    auto &mgr = util::Instance<TableManager>();
-    auto lower = std::max<int>(state->current_oid - (20 << 8), 0);
-    auto upper = std::max<int>(state->current_oid, 0);
-
-    auto ol_start = OrderLine::Key::New(warehouse_id, district_id, lower, 0);
-    auto ol_end = OrderLine::Key::New(warehouse_id, district_id, upper, 0);
-
-    INIT_ROUTINE_BRK(8 << 10);
-
-    state->n = 0;
-    for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
-             ol_start.EncodeFromRoutine(),
-             ol_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
-      if (it->row()->ShouldScanSkip(sid)) continue;
-      state->items.at(state->n++) = it->row();
-      OrderLine::Key ol_key;
-      ol_key.Decode(&it->key());
-
-      // Collecting resources for PWV
-      if (state->res && ol_key.ol_number == 1) {
-        state->res[state->nr_res++] = PWVGraph::VHandleToResource(it->row());
-      }
-    }
-  };
   if (!VHandleSyncService::g_lock_elision) {
-    ScanOrderLine(state, serial_id(), warehouse_id, district_id);
+    if (!Options::kTpccReadOnlyDelayQuery)
+      ScanOrderLineIndex(state, serial_id(), warehouse_id, district_id);
   } else {
     if (Client::g_enable_pwv) {
       state->nr_res = 0;
@@ -83,8 +86,8 @@ void StockLevelTxn::Prepare()
     root->Then(
         MakeContext(warehouse_id, district_id, part), 1,
         [](auto &ctx, auto _) -> Optional<VoidValue> {
-          auto &[state, handle, warehouse_id, distrcit_id, p] = ctx;
-          ScanOrderLine(state, handle.serial_id(), warehouse_id, distrcit_id);
+          auto &[state, handle, warehouse_id, district_id, p] = ctx;
+          ScanOrderLineIndex(state, handle.serial_id(), warehouse_id, district_id);
           if (Client::g_enable_pwv) {
             auto &gm = util::Instance<PWVGraphManager>();
             gm[p]->ReserveEdge(handle.serial_id(), state->nr_res);
@@ -147,6 +150,10 @@ void StockLevelTxn::Run()
         MakeContext(warehouse_id, district_id, threshold), 0,
         [](const auto &ctx, auto _) -> Optional<VoidValue> {
           auto &[state, index_handle, warehouse_id, district_id, threshold] = ctx;
+
+          if (Options::kTpccReadOnlyDelayQuery)
+            ScanOrderLineIndex(state, index_handle.serial_id(), warehouse_id, district_id);
+
           ScanOrderLine(state, index_handle, warehouse_id, district_id);
           ScanStocks(state, index_handle, warehouse_id, district_id, threshold);
           if (Client::g_enable_pwv) {
@@ -161,7 +168,7 @@ void StockLevelTxn::Run()
         },
         aff);
     if (!Client::g_enable_granola && !Client::g_enable_pwv) {
-      root->AssignSchedulingKey(serial_id() + (1024ULL << 8));
+      root->AssignSchedulingKey(serial_id() + (2024ULL << 8));
     }
   } else { // kEnablePartition && !IsWarehousePinnable()
     state->barrier = FutureValue<void>();

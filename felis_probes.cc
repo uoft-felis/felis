@@ -18,9 +18,11 @@ static struct ProbeMain {
   agg::Agg<agg::Histogram<32, 0, 1>> payment_cnt;
   agg::Agg<agg::Histogram<32, 0, 1>> delivery_cnt;
 
+  agg::Agg<agg::Histogram<16, 0, 1>> absorb_memmove_size_detail;
   agg::Agg<agg::Histogram<1024, 0, 16>> absorb_memmove_size;
   agg::Agg<agg::Average> absorb_memmove_avg;
   agg::Agg<agg::Histogram<128, 0, 1 << 10>> msc_wait_cnt;
+  agg::Agg<agg::Average> msc_wait_cnt_avg;
 
   std::vector<long> mem_usage;
   std::vector<long> expansion;
@@ -37,9 +39,11 @@ thread_local struct ProbePerCore {
   AGG(payment_cnt);
   AGG(delivery_cnt);
 
+  AGG(absorb_memmove_size_detail);
   AGG(absorb_memmove_size);
   AGG(absorb_memmove_avg);
   AGG(msc_wait_cnt);
+  AGG(msc_wait_cnt_avg);
 } statcnt;
 
 // Default for all probes
@@ -57,11 +61,10 @@ static void CountUpdate(agg::Histogram<32, 0, 1> &agg, int nr_update, int core =
 // Override for some enabled probes
 ////////////////////////////////////////////////////////////////////////////////
 
-#if 0
-
 template <> void OnProbe(felis::probes::VHandleAbsorb p)
 {
   statcnt.absorb_memmove_size << p.size;
+  statcnt.absorb_memmove_size_detail << p.size;
   statcnt.absorb_memmove_avg << p.size;
 }
 
@@ -75,9 +78,8 @@ template <> void OnProbe(felis::probes::VHandleAppendSlowPath p)
 {
   auto msc_wait = __rdtsc() - last_tsc;
   statcnt.msc_wait_cnt << msc_wait;
+  statcnt.msc_wait_cnt_avg << msc_wait;
 }
-
-#endif
 
 #if 0
 thread_local uint64_t last_wait_cnt;
@@ -177,13 +179,20 @@ ProbeMain::~ProbeMain()
 #endif
 
 #if 0
-
   std::cout << "VHandle MSC Spin Time Distribution (in TSC)" << std::endl
             << global.msc_wait_cnt << std::endl;
+  std::cout << "VHandle MSC Spin Time Avg: "
+            << global.msc_wait_cnt_avg
+            << std::endl;
 
-  std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
   std::cout << "Memmove/Sorting Distance Distribution:" << std::endl;
-  std::cout << global.absorb_memmove_size << std::endl;
+  std::cout << global.absorb_memmove_size_detail
+            << global.absorb_memmove_size << std::endl;
+  std::cout << "Memmove/Sorting Distance Medium: "
+            << global.absorb_memmove_size_detail.CalculatePercentile(
+                .5 * global.absorb_memmove_size.Count() / global.absorb_memmove_size_detail.Count())
+            << std::endl;
+  std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
 #endif
 }
 

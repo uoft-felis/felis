@@ -127,7 +127,6 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
   // routine->set_busy_poll(true);
 
   // abort_if(core_id < 0, "We should not run on thread pool 0!");
-
   while (!slot(core_id)->done.load(std::memory_order_acquire)) {
     wait_cnt++;
 
@@ -147,6 +146,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
     if ((wait_cnt & 0x00FF) == 0) {
       if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
         // logger->info("Preempt back");
+        // Broken???
         return true;
       }
     }
