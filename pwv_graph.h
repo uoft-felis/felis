@@ -41,10 +41,11 @@ class PWVGraph {
     uint16_t nr_resources; // out_degree
     uint16_t tot_resources;
 
+    bool mark;
+
     std::atomic<void *> sched_entry;
     void (*on_node_free)(void *);
     void (*on_node_rvp_change)(void *);
-    uint8_t __padding__[8];
 
     Edge *extra;
     Edge inlined[kInlineEdges];

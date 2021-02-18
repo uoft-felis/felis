@@ -304,8 +304,6 @@ void CallTxnsWorker::Run()
     RowEntity::Quiescence();
 
     mem::GetDataRegion().Quiescence();
-    if (EpochClient::g_enable_pwv)
-      util::Instance<PWVGraphManager>().local_graph()->Build();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
     util::Instance<GC>().RunGC();

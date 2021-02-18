@@ -78,6 +78,7 @@ class PWVScheduler final : public PrioritySchedulingPolicy {
     free.Initialize();
     rvp.Initialize();
     nr_free = 0;
+    is_graph_built = false;
   }
   ~PWVScheduler() {}
 
@@ -112,6 +113,7 @@ class PWVScheduler final : public PrioritySchedulingPolicy {
   util::GenericListNode<FreeNodeEntry> free, inactive, rvp;
   util::MCSSpinLock qlock;
   std::atomic_ulong nr_free;
+  std::atomic_bool is_graph_built;
 
   mem::Brk brk;
 };
@@ -138,6 +140,9 @@ void PWVScheduler::OnNodeFreeImpl(FreeNodeEntry *node_ent)
 
 void PWVScheduler::OnNodeRVPChangeImpl(FreeNodeEntry *node_ent)
 {
+  if (!is_graph_built.load(std::memory_order_acquire)) {
+    return; // Not ready
+  }
   util::MCSSpinLock::QNode qnode;
   qlock.Acquire(&qnode);
   if (node_ent->in_rvp_queue) {
@@ -170,6 +175,7 @@ RVPInfo *PWVScheduler::GetRVPInfo(PriorityQueueValue *value)
 
 void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value)
 {
+  abort_if(is_graph_built, "graph is already built!");
   auto g = util::Instance<PWVGraphManager>().local_graph();
   util::MCSSpinLock::QNode qnode;
   qlock.Acquire(&qnode);
@@ -181,14 +187,9 @@ void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValu
     node_ent->in_rvp_queue = false;
     node_ent->Initialize();
 
-    if (g->is_node_free(hent->key)) {
-      node_ent->InsertAfter(free.prev);
-      nr_free.fetch_add(1);
-    } else {
-      node_ent->InsertAfter(inactive.prev);
-      g->RegisterFreeListener(hent->key, &PWVScheduler::OnNodeFree);
-    }
+    node_ent->InsertAfter(inactive.prev);
     len++;
+    g->RegisterFreeListener(hent->key, &PWVScheduler::OnNodeFree);
     g->RegisterRVPListener(hent->key, &PWVScheduler::OnNodeRVPChange);
     g->RegisterSchedEntry(hent->key, node_ent);
   }
@@ -219,6 +220,10 @@ bool PWVScheduler::ShouldPickWaiting(const WaitState &ws)
 
 PriorityQueueValue *PWVScheduler::Pick()
 {
+  if (!is_graph_built.load(std::memory_order_acquire)) {
+    util::Instance<PWVGraphManager>().local_graph()->Build();
+    is_graph_built = true;
+  }
   while (true) {
     while (nr_free.load() == 0) _mm_pause();
     util::MCSSpinLock::QNode qnode;
@@ -277,6 +282,7 @@ void PWVScheduler::Reset()
   brk.Reset();
   logger->info("free {} inactive {} rvp {} len {} nr free {}",
                (void *) &free, (void *) &inactive, (void *) &rvp, len, nr_free);
+  is_graph_built = false;
 }
 
 size_t EpochExecutionDispatchService::g_max_item = 20_M;

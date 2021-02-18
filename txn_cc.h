@@ -172,7 +172,7 @@ struct InvokeHandle {
   }
 
   bool has_callback() const {
-    return row && rowfunc;
+    return rowfunc;
   }
 
   void InvokeWithContext(const Context& ctx) const {
@@ -321,7 +321,7 @@ class Txn : public BaseTxn {
     auto aff = UpdateForKeyAffinity(node, row);
     InvokeHandle<TxnState, Types...> invoke_handle{rowfunc, row};
 
-    if (aff != -1) {
+    if (aff != -1 && !EpochClient::g_enable_granola && !EpochClient::g_enable_pwv) {
       root->Then(
           sql::MakeTuple(invoke_handle, MakeContext(params...)),
           node,

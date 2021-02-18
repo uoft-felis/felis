@@ -65,6 +65,7 @@ void PWVGraph::AddResources(uint64_t sid, Resource *res, int nr_res)
     e->resource = rc;
     e->node = nullptr;
   }
+  node->mark = true;
 }
 
 void PWVGraph::Build()
@@ -74,7 +75,7 @@ void PWVGraph::Build()
   p.Start();
   for (unsigned int seq = 1; seq <= EpochClient::g_txn_per_epoch; seq++) {
     auto node = &nodes[seq - 1];
-    if (node->nr_resources == 0)
+    if (!node->mark)
       continue;
 
     int in_degree = 0;
@@ -97,6 +98,7 @@ void PWVGraph::Build()
     if (in_degree > 0) {
       node->in_degree.fetch_add(in_degree);
     } else {
+      // abort_if(node->sched_entry == nullptr, "WHY? seq {}", seq);
       NotifyFree(node);
     }
   }
@@ -107,6 +109,7 @@ void PWVGraph::NotifyFree(Node *node)
 {
   if (node->sched_entry && node->on_node_free)
     node->on_node_free(node->sched_entry);
+  abort_if(node->sched_entry == nullptr, "node->sched_entry not ingested? node {}", (void *) node);
 }
 
 void PWVGraph::RegisterSchedEntry(uint64_t sid, void *sched_entry)

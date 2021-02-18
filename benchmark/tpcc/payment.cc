@@ -120,6 +120,7 @@ void PaymentTxn::Run()
     auto [node, bitmap] = p;
 
     if (conf.node_id() == node) {
+
       state->warehouse_future = UpdateForKey(
           node, state->warehouse,
           [](const auto &ctx, VHandle *row) {

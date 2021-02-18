@@ -51,19 +51,29 @@ class BaseTxn {
   // Entry functions for Epoch. Granola, PWV and Felis all have different
   // requirements on each phase is executed (in-order vs out-of-order).
   void Run0() {
-    if (EpochClient::g_enable_granola) {
+    PromiseRoutine *last = nullptr;
+    if (EpochClient::g_enable_granola || EpochClient::g_enable_pwv) {
       PrepareInsert();
       Prepare();
+      if (EpochClient::g_enable_pwv)
+        last = root_promise()->last();
     }
     Run();
-    root_promise()->AssignSchedulingKey(serial_id());
+
+    if (!last) { // !PWV
+      root_promise()->AssignSchedulingKey(serial_id());
+    } else { // PWV
+      uint64_t k = 0;
+      for (int i = 0; i < root_promise()->nr_routines(); i++) {
+        auto r = root_promise()->routine(i);
+        r->sched_key = k;
+        if (r == last) k = serial_id();
+      }
+    }
   }
   void Prepare0() {
-    if (EpochClient::g_enable_granola)
+    if (EpochClient::g_enable_granola || EpochClient::g_enable_pwv)
       return;
-
-    if (EpochClient::g_enable_pwv)
-      PrepareInsert();
 
     Prepare();
   }

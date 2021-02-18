@@ -38,7 +38,7 @@ void DeliveryTxn::PrepareInsert()
 void DeliveryTxn::Prepare()
 {
   if (VHandleSyncService::g_lock_elision) {
-    if (Client::g_enable_granola) {
+    if (Client::g_enable_granola || Client::g_enable_pwv) {
       root = new Promise<DummyValue>(nullptr, 128 + BasePromise::kInlineLimit);
     } else {
       root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
@@ -163,7 +163,8 @@ void DeliveryTxn::Prepare()
 
 void DeliveryTxn::Run()
 {
-  if (Options::kEnablePartition && !g_tpcc_config.IsWarehousePinnable() && !Client::g_enable_granola) {
+  if (Options::kEnablePartition && !g_tpcc_config.IsWarehousePinnable()
+      && !Client::g_enable_granola && !Client::g_enable_pwv) {
     root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
   }
 
