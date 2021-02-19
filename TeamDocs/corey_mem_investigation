@@ -1,0 +1,198 @@
+Caracal SW Design:
+main.cc
+	line 100   client->GenerateBenchmarks();
+
+-> epoch.cc 
+Constructor: line 188 -> line 139 for memory allocation
+
+
+Don't remeber why I put this here:
+	line 184 void EpochClient::GenerateBenchmarks()
+	line 192 CreateTxn(GenerateSerialId(i, j));
+	
+
+Where new EpochClient gets setup:
+file: tpcc_workload.cc
+line: 75
+EpochClient::g_workload_client = new tpcc::Client();
+-------------------------------------------------
+Document to describe Caracal Memory Structure: contained within mem.h/cc
+
+Allocation Method:
+ AllocMemory()
+ AllocPersistentMemory()
+Both use memory mapping (mmap) to use loction memory (DRAM or PMEM) in application's process userspace
+
+mem file:
+q: what is CACHE_LINE_SIZE=64?
+
+WeakPool:
+-> constructor/destructor mmap
+-> separate alloc & dealloc: line 76&87 strange pointer usage?
+
+-> Register?: why adding same stat variable to vector
+-> what is watermark used for?
+
+BasicPool: inherits WeakPool
+-> basically just ontop of WeakPool class but has a checkpointer function
+so more safer alloc/dealloc
+
+Pool: inherits BasicPool
+-> this is a thread safe version using spinlock
+
+######
+
+Slab allocator before region allocator
+
+Slab Allocator: is to make memory from different pools shared at the page granularity 
+to reduce memory fragmentation
+- extremely useful for the partitioned skewed workload, where one core allocate all the memory
+
+Q: InitSlab is not in a class.  -> look into
+When is this called?
+	Called from module.cc in AllocatorModule::Init()
+	Why shirely added  mem::InitTransientPool(4_G) - line 73
+	Who is calling AllocatorModule::Init()?
+purpose?
+why you think not needed for PMEM?
+
+SlabPool can take care of chuncks <= 512K or chuncks <= 16M.
+For chuncks > 512K SlabPool will ask for memory from the larger metaslabs 
+Slab => 64M pages
+
+Slab: Linkedlist of Slab
+- contains BasicPool, hence list of Pools
+
+SlabMemory: in header is class but in .cc it struct?
+- contains a Pool class
+- contains pointer (looks like for data
+- contains a spinlock
+- contains a linked list of MetaSlab - not sure what this is for
+	- MetaSlab defined in code .cc
+		- seems to be a list
+		- contains an array of for slabs, a pointer for ?
+		- contains an Alloc and Free function
+			seems to be implementing the SlabMemory 
+- this is a strange one?
+
+SlabPool:
+- friend of ParallelRegion
+- contains list of slab's [empty, half_full]
+- contains a SlabMemory pointer ?
+- contains a Alloc and Free and Register
+- Register adds 
+    g_ps[int(alloc_type)].emplace_back(&stats);
+
+ParallelAllocationPolicy: 
+- this just seems to be setting affinity for threads on cores
+
+ParallelAllocator:
+- is a template
+- inherits ParallelAllocationPolicy
+- contains a free list struct called ConsolidateFreeList, but contains strange variables?
+	- array of something called heads
+- contains pools, free_lists, free_tails, csld_free_list? arrays
+- contains a Alloc and Free
+
+ParallelPool:
+- inherits ParallelAllocator<BasicPool>
+- has an empty destructor with TODO's
+
+ParallelSlabPool:
+- inherits ParallelAllocator<SlabPool> 
+- has an empty destructor with TODO's
+
+ParallelRegion:
+- has a constant kMaxPools = 20;
+- has an array of 32 ParallelSlabPool - pools 
+- can use a configuration json - but for what?
+	- runs set_pool_capacity
+- contains an Alloc and Free working on pools array
+
+Brk: -> Seems to be class to take a pointer to memory block, and allows breaking that memory block for others. Contains offset, limit, data for tracking.
+- has a data pointer
+- has a use_pmem bool
+- has empty destructor
+- has a New function that allocates a new Brk class
+- has a Reset function that resets offset to 0
+- has a Alloc function that seems to take chuncks from an already allocated memory
+
+ParallelBrk:
+- inherits ParallelAllocator<Brk>
+- has empty destructor
+
+Some Interesting Global Functions:
+- ParallelBrk &GetTransientPool();
+- ParallelRegion &GetPersistentPool();
+- void InitTransientPool(size_t t_mem);
+- NewStackBrk() -> mem::Brk::New()
+- AllocMemory() -> util::OSMemory::g_default.Alloc();
+	- g_mem_tracker[alloc_type].fetch_add(length);
+- AllocPersistentMemory() -> util::OSMemory::g_default.PmemAlloc(pmem_file_name);
+	- g_mem_tracker[alloc_type].fetch_add(length);
+
+
+--------------------------------------------------
+WeakPool -> BasicPool
+					  -> *BasicPool::Alloc() calls WeakPool::Alloc();
+ 
+Pool::Alloc() calls BasicPool::Alloc(), which calls WeakPool::Alloc();
+
+ParallelPool::AddExtraBasicPool
+-> pools[core] = new BasicPool();
+
+
+module.cc -> class AllocatorModule -> Init() -> mem::InitSlab & mem::InitTransientPool 
+
+Memory Usage:
+1) TransientPool uses ParallelBrk -> g_transient_pool
+- see mem.cc line 701 => InitTransientPool()
+	PersistentPool uses ParallelRegion -> g_persistent_pool 
+
+2) Slab -> InitSlab
+- stores array in g_slabmem & g_slabpmem of SlabMemory[# of cores]
+	- a loop 
+		-* allocating slab array with mmap
+		-* seting the slabs pool parameter = Pool() : WeakPool
+		-* seting up slab m.half_full.Initialize(); epoch phase
+		-** allocates pmem slabs using AllocPersistentMemory() 
+		-** seting the pmem slabs pool parameter = Pool() : WeakPool
+		-** seting up pmem m.half_full.Initialize(); epoch phase
+	- all items are added as function to tasks vector of threads
+
+3) module.cc AllocatorModule::Init
+ParallelRegion GetDataRegion ->  g_data_region_pmem/g_data_region
+GetPersistentPool -> g_persistent_pool
+- adds items to tasks vector of threads
+	- GetDataRegion::InitPools -> sets up a pools array with  ParallelSlabPool used for DRAM or PMem
+	
+	ParallelSlabPool::ParallelSlabPool
+	- has a mem pointer set with AllocMemory()
+		- which is used to setup pools[] with new SlabPool() in mem pointer
+
+---------------------------------------------------------
+Corey Task - FreeLists in persistent memory
+- why: Save DRAM, 
+- how often is free_lists accessed? 
+called on alloc by Constructors
+
+- What is free_tails and ConsolidateFreeList?
+ParallelPool has free_lists
+ParallelSlabPool has free_lists:
+- constructor called on RowEntity::InitPool()
+- ParallelRegion::InitPools for pools[]
+- BaseVHandle::InitPool for pool (pmem=false)
+ParallelBrk has free_lists
+
+ParallelSlabPool::ParallelSlabPool -> this mem what is it for?
+-	// note: we'll always keep the info in dram, only pool memory in pmem if required
+	mem = (uint8_t *)AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+- seems like stores pools[] for SlabPool in mem offsets
+
+In vhandle -> mem::ParallelSlabPool BaseVHandle::pool;
+              mem::ParallelSlabPool BaseVHandle::inline_pool;
+
+Why is InitTransientPool() calling ParallelBrk() and with pmem true?
+
+m_pmem.p = (uint8_t *)AllocPersistentMemory(mem::GenericMemory, memsz, n);
+p_buf = (uint8_t *)AllocPersistentMemory(PersistentPool, brk_pool_size);
