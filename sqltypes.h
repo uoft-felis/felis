@@ -314,15 +314,17 @@ class Object : public Base {
 
   Object(const Base &b) : Base(b) {}
 
-  VarStr *Encode() const { return EncodeVarStr(VarStr::New(this->EncodeSize())); }
+  VarStr *Encode(bool use_pmem = true) const {
+    return EncodeVarStr(VarStr::New(this->EncodeSize(), use_pmem));
+  }
 
   VarStr *EncodeFromPtr(void *ptr) const {
     return EncodeVarStr(VarStr::FromPtr(ptr, this->EncodeSize()));
   }
 
-  VarStr *EncodeFromPtrOrDefault(void *ptr) const {
+  VarStr *EncodeFromPtrOrDefault(void *ptr, bool use_pmem = true) const {
     if (ptr) return EncodeFromPtr(ptr);
-    else return Encode();
+    else return Encode(use_pmem);
   }
 
   VarStr *EncodeFromRoutine() const {
