@@ -166,8 +166,25 @@ template <> void OnProbe(felis::probes::RegionPoolVarstr p)
 }
 #endif
 
+static std::mutex trans_pers_m;
+// number of bytes allocated for varstr
+static long long total_transient = 0;
+static long long total_persistent = 0;
+template <> void OnProbe(felis::probes::TransientPersistentCount p) {
+  std::lock_guard _(trans_pers_m); // released automatically when lockguard
+                                   // variable is destroyed
+  if (p.isPersistent) {
+    total_persistent++;
+  }
+  else {
+    total_transient++;
+  }
+}
+
 ProbeMain::~ProbeMain()
 {
+  std::cout << "number of transient varstr: " << total_transient << std::endl;
+  std::cout << "number of persistent varstr: " << total_persistent << std::endl;
 #if 0
   std::cout << "number of bytes allocated for varstr: "
             << total_varstr_alloc_bytes << " (max " << max_varstr_alloc_bytes << ")" << std::endl;

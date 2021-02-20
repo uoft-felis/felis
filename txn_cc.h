@@ -206,11 +206,14 @@ class Txn : public BaseTxn {
       return ReadVarStr()->template ToType<T>();
     }
     template <typename T> bool Write(const T &o) {
-      return WriteVarStr(o.Encode());
+      bool usePmem = ((vhandle->last_version()) == sid);
+      return WriteVarStr(o.Encode(usePmem));
     }
 
     template <typename T> bool WriteTryInline(const T &o) {
-      return WriteVarStr(o.EncodeFromPtrOrDefault(vhandle->AllocFromInline(o.EncodeSize())));
+      bool usePmem = ((vhandle->last_version()) == sid);
+      return WriteVarStr(o.EncodeFromPtrOrDefault(
+          vhandle->AllocFromInline(o.EncodeSize()), usePmem));
     }
   };
 
