@@ -315,8 +315,8 @@ class Object : public Base {
 
   Object(const Base &b) : Base(b) {}
 
-  VarStr *Encode() const {
-    VarStr *str = VarStr::New(this->EncodeSize());
+  VarStr *Encode(bool use_pmem = true) const {
+    VarStr *str = VarStr::New(this->EncodeSize(), use_pmem);
     // this->EncodeTo((uint8_t *) str + sizeof(VarStr));
     this->EncodeTo(str->data());
     return str;
@@ -329,9 +329,9 @@ class Object : public Base {
     return str;
   }
 
-  VarStr *EncodeToPtrOrDefault(void *ptr) const {
+  VarStr *EncodeToPtrOrDefault(void *ptr, bool use_pmem = true) const {
     if (ptr) return EncodeToPtr(ptr);
-    else return Encode();
+    else return Encode(use_pmem);
   }
 
   VarStrView EncodeView(void *ptr) const {
