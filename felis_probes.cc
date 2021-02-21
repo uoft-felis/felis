@@ -62,26 +62,30 @@ static void CountUpdate(agg::Histogram<32, 0, 1> &agg, int nr_update, int core =
 ////////////////////////////////////////////////////////////////////////////////
 static std::mutex version_size_array_m;
 //MOMO what should the initial values of the vesionSize array be? How to figure that out?
-static int version_size_array[5000] = { 0 }; // all elements 0
+static int version_size_array[5001] = { 0 }; // all elements 0
 // static std::vector<int> version_size_array(100, 0);
 template <> void OnProbe(felis::probes::VersionSizeArray p)
 {
   std::lock_guard _(version_size_array_m);
   // std::cout << "MOMO p.cur_size:" << p.cur_size <<" --- p.delta:" << p.delta << std::endl;
-  
-  if (p.cur_size > 5000)
+  int index = p.cur_size;
+  int new_index = p.cur_size + p.delta; 
+  if (index >= 5000)
   {
-    return;
+    index = 5000;
   }
-  
-  if(version_size_array[p.cur_size] != 0)
+  if (new_index >= 5000)
   {
-    version_size_array[p.cur_size] -= 1;
+    new_index = 5000;
   }
-  
-  version_size_array[p.cur_size + p.delta] += 1;
 
-  // version_size_array[5] += 1;
+  if(version_size_array[index] != 0)
+  {
+    version_size_array[index] -= 1;
+  }
+  
+  version_size_array[new_index] += 1;
+
 }
 
 template <> void OnProbe(felis::probes::VHandleAbsorb p)
