@@ -607,16 +607,26 @@ LinkedListExtraVHandle::LinkedListExtraVHandle()
 bool LinkedListExtraVHandle::AppendNewVersion(uint64_t sid)
 {
   Entry *old, *n = new Entry(sid, kPendingValue, mem::ParallelPool::CurrentAffinity());
+  bool recycle = false;
   do {
+    recycle = false;
     old = head.load();
     if (old && old->version >= sid) {
       delete n;
       return false;
     }
     n->next = old;
+    if (old && old->object == kIgnoreValue) {
+      // if head is kIgnoreValue, recycle head now
+      n->next = old->next;
+      recycle = true;
+    }
   } while (!head.compare_exchange_strong(old, n));
 
-  size++;
+  if (recycle)
+    delete old;
+  else
+    size++;
   // TODO: GC
   return true;
 }

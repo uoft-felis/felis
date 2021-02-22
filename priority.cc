@@ -291,9 +291,14 @@ bool PriorityTxn::Init()
 
 // return TRUE if update's initialization has conflict with batched txns
 bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
+  bool passed = util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);
+  if (!passed)
+    return false;
+  // if max progress not passed, then read did not happen, does not need to check read bit
+
   if (PriorityTxnService::g_read_bit)
     return handle->CheckReadBit(this->sid);
-  return util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);
+  return true; // progress passed & no read bit to look precisely, deem it as conflict happened
 }
 
 bool PriorityTxn::CheckDeleteConflict(VHandle* handle) {
