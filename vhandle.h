@@ -122,7 +122,7 @@ class LinkedListExtraVHandle {
   bool InitDelete(uint64_t sid);
   void RevertInitDelete(uint64_t sid);
   void PriorityDelete(uint64_t sid);
-  uint64_t FindUnreadVersionLowerBound(uint64_t prev);
+  uint64_t FindUnreadVersionLowerBound(uint64_t min);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
 
   uint64_t first_version() {
@@ -192,8 +192,8 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);
-  uint64_t FindUnreadVersionLowerBound(uint64_t prev);
-  uint64_t GetAvailableSID(uint64_t prev);
+  uint64_t FindUnreadVersionLowerBound(uint64_t min);
+  uint64_t GetAvailableSID(uint64_t min);
   bool InitDelete(uint64_t sid);
   void RevertInitDelete(uint64_t sid);
   void PriorityDelete(uint64_t sid);

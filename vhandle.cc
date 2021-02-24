@@ -287,31 +287,33 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
   return *addr & kReadBitMask;
 }
 
-// @param prev Previous lower bound of other rows.
+// @param min Minimum sid search bound (answer can only be larger than min)
 // @return the lower bound of the last consecutive unread versions
-//         for example: 5R  7  11R  33  35  39, return 33
-//         if answer found is smaller than prev, return prev
-//         if answer found is larger than max_progress, return max_progress
-uint64_t SortedArrayVHandle::FindUnreadVersionLowerBound(uint64_t prev)
+//         for example: 5R  7  11R  [33  35  39], return 33
+//         if answer is smaller than min, return min
+//         if answer is larger than max_progress, return max_progress
+uint64_t SortedArrayVHandle::FindUnreadVersionLowerBound(uint64_t min)
 {
   // use max progress to help speed up finding the last read bit version
   int upper_pos;
   uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
   volatile uintptr_t *ptr_obj = WithVersion(max_prog, upper_pos);
-  // logger->info("vhandle {}, max {}, prev {}, pos {}", (void*)this, max_prog, prev, upper_pos);
+  // logger->info("vhandle {}, max {}, min {}, pos {}", (void*)this, max_prog, min, upper_pos);
+  if (ptr_obj == nullptr)
+    return min;
 
   volatile uintptr_t *ptr_ver = &versions[upper_pos];
-  if (*ptr_ver < prev)
-    return prev;
+  if (*ptr_ver < min)
+    return min;
 
-  if (*ptr_obj & kReadBitMask)
+  if (*ptr_obj & kReadBitMask) // all the versions are read
     return max_prog;
 
   while (!(*ptr_obj & kReadBitMask) && ptr_ver != versions) {
     ptr_ver--;
     ptr_obj--;
-    if (*ptr_ver <= prev)
-      return prev;
+    if (*ptr_ver <= min)
+      return min;
   } // this while will at least happen once
 
   if (ptr_ver == versions)
@@ -323,18 +325,18 @@ uint64_t SortedArrayVHandle::FindUnreadVersionLowerBound(uint64_t prev)
 }
 
 // according to read bit, get sid lower bound this row can use
-uint64_t SortedArrayVHandle::GetAvailableSID(uint64_t prev)
+uint64_t SortedArrayVHandle::GetAvailableSID(uint64_t min)
 {
   // eg:    extra       6r          12      14r      16  18
   //        vhandle 5r      7  11r     13r      15          19
   // 1. in extra, find unread versions' lower bound: 16
   // 2. in vhandle, try to find unread versions' lower bound, 15<16, don't look further
   // 3. return 16
-  prev = this->FindUnreadVersionLowerBound(prev);
+  min = this->FindUnreadVersionLowerBound(min);
   auto extra = extra_vhandle.load();
   if (extra)
-    prev = extra->FindUnreadVersionLowerBound(prev);
-  return prev;
+    min = extra->FindUnreadVersionLowerBound(min);
+  return min;
 }
 
 // for priority txn's delete, append new version for delete, and mark versions
@@ -712,15 +714,15 @@ void LinkedListExtraVHandle::PriorityDelete(uint64_t sid) {
   }
 }
 
-uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t prev)
+uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
 {
   Entry dummy(0, 0, 0);
   dummy.next = head;
   Entry *cur = &dummy;
   while (cur->next && !(cur->next->object & kReadBitMask)) {
     cur = cur->next;
-    if (cur->version <= prev)
-      return prev;
+    if (cur->version <= min)
+      return min;
   }
   if (cur == &dummy)
     return util::Instance<PriorityTxnService>().GetMaxProgress();
