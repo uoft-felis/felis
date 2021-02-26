@@ -24,8 +24,10 @@ PriorityTxnService::PriorityTxnService()
     g_negative_distance = true;
   if (Options::kTxnQueueLength)
     g_queue_length = Options::kTxnQueueLength.ToLargeNumber();
-  if (Options::kSlotPercentage)
+  if (Options::kSlotPercentage) {
     g_slot_percentage = Options::kSlotPercentage.ToInt();
+    abort_if(g_slot_percentage <= 0, "pri % <=0, is {}", g_slot_percentage);
+  }
   if (Options::kBackoffDist)
     g_backoff_distance = Options::kBackoffDist.ToInt();
 
@@ -156,59 +158,42 @@ void PriorityTxnService::PrintStats() {
   logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}  BackOffDist: {}", g_nr_priority_txn, g_interval_priority_txn, g_backoff_distance);
 }
 
-// A. how far ahead should we put the priority txn
-// TODO: scheme 2, time-adjusting backoff
-uint64_t PriorityTxnService::SIDLowerBound()
-{
-  uint64_t max = this->GetMaxProgress();
-  uint64_t node_id = max & 0xFF, epoch_nr = max >> 32, seq = max >> 8 & 0xFFFFFF;
-  // debug(TRACE_PRIORITY "max prog:    {}", format_sid(max));
-
-  // scheme 1: backoff fixed distance
-  uint64_t new_seq;
-  // default false
-  if (g_negative_distance) {
-    if (seq > g_backoff_distance)
-      new_seq = seq - g_backoff_distance;
-    else
-      new_seq = 0;
-  } else {
-    new_seq = seq + g_backoff_distance;
-  }
-
-  return (epoch_nr << 32) | (new_seq << 8) | node_id;
-}
-
-// B. find a serial id for the calling priority txn
+// find a serial id for the calling priority txn
 uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 {
-  lock.Lock();
-  uint64_t lb = SIDLowerBound();
-  /* using read bit to acquire SID is way too slow
+  uint64_t prog = this->GetMaxProgress();
+  uint64_t seq = prog >> 8 & 0xFFFFFF, new_seq;
+
   if (g_read_bit) {
-    uint64_t prev = 0;
-    for (int i = 0; i < txn->update_handles.size(); ++i)
-      prev = txn->update_handles[i]->GetAvailableSID(prev);
-    if (prev < lb) {
-      if (prev == 0 || prev >> 32 < lb >> 32)
-        lb = lb & 0xFFFFFFFF000000FF;
+    uint64_t min = this->last_sid;
+    for (auto update_handle : txn->update_handles)
+      min = update_handle->GetAvailableSID(min);
+    if (min >> 32 < prog >> 32) // min is from last epoch
+      new_seq = 0;
+    else
+      new_seq = min >> 8 & 0xFFFFFF;
+  } else {
+    if (g_negative_distance) /* default false */ {
+      if (seq > g_backoff_distance)
+        new_seq = seq - g_backoff_distance;
       else
-        lb = prev;
+        new_seq = 0;
+    } else {
+      new_seq = seq + g_backoff_distance;
     }
   }
-  */
-  if (last_sid > lb) lb = last_sid;
-  // debug(TRACE_PRIORITY "lower_bound: {}", format_sid(lb));
-  uint64_t node_id = lb & 0xFF, epoch_nr = lb >> 32, seq = lb >> 8 & 0xFFFFFF;
 
-  // leave empty slots
+  // locate the next empty SID slot behind new_seq
   //   every k serial id has 1 slot reserved for priority txn in the back
   //   e.g. percentage=20, then k=6 (1~5 is batched txns, 6 is the slot reserved)
-  abort_if(PriorityTxnService::g_slot_percentage <= 0, "pri % is {}",
-           PriorityTxnService::g_slot_percentage);
-  int k = 100 / PriorityTxnService::g_slot_percentage + 1;
-  uint64_t new_seq = (seq/k + 1) * k;
-  uint64_t sid = (epoch_nr << 32) | (new_seq << 8) | node_id;
+  lock.Lock();
+  uint64_t k = 100 / PriorityTxnService::g_slot_percentage + 1;
+  uint64_t next_slot = (new_seq/k + 1) * k;
+  uint64_t sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+  if (this->last_sid >= sid) {
+    next_slot = (this->last_sid >> 8 & 0xFFFFFF) + k;
+    sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+  }
   this->last_sid = sid;
   lock.Unlock();
   return sid;
