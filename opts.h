@@ -83,6 +83,8 @@ struct Options {
 
   static inline const auto kPriorityTxn = Option("PriorityTxn");
   static inline const auto kReadBit = Option("ReadBit");
+  static inline const auto kConflictReadBit = Option("ConflictReadBit");
+  static inline const auto kSIDReadBit = Option("SIDReadBit");
   static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
   static inline const auto kNegativeDistance = Option("NegativeDistance");
   static inline const auto kTxnQueueLength = Option("TxnQueueLength");

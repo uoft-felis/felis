@@ -234,7 +234,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 
   // mark read bit
   uintptr_t varstr_ptr = *addr;
-  if (!(varstr_ptr & kReadBitMask)) {
+  if (PriorityTxnService::g_read_bit && !(varstr_ptr & kReadBitMask)) {
     *addr = varstr_ptr | kReadBitMask;
   }
   varstr_ptr = varstr_ptr & ~kReadBitMask;
@@ -255,7 +255,7 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
 
   // mark read bit
   uintptr_t varstr_ptr = *addr;
-  if (!(varstr_ptr & kReadBitMask)) {
+  if (PriorityTxnService::g_read_bit && !(varstr_ptr & kReadBitMask)) {
     *addr = varstr_ptr | kReadBitMask;
   }
   varstr_ptr = varstr_ptr & ~kReadBitMask;
@@ -266,6 +266,7 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
 // return true if sid's previous version has been read
 bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
   abort_if(sid == -1, "sid == -1");
+  abort_if(!PriorityTxnService::g_read_bit, "CheckReadBit() is called when read bit is off");
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
 
@@ -294,6 +295,7 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
 //         if answer is larger than max_progress, return max_progress
 uint64_t SortedArrayVHandle::FindUnreadVersionLowerBound(uint64_t min)
 {
+  abort_if(!PriorityTxnService::g_read_bit, "FindUnreadVersionLowerBound() is called when read bit is off");
   // use max progress to help speed up finding the last read bit version
   int upper_pos;
   uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
@@ -653,7 +655,7 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
     return handle->ReadWithVersion(ver_extra);
 
   // mark read bit
-  if (!(varstr_ptr & kReadBitMask)) {
+  if (PriorityTxnService::g_read_bit && !(varstr_ptr & kReadBitMask)) {
     *addr = varstr_ptr | kReadBitMask;
   }
   varstr_ptr = varstr_ptr & ~kReadBitMask;
@@ -664,6 +666,7 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
 // bool& is_in:  true if the previous version is indeed in the extra array
 // return value: true if read bit is set
 bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in) {
+  abort_if(!PriorityTxnService::g_read_bit, "ExtraVHandle CheckReadBit() is called when read bit is off");
   is_in = false;
   Entry *p = head;
   while (p && p->version >= sid)
@@ -716,6 +719,7 @@ void LinkedListExtraVHandle::PriorityDelete(uint64_t sid) {
 
 uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
 {
+  abort_if(!PriorityTxnService::g_read_bit, "ExtraVHandle FindUnreadVersionLowerBound{} is called when read bit is off");
   Entry dummy(0, 0, 0);
   dummy.next = head;
   Entry *cur = &dummy;

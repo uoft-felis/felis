@@ -19,7 +19,9 @@ class PriorityTxnService {
   util::SpinLock lock;
 
  public:
-  static bool g_read_bit;
+  static bool g_read_bit;          // marks read bit
+  static bool g_conflict_read_bit; // uses read bit info to detect conflict
+  static bool g_sid_read_bit;      // uses read bit info to acquire SID
   static bool g_fastest_core;
   static bool g_negative_distance;
   // total number of priority txn queue length

@@ -11,7 +11,7 @@ void GeneratePriorityTxn();
 
 // STOCK transaction: a priority txn, add stock to certain items in a warehouse
 struct StockTxnInput {
-  static constexpr int kStockMaxItems = 20;
+  static constexpr int kStockMaxItems = 10;
   uint warehouse_id;
   uint nr_items;
 

@@ -31,7 +31,7 @@ StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>()
 {
   StockTxnInput in;
   in.warehouse_id = PickWarehouse();
-  in.nr_items = 20; // RandomNumber(1, StockTxnInput::kStockMaxItems);
+  in.nr_items = RandomNumber(1, StockTxnInput::kStockMaxItems);
 
   for (int i = 0; i < in.nr_items; i++) {
  again:

@@ -4,6 +4,8 @@
 namespace felis {
 
 bool PriorityTxnService::g_read_bit = false;
+bool PriorityTxnService::g_conflict_read_bit = false;
+bool PriorityTxnService::g_sid_read_bit = false;
 bool PriorityTxnService::g_fastest_core = false;
 bool PriorityTxnService::g_negative_distance = false;
 size_t PriorityTxnService::g_queue_length = 32_K;
@@ -16,8 +18,16 @@ unsigned long long PriorityTxnService::g_tsc = 0;
 
 PriorityTxnService::PriorityTxnService()
 {
-  if (Options::kReadBit)
+  if (Options::kReadBit) {
     g_read_bit = true;
+    if (Options::kConflictReadBit)
+      g_conflict_read_bit = true;
+    if (Options::kSIDReadBit)
+      g_sid_read_bit = true;
+  } else {
+    abort_if(Options::kConflictReadBit, "-XConflictReadBit requires -XReadBit");
+    abort_if(Options::kSIDReadBit, "-XSIDReadBit requires -XReadBit");
+  }
   if (Options::kFastestCore)
     g_fastest_core = true;
   if (Options::kNegativeDistance)
@@ -164,7 +174,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
   uint64_t prog = this->GetMaxProgress();
   uint64_t seq = prog >> 8 & 0xFFFFFF, new_seq;
 
-  if (g_read_bit) {
+  if (g_sid_read_bit) {
     uint64_t min = this->last_sid;
     for (auto update_handle : txn->update_handles)
       min = update_handle->GetAvailableSID(min);
@@ -223,7 +233,7 @@ bool PriorityTxn::Init()
   // updates
   for (int i = 0; i < update_handles.size(); ++i) {
     // pre-checking
-    if (PriorityTxnService::g_read_bit && CheckUpdateConflict(update_handles[i])) {
+    if (PriorityTxnService::g_conflict_read_bit && CheckUpdateConflict(update_handles[i])) {
       Rollback(update_cnt, delete_cnt, insert_cnt);
       return false;
     }
@@ -240,7 +250,7 @@ bool PriorityTxn::Init()
   }
   // deletes
   for (int i = 0; i < delete_handles.size(); ++i) {
-    if (PriorityTxnService::g_read_bit) {
+    if (PriorityTxnService::g_conflict_read_bit) {
       // pre-checking
       if (CheckDeleteConflict(delete_handles[i])) {
         Rollback(update_cnt, delete_cnt, insert_cnt);
@@ -281,13 +291,13 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
     return false;
   // if max progress not passed, then read did not happen, does not need to check read bit
 
-  if (PriorityTxnService::g_read_bit)
+  if (PriorityTxnService::g_conflict_read_bit)
     return handle->CheckReadBit(this->sid);
   return true; // progress passed & no read bit to look precisely, deem it as conflict happened
 }
 
 bool PriorityTxn::CheckDeleteConflict(VHandle* handle) {
-  if (PriorityTxnService::g_read_bit)
+  if (PriorityTxnService::g_conflict_read_bit)
     return handle->CheckReadBit(this->sid);
   return util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);
 }
