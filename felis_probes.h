@@ -118,6 +118,7 @@ struct VersionSizeArray {
   void operator()() const;
 };
 
+
 }
 }
 
