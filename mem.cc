@@ -738,6 +738,7 @@ namespace mem {
       }
       
       pools[i] = new (p) Brk(p_buf, brk_pool_size, use_pmem);
+      pools[i]->set_thread_safe(true);
 
       p += sizeof(Brk);
       free_lists[i] = (uintptr_t *) p;
