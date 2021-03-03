@@ -334,10 +334,10 @@ uint64_t SortedArrayVHandle::GetAvailableSID(uint64_t min)
   // 1. in extra, find unread versions' lower bound: 16
   // 2. in vhandle, try to find unread versions' lower bound, 15<16, don't look further
   // 3. return 16
-  min = this->FindUnreadVersionLowerBound(min);
   auto extra = extra_vhandle.load();
   if (extra)
     min = extra->FindUnreadVersionLowerBound(min);
+  min = this->FindUnreadVersionLowerBound(min);
   return min;
 }
 
