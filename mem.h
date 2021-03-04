@@ -490,6 +490,7 @@ class ParallelBrk : public ParallelAllocator<Brk> {
   ~ParallelBrk();
   ParallelBrk(ParallelBrk &&rhs) : ParallelAllocator(std::move(rhs)) {}
 
+  void Reset();
   ParallelBrk &operator=(ParallelBrk &&rhs) {
     if (&rhs != this) {
       this->~ParallelBrk();
