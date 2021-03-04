@@ -763,6 +763,13 @@ namespace mem {
     }
   }
 
+  void ParallelBrk::Reset()
+  {
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      pools[i]->Reset();
+    }
+  }
+
   ParallelBrk::~ParallelBrk()
   {
     // TODO
