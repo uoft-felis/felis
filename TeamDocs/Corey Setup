@@ -1,0 +1,73 @@
+For Feli-Controller:
+ssh c165_node
+Run: java -Dvertx.cacheDirBase=/tmp/$USER/ -jar out/FelisController/assembly/dest/out.jar config.json
+
+For Felis:
+ssh c165_node
+
+To Build Debug: buck build db
+To Build Release: buck build db_release
+
+To Test:
+buck-out/gen/db#release -c 142.150.234.165:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
+buck-out/gen/db#debug -c 142.150.234.165:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
+
+Someother test: Run when want to try the skewed work load
+in tpcc.h, change kWarehouseSpread to 1.0
+buck-out/gen/db#release -c 142.150.234.169:3148 -n host1 -w tpcc -Xcpu16 -Xmem16G -XTpccHotWarehouseBitmap2 -XTpccHotWarehouseLoad1000
+
+Debugging:
+lldb -- buck-out/gen/db#debug -c 142.150.234.165:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
+-> process launch
+
+-bash-4.2$ lldb -- buck-out/gen/db#debug -c 142.150.234.165:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
+(lldb) target create "buck-out/gen/db#debug"
+Current executable set to 'buck-out/gen/db#debug' (x86_64).
+(lldb) settings set -- target.run-args  "-c" "142.150.234.165:3148" "-n" "host1" "-w" "tpcc" "-Xcpu8" "-Xmem16G"
+(lldb) process launch
+Process 21394 launched: '/mnt/home/corey/felis/buck-out/gen/db#debug' (x86_64)
+Found module config(required): Configuration and monitoring interface for the controller WebUI
+Found module logging(required): Logging
+Found module allocator: Memory Allocator
+Found module coroutine(required): Coroutine Thread Pool
+Found module node-server: Server for a database node
+Found module ycsb: YCSB (Single Node Only)
+Found module tpcc: TPC-C
+
+
+Loading config module...
+Console Client connecting to controller 142.150.234.165 on port 3148
+Loading logging module...
+Loading coroutine module...
+[17:08:08.501 thr-21394] Starting node server with id 1
+WARNING!!! PmemManager Disabled!!!
+Loading tpcc module...
+Loading node-server module...
+Loading allocator module...
+Allocation of generic failed
+General memory statistics:
+   generic: 0 MB
+   epoch queue item: 111 MB
+   epoch queue promise: 0 MB
+   txn input and state: 0 MB
+   promise: 0 MB
+   epoch: 0 MB
+Pool usage statistics:
+    ^pool:contention manager: 0/0 MB used (max 0 MB)
+    ^pool:row entity: 0/0 MB used (max 0 MB)
+    ^pool:vhandle: 0/0 MB used (max 0 MB)
+    ^pool:region: 0/0 MB used (max 0 MB)
+    coroutine: 0/504 MB used (max 4 MB)
+    ^pool:transient mem: 0/0 MB used (max 0 MB)
+    ^pool:persistent mem: 0/0 MB used (max 0 MB)
+Process 21394 stopped
+* thread #2, name = 'db#debug', stop reason = signal SIGSEGV: invalid address (fault address: 0x0)
+    frame #0: 0x00000000004445d0 db#debug`mem::WeakPool::WeakPool(this=0x00007fffdd7f72e8, alloc_type=GenericMemory, chunk_size=2592, cap=255, data=0x0000000000000000) at mem.cc:49:24
+   46         uintptr_t p = (uintptr_t) head + i * chunk_size;
+   47         uintptr_t next = p + chunk_size;
+   48         if (i == cap - 1) next = 0;
+-> 49         *(uintptr_t *) p = next;
+   50       }
+   51
+   52       memset(&stats, 0, sizeof(PoolStatistics));
+(lldb)
