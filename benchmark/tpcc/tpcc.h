@@ -117,7 +117,7 @@ struct Customer {
     return *v;
   }
   static constexpr auto kTable = TableType::Customer;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 8 << 20, false);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 8 << 20, true); //inlined was false
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::CustomerKey;
   using Value = sql::CustomerValue;
@@ -145,7 +145,7 @@ struct District {
     return (((k[3] - 1) << 9) | (k[7] - 1)) << 4;
   }
   static constexpr auto kTable = TableType::District;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, false);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, true); //inlined was false
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::DistrictKey;
   using Value = sql::DistrictValue;
@@ -153,7 +153,7 @@ struct District {
 
 struct History {
   static constexpr auto kTable = TableType::History;
-  static constexpr auto kIndexArgs = std::make_tuple(false);
+  static constexpr auto kIndexArgs = std::make_tuple(true); // inlined was false
   using IndexBackend = felis::MasstreeIndex;
   using Key = sql::HistoryKey;
   using Value = sql::HistoryValue;
@@ -218,7 +218,7 @@ struct Stock {
     return *(uint32_t *) x;
   }
   static constexpr auto kTable = TableType::Stock;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 16 << 20, false);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 16 << 20, true); //inlined was false
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::StockKey;
   using Value = sql::StockValue;
@@ -241,7 +241,7 @@ struct Warehouse {
   }
 
   static constexpr auto kTable = TableType::Warehouse;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, false);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, true); //inlined was false
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::WarehouseKey;
   using Value = sql::WarehouseValue;
