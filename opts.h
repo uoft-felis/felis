@@ -81,18 +81,26 @@ struct Options {
 
   static inline const auto kEnableGranola = Option("EnableGranola");
 
+
   static inline const auto kPriorityTxn = Option("PriorityTxn");
-  static inline const auto kReadBit = Option("ReadBit");
-  static inline const auto kConflictReadBit = Option("ConflictReadBit");
-  static inline const auto kSIDReadBit = Option("SIDReadBit");
-  static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
-  static inline const auto kNegativeDistance = Option("NegativeDistance");
   static inline const auto kTxnQueueLength = Option("TxnQueueLength");
-  static inline const auto kSlotPercentage = Option("SlotPercentage");
-  static inline const auto kBackoffDist = Option("BackoffDist");
+
   static inline const auto kIncomingRate = Option("IncomingRate");
   static inline const auto kNrPriorityTxn = Option("NrPriorityTxn");
   static inline const auto kIntervalPriorityTxn = Option("IntervalPriorityTxn");
+
+  static inline const auto kSlotPercentage = Option("SlotPercentage");
+  static inline const auto kStripBatched = Option("StripBatched");
+  static inline const auto kStripPriority = Option("StripPriority");
+  static inline const auto kIncrementalSID = Option("IncrementalSID");
+
+  static inline const auto kReadBit = Option("ReadBit");
+  static inline const auto kConflictReadBit = Option("ConflictReadBit");
+  static inline const auto kSIDReadBit = Option("SIDReadBit");
+
+  static inline const auto kBackoffDist = Option("BackoffDist");
+  static inline const auto kNegativeDistance = Option("NegativeDistance");
+  static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
 
 
   static inline bool ParseExtentedOptions(std::string arg)

@@ -193,7 +193,7 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);
   uint64_t FindUnreadVersionLowerBound(uint64_t min);
-  uint64_t GetAvailableSID(uint64_t min);
+  uint64_t FindUnreadSIDLowerBound(uint64_t min);
   bool InitDelete(uint64_t sid);
   void RevertInitDelete(uint64_t sid);
   void PriorityDelete(uint64_t sid);

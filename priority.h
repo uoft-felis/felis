@@ -19,21 +19,28 @@ class PriorityTxnService {
   util::SpinLock lock;
 
  public:
+  std::array<uint8_t*, NodeConfiguration::kMaxNrThreads> seq_bitmap;
+  size_t bitmap_size;
+  // total number of priority txn queue length
+  static size_t g_queue_length;
+
+  static size_t g_nr_priority_txn;       // number of priority txns per epoch
+  static size_t g_interval_priority_txn; // interval of priority txn, in microseconds
+
+  // for example, if strip_batched = 8 and strip_priority = 8, then
+  // txn 1 - 8 are batched txns,  9-16 are priority txn slots,
+  // txn 17-24 are batched txns, 25-32 are priority txn slots, ...
+  static size_t g_strip_batched;
+  static size_t g_strip_priority;
+  static bool g_incremental_sid;
+
   static bool g_read_bit;          // marks read bit
   static bool g_conflict_read_bit; // uses read bit info to detect conflict
   static bool g_sid_read_bit;      // uses read bit info to acquire SID
-  static bool g_fastest_core;
+
+  static size_t g_backoff_distance; // how many distance we are going to backoff
   static bool g_negative_distance;
-  // total number of priority txn queue length
-  static size_t g_queue_length;
-  // extra percentage of slots to add. say we have 100 batched txns, % is 20,
-  // then we add 20 slots, making the serial_id space 120.
-  static size_t g_slot_percentage;
-  // in strawman approach, how many distance we are going to backoff
-  static size_t g_backoff_distance;
-  // the following two is usually calculated using Priority txn incoming rate.
-  static size_t g_nr_priority_txn;       // number of priority txns per epoch
-  static size_t g_interval_priority_txn; // interval of priority txn, in microseconds
+  static bool g_fastest_core;
 
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);
@@ -44,10 +51,14 @@ class PriorityTxnService {
   uint64_t GetProgress(int core_id);
   bool MaxProgressPassed(uint64_t sid);
   static bool isPriorityTxn(uint64_t sid);
+  void ClearBitMap(void);
 
  private:
   uint64_t SIDLowerBound();
   uint64_t GetSID(PriorityTxn* txn);
+  uint64_t GetNextSIDSlot(uint64_t sequence);
+  bool BitMapValue(uint64_t idx, int core_id);
+  void SetBitMapValue(uint64_t idx, int core_id, uint8_t value);
 
  public:
   static void PrintStats();

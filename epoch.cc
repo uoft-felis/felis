@@ -184,20 +184,19 @@ EpochTxnSet::~EpochTxnSet()
 void EpochClient::GenerateBenchmarks()
 {
   all_txns = new EpochTxnSet[g_max_epoch - 1];
+  size_t batched, priority;
+  if (NodeConfiguration::g_priority_txn) {
+    batched = PriorityTxnService::g_strip_batched;
+    priority = PriorityTxnService::g_strip_priority;
+  }
   for (auto i = 1; i < g_max_epoch; i++) {
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
       auto t = d.rem, pos = d.quot;
       BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
       uint64_t seq = j;
-      if (PriorityTxnService::g_slot_percentage != 0) {
-        // for every k batched txns, we need to leave 1 extra slot for priority txn in the back.
-        // e.g. say # of batched txn is 100, % is 20,
-        // then 1~5 is batched, 6 is reserved, 7~11 is reserved (j=6~10)...
-        int k = 100 / PriorityTxnService::g_slot_percentage;
-        abort_if(100 % PriorityTxnService::g_slot_percentage != 0,
-                 "Please give a PriTxn % that can divide 100 with no remainder");
-        seq = j + (j-1)/k;
+      if (NodeConfiguration::g_priority_txn) {
+        seq = j + (j-1)/batched * priority;
       }
       all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, seq));
     }
@@ -462,6 +461,7 @@ void EpochClient::OnExecuteComplete()
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
     InitializeEpoch();
+    util::Instance<PriorityTxnService>().ClearBitMap();
   } else {
     // End of the experiment.
     perf.Show("All epochs done in");
