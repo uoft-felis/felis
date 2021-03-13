@@ -88,7 +88,17 @@ template <> void OnProbe(felis::probes::VersionSizeArray p)
 
 }
 
-#if 0
+//shirley: version values sizes in the database
+static std::mutex version_value_size_array_m;
+static int version_value_size_array[162] = {0}; // all elements 0
+template <> void OnProbe(felis::probes::VersionValueSizeArray p) {
+  std::lock_guard _(version_value_size_array_m);
+  int index = p.cur_size;
+  if (index >= 161) {
+    index = 161;
+  }
+  version_value_size_array[index] += 1;
+}
 
 template <> void OnProbe(felis::probes::VHandleAbsorb p)
 {
@@ -224,6 +234,14 @@ ProbeMain::~ProbeMain()
     std::cout << "MOMO versionSizeArray[" << i << "]:" << version_size_array[i] << std::endl;
   }
   std::cout << "MOMO DONE printing versionSizeArray" << std::endl;
+
+  std::cout << "START print version values sizes" << std::endl;
+  for(int i = 0; i < 162; i++) {
+    if (version_value_size_array[i]) {
+      std::cout << "version value of size[" << i << "]:" << version_value_size_array[i] << std::endl;
+    }
+  }
+  std::cout << "DONE printing version value size" << std::endl;
 
 #if 0
   std::cout << "number of bytes allocated for varstr: "

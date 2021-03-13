@@ -215,11 +215,17 @@ class Txn : public BaseTxn {
     // also, what if insert doesn't write initial version value? 
     // then do we need to handle "insert" during append?
     template <typename T> bool Write(const T &o) {
+      //shirley: probe size of version value
+      //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+
       bool usePmem = ((vhandle->last_version()) == sid);
       return WriteVarStr(o.Encode(usePmem));
     }
 
     template <typename T> bool WriteTryInline(const T &o) {
+      //shirley: probe size of version value
+      //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+
       //shirley: copied from Write above. Don't allow txns to write to inlined
       bool usePmem = ((vhandle->last_version()) == sid);
       return WriteVarStr(o.Encode(usePmem));
