@@ -118,7 +118,10 @@ struct VersionSizeArray {
   void operator()() const;
 };
 
-
+struct VersionValueSizeArray {
+  int cur_size;
+  void operator()() const;
+};
 }
 }
 
@@ -139,6 +142,7 @@ struct VersionSizeArray {
   PROBE_PROXY(felis::probes::TpccDelivery);                                    \
   PROBE_PROXY(felis::probes::RegionPoolVarstr);                                \
   PROBE_PROXY(felis::probes::TransientPersistentCount);                        \
-  PROBE_PROXY(felis::probes::VersionSizeArray);
+  PROBE_PROXY(felis::probes::VersionSizeArray);                                \
+  PROBE_PROXY(felis::probes::VersionValueSizeArray);
 
 #endif /* FELIS_PROBES_H */
