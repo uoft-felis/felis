@@ -31,6 +31,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   size = 0;
   cur_start = 0;
   nr_ondsplt = 0;
+  //shirley TODO: we don't need this inline_used variable with our design. we have our own flags/bitmaps.
   inline_used = 0xFF; // disabled, 0x0F at most when enabled.
 
   // abort_if(mem::ParallelPool::CurrentAffinity() >= 256,
@@ -40,6 +41,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   cont_affinity = -1;
 
   // versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
+  // shirley TODO: versions should be initialized to null
   versions = (uint64_t *) ((uint8_t *) this + 64);
   latest_version.store(-1);
 }
@@ -61,6 +63,7 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   const size_t old_len = old_cap * sizeof(uint64_t);
   const size_t new_len = new_cap * sizeof(uint64_t);
 
+  // shirley todo: should grab new mem from parallel break pool
   auto new_p = (uint64_t *) mem::GetDataRegion().Alloc(2 * new_len);
   if (!new_p) {
     return nullptr;
@@ -69,6 +72,7 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   std::copy(old_p, old_p + old_cap, new_p);
   // memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
   std::copy(old_p + old_cap, old_p + 2 * old_cap, new_p + new_cap);
+  //shirley todo: after using parallel break pool, don't need the free here (cleaned at end of epoch)
   if ((uint8_t *) old_p - (uint8_t *) row != 64)
     mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
   return new_p;
@@ -245,6 +249,7 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
   assert(size > 0);
 
+  //shirley TODO: how can we prefetch in our new design?
   if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
 
   uint64_t *p = versions;
@@ -318,6 +323,7 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
+  //shirley TODO: how to use prefetch for our new design?
   if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
   // Finding the exact location
   int pos = latest_version.load();
@@ -408,23 +414,28 @@ void SortedArrayVHandle::GarbageCollect()
 }
 #endif
 
+//shirley TODO: should be removed
 SortedArrayVHandle *SortedArrayVHandle::New()
 {
+  //shirley: should remove this in the future. for now, just replace with NewInline()
   return new (pool.Alloc()) SortedArrayVHandle();
 }
 
 SortedArrayVHandle *SortedArrayVHandle::NewInline()
 {
   auto r = new (inline_pool.Alloc()) SortedArrayVHandle();
+  //shirley TODO: we don't use inline_used variable in our design. we have our own flags/bitmaps
   r->inline_used = 0;
   return r;
 }
 
+//shirley TODO: we can comment out the pool bc all vhandles should be inlined
 mem::ParallelSlabPool BaseVHandle::pool;
 mem::ParallelSlabPool BaseVHandle::inline_pool;
 
 void BaseVHandle::InitPool()
 {
+  //shirley TODO: pool should be removed, only need inline_pool
   pool = mem::ParallelSlabPool(mem::VhandlePool, kSize, 4, false);
   inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
   pool.Register();
