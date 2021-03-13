@@ -7,6 +7,7 @@ namespace felis {
 
 std::map<std::string, Checkpoint *> Checkpoint::impl;
 
+//shirley TODO: InitVersion should write to sid1, ptr1, similar to a row insert
 void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
 {
   handle->AppendNewVersion(0, 0);

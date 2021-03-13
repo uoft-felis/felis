@@ -28,8 +28,10 @@ class VHandleSyncService {
 
 class BaseVHandle {
  public:
-  static constexpr size_t kSize = 128; // Inlined version values in old vhandle layout (Since all in DRAM?)
-  static constexpr size_t kInlinedSize = 256; // Inlineded version values in new vhandle layout
+  static constexpr size_t kSize = 128; // Corey: Inlined version values in old vhandle layout (Since all in DRAM?)
+  static constexpr size_t kInlinedSize = 256; // Corey: Inlineded version values in new vhandle layout
+
+  //shirley TODO: (un-inlined) pool can be removed bc all vhandles are inlined
   static mem::ParallelSlabPool pool;
 
   // Cicada uses inline data to reduce cache misses. These inline rows are much
@@ -63,8 +65,8 @@ class SortedArrayVHandle : public BaseVHandle {
   
   uint8_t inline_used; // I think this is a mask (1bit = 1byte used for inline version array, not values)
 
-  uint8_t inline_pmem_ptr1; // Mask to track ptr1 area in PMem inline version data space
-  uint8_t inline_pmem_ptr2; // Mask to track ptr2 area in PMem inline version data space
+  //uint8_t inline_pmem_ptr1; // Mask to track ptr1 area in PMem inline version data space
+  //uint8_t inline_pmem_ptr2; // Mask to track ptr2 area in PMem inline version data space
 
   unsigned int capacity;
   unsigned int size;
@@ -84,6 +86,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
+    //shirley TODO: we should onlly use inlined pool bc all vhandles are inlined
     if (phandle->is_inlined())
       inline_pool.Free(ptr, phandle->this_coreid);
     else
@@ -104,7 +107,8 @@ class SortedArrayVHandle : public BaseVHandle {
 
   std::string ToString() const;
 
-  bool is_inlined() const { return inline_used != 0xFF; } // This is confusing?
+  //shirley TODO: we don't use inline_used variable for our design
+  bool is_inlined() const { return inline_used != 0xFF; } // Corey: this is confusing?
 
   uint8_t *AllocFromInline(size_t sz) {
     if (inline_used != 0xFF) {
