@@ -28,12 +28,12 @@ class VHandleSyncService {
 
 class BaseVHandle {
  public:
-  static constexpr size_t kSize = 128;
-  static constexpr size_t kInlinedSize = 256;
+  static constexpr size_t kSize = 128; // Inlined version values in old vhandle layout (Since all in DRAM?)
+  static constexpr size_t kInlinedSize = 256; // Inlineded version values in new vhandle layout
   static mem::ParallelSlabPool pool;
 
   // Cicada uses inline data to reduce cache misses. These inline rows are much
-  // larger: 4-cache lines.
+  // larger: 4-cache linekInlinedSizes.
   static mem::ParallelSlabPool inline_pool;
   static void InitPool();
   static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
@@ -60,7 +60,11 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t alloc_by_regionid;
   uint8_t this_coreid;
   int8_t cont_affinity;
-  uint8_t inline_used;
+  
+  uint8_t inline_used; // I think this is a mask (1bit = 1byte used for inline version array, not values)
+
+  uint8_t inline_pmem_ptr1; // Mask to track ptr1 area in PMem inline version data space
+  uint8_t inline_pmem_ptr2; // Mask to track ptr2 area in PMem inline version data space
 
   unsigned int capacity;
   unsigned int size;
@@ -86,6 +90,7 @@ class SortedArrayVHandle : public BaseVHandle {
       pool.Free(ptr, phandle->this_coreid);
   }
 
+  // What is the purpose of these two?
   static SortedArrayVHandle *New();
   static SortedArrayVHandle *NewInline();
 
@@ -99,14 +104,14 @@ class SortedArrayVHandle : public BaseVHandle {
 
   std::string ToString() const;
 
-  bool is_inlined() const { return inline_used != 0xFF; }
+  bool is_inlined() const { return inline_used != 0xFF; } // This is confusing?
 
   uint8_t *AllocFromInline(size_t sz) {
     if (inline_used != 0xFF) {
-      sz = util::Align(sz, 32);
+      sz = util::Align(sz, 32); // Here aligns to 32 but in free uses 16
       if (sz > 128) return nullptr;
 
-      uint8_t mask = (1 << (sz >> 5)) - 1;
+      uint8_t mask = (1 << (sz >> 5)) - 1; // This makes no sense, if I use 1byte = mask is 0
       for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
         if ((inline_used & (mask << off)) == 0) {
           inline_used |= (mask << off);
@@ -114,11 +119,12 @@ class SortedArrayVHandle : public BaseVHandle {
         }
       }
     }
+    // Print inline_used - see big
     return nullptr;
   }
 
   void FreeToInline(uint8_t *p, size_t sz) {
-    if (inline_used != 0xFF) {
+    if (inline_used != 0xFF) { // This line makes no sense as i'd think you'd still want to free if full
       sz = util::Align(sz, 16);
       if (sz > 128) return;
       uint8_t mask = (1 << (sz >> 4)) - 1;
@@ -126,6 +132,65 @@ class SortedArrayVHandle : public BaseVHandle {
       inline_used &= ~(mask << off);
     }
   }
+
+  // To allocate ptr1/ptr2 version data to be placed in PMem's vhandle inline version data area
+  /*uint8_t *AllocFromInlinePmem(size_t sz) {
+    if (inline_used == 0xFF) return nullptr;
+    sz = util::Align(sz, 32); // Align in bytes
+    if (sz > 160) return nullptr; // We are using 160Byte inlined version values 
+    
+    // Check to make sure both inline ptrs are currently being used
+    if (inline_pmem_ptr1 != 0 && inline_pmem_ptr2 != 0) return nullptr;
+    // assert(inline_pmem_ptr1 != 0 && inline_pmem_ptr2 != 0, "SortedArrayVHandle is larger than a cache line");
+
+  // Psudo Code
+  //  1) check that space exists 
+  //  either inline_pmem_ptr1 | inline_pmem_ptr1 < 160B
+  //  2) As only two versions will exist in this space,
+  //  only need to check 
+  //  - make sure two don't already exist
+  //  - get ptr mask size for ptr that exists 
+  //    - either only ptr1 or ptr2
+  //  3) check size of input arg and find closest space for it
+  //  4) if found return ptr address, else nullptr
+
+    uint8_t mask = (1 << sz) - 1;
+
+    // If nothing set yet then just put to front
+    if (inline_pmem_ptr1 == 0 && inline_pmem_ptr2 == 0) {
+      inline_pmem_ptr1 = mask;
+      return (uint8_t *) this + 96;
+    }
+    // Else only ptr1 should exist
+    else if (inline_pmem_ptr1) {
+      // Set ptr2
+    }
+    else if (inline_pmem_ptr2) {
+      // 
+    }
+
+
+      for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
+        if ((inline_used & (mask << off)) == 0) {
+          inline_used |= (mask << off);
+          return (uint8_t *) this + 128 + (off << 5);
+        }
+      }
+    }
+    // Print inline_used - see big
+    return nullptr;
+  }*/
+
+  // Stop tracking ptr1/ptr2 version data in PMem's vhandle inline version data area
+  /*void FreeToInlinePmem(uint8_t *p) {
+    if (inline_used != 0xFF) {
+      sz = util::Align(sz, 16);
+      if (sz > 128) return;
+      uint8_t mask = (1 << (sz >> 4)) - 1;
+      uint8_t off = (p - (uint8_t *) this - 128) >> 4;
+      inline_used &= ~(mask << off);
+    }
+  }*/
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   const size_t nr_capacity() const { return capacity; }
