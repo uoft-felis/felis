@@ -42,7 +42,7 @@ class EpochClientBaseWorker : public go::Routine {
  public:
   EpochClientBaseWorker(int t, EpochClient *client)
       : t(t), nr_threads(NodeConfiguration::g_nr_threads), client(client), finished(true) {
-    set_reuse(true);
+    set_reuse(true); // so that OnFinish() is invoked.
   }
   void Reset() {
     bool old = true;

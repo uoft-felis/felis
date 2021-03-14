@@ -88,6 +88,7 @@ class PWVScheduler final : public PrioritySchedulingPolicy {
     bool in_rvp_queue;
   };
 
+  bool ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end) override;
   bool ShouldPickWaiting(const WaitState &ws) override;
   PriorityQueueValue *Pick() override;
   void Consume(PriorityQueueValue *value) override;
@@ -204,6 +205,14 @@ void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValu
   qlock.Release(&qnode);
 }
 
+bool PWVScheduler::ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end)
+{
+  while (CallTxnsWorker::g_finished < NodeConfiguration::g_nr_threads
+         && zq_start->load(std::memory_order_acquire) == zq_end->load(std::memory_order_acquire))
+      _mm_pause();
+  return zq_start->load(std::memory_order_acquire) < zq_end->load(std::memory_order_acquire);
+}
+
 bool PWVScheduler::ShouldPickWaiting(const WaitState &ws)
 {
   // util::MCSSpinLock::QNode qnode;
@@ -220,6 +229,8 @@ bool PWVScheduler::ShouldPickWaiting(const WaitState &ws)
 
 PriorityQueueValue *PWVScheduler::Pick()
 {
+  abort_if(CallTxnsWorker::g_finished.load() != NodeConfiguration::g_nr_threads,
+           "Should wait?");
   if (!is_graph_built.load(std::memory_order_acquire)) {
     util::Instance<PWVGraphManager>().local_graph()->Build();
     is_graph_built = true;
@@ -475,6 +486,7 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
     return false;
   }
 
+retry:
   zstart = zq.start.load(std::memory_order_acquire);
   if (zstart < zq.end.load(std::memory_order_acquire)) {
     state.running = State::kRunning;
@@ -498,6 +510,8 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   }
 
   ProcessPending(q);
+  if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end))
+    goto retry;
 
   auto &ws = q.waiting.states[q.waiting.off];
   if (q.waiting.len > 0

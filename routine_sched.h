@@ -38,6 +38,11 @@ class PrioritySchedulingPolicy {
 
   bool empty() { return len == 0; }
 
+  // Before we try to schedule from this scheduling policy, should we double
+  // check the zero queue?
+  virtual bool ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end) {
+    return false;
+  }
   // Would you pick this key according to the current situation?
   virtual bool ShouldPickWaiting(const WaitState &ws) = 0;
   // Pick a value without consuming it.

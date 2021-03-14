@@ -295,7 +295,7 @@ void CallTxnsWorker::Run()
   if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv) && client->callback.phase == EpochPhase::Execute) {
     g_finished.fetch_add(1);
 
-    while (g_finished.load() != NodeConfiguration::g_nr_threads)
+    while (EpochClient::g_enable_granola && g_finished.load() != NodeConfiguration::g_nr_threads)
       _mm_pause();
   }
 
