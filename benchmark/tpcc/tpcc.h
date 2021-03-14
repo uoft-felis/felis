@@ -88,6 +88,7 @@ extern Config g_tpcc_config;
 enum class TableType : int {
   TPCCBase = 100,
   Customer,
+  CustomerInfo,
   CustomerNameIdx,
   District,
   History,
@@ -120,7 +121,11 @@ struct Customer {
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::CustomerKey;
   using Value = sql::CustomerValue;
-  using CommonValue = sql::CustomerCommonValue;
+};
+
+struct CustomerInfo : public Customer {
+  static constexpr auto kTable = TableType::CustomerInfo;
+  using Value = sql::CustomerInfoValue;
 };
 
 #if 0
@@ -144,7 +149,6 @@ struct District {
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::DistrictKey;
   using Value = sql::DistrictValue;
-  using CommonValue = sql::DistrictCommonValue;
 };
 
 struct History {
@@ -241,7 +245,6 @@ struct Warehouse {
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::WarehouseKey;
   using Value = sql::WarehouseValue;
-  using CommonValue = sql::WarehouseCommonValue;
 };
 
 void InitializeTPCC();

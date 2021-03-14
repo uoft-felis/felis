@@ -9,20 +9,7 @@
 
 namespace felis {
 
-// TODO: I need to update this doc.
-
-// Distributed Promise system. We can use promise to define the intra
-// transaction dependencies. The dependencies have to be acyclic.
-
-// A promise handler can take *one* input and *one* output. It can also migrate
-// dyanmically according to the input and its capture data before it starts.
-//
-// Since each handler can only take one input, if we need a subroutine that
-// takes multiple inputs from many promises, we need to handle it using static
-// routine. A special property of a collector routine is that it cannot
-// dynamically migrates, otherwise we will encounter race conditions between
-// nodes.
-
+// TODO: This needs to be simplified!
 class BasePromise;
 class PromiseRoutine;
 

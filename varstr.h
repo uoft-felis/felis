@@ -44,12 +44,11 @@ struct VarStr {
   }
 
   uint16_t len;
-  uint8_t inherit;
   int region_id;
   const uint8_t *data;
 
-  VarStr() : len(0), inherit(0), region_id(0), data(nullptr) {}
-  VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), inherit(0), region_id(region_id), data(data) {}
+  VarStr() : len(0), region_id(0), data(nullptr) {}
+  VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), region_id(region_id), data(data) {}
 
   bool operator<(const VarStr &rhs) const {
     if (data == nullptr) return true;
@@ -65,12 +64,6 @@ struct VarStr {
 
   bool operator!=(const VarStr &rhs) const {
     return !(*this == rhs);
-  }
-
-  VarStr *InspectBaseInheritPointer() const {
-    if (inherit > 1) std::abort();
-    if (inherit && len >= sizeof(VarStr *)) return (VarStr *) (*(uintptr_t *) data);
-    return nullptr;
   }
 
   template <typename T>

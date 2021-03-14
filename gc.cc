@@ -271,22 +271,14 @@ size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 bool GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next)
 {
   auto &s = stats[go::Scheduler::CurrentThreadPoolId() - 1];
-  VarStr *basedata = nullptr;
   bool deleted = false;
 
-  if (p) basedata = p->InspectBaseInheritPointer();
-  if (basedata && next && next->InspectBaseInheritPointer() == basedata) {
-    basedata = nullptr;
-  }
-  if (IsDataGarbage(row, p) && p != p->InspectBaseInheritPointer()) {
+  if (IsDataGarbage(row, p)) {
     s.nr_bytes += p->len;
     deleted = true;
     delete p;
   }
-  if (basedata) {
-    deleted = true;
-    delete basedata;
-  }
+
   return deleted;
 }
 

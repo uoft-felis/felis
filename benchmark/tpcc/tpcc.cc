@@ -144,7 +144,7 @@ void InitializeTPCC()
   logger->info("data migration mode {}", NodeConfiguration::g_data_migration);
 
   auto &mgr = Instance<felis::TableManager>();
-  mgr.Create<Customer, District, History, Item, NewOrder, OOrder, OOrderCIdIdx,
+  mgr.Create<Customer, CustomerInfo, District, History, Item, NewOrder, OOrder, OOrderCIdIdx,
              OrderLine, Stock, Warehouse>();
 
   logger->info("TPCC Table schemas created");
@@ -349,7 +349,6 @@ struct Checker {
     assert(k->c_d_id >= 1 && static_cast<size_t>(k->c_d_id) <= g_tpcc_config.districts_per_warehouse);
     assert(k->c_id >= 1 && static_cast<size_t>(k->c_id) <= g_tpcc_config.customers_per_district);
     assert(v->c_credit == "BC" || v->c_credit == "GC");
-    assert(v->c_middle == "OE");
   }
 
   static inline  void
@@ -624,6 +623,7 @@ void Loader<LoaderType::Customer>::DoLoad()
             k,
             [=](auto slice_id, auto core_id) {
               Customer::Value v;
+              CustomerInfo::Value info_v;
               v.c_discount = RandomNumber(1, 5000) / 100;
               if (RandomNumber(1, 100) <= 10)
                 v.c_credit.assign("BC");
@@ -631,11 +631,11 @@ void Loader<LoaderType::Customer>::DoLoad()
                 v.c_credit.assign("GC");
 
               if (c <= 1000)
-                v.c_last.assign(GetCustomerLastName(c - 1));
+                info_v.c_last.assign(GetCustomerLastName(c - 1));
               else
-                v.c_last.assign(GetNonUniformCustomerLastNameLoad());
+                info_v.c_last.assign(GetNonUniformCustomerLastNameLoad());
 
-              v.c_first.assign(RandomStr(RandomNumber(8, 16)));
+              info_v.c_first.assign(RandomStr(RandomNumber(8, 16)));
               v.c_credit_lim = 50000;
 
               v.c_balance = -1000;
@@ -643,22 +643,25 @@ void Loader<LoaderType::Customer>::DoLoad()
               v.c_payment_cnt = 1;
               v.c_delivery_cnt = 0;
 
-              v.c_street_1.assign(RandomStr(RandomNumber(10, 20)));
-              v.c_street_2.assign(RandomStr(RandomNumber(10, 20)));
-              v.c_city.assign(RandomStr(RandomNumber(10, 20)));
-              v.c_state.assign(RandomStr(3));
-              v.c_zip.assign(RandomNStr(4) + "11111");
-              v.c_phone.assign(RandomNStr(16));
-              v.c_since = GetCurrentTime();
-              v.c_middle.assign("OE");
-              v.c_data.assign(RandomStr(RandomNumber(300, 500)));
+              info_v.c_street_1.assign(RandomStr(RandomNumber(10, 20)));
+              info_v.c_street_2.assign(RandomStr(RandomNumber(10, 20)));
+              info_v.c_city.assign(RandomStr(RandomNumber(10, 20)));
+              info_v.c_state.assign(RandomStr(3));
+              info_v.c_zip.assign(RandomNStr(4) + "11111");
+              info_v.c_phone.assign(RandomNStr(16));
+              info_v.c_since = GetCurrentTime();
+              info_v.c_middle.assign("OE");
+              info_v.c_data.assign(RandomStr(RandomNumber(300, 500)));
 
               Checker::SanityCheckCustomer(&k, &v);
 
               auto handle = tables().Get<tpcc::Customer>().SearchOrCreate(k.EncodeFromPtr(large_buf));
-
               OnNewRow(slice_id, TableType::Customer, k, handle);
               felis::InitVersion(handle, v.Encode());
+
+              auto info_handle = tables().Get<tpcc::CustomerInfo>().SearchOrCreate(k.EncodeFromPtr(large_buf));
+              OnNewRow(slice_id, TableType::CustomerInfo, k, handle);
+              felis::InitVersion(info_handle, info_v.Encode());
             });
 
         // I don't think we ever used this, I'll just disable this for now.

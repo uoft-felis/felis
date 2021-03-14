@@ -212,7 +212,7 @@ void DeliveryTxn::Run()
 
       static auto constexpr WriteCustomer = [](auto state, auto index_handle, int i, int sum) -> void {
         probes::TpccDelivery{1, 1}();
-        auto customer = index_handle(state->customers[i]).template Read<Customer::CommonValue>();
+        auto customer = index_handle(state->customers[i]).template Read<Customer::Value>();
         customer.c_balance += sum;
         index_handle(state->customers[i]).Write(customer);
         ClientBase::OnUpdateRow(state->customers[i]);

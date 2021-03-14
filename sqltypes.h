@@ -516,10 +516,6 @@ template <typename Base>
 VarStr *Object<Base>::EncodeVarStr(VarStr *str) const
 {
   this->EncodeTo((uint8_t *) str + sizeof(VarStr));
-  str->inherit = 0;
-  if constexpr (std::is_base_of<GapField<ValueSerializer>, Base>::value) {
-  if constexpr (std::is_base_of<InheritBasePtr, typename FieldValue<Base::kOffset - Base::kFieldOffset>::Type>::value) str->inherit = 1;
-  }
   return str;
 }
 
