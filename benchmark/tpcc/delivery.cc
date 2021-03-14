@@ -44,9 +44,12 @@ void DeliveryTxn::Prepare()
       root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
     }
   }
-  INIT_ROUTINE_BRK(16384);
+
   auto &mgr = util::Instance<TableManager>();
+  void *buf = alloca(2048);
+
   for (int i = 0; i < g_tpcc_config.districts_per_warehouse; i++) {
+    go::RoutineScopedData _(mem::Brk::New(buf, 2048));
     auto district_id = i + 1;
     auto oid_min = oid[i];
 
@@ -65,7 +68,7 @@ void DeliveryTxn::Prepare()
     // non-serializable. Although this is unlikely to happen if the epoch size
     // is small enough.
     for (auto no_it = mgr.Get<NewOrder>().IndexSearchIterator(
-             neworder_start.EncodeFromRoutine(), neworder_end.EncodeFromRoutine());
+             neworder_start.EncodeViewRoutine(), neworder_end.EncodeViewRoutine());
          no_it->IsValid(); no_it->Next()) {
       no_key = no_it->key().template ToType<NewOrder::Key>();
 

@@ -8,7 +8,7 @@
 
 namespace felis {
 
-typedef uint32_t (*HashFunc)(const VarStr *);
+typedef uint32_t (*HashFunc)(const VarStrView &);
 
 struct HashEntry {
   using Key = std::array<uint8_t, 16>;
@@ -18,10 +18,10 @@ struct HashEntry {
   // TODO: we have not implemented delete yet
   uint64_t rcu_epoch;
 
-  static Key Convert(const VarStr *k) {
+  static Key Convert(const VarStrView &k) {
     Key x;
     x.fill(0);
-    std::copy(k->data, k->data + k->len, x.begin());
+    std::copy(k.data(), k.data() + k.length(), x.begin());
     return x;
   }
 
@@ -41,12 +41,12 @@ class HashtableIndex final : public Table {
  public:
   HashtableIndex(std::tuple<HashFunc, size_t, bool> conf);
 
-  VHandle *SearchOrCreate(const VarStr *k, bool *created) override;
-  VHandle *SearchOrCreate(const VarStr *k) override;
-  VHandle *Search(const VarStr *k) override;
+  VHandle *SearchOrCreate(const VarStrView &k, bool *created) override;
+  VHandle *SearchOrCreate(const VarStrView &k) override;
+  VHandle *Search(const VarStrView &k) override;
 };
 
-uint32_t DefaultHash(const VarStr *);
+uint32_t DefaultHash(const VarStrView &);
 
 }
 

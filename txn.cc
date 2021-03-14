@@ -196,15 +196,15 @@ BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpConte
   result.fill(nullptr);
 
   if (ctx.slice_ids[idx] >= 0 || ctx.slice_ids[idx] == kReadOnlySliceId) {
-    VarStr key(ctx.key_len[idx], 0, ctx.key_data[idx]);
-    auto handle = tbl->Search(&key);
+    VarStrView key(ctx.key_len[idx], ctx.key_data[idx]);
+    auto handle = tbl->Search(key);
     result[0] = handle;
   } else if (ctx.slice_ids[idx] == -1) {
-    VarStr range_start(ctx.key_len[idx], 0, ctx.key_data[idx]);
-    VarStr range_end(ctx.key_len[idx + 1], 0, ctx.key_data[idx + 1]);
+    VarStrView range_start(ctx.key_len[idx], ctx.key_data[idx]);
+    VarStrView range_end(ctx.key_len[idx + 1], ctx.key_data[idx + 1]);
     // auto &table = mgr[ctx.relation_ids[idx]];
     int i = 0;
-    for (auto it = tbl->IndexSearchIterator(&range_start, &range_end);
+    for (auto it = tbl->IndexSearchIterator(range_start, range_end);
          it->IsValid(); it->Next(), i++) {
       result[i] = it->row();
     }
@@ -219,10 +219,9 @@ VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx
   abort_if(ctx.keys_bitmap != ctx.slices_bitmap,
            "InsertOp should have same number of keys and values. bitmap {} != {}",
            ctx.keys_bitmap, ctx.slices_bitmap);
-  VarStr key(ctx.key_len[idx], 0, ctx.key_data[idx]);
+  VarStrView key(ctx.key_len[idx], ctx.key_data[idx]);
   bool created = false;
-  VHandle *result = tbl->SearchOrCreate(
-      &key, &created);
+  VHandle *result = tbl->SearchOrCreate(key, &created);
 
   if (created) {
     VarStr *kstr = VarStr::New(ctx.key_len[idx]);

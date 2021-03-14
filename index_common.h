@@ -76,29 +76,40 @@ class Table {
   }
 
   class Iterator {
+    friend class Table;
    protected:
-    const VarStr *end_key;
-    VarStr cur_key;
+    VarStrView end_key;
+    VarStrView cur_key;
     VHandle *vhandle;
 
    public:
-    void set_end_key(const VarStr *end) { end_key = end; }
     virtual void Next() = 0;
     virtual bool IsValid() const = 0;
 
-    const VarStr &key() const { return cur_key; }
+    const VarStrView &key() const { return cur_key; }
     const VHandle *row() const { return vhandle; }
     VHandle *row() { return vhandle; }
   };
+ protected:
+  void set_iterator_end_key(Iterator *it, const VarStrView &end) {
+    it->end_key = end;
+  }
+ public:
 
   // IndexBackend will implement these
-  virtual VHandle *SearchOrCreate(const VarStr *k, bool *created) { return nullptr; }
-  virtual VHandle *SearchOrCreate(const VarStr *k) { return nullptr; }
-  virtual VHandle *Search(const VarStr *k) { return nullptr; }
-  virtual Table::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) {
+  virtual VHandle *SearchOrCreate(const VarStrView &k, bool *created) { return nullptr; }
+  virtual VHandle *SearchOrCreate(const VarStrView &k) { return nullptr; }
+  virtual VHandle *Search(const VarStrView &k) { return nullptr; }
+  virtual Table::Iterator *IndexSearchIterator(const VarStrView &start) {
     return nullptr;
   }
-  virtual Table::Iterator *IndexReverseIterator(const VarStr *start, const VarStr *end = nullptr) {
+  virtual Table::Iterator *IndexSearchIterator(const VarStrView &start, const VarStrView &end) {
+    return nullptr;
+  }
+  virtual Table::Iterator *IndexReverseIterator(const VarStrView &start) {
+    return nullptr;
+  }
+  virtual Table::Iterator *IndexReverseIterator(const VarStrView &start, const VarStrView &end) {
     return nullptr;
   }
 

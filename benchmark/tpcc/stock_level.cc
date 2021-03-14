@@ -48,16 +48,14 @@ static void ScanOrderLineIndex(
   auto ol_start = OrderLine::Key::New(warehouse_id, district_id, lower, 0);
   auto ol_end = OrderLine::Key::New(warehouse_id, district_id, upper, 0);
 
-  INIT_ROUTINE_BRK(8 << 10);
+  INIT_ROUTINE_BRK(4096);
 
   state->n = 0;
   for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
-           ol_start.EncodeFromRoutine(),
-           ol_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
+           ol_start.EncodeViewRoutine(), ol_end.EncodeViewRoutine()); it->IsValid(); it->Next()) {
     if (it->row()->ShouldScanSkip(sid)) continue;
     state->items.at(state->n++) = it->row();
-    OrderLine::Key ol_key;
-    ol_key.Decode(&it->key());
+    auto ol_key = it->key().ToType<OrderLine::Key>();
 
     // Collecting resources for PWV
     if (state->res && ol_key.ol_number == 1) {
@@ -122,17 +120,18 @@ void StockLevelTxn::Run()
     // Distinct item keys
     int last = -1;
     int result = 0;
+    void *buf = alloca(32);
 
     for (int i = 0; i < state->n; i++) {
       auto id = state->item_ids[i];
       if (last == id) continue;
       last = id;
 
-      uint8_t stk_data[4UL << 10];
-      go::RoutineScopedData sb(mem::Brk::New(stk_data, 4UL << 10));
+      // uint8_t stk_data[4UL << 10];
+      // go::RoutineScopedData sb(mem::Brk::New(stk_data, 4UL << 10));
 
       auto stock_key = Stock::Key::New(warehouse_id, id);
-      auto stock_value = index_handle(mgr.Get<Stock>().Search(stock_key.EncodeFromRoutine()))
+      auto stock_value = index_handle(mgr.Get<Stock>().Search(stock_key.EncodeView(buf)))
                          .template Read<Stock::Value>();
       if (stock_value.s_quantity < threshold) result++;
     }

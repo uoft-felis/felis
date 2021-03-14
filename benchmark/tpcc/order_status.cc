@@ -30,28 +30,27 @@ static void LookupCustomerIndex(
     int warehouse_id, int district_id, int customer_id)
 {
   auto &mgr = util::Instance<TableManager>();
-  INIT_ROUTINE_BRK(8 << 10);
+  // INIT_ROUTINE_BRK(8 << 10);
+  void *buf = alloca(512);
   auto customer_key = Customer::Key::New(warehouse_id, district_id, customer_id);
-  state->customer = mgr.Get<Customer>().Search(customer_key.EncodeFromRoutine());
+  state->customer = mgr.Get<Customer>().Search(customer_key.EncodeView(buf));
 }
 
 static void ScanOrdersIndex(
     const OrderStatusTxn::State &state,
     uint64_t sid, int warehouse_id, int district_id, int customer_id)
 {
+  INIT_ROUTINE_BRK(4096);
   auto cididx_start = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id,
                                              std::numeric_limits<int32_t>::max());
   auto cididx_end = OOrderCIdIdx::Key::New(warehouse_id, district_id, customer_id,
                                            0);
   auto &mgr = util::Instance<TableManager>();
-  INIT_ROUTINE_BRK(8 << 10);
   int oid = -1;
   for (auto it = mgr.Get<OOrderCIdIdx>().IndexReverseIterator(
-           cididx_start.EncodeFromRoutine(),
-           cididx_end.EncodeFromRoutine()); it->IsValid(); it->Next()) {
+           cididx_start.EncodeViewRoutine(), cididx_end.EncodeViewRoutine()); it->IsValid(); it->Next()) {
     if (it->row()->ShouldScanSkip(sid)) continue;
-    auto cididx_key = OOrderCIdIdx::Key();
-    cididx_key.Decode(&it->key());
+    auto cididx_key = it->key().ToType<OOrderCIdIdx::Key>();
     oid = cididx_key.o_o_id;
     break;
   }
@@ -68,8 +67,7 @@ static void ScanOrdersIndex(
   int i = 0;
   std::fill(state->order_line, state->order_line + 15, nullptr);
   for (auto it = mgr.Get<OrderLine>().IndexSearchIterator(
-           ol_start.EncodeFromRoutine(),
-           ol_end.EncodeFromRoutine()); it->IsValid() && i < 15; it->Next()) {
+           ol_start.EncodeViewRoutine(), ol_end.EncodeViewRoutine()); it->IsValid() && i < 15; it->Next()) {
     if (it->row()->ShouldScanSkip(sid)) continue;
     state->order_line[i] = it->row();
     i++;

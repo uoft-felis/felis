@@ -210,7 +210,7 @@ class Txn : public BaseTxn {
     }
 
     template <typename T> bool WriteTryInline(const T &o) {
-      return WriteVarStr(o.EncodeFromPtrOrDefault(vhandle->AllocFromInline(o.EncodeSize())));
+      return WriteVarStr(o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize())));
     }
   };
 
@@ -231,9 +231,9 @@ class Txn : public BaseTxn {
       for (int i = bitshift; i < kMaxPackedKeys && i < bitshift + param.size(); i++) {
         if constexpr (!std::is_void<typename R::TableType>::value) {
           if (bitmap & (1 << i)) {
-            auto varstr = param[i - bitshift].EncodeFromRoutine();
-            key_len[shift] = varstr->len;
-            key_data[shift] = varstr->data;
+            auto view = param[i - bitshift].EncodeViewRoutine();
+            key_len[shift] = view.length();
+            key_data[shift] = view.data();
             relation_ids[shift] = R::kRelationId;
             slice_ids[shift] = param.EncodeToSliceId(i - bitshift);
 

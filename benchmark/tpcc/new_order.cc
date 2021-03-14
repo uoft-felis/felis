@@ -70,11 +70,12 @@ void NewOrderTxn::PrepareInsert()
   }
 
   INIT_ROUTINE_BRK(8192);
+  void *buf = mem::AllocFromRoutine(16);
 
   auto handle = index_handle();
 
   for (int i = 0; i < nr_items; i++) {
-    auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeFromRoutine());
+    auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeView(buf));
     auto item_value = handle(item).Read<Item::Value>();
     detail.unit_price[i] = item_value.i_price;
   }
@@ -327,12 +328,11 @@ void NewOrderTxn::Run()
           auto &[state, index_handle, bitmap, detail] = ctx;
           auto &mgr = util::Instance<TableManager>();
 
-          INIT_ROUTINE_BRK(4096);
-
+          void *buf = alloca(16);
           for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
             if ((bitmap & (1 << i)) == 0) continue;
 
-            auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeFromRoutine());
+            auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeView(buf));
             auto item_value = index_handle(item).template Read<Item::Value>();
             auto amount = item_value.i_price * detail.order_quantities[i];
 

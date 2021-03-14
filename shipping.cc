@@ -307,7 +307,7 @@ void RowShipmentReceiver::Run()
               //     (key, return value of lambda) into the masstree, and return the value
               auto rel = mgr.GetTable(rel_id);
               bool created = true;
-              auto handle = rel->SearchOrCreate(k, &created);
+              auto handle = rel->SearchOrCreate(k->ToView(), &created);
               if (!created) {
                 auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
                 auto sid = handle->last_version() + 1;

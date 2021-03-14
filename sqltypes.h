@@ -16,6 +16,7 @@
 namespace sql {
 
 using VarStr = felis::VarStr;
+using VarStrView = felis::VarStrView;
 
 // types that looks like a built-in C++ type, let's keep them all in lower-case!
 // copied from Silo.
@@ -314,27 +315,41 @@ class Object : public Base {
 
   Object(const Base &b) : Base(b) {}
 
-  VarStr *Encode() const { return EncodeVarStr(VarStr::New(this->EncodeSize())); }
-
-  VarStr *EncodeFromPtr(void *ptr) const {
-    return EncodeVarStr(VarStr::FromPtr(ptr, this->EncodeSize()));
+  VarStr *Encode() const {
+    VarStr *str = VarStr::New(this->EncodeSize());
+    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    return str;
   }
 
-  VarStr *EncodeFromPtrOrDefault(void *ptr) const {
-    if (ptr) return EncodeFromPtr(ptr);
+  VarStr *EncodeToPtr(void *ptr) const {
+    VarStr *str = VarStr::FromPtr(ptr, this->EncodeSize());
+    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    return str;
+  }
+
+  VarStr *EncodeToPtrOrDefault(void *ptr) const {
+    if (ptr) return EncodeToPtr(ptr);
     else return Encode();
   }
 
-  VarStr *EncodeFromRoutine() const {
-    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
-    return EncodeVarStr(VarStr::FromPtr(base_ptr, this->EncodeSize()));
+  VarStrView EncodeView(void *ptr) const {
+    VarStrView v(this->EncodeSize(), (uint8_t *) ptr);
+    this->EncodeTo((uint8_t *) ptr);
+    return v;
   }
+
+  VarStrView EncodeViewRoutine() const {
+    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
+    return EncodeView(base_ptr);
+  }
+
   void Decode(const VarStr *str) {
     this->DecodeFrom(str->data);
   }
 
- private:
-  VarStr *EncodeVarStr(VarStr *str) const;
+  void DecodeView(const VarStrView &view) {
+    this->DecodeFrom(view.data());
+  }
 };
 
 template <typename Base>
@@ -511,13 +526,6 @@ class TupleImpl : public TupleField<Types...> {
     return _<N>();
   }
 };
-
-template <typename Base>
-VarStr *Object<Base>::EncodeVarStr(VarStr *str) const
-{
-  this->EncodeTo((uint8_t *) str + sizeof(VarStr));
-  return str;
-}
 
 template <typename LastField>
 class Schemas : public Object<LastField> {

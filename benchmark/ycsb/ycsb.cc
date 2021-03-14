@@ -112,8 +112,8 @@ void RMWTxn::Prepare()
       auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
       Ycsb::Key dbk;
       dbk.k = k;
-      INIT_ROUTINE_BRK(1024);
-      state->rows[i] = rel.Search(dbk.EncodeFromRoutine());
+      void *buf = alloca(512);
+      state->rows[i] = rel.Search(dbk.EncodeView(buf));
       if (i < kTotal - Client::g_extra_read)
         handle(state->rows[i]).AppendNewVersion();
     };
@@ -287,7 +287,7 @@ void YcsbLoader::Run()
   auto &mgr = util::Instance<felis::TableManager>();
   mgr.Create<Ycsb>();
 
-  void *large_buf = alloca(1024);
+  void *buf = alloca(512);
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
   for (auto t = 0; t < nr_threads; t++) {
@@ -307,7 +307,7 @@ void YcsbLoader::Run()
       Ycsb::Value dbv;
       dbk.k = i;
       dbv.v.resize_junk(999);
-      auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeFromPtr(large_buf));
+      auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeView(buf));
       // TODO: slice mapping table stuff?
       felis::InitVersion(handle, dbv.Encode());
     }

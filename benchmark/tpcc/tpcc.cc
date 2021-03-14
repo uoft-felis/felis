@@ -449,7 +449,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
           Checker::SanityCheckWarehouse(&k, &v);
 
-          auto handle = tables().Get<tpcc::Warehouse>().SearchOrCreate(k.EncodeFromPtr(large_buf));
+          auto handle = tables().Get<tpcc::Warehouse>().SearchOrCreate(k.EncodeView(large_buf));
           printf("warehouse %d coreid %d\n", k.w_id, handle->object_coreid());
           OnNewRow(slice_id, TableType::Warehouse, k, handle);
           felis::InitVersion(handle, v.Encode());
@@ -490,10 +490,10 @@ void Loader<LoaderType::Item>::DoLoad()
     v.i_im_id = RandomNumber(1, 10000);
 
     Checker::SanityCheckItem(&k, &v);
-    auto handle = tables().Get<tpcc::Item>().SearchOrCreate(k.EncodeFromPtr(large_buf));
+    auto handle = tables().Get<tpcc::Item>().SearchOrCreate(k.EncodeView(large_buf));
     // no OnNewRow() here, we don't ship Item table
     auto p = handle->AllocFromInline(v.EncodeSize());
-    felis::InitVersion(handle, v.EncodeFromPtrOrDefault(p));
+    felis::InitVersion(handle, v.EncodeToPtrOrDefault(p));
   }
   // logger->info("Item Loader done.");
 }
@@ -522,7 +522,7 @@ void Loader<LoaderType::Stock>::DoLoad()
 
             Checker::SanityCheckStock(&k, &v);
 
-            auto handle = tables().Get<tpcc::Stock>().SearchOrCreate(k.EncodeFromPtr(large_buf));
+            auto handle = tables().Get<tpcc::Stock>().SearchOrCreate(k.EncodeView(large_buf));
 
             OnNewRow(slice_id, TableType::Stock, k, handle);
             felis::InitVersion(handle, v.Encode());
@@ -554,7 +554,7 @@ void Loader<LoaderType::Stock>::DoLoad()
             v_data.s_dist_10.assign(s_dist);
 
             SetAllocAffinity(core_id);
-            auto data_handle = tables().Get<tpcc::StockData>().SearchOrCreate(k_data.EncodeFromAlloca(large_buf));
+            auto data_handle = tables().Get<tpcc::StockData>().SearchOrCreate(k_data.EncodeView(large_buf));
 
             OnNewRow(slice_id, TableType::StockData, k_data, data_handle);
             felis::InitVersion(data_handle, v_data.Encode());
@@ -590,7 +590,7 @@ void Loader<LoaderType::District>::DoLoad()
 
             Checker::SanityCheckDistrict(&k, &v);
 
-            auto handle = tables().Get<tpcc::District>().SearchOrCreate(k.EncodeFromPtr(large_buf));
+            auto handle = tables().Get<tpcc::District>().SearchOrCreate(k.EncodeView(large_buf));
 
             OnNewRow(slice_id, TableType::District, k, handle);
             felis::InitVersion(handle, v.Encode());
@@ -655,11 +655,11 @@ void Loader<LoaderType::Customer>::DoLoad()
 
               Checker::SanityCheckCustomer(&k, &v);
 
-              auto handle = tables().Get<tpcc::Customer>().SearchOrCreate(k.EncodeFromPtr(large_buf));
+              auto handle = tables().Get<tpcc::Customer>().SearchOrCreate(k.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::Customer, k, handle);
               felis::InitVersion(handle, v.Encode());
 
-              auto info_handle = tables().Get<tpcc::CustomerInfo>().SearchOrCreate(k.EncodeFromPtr(large_buf));
+              auto info_handle = tables().Get<tpcc::CustomerInfo>().SearchOrCreate(k.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::CustomerInfo, k, handle);
               felis::InitVersion(info_handle, info_v.Encode());
             });
@@ -673,7 +673,7 @@ void Loader<LoaderType::Customer>::DoLoad()
         // index structure is:
         // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-        handle = tables().Get<tpcc::CustomerNameIdx>().SearchOrCreate(k_idx.EncodeFromAlloca(large_buf));
+        handle = tables().Get<tpcc::CustomerNameIdx>().SearchOrCreate(k_idx.EncodeView(large_buf));
         slice_id = util::Instance<SliceLocator<tpcc::CustomerNameIdx>>().Locate(k_idx);
         OnNewRow(slice_id, TableType::CustomerNameIdx, k_idx, handle);
         felis::InitVersion(handle, v_idx.Encode());
@@ -696,7 +696,7 @@ void Loader<LoaderType::Customer>::DoLoad()
               v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
               SetAllocAffinity(core_id);
-              auto hist_handle = tables().Get<tpcc::History>().SearchOrCreate(k_hist.EncodeFromAlloca(large_buf));
+              auto hist_handle = tables().Get<tpcc::History>().SearchOrCreate(k_hist.EncodeView(large_buf));
 
               OnNewRow(slice_id, TableType::History, k_hist, hist_handle);
               felis::InitVersion(hist_handle, v_hist.Encode());
@@ -761,10 +761,10 @@ void Loader<LoaderType::Order>::DoLoad()
 
               Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
-              auto oo_handle = tables().Get<tpcc::OOrder>().SearchOrCreate(k_oo.EncodeFromPtr(large_buf));
+              auto oo_handle = tables().Get<tpcc::OOrder>().SearchOrCreate(k_oo.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::OOrder, k_oo, oo_handle);
               auto p = oo_handle->AllocFromInline(v_oo.EncodeSize());
-              felis::InitVersion(oo_handle, v_oo.EncodeFromPtrOrDefault(p));
+              felis::InitVersion(oo_handle, v_oo.EncodeToPtrOrDefault(p));
             });
 
         const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, c_ids[c - 1], k_oo.o_id);
@@ -773,10 +773,10 @@ void Loader<LoaderType::Order>::DoLoad()
         DoOnSlice<tpcc::OOrderCIdIdx>(
             k_oo_idx,
             [=](auto slice_id, auto core_id) {
-              auto oo_idx_handle = tables().Get<tpcc::OOrderCIdIdx>().SearchOrCreate(k_oo_idx.EncodeFromPtr(large_buf));
+              auto oo_idx_handle = tables().Get<tpcc::OOrderCIdIdx>().SearchOrCreate(k_oo_idx.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::OOrderCIdIdx, k_oo_idx, oo_idx_handle);
               auto p = oo_idx_handle->AllocFromInline(v_oo_idx.EncodeSize());
-              felis::InitVersion(oo_idx_handle, v_oo_idx.EncodeFromPtrOrDefault(p));
+              felis::InitVersion(oo_idx_handle, v_oo_idx.EncodeToPtrOrDefault(p));
             });
 
         if (c >= 2101) {
@@ -786,10 +786,10 @@ void Loader<LoaderType::Order>::DoLoad()
           DoOnSlice<tpcc::NewOrder>(
               k_no,
               [=](auto slice_id, auto core_id) {
-                auto no_handle = tables().Get<tpcc::NewOrder>().SearchOrCreate(k_no.EncodeFromPtr(large_buf));
+                auto no_handle = tables().Get<tpcc::NewOrder>().SearchOrCreate(k_no.EncodeView(large_buf));
                 OnNewRow(slice_id, TableType::NewOrder, k_no, no_handle);
                 auto p = no_handle->AllocFromInline(v_no.EncodeSize());
-                felis::InitVersion(no_handle, v_no.EncodeFromPtrOrDefault(p));
+                felis::InitVersion(no_handle, v_no.EncodeToPtrOrDefault(p));
               });
         }
 
@@ -817,11 +817,11 @@ void Loader<LoaderType::Order>::DoLoad()
 
                 Checker::SanityCheckOrderLine(&k_ol, &v_ol);
 
-                auto ol_handle = tables().Get<tpcc::OrderLine>().SearchOrCreate(k_ol.EncodeFromPtr(large_buf));
+                auto ol_handle = tables().Get<tpcc::OrderLine>().SearchOrCreate(k_ol.EncodeView(large_buf));
 
                 OnNewRow(slice_id, TableType::OrderLine, k_ol, ol_handle);
                 auto p = ol_handle->AllocFromInline(v_ol.EncodeSize());
-                felis::InitVersion(ol_handle, v_ol.EncodeFromPtrOrDefault(p));
+                felis::InitVersion(ol_handle, v_ol.EncodeToPtrOrDefault(p));
               });
         }
       }

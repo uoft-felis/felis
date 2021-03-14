@@ -28,7 +28,7 @@ class MasstreeIndex final : public Table {
   }
 
   template <typename Func>
-  VHandle *SearchOrCreateImpl(const VarStr *k, Func f);
+  VHandle *SearchOrCreateImpl(const VarStrView &k, Func f);
  public:
   static void ResetThreadInfo();
 
@@ -37,15 +37,16 @@ class MasstreeIndex final : public Table {
   static void *operator new(size_t sz);
   static void operator delete(void *p);
 
-  VHandle *SearchOrCreate(const VarStr *k, bool *created) override;
-  VHandle *SearchOrCreate(const VarStr *k) override;
-  VHandle *Search(const VarStr *k) override ;
+  VHandle *SearchOrCreate(const VarStrView &k, bool *created) override;
+  VHandle *SearchOrCreate(const VarStrView &k) override;
+  VHandle *Search(const VarStrView &k) override;
 
-  Table::Iterator *IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) override;
-  Table::Iterator *IndexReverseIterator(const VarStr *start, const VarStr *end = nullptr) override;
+  Table::Iterator *IndexSearchIterator(const VarStrView &start, const VarStrView &end) override;
+  Table::Iterator *IndexSearchIterator(const VarStrView &start) override;
+  Table::Iterator *IndexReverseIterator(const VarStrView &start, const VarStrView &end) override;
+  Table::Iterator *IndexReverseIterator(const VarStrView &start) override;
 
-  void ImmediateDelete(const VarStr *k);
-
+  void ImmediateDelete(const VarStrView &k);
 };
 
 }

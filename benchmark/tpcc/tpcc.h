@@ -105,13 +105,13 @@ enum class TableType : int {
 
 // table and schemas definition
 struct Customer {
-  static uint32_t HashKey(const felis::VarStr *k) {
+  static uint32_t HashKey(const felis::VarStrView &k) {
     uint8_t x[4];
     auto v = (uint32_t *) x;
 
-    x[0] = k->data[11];
-    x[1] = k->data[10] | (k->data[7] << 4);
-    x[2] = k->data[3] - 1;
+    x[0] = k[11];
+    x[1] = k[10] | (k[7] << 4);
+    x[2] = k[3] - 1;
     x[3] = 0;
 
     return *v;
@@ -141,8 +141,8 @@ struct CustomerNameIdx {
 #endif
 
 struct District {
-  static uint32_t HashKey(const felis::VarStr *k) {
-    return (((k->data[3] - 1) << 9) | (k->data[7] - 1)) << 4;
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    return (((k[3] - 1) << 9) | (k[7] - 1)) << 4;
   }
   static constexpr auto kTable = TableType::District;
   static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, false);
@@ -160,8 +160,8 @@ struct History {
 };
 
 struct Item {
-  static uint32_t HashKey(const felis::VarStr *k) {
-    uint8_t x[] = {(uint8_t) (k->data[3] - 1), k->data[2], k->data[1], 0};
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    uint8_t x[] = {(uint8_t) (k[3] - 1), k[2], k[1], 0};
     return *(uint32_t *) x;
   }
 
@@ -182,9 +182,9 @@ struct NewOrder {
 
 struct OOrder {
   /*
-  static uint32_t HashKey(const felis::VarStr *k) {
+  static uint32_t HashKey(const felis::VarStrView &k) {
     uint32_t p = District::HashKey(k) >> 9;
-    uint8_t x[] = {k->data[11], k->data[10], (uint8_t) p, (uint8_t) (p >> 8)};
+    uint8_t x[] = {k.data[11], k.data[10], (uint8_t) p, (uint8_t) (p >> 8)};
     return *(uint32_t *) x;
   }
   */
@@ -213,8 +213,8 @@ struct OrderLine {
 };
 
 struct Stock {
-  static uint32_t HashKey(const felis::VarStr *k) {
-    uint8_t x[] = {k->data[7], k->data[6], (uint8_t) (k->data[5] | ((k->data[3] - 1) << 1)), 0};
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    uint8_t x[] = {k[7], k[6], (uint8_t) (k[5] | ((k[3] - 1) << 1)), 0};
     return *(uint32_t *) x;
   }
   static constexpr auto kTable = TableType::Stock;
@@ -236,8 +236,8 @@ struct StockData {
 #endif
 
 struct Warehouse {
-  static uint32_t HashKey(const felis::VarStr *k) {
-    return (k->data[3] - 1) << 9;
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    return (k[3] - 1) << 9;
   }
 
   static constexpr auto kTable = TableType::Warehouse;

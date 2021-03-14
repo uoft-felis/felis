@@ -89,7 +89,7 @@ HashtableIndex::HashtableIndex(std::tuple<HashFunc, size_t, bool> conf)
 
 static constexpr size_t kOffset = 96;
 
-VHandle *HashtableIndex::SearchOrCreate(const VarStr *k, bool *created)
+VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
 {
   auto idx = hash(k) % nr_buckets;
   HashEntry *first = (HashEntry *) (table + idx * row_size() + kOffset);
@@ -137,13 +137,13 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStr *k, bool *created)
   return row;
 }
 
-VHandle *HashtableIndex::SearchOrCreate(const VarStr *k)
+VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k)
 {
   bool unused = false;
   return SearchOrCreate(k, &unused);
 }
 
-VHandle *HashtableIndex::Search(const VarStr *k)
+VHandle *HashtableIndex::Search(const VarStrView &k)
 {
   auto idx = hash(k) % nr_buckets;
   auto p = (HashEntry *) (table + idx * row_size() + kOffset);
@@ -165,9 +165,9 @@ VHandle *HashtableIndex::Search(const VarStr *k)
   return nullptr;
 }
 
-uint32_t DefaultHash(const VarStr *k)
+uint32_t DefaultHash(const VarStrView &k)
 {
-  return XXH32(k->data, k->len, 0xdeadbeef);
+  return XXH32(k.data(), k.length(), 0xdeadbeef);
 }
 
 }

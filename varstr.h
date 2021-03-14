@@ -10,6 +10,53 @@
 
 namespace felis {
 
+class VarStrView final {
+  static void *operator new(size_t s) { std::abort(); } // No, you cannot new this class.
+  static void operator delete(void *) { std::abort(); } // No, you cannot delete this class.
+  uint64_t w;
+ public:
+  VarStrView() : w(0) {}
+  VarStrView(uint16_t len, const uint8_t *data) {
+    w = ((uintptr_t) data << 16) | len;
+  }
+
+  uint16_t length() const { return 0x00ff & w; }
+  uint8_t *data() const { return (uint8_t *) (w >> 16); }
+
+  uint8_t operator[](size_t idx) const {
+    return *(data() + idx);
+  }
+
+  bool operator<(const VarStrView &rhs) const {
+    return length() == rhs.length() ?
+        memcmp(data(), rhs.data(), length()) < 0 : length() < rhs.length();
+  }
+
+  bool operator==(const VarStrView &rhs) const {
+    if (length() != rhs.length()) return false;
+    return memcmp(data(), rhs.data(), length()) == 0;
+  }
+
+  bool operator!=(const VarStrView &rhs) const {
+    return !(*this == rhs);
+  }
+
+  std::string ToHex() const {
+    fmt::memory_buffer buf;
+    for (int i = 0; i < length(); i++) {
+      fmt::format_to(buf, "{:x} ", data()[i]);
+    }
+    return std::string(buf.data(), buf.size());
+  }
+
+  template <typename T>
+  const T ToType() const {
+    T instance;
+    instance.DecodeView(*this);
+    return instance;
+  }
+};
+
 // serve as the key/value of database
 struct VarStr {
 
@@ -50,22 +97,6 @@ struct VarStr {
   VarStr() : len(0), region_id(0), data(nullptr) {}
   VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), region_id(region_id), data(data) {}
 
-  bool operator<(const VarStr &rhs) const {
-    if (data == nullptr) return true;
-    else if (rhs.data == nullptr) return false;
-
-    return len == rhs.len ? memcmp(data, rhs.data, len) < 0 : len < rhs.len;
-  }
-
-  bool operator==(const VarStr &rhs) const {
-    if (len != rhs.len) return false;
-    return memcmp(data, rhs.data, len) == 0;
-  }
-
-  bool operator!=(const VarStr &rhs) const {
-    return !(*this == rhs);
-  }
-
   template <typename T>
   const T ToType() const {
     T instance;
@@ -79,6 +110,10 @@ struct VarStr {
       fmt::format_to(buf, "{:x} ", data[i]);
     }
     return std::string(buf.data(), buf.size());
+  }
+
+  VarStrView ToView() const {
+    return VarStrView(len, data);
   }
 };
 

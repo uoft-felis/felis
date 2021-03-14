@@ -16,8 +16,8 @@ enum class TableType : int {
 };
 
 struct Ycsb {
-  static uint32_t HashKey(const felis::VarStr *k) {
-    auto x = (uint8_t *) k->data;
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    auto x = (uint8_t *) k.data();
     return *(uint32_t *) x;
   }
 
