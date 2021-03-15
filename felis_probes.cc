@@ -61,6 +61,8 @@ static void CountUpdate(agg::Histogram<32, 0, 1> &agg, int nr_update, int core =
 // Override for some enabled probes
 ////////////////////////////////////////////////////////////////////////////////
 
+#if 0
+
 template <> void OnProbe(felis::probes::VHandleAbsorb p)
 {
   statcnt.absorb_memmove_size << p.size;
@@ -80,6 +82,8 @@ template <> void OnProbe(felis::probes::VHandleAppendSlowPath p)
   statcnt.msc_wait_cnt << msc_wait;
   statcnt.msc_wait_cnt_avg << msc_wait;
 }
+
+#endif
 
 #if 0
 thread_local uint64_t last_wait_cnt;
