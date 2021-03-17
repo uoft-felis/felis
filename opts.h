@@ -92,7 +92,9 @@ struct Options {
   static inline const auto kSlotPercentage = Option("SlotPercentage");
   static inline const auto kStripBatched = Option("StripBatched");
   static inline const auto kStripPriority = Option("StripPriority");
-  static inline const auto kIncrementalSID = Option("IncrementalSID");
+  static inline const auto kSIDGlobalInc = Option("SIDGlobalInc");
+  static inline const auto kSIDLocalInc = Option("SIDLocalInc");
+  static inline const auto kSIDBitmap = Option("SIDBitmap");
 
   static inline const auto kReadBit = Option("ReadBit");
   static inline const auto kConflictReadBit = Option("ConflictReadBit");

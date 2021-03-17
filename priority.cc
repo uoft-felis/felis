@@ -10,7 +10,9 @@ size_t PriorityTxnService::g_interval_priority_txn;
 
 size_t PriorityTxnService::g_strip_batched = 1;
 size_t PriorityTxnService::g_strip_priority = 1;
-bool PriorityTxnService::g_incremental_sid = false;
+bool PriorityTxnService::g_sid_global_inc = false;
+bool PriorityTxnService::g_sid_local_inc = false;
+bool PriorityTxnService::g_sid_bitmap = false;
 
 bool PriorityTxnService::g_read_bit = false;
 bool PriorityTxnService::g_conflict_read_bit = false;
@@ -74,12 +76,19 @@ PriorityTxnService::PriorityTxnService()
       g_strip_priority = Options::kStripPriority.ToInt();
   }
 
-  if (Options::kIncrementalSID) {
-    g_incremental_sid = true;
-    bitmap_size = 0;
-  } else {
+  if (Options::kSIDGlobalInc) g_sid_global_inc = true;
+  if (Options::kSIDLocalInc) g_sid_local_inc = true;
+  if (Options::kSIDBitmap) g_sid_bitmap = true;
+  int count = g_sid_global_inc + g_sid_local_inc + g_sid_bitmap;
+  abort_if(count != 1, "Please specify one (and only one) way for SID reuse detection");
+  if (g_sid_bitmap) {
     bitmap_size = (((EpochClient::g_txn_per_epoch / g_strip_batched + 1) * g_strip_priority)
                   / NodeConfiguration::g_nr_threads + 1) / 8 + 1;
+  } else {
+    bitmap_size = 0;
+    if (g_sid_local_inc)
+      abort_if(NodeConfiguration::g_nr_threads != g_strip_priority,
+               "plz make priority strip = # cores"); // allow me to be lazy once
   }
 
   if (Options::kReadBit) {
@@ -104,16 +113,21 @@ PriorityTxnService::PriorityTxnService()
                g_strip_batched, g_strip_priority, logical_dist, g_backoff_distance);
 
   this->core = 0;
-  this->last_sid = 0;
+  this->global_last_sid = 0;
   this->epoch_nr = 0;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
       exec_progress[i] = new uint64_t(0);
-      if (g_incremental_sid) {
-        seq_bitmap[i] = nullptr;
-      } else {
+      if (g_sid_bitmap) {
         seq_bitmap[i] = (uint8_t*)malloc(bitmap_size);
         memset(seq_bitmap[i], 0, bitmap_size);
+      } else {
+        seq_bitmap[i] = nullptr;
+      }
+      if (g_sid_local_inc) {
+        local_last_sid[i] = new uint64_t(0);
+      } else {
+        local_last_sid[i] = nullptr;
       }
     });
     r->set_urgent(true);
@@ -227,9 +241,15 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 
   if (g_sid_read_bit) {
     uint64_t min = (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
-    if (g_incremental_sid)
-      if (this->last_sid > min)
-        min = this->last_sid;
+
+    uint64_t last = 0;
+    if (g_sid_global_inc)
+      last = this->global_last_sid;
+    if (g_sid_local_inc)
+      last = *local_last_sid[go::Scheduler::CurrentThreadPoolId() - 1];
+    if (last > min)
+      min = last;
+
     for (auto handle : txn->update_handles)
       min = handle->FindUnreadSIDLowerBound(min);
     for (auto handle : txn->delete_handles)
@@ -248,18 +268,31 @@ uint64_t PriorityTxnService::GetNextSIDSlot(uint64_t sequence)
   uint64_t prog = this->GetMaxProgress();
   int k = this->g_strip_batched + this->g_strip_priority; // strip width
 
-  // legacy method, uses overall last_sid
-  if (g_incremental_sid) {
+  if (g_sid_global_inc) {
     lock.Lock();
     uint64_t next_slot = (sequence/k + 1) * k;
     // maximum slot ratio it can utilize is priority:batched = 1:1
     uint64_t sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
-    if (this->last_sid >= sid) {
-      next_slot = (this->last_sid >> 8 & 0xFFFFFF) + k;
+    if (this->global_last_sid >= sid) {
+      next_slot = (this->global_last_sid >> 8 & 0xFFFFFF) + k;
       sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
     }
-    this->last_sid = sid;
+    this->global_last_sid = sid;
     lock.Unlock();
+    return sid;
+  }
+
+  if (g_sid_local_inc) {
+    // based on g_strip_priorty = # of cores
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    uint64_t next_slot = sequence/k * k + g_strip_batched + core_id + 1;
+    uint64_t sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+    auto &last = *local_last_sid[core_id];
+    if (last >= sid) {
+      next_slot = (last >> 8 & 0xFFFFFF) + k;
+      sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+    }
+    last = sid;
     return sid;
   }
 
@@ -295,7 +328,7 @@ void PriorityTxnService::SetBitMapValue(uint64_t idx, int core_id, uint8_t value
 
 void PriorityTxnService::ClearBitMap(void)
 {
-  if (PriorityTxnService::g_incremental_sid)
+  if (PriorityTxnService::g_sid_global_inc | PriorityTxnService::g_sid_local_inc)
     return;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {

@@ -13,10 +13,11 @@ class PriorityTxnService {
   friend class PriorityTxn;
   // per-core progress, the maximum piece sid each core has started executing
   std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> exec_progress;
+  std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> local_last_sid;
   std::atomic_int core;
   std::atomic_ulong epoch_nr;
-  uint64_t last_sid;
-  util::SpinLock lock;
+  uint64_t global_last_sid;
+  util::SpinLock lock; // for global_last_sid
 
  public:
   std::array<uint8_t*, NodeConfiguration::kMaxNrThreads> seq_bitmap;
@@ -32,7 +33,10 @@ class PriorityTxnService {
   // txn 17-24 are batched txns, 25-32 are priority txn slots, ...
   static size_t g_strip_batched;
   static size_t g_strip_priority;
-  static bool g_incremental_sid;
+
+  static bool g_sid_global_inc;
+  static bool g_sid_local_inc;
+  static bool g_sid_bitmap;
 
   static bool g_read_bit;          // marks read bit
   static bool g_conflict_read_bit; // uses read bit info to detect conflict
