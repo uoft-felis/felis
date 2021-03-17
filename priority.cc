@@ -16,8 +16,7 @@ bool PriorityTxnService::g_read_bit = false;
 bool PriorityTxnService::g_conflict_read_bit = false;
 bool PriorityTxnService::g_sid_read_bit = false;
 
-size_t PriorityTxnService::g_backoff_distance = 100;
-bool PriorityTxnService::g_negative_distance = false;
+int PriorityTxnService::g_backoff_distance = -100;
 bool PriorityTxnService::g_fastest_core = false;
 
 unsigned long long PriorityTxnService::g_tsc = 0;
@@ -30,7 +29,8 @@ PriorityTxnService::PriorityTxnService()
   if (Options::kIncomingRate) {
     // two ways: you either specify incoming rate, or specify both # of priTxn per epoch and interval
     if (Options::kNrPriorityTxn || Options::kIntervalPriorityTxn) {
-      logger->critical("When IncomingRate is specified, please do not specify NrPriorityTxn or IntervalPriorityTxn");
+      logger->critical("When IncomingRate is specified, "
+                       "please do not specify NrPriorityTxn or IntervalPriorityTxn");
       std::abort();
     }
     int incoming_rate = Options::kIncomingRate.ToInt();
@@ -41,17 +41,20 @@ PriorityTxnService::PriorityTxnService()
     g_interval_priority_txn = exec_time * 1000 / g_nr_priority_txn; // ms to us
   } else {
     if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn) {
-      logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn (or specify IncomingRate)");
+      logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn "
+                       "(or only specify IncomingRate)");
       std::abort();
     }
     g_nr_priority_txn = Options::kNrPriorityTxn.ToInt();
     g_interval_priority_txn = Options::kIntervalPriorityTxn.ToInt();
   }
-  logger->info("[Pri-init] NrPriorityTxn: {}  IntervalPriorityTxn: {}", g_nr_priority_txn, g_interval_priority_txn);
+  logger->info("[Pri-init] NrPriorityTxn: {}  IntervalPriorityTxn: {}",
+               g_nr_priority_txn, g_interval_priority_txn);
 
   if (Options::kSlotPercentage) {
     if (Options::kStripBatched || Options::kStripPriority) {
-      logger->critical("When SlotPercentage is specified, please do not specify StripBatched or StripPriority");
+      logger->critical("When SlotPercentage is specified, "
+                       "please do not specify StripBatched or StripPriority");
       std::abort();
     }
     size_t slot_percentage = Options::kSlotPercentage.ToInt();
@@ -75,7 +78,8 @@ PriorityTxnService::PriorityTxnService()
     g_incremental_sid = true;
     bitmap_size = 0;
   } else {
-    bitmap_size = (((EpochClient::g_txn_per_epoch / g_strip_batched + 1) * g_strip_priority) / NodeConfiguration::g_nr_threads + 1) / 8 + 1;
+    bitmap_size = (((EpochClient::g_txn_per_epoch / g_strip_batched + 1) * g_strip_priority)
+                  / NodeConfiguration::g_nr_threads + 1) / 8 + 1;
   }
 
   if (Options::kReadBit) {
@@ -89,12 +93,15 @@ PriorityTxnService::PriorityTxnService()
     abort_if(Options::kSIDReadBit, "-XSIDReadBit requires -XReadBit");
   }
 
-  if (Options::kBackoffDist)
-    g_backoff_distance = Options::kBackoffDist.ToInt();
-  if (Options::kNegativeDistance)
-    g_negative_distance = true;
+  int logical_dist = -1;
+  if (Options::kBackoffDist) {
+    logical_dist = Options::kBackoffDist.ToInt(); // independent of priority txn slot ratio
+    g_backoff_distance = logical_dist * (g_strip_batched + g_strip_priority);
+  }
   if (Options::kFastestCore)
     g_fastest_core = true;
+  logger->info("[Pri-init] Strip: Batched {} + Priority {}, BackoffDist: logical {}, physical {}",
+               g_strip_batched, g_strip_priority, logical_dist, g_backoff_distance);
 
   this->core = 0;
   this->last_sid = 0;
@@ -203,23 +210,20 @@ bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
 void PriorityTxnService::PrintStats() {
   if (!NodeConfiguration::g_priority_txn)
     return;
-  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}  BackOffDist: {}", g_nr_priority_txn, g_interval_priority_txn, g_backoff_distance);
+  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}  physical BackOffDist: {}",
+               g_nr_priority_txn, g_interval_priority_txn, g_backoff_distance);
 }
 
 // find a serial id for the calling priority txn
 uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 {
-  uint64_t prog = this->GetMaxProgress();
-  uint64_t seq = prog >> 8 & 0xFFFFFF, new_seq;
+  uint64_t prog = this->GetMaxProgress(), new_seq;
+  int seq = prog >> 8 & 0xFFFFFF;
 
-  if (g_negative_distance) /* default false */ {
-    if (seq > g_backoff_distance + 1)
-      new_seq = seq - g_backoff_distance;
-    else
-      new_seq = 1;
-  } else {
+  if (seq + g_backoff_distance < 1)
+    new_seq = 1;
+  else
     new_seq = seq + g_backoff_distance;
-  }
 
   if (g_sid_read_bit) {
     uint64_t min = (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
