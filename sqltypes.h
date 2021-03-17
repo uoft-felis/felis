@@ -317,13 +317,15 @@ class Object : public Base {
 
   VarStr *Encode() const {
     VarStr *str = VarStr::New(this->EncodeSize());
-    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    // this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    this->EncodeTo(str->data());
     return str;
   }
 
   VarStr *EncodeToPtr(void *ptr) const {
     VarStr *str = VarStr::FromPtr(ptr, this->EncodeSize());
-    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    // this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    this->EncodeTo(str->data());
     return str;
   }
 
@@ -344,7 +346,7 @@ class Object : public Base {
   }
 
   void Decode(const VarStr *str) {
-    this->DecodeFrom(str->data);
+    this->DecodeFrom(str->data());
   }
 
   void DecodeView(const VarStrView &view) {

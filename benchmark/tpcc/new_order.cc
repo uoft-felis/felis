@@ -290,9 +290,9 @@ void NewOrderTxn::Run()
           });
     }
 
-    root->Then(
+    root->AttachRoutine(
         MakeContext(bitmap, customer_id, nr_items, ts_now, all_local), node,
-        [](const auto &ctx, auto args) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, bitmap, customer_id, nr_items, ts_now,
                  all_local] = ctx;
           probes::TpccNewOrder{0, __builtin_popcount(bitmap)}();
@@ -309,8 +309,6 @@ void NewOrderTxn::Run()
             index_handle(state->cididx).WriteTryInline(OOrderCIdIdx::Value());
             ClientBase::OnUpdateRow(state->cididx);
           }
-
-          return nullopt;
         });
   }
 
@@ -322,9 +320,9 @@ void NewOrderTxn::Run()
       aff = AffinityFromRows(bitmap, state->orderlines);
     }
 
-    root->Then(
+    root->AttachRoutine(
         MakeContext(bitmap, detail), node,
-        [](const auto &ctx, auto args) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, bitmap, detail] = ctx;
           auto &mgr = util::Instance<TableManager>();
 
@@ -344,8 +342,6 @@ void NewOrderTxn::Run()
                                                       detail.order_quantities[i]));
             ClientBase::OnUpdateRow(state->orderlines[i]);
           }
-
-          return nullopt;
         },
         aff);
   }
@@ -396,9 +392,9 @@ void NewOrderTxn::Run()
         if (g_tpcc_config.IsWarehousePinnable())
           aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
 
-        root->Then(
+        root->AttachRoutine(
             MakeContext(bitmap, warehouse_id, params), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, bitmap, warehouse_id, params] = ctx;
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
                 if ((bitmap & (1 << i)) == 0) continue;
@@ -409,14 +405,13 @@ void NewOrderTxn::Run()
                     params.supplier_warehouses[i] != warehouse_id,
                     i);
               }
-              return nullopt;
             },
             aff);
       } else {
         // Remote piece
-        root->Then(
+        root->AttachRoutine(
             MakeContext(bitmap, params), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, bitmap, params] = ctx;
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
                 if ((bitmap & (1 << i)) == 0) continue;
@@ -435,7 +430,6 @@ void NewOrderTxn::Run()
 
                 vhandle.Write(stock);
               }
-              return nullopt;
             });
       }
 
@@ -459,9 +453,9 @@ void NewOrderTxn::Run()
 
         aff = w - 1;
 
-        root->Then(
+        root->AttachRoutine(
             MakeContext(bitmap, params, w), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, bitmap, params, w] = ctx;
 
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
@@ -495,7 +489,6 @@ void NewOrderTxn::Run()
                 g->ActivateResource(
                     index_handle.serial_id(), &ClientBase::g_pwv_stock_resources[w - 1]);
               }
-              return nullopt;
             },
             aff);
       }

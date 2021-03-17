@@ -9,7 +9,7 @@
 #include "util/types.h"
 #include "util/locks.h"
 #include "log.h"
-#include "base_promise.h"
+#include "piece.h"
 
 namespace go {
 class OutputChannel;
@@ -19,7 +19,7 @@ namespace felis {
 
 class NodeServerRoutine;
 class NodeServerThreadRoutine;
-struct PromiseRoutine;
+struct PieceRoutine;
 
 class LocalDispatcherImpl;
 
@@ -65,7 +65,7 @@ class LocalTransport : public PromiseRoutineTransportService {
   ~LocalTransport();
   LocalTransport(const LocalTransport &rhs) = delete;
 
-  void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) final override;
+  void TransportPromiseRoutine(PieceRoutine *routine) final override;
   void Flush();
   bool TryFlushForCore(int core_id);
 };
@@ -134,7 +134,7 @@ class NodeConfiguration {
   }
 
   void ResetBufferPlan();
-  void CollectBufferPlan(BasePromise *root, unsigned long *cnts);
+  void CollectBufferPlan(BasePieceCollection *root, unsigned long *cnts);
   bool FlushBufferPlan(unsigned long *per_core_cnts);
   void SendStartPhase();
   void ContinueInboundPhase();
@@ -188,7 +188,7 @@ class NodeConfiguration {
   } *local_batch;
   std::atomic_ulong local_batch_completed;
  private:
-  void CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts, int level, int src);
+  void CollectBufferPlanImpl(PieceRoutine *routine, unsigned long *cnts, int level, int src);
 };
 
 template <typename T>
@@ -234,11 +234,11 @@ class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
     // Putting these per-core task buffer simply because it's too large and we
     // can't put them on the stack!
     struct {
-      std::array<PromiseRoutineWithInput, kBufferSize> routines;
+      std::array<PieceRoutine *, kBufferSize> routines;
       size_t nr;
     } task_buffer[NodeConfiguration::kMaxNrThreads];
 
-    std::array<PromiseRoutineWithInput, kBufferSize> routines;
+    std::array<PieceRoutine *, kBufferSize> routines;
     std::atomic_uint append_start = 0;
     unsigned int flusher_start = 0;
     std::atomic_bool need_scan = false;
@@ -251,8 +251,7 @@ class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
 
  public:
   LocalDispatcherImpl(int idx);
-  void QueueRoutine(PromiseRoutine *routine, const VarStr &in);
-  void QueueBubble();
+  void QueueRoutine(PieceRoutine *routine);
 
   std::tuple<uint, uint> GetFlushRange(int tid) {
     return {
@@ -276,7 +275,7 @@ class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
 
  private:
   void FlushOnCore(int thread, unsigned int start, unsigned int end);
-  void SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int start, unsigned int end, int thread);
+  void SubmitOnCore(PieceRoutine **routines, unsigned int start, unsigned int end, int thread);
 };
 
 }

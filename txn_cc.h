@@ -1,3 +1,5 @@
+// -*- mode: c++ -*-
+
 #ifndef TXN_CC_H
 #define TXN_CC_H
 
@@ -6,6 +8,7 @@
 #include "epoch.h"
 #include "txn.h"
 #include "contention_manager.h"
+#include "piece_cc.h"
 
 namespace felis {
 
@@ -125,7 +128,7 @@ class FutureValue<void> {
       wait_cnt++;
       if ((wait_cnt & 0x0FFFF) == 0) {
         auto routine = go::Scheduler::Current()->current_routine();
-        if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
+        if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
           continue;
         }
       }
@@ -194,7 +197,7 @@ class Txn : public BaseTxn {
   typedef GenericEpochObject<TxnState> State;
 
  protected:
-  Promise<DummyValue> *root;
+  PieceCollection *root;
   State state;
  public:
 
@@ -287,8 +290,8 @@ class Txn : public BaseTxn {
 
   Txn(uint64_t serial_id) : BaseTxn(serial_id) {}
 
-  BasePromise *root_promise() override final { return root; }
-  void ResetRoot() override final { root = new Promise<DummyValue>(); }
+  PieceCollection *root_promise() override final { return root; }
+  void ResetRoot() override final { root = new PieceCollection(); }
 
   void PrepareState() override {
     epoch = util::Instance<EpochManager>().current_epoch();
@@ -322,13 +325,12 @@ class Txn : public BaseTxn {
     InvokeHandle<TxnState, Types...> invoke_handle{rowfunc, row};
 
     if (aff != -1 && !EpochClient::g_enable_granola && !EpochClient::g_enable_pwv) {
-      root->Then(
+      root->AttachRoutine(
           sql::MakeTuple(invoke_handle, MakeContext(params...)),
           node,
-          [](const auto &t, auto _) -> Optional<VoidValue> {
+          [](const auto &t) {
             auto &[invoke_handle, ctx] = t;
             invoke_handle.InvokeWithContext(ctx);
-            return nullopt;
           },
           aff);
       invoke_handle.ClearCallback();
@@ -390,9 +392,9 @@ class Txn : public BaseTxn {
 
       if ((node != 0 && current_node != node)
           || (VHandleSyncService::g_lock_elision && txn_indexop_affinity != kIndexOpFlatten)) {
-        root->Then(
+        root->AttachRoutine(
             op_ctx, node,
-            [](auto &ctx, auto _) -> Optional<VoidValue> {
+            [](auto &ctx) {
               auto completion = OnComplete();
               if constexpr (!std::is_void<OnCompleteParam>()) {
                 completion.args = (OnCompleteParam) ctx;
@@ -407,7 +409,6 @@ class Txn : public BaseTxn {
                     auto op = IndexOp(ctx, j);
                     completion(i, op.result);
                   });
-              return nullopt;
             },
             txn_indexop_affinity);
       } else {

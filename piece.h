@@ -1,5 +1,5 @@
-#ifndef BASE_PROMISE_H
-#define BASE_PROMISE_H
+#ifndef PIECE_H
+#define PIECE_H
 
 #include <tuple>
 #include <atomic>
@@ -9,13 +9,11 @@
 
 namespace felis {
 
-// TODO: This needs to be simplified!
-class BasePromise;
-class PromiseRoutine;
+class BasePieceCollection;
+class PieceRoutine;
 
-using PromiseRoutineWithInput = std::tuple<PromiseRoutine *, VarStr>;
 // Performance: It seems critical to keep this struct one cache line!
-struct PromiseRoutine {
+struct PieceRoutine {
   uint8_t *capture_data;
   uint32_t capture_len;
   uint8_t level;
@@ -23,97 +21,87 @@ struct PromiseRoutine {
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 
-  void (*callback)(PromiseRoutine *, VarStr input);
-  uint8_t (*node_func)(PromiseRoutine *, VarStr input);
+  void (*callback)(PieceRoutine *);
 
   size_t NodeSize() const;
   uint8_t *EncodeNode(uint8_t *p);
 
   size_t DecodeNode(uint8_t *p, size_t len);
 
-  size_t TreeSize(const VarStr &input) const;
-  void EncodeTree(uint8_t *p, const VarStr &input);
+  BasePieceCollection *next;
+  uint8_t __padding__[16];
 
-  static constexpr long kBubblePointer = 0xdeadbeef;
-
-  BasePromise *next;
-  uint8_t __padding__[8];
-
-  static PromiseRoutine *CreateFromCapture(size_t capture_len);
-  static PromiseRoutineWithInput CreateFromPacket(uint8_t *p, size_t packet_len);
+  static PieceRoutine *CreateFromCapture(size_t capture_len);
+  static PieceRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
 
   static constexpr size_t kUpdateBatchCounter = std::numeric_limits<uint64_t>::max() - (1ULL << 56);
-  static constexpr size_t kBubble = std::numeric_limits<uint64_t>::max() - (1ULL << 56) - 0x00FFFFFF;
 };
 
-static_assert(sizeof(PromiseRoutine) == CACHE_LINE_SIZE);
+static_assert(sizeof(PieceRoutine) == CACHE_LINE_SIZE);
 
 class EpochClient;
 
-class BasePromise {
+class BasePieceCollection {
  public:
   static constexpr size_t kInlineLimit = 6;
  protected:
-  friend struct PromiseRoutine;
+  friend struct PieceRoutine;
   int nr_handlers;
   int limit;
-  PromiseRoutine **extra_handlers;
+  PieceRoutine **extra_handlers;
 
-  PromiseRoutine *inline_handlers[kInlineLimit];
+  PieceRoutine *inline_handlers[kInlineLimit];
  public:
   static size_t g_nr_threads;
   static constexpr int kMaxHandlersLimit = 32 + kInlineLimit;
 
   class ExecutionRoutine : public go::Routine {
-    friend class PromiseRoutineLookupService;
    public:
     ExecutionRoutine() {
       set_reuse(true);
     }
     static void *operator new(std::size_t size) {
-      return BasePromise::Alloc(util::Align(size, CACHE_LINE_SIZE));
+      return BasePieceCollection::Alloc(util::Align(size, CACHE_LINE_SIZE));
     }
     static void operator delete(void *ptr) {}
     void Run() final override;
     void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready = false) final override;
 
     bool Preempt();
-   private:
-    void RunPromiseRoutine(PromiseRoutine *r, const VarStr &in);
   };
 
   static_assert(sizeof(ExecutionRoutine) <= CACHE_LINE_SIZE);
 
-  BasePromise(int limit = kMaxHandlersLimit);
-  void Complete(const VarStr &in);
-  void Add(PromiseRoutine *child);
+  BasePieceCollection(int limit = kMaxHandlersLimit);
+  void Complete();
+  void Add(PieceRoutine *child);
   void AssignSchedulingKey(uint64_t key);
   void AssignAffinity(uint64_t affinity);
 
   static void *operator new(std::size_t size);
   static void *Alloc(size_t size);
-  static void QueueRoutine(PromiseRoutineWithInput *routines, size_t nr_routines, int core_id);
+  static void QueueRoutine(PieceRoutine **routines, size_t nr_routines, int core_id);
   static void FlushScheduler();
 
   size_t nr_routines() const { return nr_handlers; }
-  PromiseRoutine *&routine(int idx) {
+  PieceRoutine *&routine(int idx) {
     if (idx < kInlineLimit)
       return inline_handlers[idx];
     else
       return extra_handlers[idx - kInlineLimit];
   }
-  PromiseRoutine *&last() {
+  PieceRoutine *&last() {
     return routine(nr_routines() - 1);
   }
 };
 
-static_assert(sizeof(BasePromise) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");
+static_assert(sizeof(BasePieceCollection) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");
 
 class PromiseRoutineTransportService {
  public:
   static constexpr size_t kPromiseMaxLevels = 16;
 
-  virtual void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input) = 0;
+  virtual void TransportPromiseRoutine(PieceRoutine *routine) = 0;
   virtual bool PeriodicIO(int core) { return false; }
   virtual void PrefetchInbound() {};
   virtual void FinishCompletion(int level) {}
@@ -125,7 +113,7 @@ class PromiseRoutineDispatchService {
 
   class DispatchPeekListener {
    public:
-    virtual bool operator()(PromiseRoutineWithInput, BasePromise::ExecutionRoutine *) = 0;
+    virtual bool operator()(PieceRoutine *, BasePieceCollection::ExecutionRoutine *) = 0;
   };
 
   template <typename F>
@@ -133,14 +121,14 @@ class PromiseRoutineDispatchService {
     F func;
    public:
     GenericDispatchPeekListener(F f) : func(f) {}
-    bool operator()(PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) final override {
+    bool operator()(PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) final override {
       return func(r, state);
     }
   };
 
-  virtual void Add(int core_id, PromiseRoutineWithInput *r, size_t nr_routines) = 0;
+  virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines) = 0;
   virtual void AddBubble() = 0;
-  virtual bool Preempt(int core_id, BasePromise::ExecutionRoutine *state) = 0;
+  virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;

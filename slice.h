@@ -12,6 +12,7 @@
 #include "shipping.h"
 #include "log.h"
 #include "entity.h"
+#include "vhandle.h"
 
 namespace felis {
 

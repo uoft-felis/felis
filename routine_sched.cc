@@ -171,7 +171,7 @@ void PWVScheduler::OnNodeRVPChangeImpl(FreeNodeEntry *node_ent)
 
 RVPInfo *PWVScheduler::GetRVPInfo(PriorityQueueValue *value)
 {
-  return RVPInfo::FromRoutine(std::get<0>(value->promise_routine));
+  return RVPInfo::FromRoutine(value->routine);
 }
 
 void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value)
@@ -319,10 +319,10 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     queue = qmem + offset_in_node;
 
     queue->zq.end = queue->zq.start = 0;
-    queue->zq.q = (PromiseRoutineWithInput *)
+    queue->zq.q = (PieceRoutine **)
                  mem::AllocMemory(
                      mem::EpochQueuePromise,
-                     max_item_percore * sizeof(PromiseRoutineWithInput),
+                     max_item_percore * sizeof(PieceRoutine *),
                      numa_node);
     if (EpochClient::g_enable_pwv) {
       queue->pq.sched_pol = PWVScheduler::New(max_item_percore, numa_node);
@@ -334,10 +334,10 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
                       mem::EpochQueueItem,
                       kHashTableSize * sizeof(PriorityQueueHashHeader),
                       numa_node);
-    queue->pq.pending.q = (PromiseRoutineWithInput *)
+    queue->pq.pending.q = (PieceRoutine **)
                          mem::AllocMemory(
                              mem::EpochQueuePromise,
-                             max_item_percore * sizeof(PromiseRoutineWithInput),
+                             max_item_percore * sizeof(PieceRoutine *),
                              numa_node);
     queue->pq.pending.start = 0;
     queue->pq.pending.end = 0;
@@ -377,7 +377,7 @@ void EpochExecutionDispatchService::Reset()
 }
 
 
-void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *routines,
+void EpochExecutionDispatchService::Add(int core_id, PieceRoutine **routines,
                                         size_t nr_routines)
 {
   auto &lock = queues[core_id]->lock;
@@ -401,7 +401,7 @@ again:
 
   for (; i < nr_routines; i++) {
     auto r = routines[i];
-    auto key = std::get<0>(r)->sched_key;
+    auto key = r->sched_key;
 
     if (key == 0) {
       auto pos = zend + zdelta++;
@@ -424,14 +424,13 @@ again:
 
 void
 EpochExecutionDispatchService::AddToPriorityQueue(
-    PriorityQueue &q, PromiseRoutineWithInput &r,
-    BasePromise::ExecutionRoutine *state)
+    PriorityQueue &q, PieceRoutine *&rt,
+    BasePieceCollection::ExecutionRoutine *state)
 {
   bool smaller = false;
-  auto [rt, in] = r;
   auto node = (PriorityQueueValue *) q.brk.Alloc(64);
   node->Initialize();
-  node->promise_routine = r;
+  node->routine = rt;
   node->state = state;
   auto key = rt->sched_key;
 
@@ -493,7 +492,7 @@ retry:
     auto r = zq.q[zstart];
     if (should_pop(r, nullptr)) {
       zq.start.store(zstart + 1, std::memory_order_relaxed);
-      state.current_sched_key = std::get<0>(r)->sched_key;
+      state.current_sched_key = r->sched_key;
       return true;
     }
     return false;
@@ -517,8 +516,8 @@ retry:
   if (q.waiting.len > 0
       && (q.waiting.len == kOutOfOrderWindow
           || q.sched_pol->ShouldPickWaiting(q.waiting.states[q.waiting.off]))) {
-    auto _placeholder = PromiseRoutineWithInput(nullptr, VarStr());
-    if (should_pop(_placeholder, ws.state)) {
+    // TODO: is this right?
+    if (should_pop(nullptr, ws.state)) {
       q.waiting.off = (q.waiting.off + 1) % kOutOfOrderWindow;
       q.waiting.len--;
       state.current_sched_key = ws.sched_key;
@@ -530,11 +529,11 @@ retry:
 
   if (!q.sched_pol->empty()) {
     auto node = q.sched_pol->Pick();
-    auto &promise_routine = node->promise_routine;
+    auto &rt = node->routine;
 
-    if (should_pop(promise_routine, node->object()->state)) {
+    if (should_pop(rt, node->object()->state)) {
       q.sched_pol->Consume(node);
-      state.current_sched_key = std::get<0>(promise_routine)->sched_key;
+      state.current_sched_key = rt->sched_key;
       state.ts++;
       return true;
     }
@@ -570,7 +569,7 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
-bool EpochExecutionDispatchService::Preempt(int core_id, BasePromise::ExecutionRoutine *routine_state)
+bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state)
 {
   auto &lock = queues[core_id]->lock;
   bool can_preempt = true;
@@ -614,12 +613,12 @@ int EpochExecutionDispatchService::TraceDependency(uint64_t key)
     if (q.end.load() > max_item_percore) puts("pending queue wraps around");
     abort_if(q.end.load() < q.start.load(), "WTF? pending queue underflows");
     for (auto i = q.start.load(); i < q.end.load(); i++) {
-      if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
+      if (q.q[i % max_item_percore]->sched_key == key) {
         printf("found %lu in the pending area of %d\n", key, core_id);
       }
     }
     for (auto i = 0; i < q.start.load(); i++) {
-      if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
+      if (q.q[i % max_item_percore]->sched_key == key) {
         printf("found %lu in the consumed pending area of %d\n", key, core_id);
       }
     }

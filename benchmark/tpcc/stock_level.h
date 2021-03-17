@@ -19,7 +19,7 @@ struct StockLevelState {
   std::array<uint, 300> item_ids;
   int n;
   felis::FutureValue<void> barrier;
-  felis::PromiseRoutine *last;
+  felis::PieceRoutine *last;
 
   felis::PWVGraph::Resource *res;
   int nr_res;

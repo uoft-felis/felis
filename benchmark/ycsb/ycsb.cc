@@ -126,16 +126,15 @@ void RMWTxn::Prepare()
     }
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
-          root->Then(
+          root->AttachRoutine(
               t, 1, // Always on the local node.
-              [](auto &ctx, auto _) -> Optional<VoidValue> {
+              [](auto &ctx) {
                 auto [k, i, state, handle, part] = ctx;
                 LookupIndex(k, i, state, handle);
 
                 if (Client::g_enable_pwv)
                   util::Instance<PWVGraphManager>()[part]->AddResource(
                       handle.serial_id(), PWVGraph::VHandleToResource(state->rows[i]));
-                return nullopt;
               },
               part); // Partitioning affinity.
 
@@ -181,9 +180,9 @@ void RMWTxn::Run()
 
     auto aff = std::numeric_limits<uint64_t>::max();
     // auto aff = AffinityFromRows(bitmap, state->rows);
-    root->Then(
+    root->AttachRoutine(
         MakeContext(), 1,
-        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle] = ctx;
           for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
             state->futures[i].Invoke(state, index_handle);
@@ -195,17 +194,16 @@ void RMWTxn::Run()
           for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
             ReadRow(index_handle(state->rows[i]));
           }
-          return nullopt;
         },
         aff);
 
   } else if (Client::g_enable_granola || Client::g_enable_pwv) {
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
-          root->Then(
+          root->AttachRoutine(
               t, 1,
-              [](auto &ctx, auto _) -> Optional<VoidValue> {
-                auto [k, i, state, handle, _part] = ctx;
+              [](auto &ctx) {
+                auto &[k, i, state, handle, _part] = ctx;
 
                 if (Client::g_dependency && i == kTotal - Client::g_extra_read - 1) {
                   while (state->signal != i) _mm_pause();
@@ -229,8 +227,6 @@ void RMWTxn::Run()
                   util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
                       handle.serial_id(), PWVGraph::VHandleToResource(state->rows[i]));
                 }
-
-                return nullopt;
               },
               part);
         });
@@ -245,21 +241,19 @@ void RMWTxn::Run()
 
           if (i == kTotal - Client::g_extra_read) {
             // All reads here
-            root->Then(
+            root->AttachRoutine(
                 t, 1,
-                [](auto &ctx, auto _) -> Optional<VoidValue> {
+                [](auto &ctx) {
                   auto [k, i, state, handle, _part] = ctx;
 
                   TxnRow vhandle = handle(state->rows[i]);
                   auto v = vhandle.Read<Ycsb::Value>();
                   std::copy(v.v.data(), v.v.data() + 100, buffer);
-
-                  return nullopt;
                 });
           } else {
-            root->Then(
+            root->AttachRoutine(
                 t, 1,
-                [](auto &ctx, auto _) -> Optional<VoidValue> {
+                [](auto &ctx) {
                   auto [k, i, state, handle, _part] = ctx;
                   // Last write
                   if (Client::g_dependency && i == kTotal - Client::g_extra_read - 1) {
@@ -274,8 +268,6 @@ void RMWTxn::Run()
                   v.v.resize_junk(90);
                   vhandle.Write(v);
                   state->signal.fetch_add(1);
-
-                  return nullopt;
                 }, part);
           }
         });

@@ -39,9 +39,9 @@ void DeliveryTxn::Prepare()
 {
   if (VHandleSyncService::g_lock_elision) {
     if (Client::g_enable_granola || Client::g_enable_pwv) {
-      root = new Promise<DummyValue>(nullptr, 128 + BasePromise::kInlineLimit);
+      root = new PieceCollection(128 + BasePieceCollection::kInlineLimit);
     } else {
-      root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
+      root = new PieceCollection(64 + BasePieceCollection::kInlineLimit);
     }
   }
 
@@ -168,7 +168,7 @@ void DeliveryTxn::Run()
 {
   if (Options::kEnablePartition && !g_tpcc_config.IsWarehousePinnable()
       && !Client::g_enable_granola && !Client::g_enable_pwv) {
-    root = new Promise<DummyValue>(nullptr, 64 + BasePromise::kInlineLimit);
+    root = new PieceCollection(64 + BasePieceCollection::kInlineLimit);
   }
 
   for (int i = 0; i < 10; i++) {
@@ -238,9 +238,9 @@ void DeliveryTxn::Run()
           if (Options::kEnablePartition)
             aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
 
-          root->Then(
+          root->AttachRoutine(
               MakeContext(bitmap, i, ts, o_carrier_id), node,
-              [](const auto &ctx, auto args) -> Optional<VoidValue> {
+              [](const auto &ctx) {
                 auto &[state, index_handle, bitmap, i, ts, carrier_id] = ctx;
 
                 probes::TpccDelivery{0, __builtin_popcount(bitmap)}();
@@ -273,15 +273,13 @@ void DeliveryTxn::Run()
                       index_handle.serial_id(),
                       PWVGraph::VHandleToResource(state->customers[i]));
                 }
-
-                return nullopt;
               },
               aff);
         }
 #endif
 
 #ifdef SPLIT_CUSTOMER_PIECE
-        // TODO: This code isn't well designed, nor well-debugged!
+        // TODO: This is broken!
 
         // Under hash sharding, we need to split an intra-txn dependency because
         // customer table may on a different machine.
@@ -304,9 +302,9 @@ void DeliveryTxn::Run()
       } else { // kEnablePartition && !WarehousePinnable()
         int d = i + 1;
         aff = g_tpcc_config.PWVDistrictToCoreId(d, 30);
-        root->Then(
+        root->AttachRoutine(
             MakeContext(i), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, i] = ctx;
               abort_if(state->new_orders[i] == nullptr, "??? i {}", i);
               DeleteNewOrder(state, index_handle, i);
@@ -315,13 +313,12 @@ void DeliveryTxn::Run()
                     index_handle.serial_id(),
                     PWVGraph::VHandleToResource(state->new_orders[i]));
               }
-              return nullopt;
             }, aff);
 
         aff = g_tpcc_config.PWVDistrictToCoreId(d, 40);
-        root->Then(
+        root->AttachRoutine(
             MakeContext(i, o_carrier_id), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, i, carrier_id] = ctx;
               UpdateOOrder(state, index_handle, i, carrier_id);
               if (Client::g_enable_pwv) {
@@ -329,14 +326,13 @@ void DeliveryTxn::Run()
                     index_handle.serial_id(),
                     PWVGraph::VHandleToResource(state->oorders[i]));
               }
-              return nullopt;
             }, aff);
 
         aff = g_tpcc_config.PWVDistrictToCoreId(d, 10);
         state->sum_future_values[i] = FutureValue<int>();
-        root->Then(
+        root->AttachRoutine(
             MakeContext(i, ts), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, i, ts] = ctx;
               state->sum_future_values[i].Signal(CalcSum(state, index_handle, i, ts));
               if (Client::g_enable_pwv) {
@@ -351,13 +347,12 @@ void DeliveryTxn::Run()
                       g_tpcc_config.PWVDistrictToCoreId(i + 1, 20));
                 }
               }
-              return nullopt;
             }, aff);
 
         aff = g_tpcc_config.PWVDistrictToCoreId(d, 20);
-        root->Then(
+        root->AttachRoutine(
             MakeContext(i), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, i] = ctx;
               int sum = state->sum_future_values[i].Wait();
               WriteCustomer(state, index_handle, i, sum);
@@ -366,7 +361,6 @@ void DeliveryTxn::Run()
                     index_handle.serial_id(),
                     PWVGraph::VHandleToResource(state->customers[i]));
               }
-              return nullopt;
             }, aff);
         state->customer_last[i] = root->last();
         RVPInfo::MarkRoutine(root->last());

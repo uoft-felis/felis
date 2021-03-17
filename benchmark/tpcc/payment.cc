@@ -190,9 +190,9 @@ void PaymentTxn::Run()
           }
         }
 
-        root->Then(
+        root->AttachRoutine(
             MakeContext(payment_amount, bitmap, filter), node,
-            [](const auto &ctx, auto args) -> Optional<VoidValue> {
+            [](const auto &ctx) {
               auto &[state, index_handle, payment_amount, bitmap, filter] = ctx;
 
               probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
@@ -227,14 +227,13 @@ void PaymentTxn::Run()
                       PWVGraph::VHandleToResource(state->customer));
                 }
               }
-              return nullopt;
             },
             aff);
       }
     } else {
-      root->Then(
+      root->AttachRoutine(
           MakeContext(bitmap, payment_amount), node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
+          [](const auto &ctx) {
             auto &[state, index_handle, bitmap, payment_amount] = ctx;
 
             if (bitmap & 0x01) {
@@ -262,8 +261,6 @@ void PaymentTxn::Run()
               vhandle.Write(c);
               ClientBase::OnUpdateRow(state->customer);
             }
-
-            return nullopt;
           });
     }
   }

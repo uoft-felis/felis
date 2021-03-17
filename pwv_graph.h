@@ -18,8 +18,8 @@ class VHandle;
 struct RVPInfo {
   bool is_rvp;
   std::atomic_uint8_t indegree;
-  static RVPInfo *FromRoutine(PromiseRoutine *r);
-  static void MarkRoutine(PromiseRoutine *r, uint8_t cnt = 1);
+  static RVPInfo *FromRoutine(PieceRoutine *r);
+  static void MarkRoutine(PieceRoutine *r, uint8_t cnt = 1);
 };
 static_assert(sizeof(RVPInfo) == 2);
 

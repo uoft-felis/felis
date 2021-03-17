@@ -3,7 +3,7 @@
 
 #include "tpcc.h"
 #include "txn_cc.h"
-#include "promise.h"
+#include "piece_cc.h"
 #include <tuple>
 
 namespace tpcc {

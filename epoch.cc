@@ -276,7 +276,7 @@ void CallTxnsWorker::Run()
 
     auto root = txn->root_promise();
     root->AssignAffinity(aff);
-    root->Complete(VarStr());
+    root->Complete();
 
     // Doesn't seems to work that well, but just in case it works well for some
     // workloads. For example, issuing takes a longer time.

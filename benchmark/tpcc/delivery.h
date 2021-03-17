@@ -3,7 +3,7 @@
 
 #include "tpcc.h"
 #include "txn_cc.h"
-#include "promise.h"
+#include "piece_cc.h"
 #include "pwv_graph.h"
 #include <tuple>
 #include <string_view>
@@ -27,7 +27,7 @@ struct DeliveryState {
 
   NodeBitmap nodes[10];
   InvokeHandle<DeliveryState, int, uint32_t> customer_future[10];
-  PromiseRoutine *customer_last[10];
+  PieceRoutine *customer_last[10];
 
   FutureValue<int> sum_future_values[10];
 

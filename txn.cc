@@ -115,8 +115,8 @@ BaseTxn::BaseTxnIndexOpContext::BaseTxnIndexOpContext(
   ForEachWithBitmap(
       keys_bitmap,
       [this, keys](int to, int from) {
-        key_len[to] = keys[from]->len;
-        key_data[to] = keys[from]->data;
+        key_len[to] = keys[from]->length();
+        key_data[to] = keys[from]->data();
       });
   ForEachWithBitmap(
       slices_bitmap,
@@ -225,7 +225,7 @@ VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx
 
   if (created) {
     VarStr *kstr = VarStr::New(ctx.key_len[idx]);
-    memcpy((void *) kstr->data, ctx.key_data[idx], ctx.key_len[idx]);
+    memcpy((void *) kstr->data(), ctx.key_data[idx], ctx.key_len[idx]);
 
     util::Instance<felis::SliceManager>().OnNewRow(
         ctx.slice_ids[idx], ctx.relation_ids[idx], kstr, result);

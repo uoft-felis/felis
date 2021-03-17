@@ -81,9 +81,9 @@ void StockLevelTxn::Prepare()
       part = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
     }
 
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, part), 1,
-        [](auto &ctx, auto _) -> Optional<VoidValue> {
+        [](auto &ctx) {
           auto &[state, handle, warehouse_id, district_id, p] = ctx;
           ScanOrderLineIndex(state, handle.serial_id(), warehouse_id, district_id);
           if (Client::g_enable_pwv) {
@@ -98,7 +98,6 @@ void StockLevelTxn::Prepare()
                 handle.serial_id(),
                 &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
           }
-          return nullopt;
         },
         part);
   }
@@ -145,9 +144,9 @@ void StockLevelTxn::Run()
       aff = Config::WarehouseToCoreId(warehouse_id);
     }
 
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, threshold), 0,
-        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, warehouse_id, district_id, threshold] = ctx;
 
           if (Options::kTpccReadOnlyDelayQuery)
@@ -163,7 +162,6 @@ void StockLevelTxn::Run()
                 index_handle.serial_id(), &ClientBase::g_pwv_stock_resources[warehouse_id - 1]);
             free(state->res);
           }
-          return nullopt;
         },
         aff);
     if (!Client::g_enable_granola && !Client::g_enable_pwv) {
@@ -172,9 +170,9 @@ void StockLevelTxn::Run()
   } else { // kEnablePartition && !IsWarehousePinnable()
     state->barrier = FutureValue<void>();
     aff = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id), 0,
-        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, warehouse_id, district_id] = ctx;
           ScanOrderLine(state, index_handle, warehouse_id, district_id);
           state->barrier.Signal();
@@ -189,13 +187,12 @@ void StockLevelTxn::Run()
             if (RVPInfo::FromRoutine(state->last)->indegree.fetch_sub(1) == 1)
               gm.NotifyRVPChange(index_handle.serial_id(), 0);
           }
-          return nullopt;
         },
         aff);
 
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, threshold), 0,
-        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, warehouse_id, district_id, threshold] = ctx;
           state->barrier.Wait();
           ScanStocks(state, index_handle, warehouse_id, district_id, threshold);
@@ -204,7 +201,6 @@ void StockLevelTxn::Run()
             util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
                 index_handle.serial_id(), &ClientBase::g_pwv_stock_resources[0]);
           }
-          return nullopt;
         },
         0); // Stock(0) partition
     state->last = root->last();

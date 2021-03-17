@@ -58,7 +58,13 @@ class VarStrView final {
 };
 
 // serve as the key/value of database
-struct VarStr {
+class VarStr final {
+  uint16_t len;
+  int16_t region_id;
+  VarStr() {}
+ public:
+  VarStr(const VarStr &rhs) = delete;
+  VarStr(VarStr &&rhs) = delete;
 
   static size_t NewSize(uint16_t length) { return sizeof(VarStr) + length; }
 
@@ -67,35 +73,33 @@ struct VarStr {
     VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
     ins->len = length;
     ins->region_id = region_id;
-    ins->data = (uint8_t *) ins + sizeof(VarStr);
+    // ins->p = (uint8_t *) ins + sizeof(VarStr);
     return ins;
   }
 
   static void operator delete(void *ptr) {
     if (ptr == nullptr) return;
     VarStr *ins = (VarStr *) ptr;
-    if (__builtin_expect(ins->data == (uint8_t *) ptr + sizeof(VarStr), 1)) {
-      mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
-    } else {
-      // Don't know who's gonna do that. Looks like it's a free from stack?!
-      std::abort();
-    }
+    mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
   }
 
   static VarStr *FromPtr(void *ptr, uint16_t length) {
     VarStr *str = static_cast<VarStr *>(ptr);
     str->len = length;
     str->region_id = -5206; // something peculiar, making you realize it's allocated adhoc.
-    str->data = (uint8_t *) str + sizeof(VarStr);
+    // str->p = (uint8_t *) ptr;
     return str;
   }
 
-  uint16_t len;
-  int region_id;
-  const uint8_t *data;
+  const uint8_t *data() const {
+    return (const uint8_t *) this + sizeof(VarStr);
+  }
 
-  VarStr() : len(0), region_id(0), data(nullptr) {}
-  VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), region_id(region_id), data(data) {}
+  uint8_t *data() {
+    return (uint8_t *) this + sizeof(VarStr);
+  }
+
+  uint16_t length() const { return len; }
 
   template <typename T>
   const T ToType() const {
@@ -105,15 +109,11 @@ struct VarStr {
   }
 
   std::string ToHex() const {
-    fmt::memory_buffer buf;
-    for (int i = 0; i < len; i++) {
-      fmt::format_to(buf, "{:x} ", data[i]);
-    }
-    return std::string(buf.data(), buf.size());
+    return ToView().ToHex();
   }
 
   VarStrView ToView() const {
-    return VarStrView(len, data);
+    return VarStrView(len, data());
   }
 };
 

@@ -1,6 +1,8 @@
+#include <unistd.h>
 #include "entity.h"
 #include "index.h"
 #include "literals.h"
+#include "vhandle.h"
 
 namespace felis {
 
@@ -13,13 +15,17 @@ void RowEntity::DecodeIOVec(struct iovec *vec)
 
   auto key_size = *((uint16_t *)(p + 8));
   assert(key_size > 0);
-  k->len = key_size;
-  memcpy((uint8_t *) k->data, p + 10, key_size);
+
+  auto pp = (uint8_t *) k;
+
+  k = VarStr::FromPtr(pp, key_size);
+  memcpy((uint8_t *) k->data(), p + 10, key_size);
+  pp += util::Align(VarStr::NewSize(key_size), 8);
 
   auto value_size = vec->iov_len - 10 - key_size;
   assert(value_size > 0);
-  v->len = value_size;
-  memcpy((uint8_t *) v->data, p + 10 + key_size, value_size);
+  v = VarStr::FromPtr(pp, value_size);
+  memcpy((uint8_t *) v->data(), p + 10 + key_size, value_size);
 }
 
 int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
@@ -32,14 +38,15 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
   vec[1].iov_len = 4;
   vec[1].iov_base = &slice;
   vec[2].iov_len = 2;
-  vec[2].iov_base = &(k->len);
-  vec[3].iov_len = k->len;
-  vec[3].iov_base = (void *) k->data;
+  auto klen = k->length();
+  vec[2].iov_base = &klen;
+  vec[3].iov_len = klen;
+  vec[3].iov_base = (void *) k->data();
 
-  auto v = handle_ptr->ReadExactVersion(handle_ptr->latest_version.load());
-  vec[4].iov_len = v->len;
-  vec[4].iov_base = (void *) v->data;
-  encoded_len = 10 + k->len + v->len;
+  VarStr *v = handle_ptr->ReadExactVersion(handle_ptr->latest_version.load());
+  vec[4].iov_len = v->length();
+  vec[4].iov_base = (void *) v->data();
+  encoded_len = 10 + klen + v->length();
 
   shipping_handle()->PrepareSend();
 

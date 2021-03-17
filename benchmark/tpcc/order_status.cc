@@ -95,9 +95,9 @@ void OrderStatusTxn::Prepare()
     }
 
     // Need to partition the index lookup!
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, customer_id, parts[0]), 1,
-        [](auto &ctx, auto _) -> Optional<VoidValue> {
+        [](auto &ctx) {
           auto &[state, handle, warehouse_id, district_id, customer_id, p] = ctx;
           LookupCustomerIndex(state, warehouse_id, district_id, customer_id);
           if (Client::g_enable_pwv) {
@@ -105,12 +105,11 @@ void OrderStatusTxn::Prepare()
                 handle.serial_id(),
                 PWVGraph::VHandleToResource(state->customer));
           }
-          return nullopt;
         },
         parts[0]);
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, customer_id, parts[1]), 1,
-        [](auto &ctx, auto _) -> Optional<VoidValue> {
+        [](auto &ctx) {
           auto &[state, handle, warehouse_id, district_id, customer_id, p] = ctx;
           ScanOrdersIndex(state, handle.serial_id(), warehouse_id, district_id, customer_id);
           if (Client::g_enable_pwv) {
@@ -118,7 +117,6 @@ void OrderStatusTxn::Prepare()
                 handle.serial_id(),
                 PWVGraph::VHandleToResource(state->order_line[0]));
           }
-          return nullopt;
         },
         parts[1]);
   }
@@ -144,9 +142,9 @@ void OrderStatusTxn::Run()
     if (g_tpcc_config.IsWarehousePinnable()) {
       aff = Config::WarehouseToCoreId(warehouse_id);
     }
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, customer_id), 0,
-        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, warehouse_id, district_id, customer_id] = ctx;
           INIT_ROUTINE_BRK(8 << 10);
 
@@ -170,15 +168,13 @@ void OrderStatusTxn::Run()
                 index_handle.serial_id(),
                 PWVGraph::VHandleToResource(state->order_line[0]));
           }
-
-          return nullopt;
         },
         aff);
   } else { // kEnablePartition && !IsWarehousePinnable()
     aff = g_tpcc_config.PWVDistrictToCoreId(district_id, 20);
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, customer_id), 0,
-        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, warehouse_id, district_id, customer_id] = ctx;
           INIT_ROUTINE_BRK(8 << 10);
           ReadCustomer(state, index_handle, warehouse_id, district_id, customer_id);
@@ -187,14 +183,13 @@ void OrderStatusTxn::Run()
                 index_handle.serial_id(),
                 PWVGraph::VHandleToResource(state->customer));
           }
-          return nullopt;
         },
         aff);
 
     aff = g_tpcc_config.PWVDistrictToCoreId(district_id, 10);
-    root->Then(
+    root->AttachRoutine(
         MakeContext(warehouse_id, district_id, customer_id), 0,
-        [](const auto &ctx, auto _) -> Optional<VoidValue> {
+        [](const auto &ctx) {
           auto &[state, index_handle, warehouse_id, district_id, customer_id] = ctx;
           int oid = state->oid;
           INIT_ROUTINE_BRK(8 << 10);
@@ -204,7 +199,6 @@ void OrderStatusTxn::Run()
                 index_handle.serial_id(),
                 PWVGraph::VHandleToResource(state->order_line[0]));
           }
-          return nullopt;
         },
         aff);
   }

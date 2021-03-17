@@ -267,7 +267,7 @@ void RowShipmentReceiver::Run()
   static constexpr int batchSize = 32; // entity batch num per lambda
   RowEntity ent[recvBufSize];
   for (int i = 0; i < recvBufSize; i++) {
-    ent[i].Prepare(VarStr::FromPtr(alloca(64), 64), VarStr::FromPtr(alloca(768), 768));
+    ent[i].Prepare(alloca(1024));
   }
 
   while (true) {
@@ -297,9 +297,9 @@ void RowShipmentReceiver::Run()
               auto rel_id = en[i].get_rel_id();
               auto slice_id = en[i].slice_id();
 
-              VarStr *k = VarStr::New(en[i].k->len), *v = VarStr::New(en[i].v->len);
-              memcpy((uint8_t *)k->data, en[i].k->data, en[i].k->len);
-              memcpy((uint8_t *)v->data, en[i].v->data, en[i].v->len);
+              VarStr *k = VarStr::New(en[i].k->length()), *v = VarStr::New(en[i].v->length());
+              memcpy((uint8_t *)k->data(), en[i].k->data(), en[i].k->length());
+              memcpy((uint8_t *)v->data(), en[i].v->data(), en[i].v->length());
 
               // InsertOrDefault:
               //   If the key exists in the masstree, then return the value

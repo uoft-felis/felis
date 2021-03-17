@@ -34,7 +34,7 @@ ycsb_srcs = [
 
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'routine_sched.h', 'gc.h', 'index.h', 'index_common.h',
-    'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'promise.h',
+    'log.h', 'mem.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'piece.h', 'piece_cc.h',
     'masstree_index_impl.h', 'hashtable_index_impl.h', 'varstr.h', 'sqltypes.h',
     'txn.h', 'txn_cc.h', 'vhandle.h', 'vhandle_sync.h', 'contention_manager.h', 'locality_manager.h', 'threshold_autotune.h',
     'commit_buffer.h', 'shipping.h', 'completion.h', 'entity.h',
@@ -46,7 +46,7 @@ db_headers = [
 db_srcs = [
     'epoch.cc', 'routine_sched.cc', 'txn.cc', 'log.cc', 'vhandle.cc', 'vhandle_sync.cc', 'contention_manager.cc', 'locality_manager.cc',
     'gc.cc', 'index.cc', 'mem.cc',
-    'promise.cc', 'masstree_index_impl.cc', 'hashtable_index_impl.cc',
+    'piece.cc', 'masstree_index_impl.cc', 'hashtable_index_impl.cc',
     'node_config.cc', 'console.cc', 'console_client.cc',
     'commit_buffer.cc', 'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
     'felis_probes.cc',

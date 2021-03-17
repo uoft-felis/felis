@@ -274,7 +274,7 @@ bool GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next)
   bool deleted = false;
 
   if (IsDataGarbage(row, p)) {
-    s.nr_bytes += p->len;
+    s.nr_bytes += p->length();
     deleted = true;
     delete p;
   }

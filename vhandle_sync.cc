@@ -144,7 +144,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
     }
 
     if ((wait_cnt & 0x00FF) == 0) {
-      if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
         // logger->info("Preempt back");
         // Broken???
         return true;
@@ -205,7 +205,7 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
     }
 
     if ((wait_cnt & 0x00FF) == 0) {
-      if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
         continue;
       }
     }

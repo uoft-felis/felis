@@ -1,7 +1,7 @@
 #ifndef ROUTINE_SCHED_H
 #define ROUTINE_SCHED_H
 
-#include "base_promise.h"
+#include "piece.h"
 #include "util/objects.h"
 #include "util/linklist.h"
 #include "node_config.h"
@@ -9,12 +9,12 @@
 namespace felis {
 
 struct PriorityQueueValue : public util::GenericListNode<PriorityQueueValue> {
-  PromiseRoutineWithInput promise_routine;
-  BasePromise::ExecutionRoutine *state;
+  PieceRoutine *routine;
+  BasePieceCollection::ExecutionRoutine *state;
 };
 
 struct WaitState {
-  BasePromise::ExecutionRoutine *state;
+  BasePieceCollection::ExecutionRoutine *state;
   uint64_t sched_key;
   uint64_t preempt_ts;
 };
@@ -60,7 +60,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   template <typename T> friend T &util::Instance() noexcept;
   EpochExecutionDispatchService();
 
-  using ExecutionRoutine = BasePromise::ExecutionRoutine;
+  using ExecutionRoutine = BasePieceCollection::ExecutionRoutine;
 
   struct CompleteCounter {
     ulong completed;
@@ -78,7 +78,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     PrioritySchedulingPolicy *sched_pol;
     PriorityQueueHashHeader *ht; // Hashtable. First item is a sentinel
     struct {
-      PromiseRoutineWithInput *q;
+      PieceRoutine **q;
       std::atomic_uint start;
       std::atomic_uint end;
     } pending; // Pending inserts into the heap and the hashtable
@@ -94,7 +94,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   };
 
   struct ZeroQueue {
-    PromiseRoutineWithInput *q;
+    PieceRoutine **q;
     std::atomic_ulong end;
     std::atomic_ulong start;
   };
@@ -129,15 +129,15 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   std::atomic_ulong tot_bubbles;
 
  private:
-  void AddToPriorityQueue(PriorityQueue &q, PromiseRoutineWithInput &r,
-                          BasePromise::ExecutionRoutine *state = nullptr);
+  void AddToPriorityQueue(PriorityQueue &q, PieceRoutine *&r,
+                          BasePieceCollection::ExecutionRoutine *state = nullptr);
   void ProcessPending(PriorityQueue &q);
 
  public:
-  void Add(int core_id, PromiseRoutineWithInput *routines, size_t nr_routines) final override;
+  void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
-  bool Preempt(int core_id, BasePromise::ExecutionRoutine *state) final override;
+  bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   int TraceDependency(uint64_t key) final override;

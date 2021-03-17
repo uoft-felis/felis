@@ -4,16 +4,16 @@
 #include "gopp/gopp.h"
 #include "log.h"
 #include "index_common.h"
-#include "base_promise.h"
+#include "piece.h"
 
 namespace felis {
 
-RVPInfo *RVPInfo::FromRoutine(PromiseRoutine *r)
+RVPInfo *RVPInfo::FromRoutine(PieceRoutine *r)
 {
   return (RVPInfo *) r->__padding__;
 }
 
-void RVPInfo::MarkRoutine(PromiseRoutine *r, uint8_t cnt)
+void RVPInfo::MarkRoutine(PieceRoutine *r, uint8_t cnt)
 {
   auto info = FromRoutine(r);
   info->indegree = cnt;

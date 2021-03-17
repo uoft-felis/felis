@@ -207,7 +207,7 @@ class ReceiverChannel : public IncomingTraffic {
     nr_left = 0;
   }
 
-  size_t Poll(PromiseRoutineWithInput *routines, size_t cnt);
+  size_t Poll(PieceRoutine **routines, size_t cnt);
  private:
   bool TryLock() {
     bool old = false;
@@ -224,7 +224,7 @@ class ReceiverChannel : public IncomingTraffic {
     }
     warned_during_poll = false;
   }
-  size_t PollRoutines(PromiseRoutineWithInput *routines, size_t cnt);
+  size_t PollRoutines(PieceRoutine **routines, size_t cnt);
   bool PollMappingTable();
   void Complete(size_t n);
 };
@@ -241,7 +241,7 @@ void ReceiverChannel::Complete(size_t n)
   }
 }
 
-size_t ReceiverChannel::Poll(PromiseRoutineWithInput *routines, size_t cnt)
+size_t ReceiverChannel::Poll(PieceRoutine **routines, size_t cnt)
 {
   bool keep_polling = false;
   size_t nr = 0;
@@ -271,7 +271,7 @@ size_t ReceiverChannel::Poll(PromiseRoutineWithInput *routines, size_t cnt)
   return nr;
 }
 
-size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t cnt)
+size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
 {
   uint64_t header;
   size_t i = 0;
@@ -288,7 +288,7 @@ size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t c
       }
       */
       break;
-    } else if (header == PromiseRoutine::kUpdateBatchCounter) {
+    } else if (header == PieceRoutine::kUpdateBatchCounter) {
       auto &conf = util::Instance<NodeConfiguration>();
       constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
       auto nr_nodes = conf.nr_nodes();
@@ -305,16 +305,13 @@ size_t ReceiverChannel::PollRoutines(PromiseRoutineWithInput *routines, size_t c
       in->Skip(buflen);
 
       transport->OnCounterReceived();
-    } else if (header & PromiseRoutine::kBubble) {
-      // TODO:
-      in->Skip(8);
     } else {
       abort_if(header % 8 != 0, "header isn't aligned {}", header);
       auto buflen = 8 + header;
       auto buf = (uint8_t *) alloca(buflen);
       if (in->Peek(buf, buflen) < buflen)
         break;
-      routines[i++] = PromiseRoutine::CreateFromPacket(buf + 8, header);
+      routines[i++] = PieceRoutine::CreateFromPacket(buf + 8, header);
       in->Skip(buflen);
     }
   }
@@ -450,7 +447,7 @@ void TcpNodeTransport::OnCounterReceived()
   }
 }
 
-void TcpNodeTransport::TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in)
+void TcpNodeTransport::TransportPromiseRoutine(PieceRoutine *routine)
 {
   auto &conf = node_config();
   auto src_node = conf.node_id();
@@ -458,24 +455,17 @@ void TcpNodeTransport::TransportPromiseRoutine(PromiseRoutine *routine, const Va
   int level = routine->level;
 
   auto &meta = conf.batcher().GetLocalData(level, go::Scheduler::CurrentThreadPoolId() - 1);
-  bool bubble = (in.data == (uint8_t *) PromiseRoutine::kBubblePointer);
 
   if (src_node != dst_node) {
     auto out = outgoing_channels.at(dst_node);
-    if (!bubble) {
-      uint64_t buffer_size = routine->TreeSize(in);
-      auto *buffer = (uint8_t *) out->Alloc(8 + buffer_size);
+    uint64_t buffer_size = routine->NodeSize();
+    auto *buffer = (uint8_t *) out->Alloc(8 + buffer_size);
 
-      memcpy(buffer, &buffer_size, 8);
-      routine->EncodeTree(buffer + 8, in);
-      out->Finish(8 + buffer_size);
-    } else {
-      auto *flag = (uint64_t *) out->Alloc(8);
-      *flag = PromiseRoutine::kBubble | routine->level;
-      out->Finish(8);
-    }
+    memcpy(buffer, &buffer_size, 8);
+    routine->EncodeNode(buffer + 8);
+    out->Finish(8 + buffer_size);
   } else {
-    ltp.TransportPromiseRoutine(routine, in);
+    ltp.TransportPromiseRoutine(routine);
   }
   meta.AddRoute(dst_node);
 }
@@ -532,7 +522,7 @@ bool TcpNodeTransport::PeriodicIO(int core)
     }
 
     cont_io = true;
-    PromiseRoutineWithInput routines[128];
+    PieceRoutine *routines[128];
     auto nr_recv = recv->Poll(routines, 128);
     if (nr_recv > 0) {
       // We do not need to flush, because we are adding pieces to ourself!

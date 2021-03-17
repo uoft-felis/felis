@@ -8,7 +8,7 @@
 
 #include "epoch.h"
 #include "varstr.h"
-#include "promise.h"
+#include "piece.h"
 #include "slice.h"
 #include "contention_manager.h"
 #include "opts.h"
@@ -51,7 +51,7 @@ class BaseTxn {
   // Entry functions for Epoch. Granola, PWV and Felis all have different
   // requirements on each phase is executed (in-order vs out-of-order).
   void Run0() {
-    PromiseRoutine *last = nullptr;
+    PieceRoutine *last = nullptr;
     if (EpochClient::g_enable_granola || EpochClient::g_enable_pwv) {
       PrepareInsert();
       Prepare();
@@ -84,7 +84,7 @@ class BaseTxn {
   }
  public:
 
-  virtual BasePromise *root_promise() = 0;
+  virtual BasePieceCollection *root_promise() = 0;
   virtual void ResetRoot() = 0;
 
   uint64_t serial_id() const { return sid; }

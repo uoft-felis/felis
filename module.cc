@@ -9,7 +9,7 @@
 #include "console.h"
 #include "index.h"
 #include "log.h"
-#include "base_promise.h"
+#include "piece.h"
 #include "slice.h"
 #include "txn.h"
 #include "gc.h"
