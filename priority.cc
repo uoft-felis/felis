@@ -392,9 +392,7 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 }
 
 bool PriorityTxn::CheckDeleteConflict(VHandle* handle) {
-  if (PriorityTxnService::g_conflict_read_bit)
-    return handle->CheckReadBit(this->sid);
-  return util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);
+  return this->CheckUpdateConflict(handle);
 }
 
 void PriorityTxn::Rollback(int update_cnt, int delete_cnt, int insert_cnt) {
