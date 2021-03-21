@@ -120,7 +120,7 @@ template <> void OnProbe(felis::probes::VHandleAppendSlowPath p)
   statcnt.msc_wait_cnt_avg << msc_wait;
 }
 
-#endif
+
 
 #if 0
 thread_local uint64_t last_wait_cnt;
@@ -242,11 +242,6 @@ ProbeMain::~ProbeMain()
     }
   }
   std::cout << "DONE printing version value size" << std::endl;
-
-#if 0
-  std::cout << "number of bytes allocated for varstr: "
-            << total_varstr_alloc_bytes << " (max " << max_varstr_alloc_bytes << ")" << std::endl;
-#endif
 
 #if 0
   std::cout << "number of bytes allocated for varstr: "

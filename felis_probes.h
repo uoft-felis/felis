@@ -111,6 +111,11 @@ struct TransientPersistentCount {
   void operator()() const;
 };
 
+struct VersionSizeArray {
+  unsigned int cur_size;
+  int delta;
+  void operator()() const;
+};
 
 struct VersionValueSizeArray {
   int cur_size;

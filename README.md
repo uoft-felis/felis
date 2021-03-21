@@ -75,8 +75,6 @@ buck-out/gen/db#release -c 127.0.0.1:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
 buck-out/gen/db#release -c 142.150.234.169:3148 -n host1 -w tpcc -Xcpu16 -Xmem16G
 
 for ycsb, need to run with 17G (idk why)
-142.150.234.169
-
 ```
 
 `-c` is the felis-controller IP address (<rpc_port> and <http_port>
@@ -100,14 +98,8 @@ proceed:
 ```
 curl localhost:<http_port>/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 curl 127.0.0.1:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
-<<<<<<< HEAD
-<<<<<<< HEAD
 curl 142.150.234.169:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
-=======
->>>>>>> 75557035 (update readme)
-=======
-curl 142.150.234.169:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
->>>>>>> ad9d4bd8 (remove major and minor GC)
+
 ```
 
 Upon receiving this, the controller would broadcast to every node to

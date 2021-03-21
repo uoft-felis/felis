@@ -486,17 +486,8 @@ namespace mem {
           [alloc_type, chunk_size, cap, this, node]() {
             fprintf(stderr, "allocating %lu on node %d\n",
                     (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
-            uint8_t * mem = nullptr;
-            // SHIRLEY: put the check here for now. everything for these types
-            // go in pmem.
-            if ((alloc_type == EntityPool) || (alloc_type == VhandlePool) || (alloc_type == RegionPool)) {
-              mem = (uint8_t *) AllocPersistentMemory(
+            auto mem = (uint8_t *) AllocMemory(
                 alloc_type, (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
-            } else {
-              mem = (uint8_t *) AllocMemory(
-                alloc_type, (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
-            }
-            
             int offset = node * kNrCorePerNode - g_core_shifting;
             for (int i = offset; i < offset + kNrCorePerNode; i++) {
               auto p = mem + (i - offset) * (kHeaderSize + chunk_size * cap);
