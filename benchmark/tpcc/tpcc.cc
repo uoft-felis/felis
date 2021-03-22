@@ -453,7 +453,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
           printf("warehouse %d coreid %d\n", k.w_id, handle->object_coreid());
           OnNewRow(slice_id, TableType::Warehouse, k, handle);
           // shirley: probe size of version value
-          //felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
+          felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
           // shirley: probe transient vs persistent
           felis::probes::TransientPersistentCount{true}();
           felis::InitVersion(handle, v.Encode());
@@ -497,7 +497,7 @@ void Loader<LoaderType::Item>::DoLoad()
     auto handle = tables().Get<tpcc::Item>().SearchOrCreate(k.EncodeView(large_buf));
     // no OnNewRow() here, we don't ship Item table
     // shirley: probe size of version value
-    //felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
+    felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
     // shirley: probe transient vs persistent
     felis::probes::TransientPersistentCount{true}();
     auto p = handle->AllocFromInline(v.EncodeSize());
@@ -534,7 +534,7 @@ void Loader<LoaderType::Stock>::DoLoad()
 
             OnNewRow(slice_id, TableType::Stock, k, handle);
             // shirley: probe size of version value
-            // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
+            felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
             // shirley: probe transient vs persistent
             felis::probes::TransientPersistentCount{true}();
             felis::InitVersion(handle, v.Encode());
@@ -606,7 +606,7 @@ void Loader<LoaderType::District>::DoLoad()
 
             OnNewRow(slice_id, TableType::District, k, handle);
             // shirley: probe size of version value
-            // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
+            felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
             // shirley: probe transient vs persistent
             felis::probes::TransientPersistentCount{true}();
             felis::InitVersion(handle, v.Encode());
@@ -674,7 +674,7 @@ void Loader<LoaderType::Customer>::DoLoad()
               auto handle = tables().Get<tpcc::Customer>().SearchOrCreate(k.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::Customer, k, handle);
               // shirley: probe size of version value
-              // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
+              felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
               // shirley: probe transient vs persistent
               felis::probes::TransientPersistentCount{true}();
               felis::InitVersion(handle, v.Encode());
@@ -784,7 +784,7 @@ void Loader<LoaderType::Order>::DoLoad()
               auto oo_handle = tables().Get<tpcc::OOrder>().SearchOrCreate(k_oo.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::OOrder, k_oo, oo_handle);
               // shirley: probe size of version value
-              // felis::probes::VersionValueSizeArray{(int)v_oo.EncodeSize()}();
+              felis::probes::VersionValueSizeArray{(int)v_oo.EncodeSize()}();
               // shirley: probe transient vs persistent
               felis::probes::TransientPersistentCount{true}();
               auto p = oo_handle->AllocFromInline(v_oo.EncodeSize());
@@ -800,7 +800,7 @@ void Loader<LoaderType::Order>::DoLoad()
               auto oo_idx_handle = tables().Get<tpcc::OOrderCIdIdx>().SearchOrCreate(k_oo_idx.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::OOrderCIdIdx, k_oo_idx, oo_idx_handle);
               // shirley: probe size of version value
-              // felis::probes::VersionValueSizeArray{(int)v_oo_idx.EncodeSize()}();
+              felis::probes::VersionValueSizeArray{(int)v_oo_idx.EncodeSize()}();
               // shirley: probe transient vs persistent
               felis::probes::TransientPersistentCount{true}();
               auto p = oo_idx_handle->AllocFromInline(v_oo_idx.EncodeSize());
@@ -817,7 +817,7 @@ void Loader<LoaderType::Order>::DoLoad()
                 auto no_handle = tables().Get<tpcc::NewOrder>().SearchOrCreate(k_no.EncodeView(large_buf));
                 OnNewRow(slice_id, TableType::NewOrder, k_no, no_handle);
                 // shirley: probe size of version value
-                // felis::probes::VersionValueSizeArray{(int)v_no.EncodeSize()}();
+                felis::probes::VersionValueSizeArray{(int)v_no.EncodeSize()}();
                 // shirley: probe transient vs persistent
                 felis::probes::TransientPersistentCount{true}();
                 auto p = no_handle->AllocFromInline(v_no.EncodeSize());
@@ -853,7 +853,7 @@ void Loader<LoaderType::Order>::DoLoad()
 
                 OnNewRow(slice_id, TableType::OrderLine, k_ol, ol_handle);
                 // shirley: probe size of version value
-                // felis::probes::VersionValueSizeArray{(int)v_ol.EncodeSize()}();
+                felis::probes::VersionValueSizeArray{(int)v_ol.EncodeSize()}();
                 // shirley: probe transient vs persistent
                 felis::probes::TransientPersistentCount{true}();
                 auto p = ol_handle->AllocFromInline(v_ol.EncodeSize());

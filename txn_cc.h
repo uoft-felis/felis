@@ -216,7 +216,7 @@ class Txn : public BaseTxn {
     // then do we need to handle "insert" during append?
     template <typename T> bool Write(const T &o) {
       //shirley: probe size of version value
-      //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+      felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
       bool usePmem = ((vhandle->last_version()) == sid);
       //shirley: probe transient vs persistent
@@ -226,7 +226,7 @@ class Txn : public BaseTxn {
 
     template <typename T> bool WriteTryInline(const T &o) {
       //shirley: probe size of version value
-      //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+      felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
       //shirley: copied from Write above. Don't allow txns to write to inlined
       bool usePmem = ((vhandle->last_version()) == sid);

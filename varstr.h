@@ -73,14 +73,14 @@ class VarStr final {
   static VarStr *New(uint16_t length, bool use_pmem = true) {
     int region_id = mem::ParallelPool::CurrentAffinity();
     VarStr *ins;
-    //shirley: allocate all from transient, except last version of each epoch
+    //shirley: allocate all from transient, except last version of each epoch (or index)
     if (!use_pmem) {
       ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
-      probes::TransientPersistentCount{false}();
+      //probes::TransientPersistentCount{false}();
     }
     else {
       ins = (VarStr *) mem::GetPersistentPool().Alloc(NewSize(length));
-      probes::TransientPersistentCount{true}();
+      //probes::TransientPersistentCount{true}();
     }
     //VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
     
