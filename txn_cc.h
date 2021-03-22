@@ -219,6 +219,8 @@ class Txn : public BaseTxn {
       //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
       bool usePmem = ((vhandle->last_version()) == sid);
+      //shirley: probe transient vs persistent
+      probes::TransientPersistentCount{usePmem}();
       return WriteVarStr(o.Encode(usePmem));
     }
 
@@ -228,6 +230,7 @@ class Txn : public BaseTxn {
 
       //shirley: copied from Write above. Don't allow txns to write to inlined
       bool usePmem = ((vhandle->last_version()) == sid);
+      probes::TransientPersistentCount{usePmem}();
       return WriteVarStr(o.Encode(usePmem));
 
       //shirley: remove inline

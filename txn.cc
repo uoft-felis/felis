@@ -224,7 +224,7 @@ VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx
   bool created = false;
   VHandle *result = tbl->SearchOrCreate(key, &created);
 
-  if (created) {
+  if (created && NodeConfiguration::g_data_migration) {
     VarStr *kstr = VarStr::New(ctx.key_len[idx]);
     memcpy((void *) kstr->data(), ctx.key_data[idx], ctx.key_len[idx]);
 
