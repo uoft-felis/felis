@@ -47,11 +47,14 @@ struct NewOrderState {
     Tuple<NewOrderStruct::OrderDetail> args;
     void operator()(int id, VHandle *row) {
       state->orderlines[id] = row;
+      // shirley TODO: handle(row).write sid1; Don't call append new version bc
+      // don't need version array yet.
       handle(row).AppendNewVersion();
 
       auto &[detail] = args;
       auto amount = detail.unit_price[id] * detail.order_quantities[id];
 
+      // shirley TODO: change to WriteInitialInline
       handle(row).WriteTryInline(
           OrderLine::Value::New(detail.item_id[id], 0, amount,
                                 detail.supplier_warehouse_id[id],
@@ -67,15 +70,20 @@ struct NewOrderState {
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     OOrder::Value args;
     void operator()(int id, VHandle *row) {
+      // shirley TODO: handle(row).write sid1; Don't call append new version bc 
+      // don't need version array yet.
       handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;
+        // shirley TODO: change to WriteInitialInline
         handle(row).WriteTryInline(args);
       } else if (id == 1) {
         state->neworder = row;
+        // shirley TODO: change to WriteInitialInline
         handle(row).WriteTryInline(NewOrder::Value());
       } else if (id == 2) {
         state->cididx = row;
+        // shirley TODO: change to WriteInitialInline
         handle(row).WriteTryInline(OOrderCIdIdx::Value());
       }
       // handle(row).AppendNewVersion(id < 2);

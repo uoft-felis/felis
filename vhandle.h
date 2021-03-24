@@ -200,8 +200,18 @@ class SortedArrayVHandle : public BaseVHandle {
   const size_t nr_capacity() const { return capacity; }
   const size_t nr_versions() const { return size; }
   const size_t current_start() const { return cur_start;}
-  uint64_t first_version() const { return versions[0]; }
-  uint64_t last_version() const { return versions[size - 1]; }
+  uint64_t first_version() const { 
+    if (!versions) 
+      return versions[0]; //shirley TODO: return sid1
+    else 
+      return versions[0];
+  }
+  uint64_t last_version() const { 
+    if (versions)
+      return versions[size - 1]; 
+    else
+      return versions[size - 1]; // assert(0); // shirley TODO: assert bc versions shouldn't be nullptr?
+  }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed) + 1; }
   int nr_ondemand_split() const { return nr_ondsplt; }
   uint8_t region_id() const { return alloc_by_regionid; }

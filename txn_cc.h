@@ -212,8 +212,6 @@ class Txn : public BaseTxn {
     // shirley: since we want to allocate from inlined vhandle, 
     // we probably need do something similar to the previous WriteTryInline
     // to use vhandle->AllocFromInline, and EncodeFromPtrOrDefault
-    // also, what if insert doesn't write initial version value? 
-    // then do we need to handle "insert" during append?
     template <typename T> bool Write(const T &o) {
       //shirley: probe size of version value
       felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
@@ -221,22 +219,58 @@ class Txn : public BaseTxn {
       bool usePmem = ((vhandle->last_version()) == sid);
       //shirley: probe transient vs persistent
       probes::TransientPersistentCount{usePmem}();
+
+      //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
+      // if (usePmem) {
+        // VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem)
+        // sid2 = sid;
+        // ptr2 = val;
+        // return WriteVarStr(val);
+      // }
+      // else
       return WriteVarStr(o.Encode(usePmem));
     }
 
+    // shirley TODO: WriteTryInline should be the same as Write.
+    // use WriteInitialInline for row inserts
     template <typename T> bool WriteTryInline(const T &o) {
       //shirley: probe size of version value
       felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
-      //shirley: copied from Write above. Don't allow txns to write to inlined
       bool usePmem = ((vhandle->last_version()) == sid);
+      //shirley: probe transient vs persistent
       probes::TransientPersistentCount{usePmem}();
+
+      //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
+      // if (usePmem) {
+        // VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
+        // sid2 = sid;
+        // ptr2 = val;
+        // return WriteVarStr(val);
+      // }
+      // else
       return WriteVarStr(o.Encode(usePmem));
 
-      //shirley: remove inline
+      //shirley: removed inline (from original Caracal)
       // bool usePmem = ((vhandle->last_version()) == sid);
       // return WriteVarStr(o.EncodeToPtrOrDefault(
       //     vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem));
+    }
+
+    template <typename T> bool WriteInitialInline(const T &o) {
+      //shirley: probe size of version value
+      felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+
+      //shirley: initial version (after insert) should be inlined if possible.
+      bool usePmem = true;
+      //shirley: probe transient vs persistent
+      probes::TransientPersistentCount{usePmem}();
+      // VarStr *val = 
+      // vhandle -> sid1 = sid
+      // vhandle -> ptr1 = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
+      //shirley TODO: instead of calling WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
+      return WriteVarStr(o.EncodeToPtrOrDefault(
+          vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem));
     }
   };
 

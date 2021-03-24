@@ -64,7 +64,8 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   const size_t new_len = new_cap * sizeof(uint64_t);
 
   // shirley todo: should grab new mem from parallel break pool
-  auto new_p = (uint64_t *) mem::GetDataRegion().Alloc(2 * new_len);
+  // auto new_p = (uint64_t *)mem::GetTransientPool().Alloc(2 * new_len);
+  auto new_p = (uint64_t *)mem::GetDataRegion().Alloc(2 * new_len);
   if (!new_p) {
     return nullptr;
   }
@@ -163,6 +164,17 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight)
 {
   if (ondemand_split_weight) nr_ondsplt += ondemand_split_weight;
+
+  // shirley: if versions is nullptr, allocate new version array, copy sid1 &
+  // ptr1, set capacity = x, size = 1, latest_version = 0, (cur_start = 0?) if
+  // (!versions) {
+  //   versions = (uint64_t *)mem::GetTransientPool().Alloc(64); //shirley TODO: initial size TBD. 64 is ok.
+  //   versions[0] = sid1;
+  //   versions[1] = ptr1;
+  //   capacity = 4;
+  //   size = 1;
+  //   latest_version.store(0);
+  //}
 
   // append this version at the end of version array
   IncreaseSize(1, epoch_nr);
@@ -298,6 +310,18 @@ found:
 //   but if sid = 4, then we don't have the value for it to read, then returns nullptr
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
+  //shirley: if versions is nullptr, read from sid1/sid2
+  if (!versions) {
+    // shirley TODO:
+    // if (sid >= sid1) return (VarStr *) ptr1;
+    // else return nullptr;
+
+    // shirley TODO future: if we use the approach that uses minor GC (and not as much major GC)
+    // then we need to check sid2 before sid1. But, we don't need to sync().WaitForData bc if versions is 
+    // null or out of date epoch, then the data is already written in prev epoch. If it was updated in curr epoch 
+    // then we won't go into this code (i.e. there won't be null versions or out-dated versions ptr).
+  }
+
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
@@ -313,6 +337,9 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
   assert(size > 0);
   assert(size < capacity);
   assert(version_idx < size);
+  // shirley TODO: assert: we shouldn't reach this function unless we're running
+  // granola / pwv / data migration if not, need to handle if versions is null
+  // assert(0);
 
   auto objects = versions + capacity;
   volatile uintptr_t *addr = &objects[version_idx];
