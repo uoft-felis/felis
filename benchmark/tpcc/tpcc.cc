@@ -500,8 +500,10 @@ void Loader<LoaderType::Item>::DoLoad()
     felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
     // shirley: probe transient vs persistent
     felis::probes::TransientPersistentCount{true}();
-    auto p = handle->AllocFromInline(v.EncodeSize());
-    felis::InitVersion(handle, v.EncodeToPtrOrDefault(p));
+    //shirley: temporarily disable alloc from inline
+    felis::InitVersion(handle, v.Encode());
+    // auto p = handle->AllocFromInline(v.EncodeSize());
+    // felis::InitVersion(handle, v.EncodeToPtrOrDefault(p));
   }
   // logger->info("Item Loader done.");
 }
@@ -787,8 +789,10 @@ void Loader<LoaderType::Order>::DoLoad()
               felis::probes::VersionValueSizeArray{(int)v_oo.EncodeSize()}();
               // shirley: probe transient vs persistent
               felis::probes::TransientPersistentCount{true}();
-              auto p = oo_handle->AllocFromInline(v_oo.EncodeSize());
-              felis::InitVersion(oo_handle, v_oo.EncodeToPtrOrDefault(p));
+              // shirley: temporarily disable alloc from inline
+              felis::InitVersion(oo_handle, v_oo.Encode());
+              // auto p = oo_handle->AllocFromInline(v_oo.EncodeSize());
+              // felis::InitVersion(oo_handle, v_oo.EncodeToPtrOrDefault(p));
             });
 
         const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, c_ids[c - 1], k_oo.o_id);
@@ -803,8 +807,10 @@ void Loader<LoaderType::Order>::DoLoad()
               felis::probes::VersionValueSizeArray{(int)v_oo_idx.EncodeSize()}();
               // shirley: probe transient vs persistent
               felis::probes::TransientPersistentCount{true}();
-              auto p = oo_idx_handle->AllocFromInline(v_oo_idx.EncodeSize());
-              felis::InitVersion(oo_idx_handle, v_oo_idx.EncodeToPtrOrDefault(p));
+              // shirley: temporarily disable alloc from inline
+              felis::InitVersion(oo_idx_handle, v_oo_idx.Encode());
+              // auto p = oo_idx_handle->AllocFromInline(v_oo_idx.EncodeSize());
+              // felis::InitVersion(oo_idx_handle, v_oo_idx.EncodeToPtrOrDefault(p));
             });
 
         if (c >= 2101) {
@@ -820,8 +826,10 @@ void Loader<LoaderType::Order>::DoLoad()
                 felis::probes::VersionValueSizeArray{(int)v_no.EncodeSize()}();
                 // shirley: probe transient vs persistent
                 felis::probes::TransientPersistentCount{true}();
-                auto p = no_handle->AllocFromInline(v_no.EncodeSize());
-                felis::InitVersion(no_handle, v_no.EncodeToPtrOrDefault(p));
+                // shirley: temporarily disable alloc from inline
+                felis::InitVersion(no_handle, v_no.Encode());
+                // auto p = no_handle->AllocFromInline(v_no.EncodeSize());
+                // felis::InitVersion(no_handle, v_no.EncodeToPtrOrDefault(p));
               });
         }
 
@@ -856,8 +864,10 @@ void Loader<LoaderType::Order>::DoLoad()
                 felis::probes::VersionValueSizeArray{(int)v_ol.EncodeSize()}();
                 // shirley: probe transient vs persistent
                 felis::probes::TransientPersistentCount{true}();
-                auto p = ol_handle->AllocFromInline(v_ol.EncodeSize());
-                felis::InitVersion(ol_handle, v_ol.EncodeToPtrOrDefault(p));
+                // shirley: temporarily disable alloc from inline
+                felis::InitVersion(ol_handle, v_ol.Encode());
+                // auto p = ol_handle->AllocFromInline(v_ol.EncodeSize());
+                // felis::InitVersion(ol_handle, v_ol.EncodeToPtrOrDefault(p));
               });
         }
       }
