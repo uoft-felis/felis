@@ -259,6 +259,81 @@ void GC::RunGC()
   }
 }
 
+void GC::RunPmemGC()
+{
+  // TODO: add memory pressure detection.
+  if (g_lazy)
+    return;
+
+  auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+  int q_idx = (cur_epoch_nr + 1) % g_gc_every_epoch;
+
+  auto &s = stats[go::Scheduler::CurrentThreadPoolId() - 1];
+
+  GarbageBlock *b = collect_head.load();
+  while (true) {
+    // logger->info("GC block {}", (void *) b);
+    while (!b || !collect_head.compare_exchange_strong(b, b->next->object())) {
+      if (!b) {
+        return;
+      }
+    }
+
+    size_t i = 0;
+    // After processing this block, we always need to put it back into the slab!
+    // util::MCSSpinLock::QNode qnode;
+    auto slab = g_slabs[b->alloc_core];
+    b->Initialize();
+
+    //set the version array pointers to NULL
+    for (auto vhandle : b->rows)
+    {
+      vhandle->versions = nullptr;
+    }
+
+    /* Not sure what is happening here
+    while (b->bitmap != 0) {
+      i = __builtin_ffsll(b->bitmap) - 1;
+      // logger->info("Found {} bitmap {:x}", i, b->bitmap);
+      // abort_if((uint64_t) &b->rows[i] != b->rows[i]->gc_handle.load(),
+      //          "gc_handle {:x} i {} blk {}", b->rows[i]->gc_handle.load(), i, (void *) b);
+
+      auto old = s.nr_bytes;
+      auto nr_processed = Process(b->rows[i], cur_epoch_nr, 16_K);
+      if (nr_processed < 16_K) {
+        b->rows[i]->gc_handle = 0;
+        b->bitmap &= ~(1ULL << i);
+        s.nr_rows++;
+        continue;
+      }
+
+      // Too much work for this block, am I the straggler?
+      if (collect_head == nullptr) {
+        // Add this block back into the slab.
+        // slab->lock.Acquire(&qnode);
+        if (__builtin_popcountll(b->bitmap) == GarbageBlock::kMaxNrRows) {
+          b->InsertAfter(&slab->full[q_idx]);
+        } else {
+          b->InsertAfter(&slab->half[q_idx]);
+        }
+        // slab->lock.Release(&qnode);
+
+        s.nr_rows++;
+        s.straggler = true;
+        return;
+      }
+    } */
+    
+    // Mark this block free
+    // slab->lock.Acquire(&qnode);
+    b->InsertAfter(&g_slabs[b->alloc_core]->free);
+    // slab->lock.Release(&qnode);
+
+    s.nr_blocks++;
+    b = b->next->object();
+  }
+}
+
 size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 {
   util::MCSSpinLock::QNode qnode;

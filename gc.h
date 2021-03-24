@@ -28,6 +28,7 @@ class GC {
   void RemoveRow(VHandle *row, uint64_t gc_handle);
   void PrepareGCForAllCores();
   void RunGC();
+  void RunPmemGC();
   void PrintStats();
   void ClearStats() {
     for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
