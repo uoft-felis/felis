@@ -288,10 +288,15 @@ void GC::RunPmemGC()
     //set the version array pointers to NULL
     for (auto vhandle : b->rows)
     {
-      vhandle->versions = nullptr;
+      if(vhandle)
+      {
+        vhandle->versions = nullptr;
+      }
     }
 
     /* Not sure what is happening here
+
+
     while (b->bitmap != 0) {
       i = __builtin_ffsll(b->bitmap) - 1;
       // logger->info("Found {} bitmap {:x}", i, b->bitmap);
@@ -322,7 +327,10 @@ void GC::RunPmemGC()
         s.straggler = true;
         return;
       }
-    } */
+    } 
+    
+    
+    */
     
     // Mark this block free
     // slab->lock.Acquire(&qnode);
