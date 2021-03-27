@@ -28,9 +28,27 @@ class VHandleSyncService {
 
 class BaseVHandle {
  public:
-  static constexpr size_t kSize = 128; // Corey: Inlined version values in old vhandle layout (Since all in DRAM?)
-  static constexpr size_t kInlinedSize = 256; // Corey: Inlineded version values in new vhandle layout
+  //Corey: Vhandle_Metadata(64B) | Inline_Version_Array(32B) | Mask1(1B)|Mask2(1B)|MiniHeap(158B)
+  //Corey: Inline_Version_Array(32B) = Sid1(8B)|Ptr1(8B)|Sid2(8B)|Ptr2(8B)
+  //Corey: Set Inline offsets - Doesn't take up memory
+  static constexpr size_t vhandleMetadataSize = 64;
+  static constexpr size_t ineTwoVersionArraySid1Size = 8;
+  static constexpr size_t inlineTwoVersionArrayPtr1Size = 8;
+  static constexpr size_t inlineTwoVersionArraySid2Size = 8;
+  static constexpr size_t inlineTwoVersionArrayPtr2Size = 8;
+  static constexpr size_t inlineTwoVersionArraySize = ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size + 
+              inlineTwoVersionArraySid2Size + inlineTwoVersionArrayPtr2Size; // 32
+  static constexpr size_t inlineMiniHeapMask1Size = 1;
+  static constexpr size_t inlineMiniHeapMask2Size = 1;
+  static constexpr size_t inlineMiniHeapSize = 158;
 
+  //Corey TODO: Comment out Non-Inlined vhandle [vhandle info & pointer to version array | version array]
+  static constexpr size_t kSize = 128;
+  //Corey: Inlineded version values in new vhandle layout
+  //Corey: Total size to be used for VHandle + Inline for PMem design
+  static constexpr size_t kInlinedSize = vhandleMetadataSize + inlineTwoVersionArraySize +
+                inlineMiniHeapMask1Size + inlineMiniHeapMask2Size +
+                inlineMiniHeapSize; // Should be 256
   //shirley TODO: (un-inlined) pool can be removed bc all vhandles are inlined
   static mem::ParallelSlabPool pool;
 
@@ -38,6 +56,8 @@ class BaseVHandle {
   // larger: 4-cache linekInlinedSizes.
   static mem::ParallelSlabPool inline_pool;
   static void InitPool();
+
+  // Corey: Pool is not needed
   static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
  public:
 
@@ -63,19 +83,19 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t this_coreid;
   int8_t cont_affinity;
   
-  uint8_t inline_used; // I think this is a mask (1bit = 1byte used for inline version array, not values)
-
-  //uint8_t inline_pmem_ptr1; // Mask to track ptr1 area in PMem inline version data space
-  //uint8_t inline_pmem_ptr2; // Mask to track ptr2 area in PMem inline version data space
+  //Corey: TODO comment out: Inline Mask (1bit = 32byte used for inline version array miniheap tracking)
+  uint8_t inline_used;
 
   unsigned int capacity;
   unsigned int size;
   unsigned int cur_start;
 
-  std::atomic_int latest_version; // the latest written version's offset in *versions
+  //Corey: the latest written version's offset in *versions
+  std::atomic_int latest_version;
   int nr_ondsplt;
-  // versions: ptr to the version array.
-  // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
+  //Corey: versions: ptr to the version array.
+  //Corey: [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
+  //Corey: TODO Inline Pmem or Transient
   uint64_t *versions;
   util::OwnPtr<RowEntity> row_entity;
   std::atomic_long buf_pos = -1;
@@ -93,7 +113,7 @@ class SortedArrayVHandle : public BaseVHandle {
       pool.Free(ptr, phandle->this_coreid);
   }
 
-  // What is the purpose of these two?
+  //Corey: New() not necessary in new design
   static SortedArrayVHandle *New();
   static SortedArrayVHandle *NewInline();
 
@@ -103,6 +123,57 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
+
+  enum SidType {
+    sid1,
+    sid2
+  };
+
+  //Corey: Get Sid value
+  uint64_t GetInlineSid(SidType sidType) {
+    uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
+    if (sidType == sid2) {
+      sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
+    }
+    return *((uint64_t *)sidPtr);
+  }
+  
+  //Corey: Write Sid Ptr value
+  void SetInlineSid(SidType sidType, uint64_t sidValue) {
+    uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
+    if (sidType == sid2) {
+      sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
+    }
+    *((uint64_t *)sidPtr) = sidValue;
+  }
+
+  //Corey: Get Inline Ptr value
+  //Corey: This one returns a pointer to ptr1
+  uint8_t **GetInlinePtrPtr(SidType sidType) {
+    uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
+    if (sidType == sid2) {
+      sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
+    }
+    return sidPtr;
+  }
+  //Corey: This one returns pointer to miniheap
+  uint8_t *GetInlinePtr(SidType sidType) {
+    uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
+    if (sidType == sid2) {
+      sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
+    }
+    return *sidPtr;
+  }
+
+  //Corey: Set Inline Ptr value to the address passed in to function
+  void SetInlinePtr(SidType sidType, uint8_t *miniHeapPtrAddr) {
+    uint8_t **sidPtr = (uint8_t **)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
+    if (sidType == sid2) {
+      sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
+    }
+    *sidPtr = miniHeapPtrAddr;
+  }
+
   void Prefetch() const { __builtin_prefetch(versions); }
 
   std::string ToString() const;
@@ -110,6 +181,7 @@ class SortedArrayVHandle : public BaseVHandle {
   //shirley TODO: we don't use inline_used variable for our design
   bool is_inlined() const { return inline_used != 0xFF; } // Corey: this is confusing?
 
+  //Corey: Old Design Alloc
   uint8_t *AllocFromInline(size_t sz) {
     if (inline_used != 0xFF) {
       sz = util::Align(sz, 32); // Here aligns to 32 but in free uses 16
@@ -127,6 +199,7 @@ class SortedArrayVHandle : public BaseVHandle {
     return nullptr;
   }
 
+  //Corey: Old Design
   void FreeToInline(uint8_t *p, size_t sz) {
     if (inline_used != 0xFF) { // This line makes no sense as i'd think you'd still want to free if full
       sz = util::Align(sz, 16);
@@ -136,65 +209,83 @@ class SortedArrayVHandle : public BaseVHandle {
       inline_used &= ~(mask << off);
     }
   }
+  
+  /* Corey:
+    1) Try offest [two 8-bit in mask space] | uses all bits for byte granularity
+    2) Try 32 mask [one 8-bit in vhandle] | use 5-bits / wastes 3-bits for 32byte granularity
+    3) Try 16 mask [two 8-bit in mask space] uses 10-bits / wastes 6-bits for 16byte granularity
 
-  // To allocate ptr1/ptr2 version data to be placed in PMem's vhandle inline version data area
-  /*uint8_t *AllocFromInlinePmem(size_t sz) {
-    if (inline_used == 0xFF) return nullptr;
-    sz = util::Align(sz, 32); // Align in bytes
-    if (sz > 160) return nullptr; // We are using 160Byte inlined version values 
+    To allocate ptr1/ptr2 version data to be placed in PMem's vhandle inline version data area
+    Total size to be used for VHandle + Inline for PMem design
+  */
+  uint8_t *AllocFromInlinePmem(size_t sz) {
+    // printf("Size: %ld\n", sz);
+
+    // Check requests size fits in miniheap
+    if (sz > inlineMiniHeapSize) return nullptr;
+
+    // Mask Offset stores byte offset = [0 to 158]
+    uint8_t *mask1Ptr = (uint8_t *)this + (vhandleMetadataSize + inlineTwoVersionArraySize); // Store Byte Offset
+    uint8_t *mask2Ptr = mask1Ptr + inlineMiniHeapMask1Size; // Store Byte Offset
+    uint8_t *startOfMiniHeap = mask2Ptr + inlineMiniHeapMask2Size;
     
-    // Check to make sure both inline ptrs are currently being used
-    if (inline_pmem_ptr1 != 0 && inline_pmem_ptr2 != 0) return nullptr;
-    // assert(inline_pmem_ptr1 != 0 && inline_pmem_ptr2 != 0, "SortedArrayVHandle is larger than a cache line");
+    //printf("Mask1: %p | Mask2: %p | MiniHeap: %p\n", mask1Ptr, mask2Ptr, startOfMiniHeap);
+    //printf("Mask1Val: %d | Mask2Val: %d\n", *mask1Ptr, *mask2Ptr);
 
-  // Psudo Code
-  //  1) check that space exists 
-  //  either inline_pmem_ptr1 | inline_pmem_ptr1 < 160B
-  //  2) As only two versions will exist in this space,
-  //  only need to check 
-  //  - make sure two don't already exist
-  //  - get ptr mask size for ptr that exists 
-  //    - either only ptr1 or ptr2
-  //  3) check size of input arg and find closest space for it
-  //  4) if found return ptr address, else nullptr
+    // Check to make sure miniheap not full - Very big last version stored
+    int trackedSize = (*mask1Ptr == *mask2Ptr && *mask1Ptr == 0) ? 0 : *mask2Ptr - *mask1Ptr + 1;
+    //printf("TrackedSize: %d\n", trackedSize);
 
-    uint8_t mask = (1 << sz) - 1;
-
-    // If nothing set yet then just put to front
-    if (inline_pmem_ptr1 == 0 && inline_pmem_ptr2 == 0) {
-      inline_pmem_ptr1 = mask;
-      return (uint8_t *) this + 96;
-    }
-    // Else only ptr1 should exist
-    else if (inline_pmem_ptr1) {
-      // Set ptr2
-    }
-    else if (inline_pmem_ptr2) {
-      // 
+    if (trackedSize >= inlineMiniHeapSize) return nullptr;
+    else if (trackedSize <= 0) {
+        *mask1Ptr = 0;
+        *mask2Ptr = sz - 1;
+        // Return address start of new allocation
+        //printf("Init | Mask1Val: %d | Mask2Val: %d\n\n", *mask1Ptr, *mask2Ptr);
+        return startOfMiniHeap + *mask1Ptr;
     }
 
-
-      for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
-        if ((inline_used & (mask << off)) == 0) {
-          inline_used |= (mask << off);
-          return (uint8_t *) this + 128 + (off << 5);
-        }
-      }
+    // find closest space for allocation
+    int diffSpaceAtFront = (*mask1Ptr >= sz) ? *mask1Ptr - sz : -1; // Extra space between end of new allocation and start of last
+    int diffSpaceAtEnd = inlineMiniHeapSize - *mask2Ptr; // Space after end of last allocation
+    diffSpaceAtEnd = (diffSpaceAtEnd >= sz) ? diffSpaceAtEnd - sz : -1; // Extra space after end of new allocation and end of miniheap
+    //printf("diffSpaceAtFront: %d | diffSpaceAtEnd: %d\n", diffSpaceAtFront, diffSpaceAtEnd);
+    
+    // Check if there was an error in above
+    if (0 > diffSpaceAtEnd && 0 > diffSpaceAtFront) {
+        // Error occured
+        return nullptr;
     }
-    // Print inline_used - see big
-    return nullptr;
-  }*/
 
-  // Stop tracking ptr1/ptr2 version data in PMem's vhandle inline version data area
-  /*void FreeToInlinePmem(uint8_t *p) {
-    if (inline_used != 0xFF) {
-      sz = util::Align(sz, 16);
-      if (sz > 128) return;
-      uint8_t mask = (1 << (sz >> 4)) - 1;
-      uint8_t off = (p - (uint8_t *) this - 128) >> 4;
-      inline_used &= ~(mask << off);
+    // Check if space at front is closest in size - less wasted space
+    bool addFront = false;
+    if (0 > diffSpaceAtEnd) {
+        addFront = true;
     }
-  }*/
+    else if (0 > diffSpaceAtFront) {
+        addFront = false;
+    }
+    else if (diffSpaceAtFront <= diffSpaceAtEnd) {
+        addFront = true;
+    }
+    else {
+        addFront = false;
+    }
+
+    // Track New Allocation
+    if (addFront) {
+        *mask1Ptr = 0;
+        *mask2Ptr = sz - 1;
+    }
+    else {
+        *mask1Ptr = *mask2Ptr + 1; // New start is taken from after last end
+        *mask2Ptr = *mask1Ptr + sz - 1;
+    }
+
+    // Return address start of new allocation
+    //printf("Front: %d | Mask1Val: %d | Mask2Val: %d\n\n", addFront, *mask1Ptr, *mask2Ptr);
+    return startOfMiniHeap + *mask1Ptr;
+  }
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   const size_t nr_capacity() const { return capacity; }

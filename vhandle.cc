@@ -453,6 +453,14 @@ SortedArrayVHandle *SortedArrayVHandle::NewInline()
   auto r = new (inline_pool.Alloc()) SortedArrayVHandle();
   //shirley TODO: we don't use inline_used variable in our design. we have our own flags/bitmaps
   r->inline_used = 0;
+
+  //Corey: Set inital mask values
+  uint8_t *mask1Ptr = (uint8_t *)r + vhandleMetadataSize + inlineTwoVersionArraySize;
+  uint8_t *mask2Ptr = mask1Ptr + inlineMiniHeapMask1Size;
+  //printf("%p | %p | %d | %d\n", r, mask1Ptr,  *mask1Ptr, *mask2Ptr);
+  *mask1Ptr = 0x00;
+  *mask2Ptr = 0x00;
+  
   return r;
 }
 
