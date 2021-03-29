@@ -187,10 +187,13 @@ class SortedArrayVHandle : public BaseVHandle {
       sz = util::Align(sz, 32); // Here aligns to 32 but in free uses 16
       if (sz > 128) return nullptr;
 
-      uint8_t mask = (1 << (sz >> 5)) - 1; // This makes no sense, if I use 1byte = mask is 0
+      uint8_t mask = (1 << (sz >> 5)) - 1; 
       for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
         if ((inline_used & (mask << off)) == 0) {
-          inline_used |= (mask << off);
+          //inline_used |= (mask << off);
+          //shirley test: what if we only record latest write. It still works.
+          inline_used = (mask << off);
+          //printf("alloced from inline\n");
           return (uint8_t *) this + 128 + (off << 5);
         }
       }
@@ -201,7 +204,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   //Corey: Old Design
   void FreeToInline(uint8_t *p, size_t sz) {
-    if (inline_used != 0xFF) { // This line makes no sense as i'd think you'd still want to free if full
+    if (inline_used != 0xFF) { 
       sz = util::Align(sz, 16);
       if (sz > 128) return;
       uint8_t mask = (1 << (sz >> 4)) - 1;
@@ -220,6 +223,11 @@ class SortedArrayVHandle : public BaseVHandle {
   */
   uint8_t *AllocFromInlinePmem(size_t sz) {
     // printf("Size: %ld\n", sz);
+    // return nullptr;
+    sz = util::Align(sz, 32); // align to 32 for now?
+
+    //printf("AllocFromInlinePmem: this: %p, &(this->size): %p, this->size: %u\n", this, &(this->size), this->size);
+    
 
     // Check requests size fits in miniheap
     if (sz > inlineMiniHeapSize) return nullptr;
@@ -242,7 +250,10 @@ class SortedArrayVHandle : public BaseVHandle {
         *mask2Ptr = sz - 1;
         // Return address start of new allocation
         //printf("Init | Mask1Val: %d | Mask2Val: %d\n\n", *mask1Ptr, *mask2Ptr);
-        return startOfMiniHeap + *mask1Ptr;
+        // assert(((startOfMiniHeap + *mask1Ptr) >= ((uint8_t *)this+64+32)) &&
+        //        ((startOfMiniHeap + *mask1Ptr) < ((uint8_t *)this+256)));
+        // printf("alloced from inline pmem this: %p, alloced: %p\n", this, (startOfMiniHeap + *mask1Ptr));
+        return (startOfMiniHeap + *mask1Ptr);
     }
 
     // find closest space for allocation
@@ -284,7 +295,10 @@ class SortedArrayVHandle : public BaseVHandle {
 
     // Return address start of new allocation
     //printf("Front: %d | Mask1Val: %d | Mask2Val: %d\n\n", addFront, *mask1Ptr, *mask2Ptr);
-    return startOfMiniHeap + *mask1Ptr;
+    // assert(((startOfMiniHeap + *mask1Ptr) >= ((uint8_t *)this+64+32)) &&
+    //            ((startOfMiniHeap + *mask1Ptr) < ((uint8_t *)this+256)));
+    // printf("alloced from inline pmem this: %p, alloced: %p\n", this, (startOfMiniHeap + *mask1Ptr));
+    return (startOfMiniHeap + *mask1Ptr);
   }
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.

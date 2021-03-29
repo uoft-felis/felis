@@ -221,13 +221,12 @@ class Txn : public BaseTxn {
       probes::TransientPersistentCount{usePmem}();
 
       //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
-      // if (usePmem) {
-        // VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem)
+      if (usePmem) {
+        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInlinePmem(sizeof(VarStr) + o.EncodeSize()), usePmem);
         // sid2 = sid;
         // ptr2 = val;
-        // return WriteVarStr(val);
-      // }
-      // else
+        return WriteVarStr(val);
+      }
       return WriteVarStr(o.Encode(usePmem));
     }
 
@@ -242,13 +241,12 @@ class Txn : public BaseTxn {
       probes::TransientPersistentCount{usePmem}();
 
       //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
-      // if (usePmem) {
-        // VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
+      if (usePmem) {
+        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInlinePmem(sizeof(VarStr) + o.EncodeSize()), usePmem);
         // sid2 = sid;
         // ptr2 = val;
-        // return WriteVarStr(val);
-      // }
-      // else
+        return WriteVarStr(val);
+      }
       return WriteVarStr(o.Encode(usePmem));
 
       //shirley: removed inline (from original Caracal)
@@ -270,7 +268,7 @@ class Txn : public BaseTxn {
       // vhandle -> ptr1 = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
       //shirley TODO: instead of calling WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
       return WriteVarStr(o.EncodeToPtrOrDefault(
-          vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem));
+          vhandle->AllocFromInlinePmem(sizeof(VarStr) + o.EncodeSize()), usePmem));
     }
   };
 

@@ -40,9 +40,10 @@ SortedArrayVHandle::SortedArrayVHandle()
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
   cont_affinity = -1;
 
-  // versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
+  //shirley: for now, alloc versions externally from data region.
+  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
   // shirley TODO: versions should be initialized to null
-  versions = (uint64_t *) ((uint8_t *) this + 64);
+  //versions = (uint64_t *) ((uint8_t *) this + 64);
   latest_version.store(-1);
 }
 
