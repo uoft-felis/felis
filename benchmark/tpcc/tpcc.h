@@ -331,6 +331,8 @@ class ClientBase {
   template <typename TableType, typename KeyType>
   static void OnNewRow(int slice_id, TableType table, const KeyType &k,
                        felis::VHandle *handle) {
+    if (!NodeConfiguration::g_data_migration)
+      return;
     util::Instance<felis::SliceManager>().OnNewRow(
         slice_id, static_cast<int>(table), k.Encode(), handle);
   }

@@ -76,11 +76,9 @@ class VarStr final {
     //shirley: allocate all from transient, except last version of each epoch (or index)
     if (!use_pmem) {
       ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
-      //probes::TransientPersistentCount{false}();
     }
     else {
       ins = (VarStr *) mem::GetPersistentPool().Alloc(NewSize(length));
-      //probes::TransientPersistentCount{true}();
     }
     //VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
     
