@@ -222,7 +222,7 @@ class Txn : public BaseTxn {
 
       //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
-        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInlinePmem(sizeof(VarStr) + o.EncodeSize()), usePmem);
+        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
         // sid2 = sid;
         // ptr2 = val;
         return WriteVarStr(val);
@@ -242,7 +242,7 @@ class Txn : public BaseTxn {
 
       //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
-        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInlinePmem(sizeof(VarStr) + o.EncodeSize()), usePmem);
+        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
         // sid2 = sid;
         // ptr2 = val;
         return WriteVarStr(val);
@@ -268,7 +268,7 @@ class Txn : public BaseTxn {
       // vhandle -> ptr1 = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
       //shirley TODO: instead of calling WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
       return WriteVarStr(o.EncodeToPtrOrDefault(
-          vhandle->AllocFromInlinePmem(sizeof(VarStr) + o.EncodeSize()), usePmem));
+          vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem));
     }
   };
 
