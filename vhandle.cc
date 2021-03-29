@@ -166,17 +166,6 @@ void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr,
 {
   if (ondemand_split_weight) nr_ondsplt += ondemand_split_weight;
 
-  // shirley: if versions is nullptr, allocate new version array, copy sid1 &
-  // ptr1, set capacity = x, size = 1, latest_version = 0, (cur_start = 0?) if
-  // (!versions) {
-  //   versions = (uint64_t *)mem::GetTransientPool().Alloc(64); //shirley TODO: initial size TBD. 64 is ok.
-  //   versions[0] = sid1;
-  //   versions[1] = ptr1;
-  //   capacity = 4;
-  //   size = 1;
-  //   latest_version.store(0);
-  //}
-
   // append this version at the end of version array
   IncreaseSize(1, epoch_nr);
   BookNewVersionNoLock(sid, size - 1);
@@ -228,6 +217,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
 
     if (sid == 0) goto slowpath;
     if (Options::kVHandleBatchAppend) {
+      //shirley: this is turned off by default
       if (buf_pos.load(std::memory_order_acquire) == -1
           && size - cur_start < EpochClient::g_splitting_threshold
           && lock.TryLock(&qnode)) {
@@ -242,6 +232,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
         return;
       }
     } else if (Options::kOnDemandSplitting) {
+      //shirley: this is turned off by default
       // Even if batch append is off, we still create a buf_pos for splitting.
       if (buf_pos.load(std::memory_order_acquire) == -1
           && size - cur_start >= EpochClient::g_splitting_threshold)
@@ -251,6 +242,19 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
  slowpath:
     lock.Lock(&qnode);
     probes::VHandleAppendSlowPath{this}();
+    // shirley: this is used by default
+    // shirley: if versions is nullptr, allocate new version array, copy sid1 &
+    // ptr1, set capacity = 4, size = 1, latest_version = 0, (cur_start = 0?) 
+    if (!versions) {
+      // shirley: initial size 64 is ok. (fits 4 versions)
+      versions = (uint64_t *)mem::GetTransientPool().Alloc(64); 
+      versions[0] = GetInlineSid(sid1);
+      versions[1] = (uint64_t)GetInlinePtr(sid1);
+      capacity = 4;
+      size = 1;
+      cur_start = 0; //shirley: should it be 0 or 1? Is cur_start used only by GC?
+      latest_version.store(0);
+    }
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
     lock.Unlock(&qnode);
   } else {
@@ -313,9 +317,11 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   //shirley: if versions is nullptr, read from sid1/sid2
   if (!versions) {
-    // shirley TODO:
-    // if (sid >= sid1) return (VarStr *) ptr1;
-    // else return nullptr;
+    // shirley: if (sid >= sid1) return ptr1;
+    if (sid >= GetInlineSid(sid1)) 
+      return (VarStr *) GetInlinePtr(sid1);
+    else 
+      return nullptr;
 
     // shirley TODO future: if we use the approach that uses minor GC (and not as much major GC)
     // then we need to check sid2 before sid1. But, we don't need to sync().WaitForData bc if versions is 

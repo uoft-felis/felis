@@ -54,8 +54,8 @@ struct NewOrderState {
       auto &[detail] = args;
       auto amount = detail.unit_price[id] * detail.order_quantities[id];
 
-      // shirley TODO: change to WriteInitialInline
-      handle(row).WriteTryInline(
+      // shirley: use WriteInitialInline bc writing initial version after row insert
+      handle(row).WriteInitialInline(
           OrderLine::Value::New(detail.item_id[id], 0, amount,
                                 detail.supplier_warehouse_id[id],
                                 detail.order_quantities[id]));
@@ -75,16 +75,16 @@ struct NewOrderState {
       handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;
-        // shirley TODO: change to WriteInitialInline
-        handle(row).WriteTryInline(args);
+        // shirley: use WriteInitialInline bc writing initial version after row insert
+        handle(row).WriteInitialInline(args);
       } else if (id == 1) {
         state->neworder = row;
-        // shirley TODO: change to WriteInitialInline
-        handle(row).WriteTryInline(NewOrder::Value());
+        // shirley: use WriteInitialInline bc writing initial version after row insert
+        handle(row).WriteInitialInline(NewOrder::Value());
       } else if (id == 2) {
         state->cididx = row;
-        // shirley TODO: change to WriteInitialInline
-        handle(row).WriteTryInline(OOrderCIdIdx::Value());
+        // shirley: use WriteInitialInline bc writing initial version after row insert
+        handle(row).WriteInitialInline(OOrderCIdIdx::Value());
       }
       // handle(row).AppendNewVersion(id < 2);
     }

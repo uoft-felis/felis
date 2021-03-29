@@ -88,7 +88,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   unsigned int capacity;
   unsigned int size;
-  unsigned int cur_start;
+  unsigned int cur_start; //shirley: is cur_start used only by GC?
 
   //Corey: the latest written version's offset in *versions
   std::atomic_int latest_version;
@@ -130,7 +130,7 @@ class SortedArrayVHandle : public BaseVHandle {
   };
 
   //Corey: Get Sid value
-  uint64_t GetInlineSid(SidType sidType) {
+  uint64_t GetInlineSid(SidType sidType) const {
     uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
     if (sidType == sid2) {
       sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
@@ -138,7 +138,7 @@ class SortedArrayVHandle : public BaseVHandle {
     return *((uint64_t *)sidPtr);
   }
   
-  //Corey: Write Sid Ptr value
+  //Corey: Write Sid value
   void SetInlineSid(SidType sidType, uint64_t sidValue) {
     uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
     if (sidType == sid2) {
@@ -148,16 +148,17 @@ class SortedArrayVHandle : public BaseVHandle {
   }
 
   //Corey: Get Inline Ptr value
-  //Corey: This one returns a pointer to ptr1
-  uint8_t **GetInlinePtrPtr(SidType sidType) {
+  //Corey: This one returns a pointer to ptr1 or ptr2
+  uint8_t **GetInlinePtrPtr(SidType sidType) const {
     uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
     if (sidType == sid2) {
       sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
     }
     return sidPtr;
   }
-  //Corey: This one returns pointer to miniheap
-  uint8_t *GetInlinePtr(SidType sidType) {
+
+  //Corey: This one returns ptr1 or ptr2
+  uint8_t *GetInlinePtr(SidType sidType) const {
     uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
     if (sidType == sid2) {
       sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
@@ -306,8 +307,8 @@ class SortedArrayVHandle : public BaseVHandle {
   const size_t nr_versions() const { return size; }
   const size_t current_start() const { return cur_start;}
   uint64_t first_version() const { 
-    if (!versions) 
-      return versions[0]; //shirley TODO: return sid1
+    if (!versions)
+      return GetInlineSid(sid1); // shirley: return sid1 when version array is null
     else 
       return versions[0];
   }
