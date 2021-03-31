@@ -41,6 +41,7 @@ class PriorityTxnService {
   static bool g_read_bit;          // marks read bit
   static bool g_conflict_read_bit; // uses read bit info to detect conflict
   static bool g_sid_read_bit;      // uses read bit info to acquire SID
+  static bool g_sid_forward_read_bit;      // uses read bit infofor SID, direction forward in time
 
   static int g_backoff_distance; // how many distance we are going to backoff, could be + or -
   static bool g_fastest_core;

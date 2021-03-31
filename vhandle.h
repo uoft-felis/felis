@@ -123,6 +123,7 @@ class LinkedListExtraVHandle {
   void RevertInitDelete(uint64_t sid);
   void PriorityDelete(uint64_t sid);
   uint64_t FindUnreadVersionLowerBound(uint64_t min);
+  uint64_t FindFirstUnreadVersion(uint64_t min);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
 
   uint64_t first_version() {
@@ -192,8 +193,8 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);
-  uint64_t FindUnreadVersionLowerBound(uint64_t min);
   uint64_t FindUnreadSIDLowerBound(uint64_t min);
+  uint64_t FindFirstUnreadSID(uint64_t min);
   bool InitDelete(uint64_t sid);
   void RevertInitDelete(uint64_t sid);
   void PriorityDelete(uint64_t sid);
@@ -231,6 +232,8 @@ class SortedArrayVHandle : public BaseVHandle {
               kPendingValue);
   }
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
+  uint64_t FindUnreadVersionLowerBound(uint64_t min);
+  uint64_t FindFirstUnreadVersion(uint64_t min);
 };
 
 static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");

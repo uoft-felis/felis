@@ -17,6 +17,7 @@ bool PriorityTxnService::g_sid_bitmap = false;
 bool PriorityTxnService::g_read_bit = false;
 bool PriorityTxnService::g_conflict_read_bit = false;
 bool PriorityTxnService::g_sid_read_bit = false;
+bool PriorityTxnService::g_sid_forward_read_bit = false;
 
 int PriorityTxnService::g_backoff_distance = -100;
 bool PriorityTxnService::g_fastest_core = false;
@@ -97,10 +98,15 @@ PriorityTxnService::PriorityTxnService()
       g_conflict_read_bit = true;
     if (Options::kSIDReadBit)
       g_sid_read_bit = true;
+    if (Options::kSIDForwardReadBit)
+      g_sid_forward_read_bit = true;
   } else {
     abort_if(Options::kConflictReadBit, "-XConflictReadBit requires -XReadBit");
     abort_if(Options::kSIDReadBit, "-XSIDReadBit requires -XReadBit");
+    abort_if(Options::kSIDForwardReadBit, "-XSIDForwardReadBit requires -XReadBit");
   }
+  abort_if(g_sid_read_bit + g_sid_forward_read_bit > 1,
+           "plz only choose one between SIDReadBit and SIDForwardReadBit");
 
   int logical_dist = -1;
   if (Options::kBackoffDist) {
@@ -239,7 +245,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
   else
     new_seq = seq + g_backoff_distance;
 
-  if (g_sid_read_bit) {
+  if (g_sid_read_bit | g_sid_forward_read_bit) {
     uint64_t min = (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
 
     uint64_t last = 0;
@@ -250,10 +256,17 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
     if (last > min)
       min = last;
 
-    for (auto handle : txn->update_handles)
-      min = handle->FindUnreadSIDLowerBound(min);
-    for (auto handle : txn->delete_handles)
-      min = handle->FindUnreadSIDLowerBound(min);
+    if (g_sid_read_bit) {
+      for (auto handle : txn->update_handles)
+        min = handle->FindUnreadSIDLowerBound(min);
+      for (auto handle : txn->delete_handles)
+        min = handle->FindUnreadSIDLowerBound(min);
+    } else {
+      for (auto handle : txn->update_handles)
+        min = handle->FindFirstUnreadSID(min);
+      for (auto handle : txn->delete_handles)
+        min = handle->FindFirstUnreadSID(min);
+    }
     if (min >> 32 < prog >> 32) // min is from last epoch
       new_seq = 1;
     else

@@ -345,6 +345,44 @@ uint64_t SortedArrayVHandle::FindUnreadSIDLowerBound(uint64_t min)
   return min;
 }
 
+// find the first sid > min that's unread
+uint64_t SortedArrayVHandle::FindFirstUnreadSID(uint64_t min)
+{
+  abort_if(!PriorityTxnService::g_read_bit, "FindUnreadSIDLowerBound() is called when read bit is off");
+  min = this->FindFirstUnreadVersion(min);
+  auto extra = extra_vhandle.load();
+  if (extra)
+    min = extra->FindFirstUnreadVersion(min);
+  return min;
+}
+
+uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
+{
+  int lower_pos;
+  volatile uintptr_t *ptr_obj = WithVersion(min, lower_pos);
+  if (ptr_obj == nullptr)
+    return min;
+
+  volatile uintptr_t *ptr_ver = &versions[lower_pos];
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
+  if (*ptr_ver <= min)
+    return min;
+  if (*ptr_ver >= max_prog)
+      return max_prog;
+
+  while (*ptr_obj & kReadBitMask) {
+    ptr_ver++;
+    ptr_obj++;
+    max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
+    if (ptr_ver - versions >= size) // search out of bound
+      return max_prog;
+    if (*ptr_ver >= max_prog)
+      return max_prog;
+  }
+
+  return *ptr_ver;
+}
+
 // for priority txn's delete, append new version for delete, and mark versions
 // behind it as kDeletePendingValue
 bool SortedArrayVHandle::InitDelete(uint64_t sid) {
@@ -742,6 +780,25 @@ uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
   return cur->version;
 }
 
+uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
+{
+  Entry dummy(0, 0, 0);
+  dummy.next = head;
+  Entry *cur = &dummy;
+  uint64_t last_unread = ~0;
+  while (cur->next && cur->next->version >= min) {
+    cur = cur->next;
+    if (!(cur->object & kReadBitMask)) {
+      abort_if(last_unread < cur->version, "what? last_unread < cur->version");
+      last_unread = cur->version;
+    }
+  }
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
+  if (cur == &dummy || last_unread >= max_prog)
+    return max_prog;
+  return last_unread;
+}
+
 bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
 {
   Entry *p = head;
@@ -753,7 +810,7 @@ bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
     std::stringstream ss;
     Entry *p = head;
     while (p) {
-      ss << "{" << p->version << ", 0x" << std::hex << p->object << "}->";
+      ss << "{" << std::dec << p->version << "(hex" << std::hex << p->version <<"), 0x" << std::hex << p->object << "}->";
       p = p->next;
     }
     logger->critical("Extra Linked list: {}nullptr", ss.str());
