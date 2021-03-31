@@ -226,6 +226,7 @@ void GC::RunGC()
 
       auto old = s.nr_bytes;
       auto nr_processed = Process(b->rows[i], cur_epoch_nr, 16_K);
+      //shirley TODO: after we remove the hard limit, don't need this check anymore.
       if (nr_processed < 16_K) {
         b->rows[i]->gc_handle = 0;
         b->bitmap &= ~(1ULL << i);
@@ -370,6 +371,7 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   auto *versions = handle->versions;
   uintptr_t *objects = handle->versions + handle->capacity;
   int i = 0;
+  //shirley TODO: we don't want a hard limit bc we need to clean everything. (comment out the limit check)
   while (i < handle->size - 1 && i < limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
     i++;
   }
