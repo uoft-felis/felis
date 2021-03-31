@@ -186,7 +186,11 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t *AllocFromInline(size_t sz) {
     if (inline_used != 0xFF) {
       sz = util::Align(sz, 32); // Here aligns to 32 but in free uses 16
-      if (sz > 128) return nullptr;
+      if (sz > 128) {
+        //shirley: set inline_used to 0 bc we didn't allocate for this version & we're only tracking latest alloc
+        inline_used = 0;
+        return nullptr;
+      }
 
       uint8_t mask = (1 << (sz >> 5)) - 1; 
       for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
@@ -199,7 +203,8 @@ class SortedArrayVHandle : public BaseVHandle {
         }
       }
     }
-    // Print inline_used - see big
+    //shirley: set inline_used to 0 bc we didn't allocate for this version & we're only tracking latest alloc
+    inline_used = 0;
     return nullptr;
   }
 
