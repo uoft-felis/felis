@@ -254,6 +254,9 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       size = 1;
       cur_start = 0; //shirley: should it be 0 or 1? Is cur_start used only by GC?
       latest_version.store(0);
+
+      auto &gc = util::Instance<GC>();
+      gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
     }
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
     lock.Unlock(&qnode);

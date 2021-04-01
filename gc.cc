@@ -295,20 +295,20 @@ void GC::RunPmemGC()
 
     //set the version array pointers to NULL
 
-    for (int i = 0; i <= idx; i++)
+    for (int i = 0; i < idx; i++)
     {
-      // if(b->rows[i])
-      // {
-        b->rows[i] = nullptr;
-      // }
+      if(b->rows[i])
+      {
+        b->rows[i]->versions = nullptr;
+        
+        //get sid2 and ptr2
+        auto sid2 = b->rows[i]->GetInlineSid(felis::SortedArrayVHandle::sid2);
+        auto ptr2 = b->rows[i]->GetInlinePtr(felis::SortedArrayVHandle::sid2);
+        //set sid1 and ptr1
+        b->rows[i]->SetInlineSid(felis::SortedArrayVHandle::sid1,sid2);
+        b->rows[i]->SetInlinePtr(felis::SortedArrayVHandle::sid1,ptr2);
+      }
     }
-    // for (auto vhandle : b->rows)
-    // {
-    //   if(vhandle)
-    //   {
-    //     vhandle->versions = nullptr;
-    //   }
-    // }
     
     // Mark this block free
     // slab->lock.Acquire(&qnode);

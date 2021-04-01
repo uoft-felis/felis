@@ -309,6 +309,7 @@ void CallTxnsWorker::Run()
   } else if (client->callback.phase == EpochPhase::Insert) {
     //SHIRLEY: this is major GC (?) disable for now
     //util::Instance<GC>().RunGC();
+    util::Instance<GC>().RunPmemGC();
   }
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
@@ -380,7 +381,7 @@ void EpochClient::InitializeEpoch()
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
   //SHIRLEY: remove major GC for now
-  //util::Instance<GC>().PrepareGCForAllCores();
+  util::Instance<GC>().PrepareGCForAllCores();
 
   commit_buffer->Reset();
   AllocStateTxnWorker::comp = nr_threads + 1;
@@ -399,9 +400,9 @@ void EpochClient::OnInsertComplete()
 {
   // Shirley: remove major GC for now
   // // GC must have been completed
-  // auto &gc = util::Instance<GC>();
-  // gc.PrintStats();
-  // gc.ClearStats();
+  auto &gc = util::Instance<GC>();
+  gc.PrintStats();
+  gc.ClearStats();
   probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 0}();
 
   stats.insert_time_ms += callback.perf.duration_ms();
