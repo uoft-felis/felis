@@ -320,8 +320,10 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t last_version() const { 
     if (versions)
       return versions[size - 1]; 
-    else
-      return versions[size - 1]; // assert(0); // shirley TODO: assert bc versions shouldn't be nullptr?
+    else {
+      printf("last_version(), versions is null???\n");
+      std::abort();
+    } // shirley: abort bc versions shouldn't be nullptr?
   }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed) + 1; }
   int nr_ondemand_split() const { return nr_ondsplt; }

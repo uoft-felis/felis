@@ -26,6 +26,14 @@ struct HashEntry {
   }
 
   bool Compare(const Key &x) {
+    if (!key.data()) {
+      printf("Compare key.data() is null!!!\n");
+      std::abort();
+    }
+    if (!x.data()) {
+      printf("Compare x.data() is null!!!\n");
+      std::abort();
+    }
     return __builtin_memcmp(key.data(), x.data(), 16) == 0;
   }
 

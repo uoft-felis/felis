@@ -110,11 +110,23 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
 
   HashEntry *p = first, *newentry = nullptr;
   std::atomic<HashEntry *> *parent = nullptr;
+  if (!k.data()) {
+    printf("k.data() is null!!!\n");
+    std::abort();
+  }
   auto x = HashEntry::Convert(k);
   VHandle *row = nullptr;
 
   do {
     while (p != kNextForEnd) {
+      if (!p) {
+        printf("p is null!!!\n");
+        std::abort();
+      }
+      if (!x.data()) {
+        printf("x.data() is null!!!\n");
+        std::abort();
+      }
       if (p->Compare(x)) {
         if (row) delete row;
         *created = false;

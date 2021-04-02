@@ -301,12 +301,15 @@ void GC::RunPmemGC()
       {
         b->rows[i]->versions = nullptr;
         
+        //shirley TODO: need to free ptr1 if it's not from inline (call corresponding function in vhandle)
+
+        //shirley TODO: later we will call functions in vhandle that perform these for us. this is temporary
         //get sid2 and ptr2
-        auto sid2 = b->rows[i]->GetInlineSid(felis::SortedArrayVHandle::sid2);
-        auto ptr2 = b->rows[i]->GetInlinePtr(felis::SortedArrayVHandle::sid2);
+        auto my_sid2 = b->rows[i]->GetInlineSid(felis::SortedArrayVHandle::sid2);
+        auto my_ptr2 = b->rows[i]->GetInlinePtr(felis::SortedArrayVHandle::sid2);
         //set sid1 and ptr1
-        b->rows[i]->SetInlineSid(felis::SortedArrayVHandle::sid1,sid2);
-        b->rows[i]->SetInlinePtr(felis::SortedArrayVHandle::sid1,ptr2);
+        b->rows[i]->SetInlineSid(felis::SortedArrayVHandle::sid1,my_sid2);
+        b->rows[i]->SetInlinePtr(felis::SortedArrayVHandle::sid1,my_ptr2);
       }
     }
     

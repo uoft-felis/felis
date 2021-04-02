@@ -116,6 +116,7 @@ class AllocatorModule : public Module<CoreModule> {
     }
 
     // Setup GC
+    //shirley todo: set to 1?
     GC::g_gc_every_epoch = 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
     GC::g_lazy = Options::kMajorGCLazy;
 

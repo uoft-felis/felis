@@ -26,7 +26,10 @@ VHandleSyncService &BaseVHandle::sync()
 
 SortedArrayVHandle::SortedArrayVHandle()
 {
+  // shirley TODO: capacity = 0 (does this break stuff??) bc we initialized versions to nullptr
+  // capacity = 0;
   capacity = 4;
+
   // value_mark = 0;
   size = 0;
   cur_start = 0;
@@ -40,10 +43,12 @@ SortedArrayVHandle::SortedArrayVHandle()
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
   cont_affinity = -1;
 
-  //shirley: for now, alloc versions externally from data region.
-  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
   // shirley TODO: versions should be initialized to null
-  //versions = (uint64_t *) ((uint8_t *) this + 64);
+  // versions = nullptr;
+  // shirley: old: alloc versions externally from data region or inline
+  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * 4 * sizeof(uint64_t)); 
+  // versions = (uint64_t *) mem::GetTransientPool().Alloc(2 * capacity * sizeof(uint64_t)); 
+  // versions = (uint64_t *) ((uint8_t *) this + 64);
   latest_version.store(-1);
 }
 
@@ -217,6 +222,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
 
     if (sid == 0) goto slowpath;
     if (Options::kVHandleBatchAppend) {
+      printf("AppendNewVersion: in batch append!\n");
       //shirley: this is turned off by default
       if (buf_pos.load(std::memory_order_acquire) == -1
           && size - cur_start < EpochClient::g_splitting_threshold
@@ -232,6 +238,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
         return;
       }
     } else if (Options::kOnDemandSplitting) {
+      printf("AppendNewVersion: in on demand splitting!\n");
       //shirley: this is turned off by default
       // Even if batch append is off, we still create a buf_pos for splitting.
       if (buf_pos.load(std::memory_order_acquire) == -1
@@ -245,18 +252,35 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
     // shirley: this is used by default
     // shirley: if versions is nullptr, allocate new version array, copy sid1 &
     // ptr1, set capacity = 4, size = 1, latest_version = 0, (cur_start = 0?) 
-    if (!versions) {
+    // shirley TODO: don't need to check capacity = 0?
+    if ((!versions) || (capacity == 0)) {
+      // printf("AppendNewVersion: version array is null. SHOULDN'T REACH HERE!\n");
+      // printf("AppendNewVersion: trying to allocate new version array\n");
       // shirley: initial size 64 is ok. (fits 4 versions)
-      versions = (uint64_t *)mem::GetTransientPool().Alloc(64); 
+      versions = (uint64_t *)mem::GetDataRegion().Alloc(64); //shirley TODO: use get transient pool
       versions[0] = GetInlineSid(sid1);
-      versions[1] = (uint64_t)GetInlinePtr(sid1);
+      versions[4] = (uint64_t)GetInlinePtr(sid1); //shirley: 4 because we allocate for capacity of 4.
+      if (!versions[4]) {
+        //printf("AppendNewVersion: ptr1 is null?\n");
+        //std::abort();
+      }
+      // printf("AppendNewVersion: veresions[0]: %d\n", versions[0]);
+      // printf("AppendNewVersion: veresions[4]: %d\n", versions[4]);
       capacity = 4;
       size = 1;
       cur_start = 0; //shirley: should it be 0 or 1? Is cur_start used only by GC?
       latest_version.store(0);
 
-      auto &gc = util::Instance<GC>();
-      gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
+      // shirley why do we fill kpendingvalue after increase size, but not for initial version array?
+      // shirley: do we need to fill versions with kPendingValue?
+      // versions[5] = kPendingValue;
+      // versions[6] = kPendingValue;
+      // versions[7] = kPendingValue;
+
+      //shirley future: we need to use gc_handle if we want to remove row during minor GC
+      //shirley todo: add row to GC
+      // auto &gc = util::Instance<GC>();
+      // gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
     }
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
     lock.Unlock(&qnode);
@@ -319,22 +343,32 @@ found:
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   //shirley: if versions is nullptr, read from sid1/sid2
-  if (!versions) {
+  if ((!versions) || (capacity == 0)) { //shirley TODO: don't need to check capacity = 0
+    // printf("ReadWithVersion: versions is null. SHOULDNT REACH HERE\n");
+    // printf("ReadWithVersion try read from inline\n");
     // shirley: if (sid >= sid1) return ptr1;
-    if (sid >= GetInlineSid(sid1)) 
-      return (VarStr *) GetInlinePtr(sid1);
-    else 
+    if (sid >= GetInlineSid(sid1)) {
+      // printf("ReadWithVersion try read from inline SUCCESS\n");
+      return (VarStr *)GetInlinePtr(sid1);
+    }
+    else {
+      // printf("ReadWithVersion: returning nullptr! sid = %u, sid1 = %u\n", sid, GetInlineSid(sid1));
       return nullptr;
+    }
 
     // shirley TODO future: if we use the approach that uses minor GC (and not as much major GC)
     // then we need to check sid2 before sid1. But, we don't need to sync().WaitForData bc if versions is 
     // null or out of date epoch, then the data is already written in prev epoch. If it was updated in curr epoch 
     // then we won't go into this code (i.e. there won't be null versions or out-dated versions ptr).
   }
+  // printf("ReadWithVersion: reading from version array!\n");
 
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
-  if (!addr) return nullptr;
+  if (!addr) {
+    // printf("ReadWithVersion: reading from version array FAILED!\n");
+    return nullptr;
+  }
 
   sync().WaitForData(addr, sid, versions[pos], (void *) this);
 
@@ -360,6 +394,10 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
+  if (!versions) {
+    printf("WriteWithVersions versions is null!!!\n");
+    std::abort();
+  }
   //shirley TODO: how to use prefetch for our new design?
   if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
   // Finding the exact location

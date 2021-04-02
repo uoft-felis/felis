@@ -215,7 +215,10 @@ class Txn : public BaseTxn {
     template <typename T> bool Write(const T &o) {
       //shirley: probe size of version value
       //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
-
+      if (!vhandle) {
+        printf("Write: vhandle is null???\n");
+        std::abort();
+      }
       bool usePmem = ((vhandle->last_version()) == sid);
       //shirley: probe transient vs persistent
       //probes::TransientPersistentCount{usePmem}();
@@ -269,12 +272,17 @@ class Txn : public BaseTxn {
       //probes::TransientPersistentCount{usePmem}();
       VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
       
+      if (!val) {
+        printf("WriteInitialInline val is null?\n");
+        std::abort();
+      }
       // vhandle -> sid1 = sid
       vhandle->SetInlineSid(felis::SortedArrayVHandle::sid1,sid); 
       // vhandle -> ptr1 = val
       vhandle->SetInlinePtr(felis::SortedArrayVHandle::sid1,(uint8_t *)val); 
       
       //shirley TODO: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
+      // return true;
       return WriteVarStr(val);
     }
   };

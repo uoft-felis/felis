@@ -695,7 +695,7 @@ void Loader<LoaderType::Customer>::DoLoad()
               OnNewRow(slice_id, TableType::CustomerInfo, k, handle);
               // shirley: initial database should be allocated from inline pmem.
               auto info_p = info_handle->AllocFromInline(info_v.EncodeSize());
-              felis::InitVersion(info_handle, info_v.EncodeToPtrOrDefault(p));
+              felis::InitVersion(info_handle, info_v.EncodeToPtrOrDefault(info_p));
               // felis::InitVersion(info_handle, info_v.Encode());
             });
 
