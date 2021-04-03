@@ -99,8 +99,14 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
     if (first->next.compare_exchange_strong(old, kNextForInitializing)) {
       first->key = HashEntry::Convert(k);
       auto row = first->value();
+
       new (row) SortedArrayVHandle();
-      row->capacity = 1;
+      // row->capacity = 1; //shirley: removed this bc we already set it in constructor
+      // shirley: need to initialize our fields here as well, because here just
+      // calls vhandle constructor without initializing required fields as in
+      // vhandle NewInline. shirley: we use inline for all tables!
+      row->inline_used = 0;
+      
       first->next = kNextForEnd;
       *created = true;
       return row;
@@ -126,7 +132,8 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
 
     if (newentry == nullptr) {
       row = NewRow();
-      row->capacity = 1;
+      //shirley: don't let it set capacity to 1, we set it in vhandle constructor already
+      // row->capacity = 1;
       newentry = (HashEntry *) ((uint8_t *) row + 96);
       newentry->key = x;
       newentry->next = kNextForEnd;

@@ -46,9 +46,9 @@ class BaseVHandle {
   static constexpr size_t kSize = 128;
   //Corey: Inlineded version values in new vhandle layout
   //Corey: Total size to be used for VHandle + Inline for PMem design
-  static constexpr size_t kInlinedSize = vhandleMetadataSize + inlineTwoVersionArraySize +
-                inlineMiniHeapMask1Size + inlineMiniHeapMask2Size +
-                inlineMiniHeapSize; // Should be 256
+  static constexpr size_t kInlinedSize = 256;//vhandleMetadataSize + inlineTwoVersionArraySize +
+                //inlineMiniHeapMask1Size + inlineMiniHeapMask2Size +
+                //inlineMiniHeapSize; // Should be 256
   //shirley TODO: (un-inlined) pool can be removed bc all vhandles are inlined
   static mem::ParallelSlabPool pool;
 
@@ -187,20 +187,35 @@ class SortedArrayVHandle : public BaseVHandle {
     // shirley: use pmem version for new vhandle layout.
     // return AllocFromInlinePmem(sz);
 
+    // uint8_t *inline_used_duplicate = (uint8_t *) this + (64 + 32);
+    // if (inline_used != *inline_used_duplicate) {
+    //   printf("AllocFromInline, inline_used != *inline_used_duplicate\n");
+    //   printf("inline_used = %x, *inline_used_duplicate = %x\n", inline_used, *inline_used_duplicate);
+    //   printf("&inline_used = %p, inline_used_duplicate = %p\n", &inline_used, inline_used_duplicate);
+    //   std::abort();
+    // }
+    // if (&inline_used < (uint8_t *) this || &inline_used > (uint8_t *)this + 64) {
+    //   printf("AllocFromInline, weird addresses, &inline_used = %p, this = %p\n", &inline_used, this);
+    //   std::abort();
+    // }
+
     if (inline_used != 0xFF) {
       sz = util::Align(sz, 32); // Here aligns to 32 but in free uses 16
       if (sz > 128) {
         //shirley: set inline_used to 0 bc we didn't allocate for this version & we're only tracking latest alloc
         inline_used = 0;
+        // *inline_used_duplicate = (uint8_t)0;
         return nullptr;
       }
 
       uint8_t mask = (1 << (sz >> 5)) - 1; 
       for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
+        // if ((((uint8_t)*inline_used_duplicate) & (mask << off)) == 0) {
         if ((inline_used & (mask << off)) == 0) {
           //inline_used |= (mask << off);
           //shirley test: what if we only record latest write. It still works.
           inline_used = (mask << off);
+          // *inline_used_duplicate = (uint8_t)(mask << off);
           //printf("alloced from inline\n");
           return (uint8_t *) this + 128 + (off << 5);
         }
@@ -208,6 +223,7 @@ class SortedArrayVHandle : public BaseVHandle {
     }
     //shirley: set inline_used to 0 bc we didn't allocate for this version & we're only tracking latest alloc
     inline_used = 0;
+    // *inline_used_duplicate = (uint8_t)0;
     return nullptr;
   }
 
