@@ -76,6 +76,7 @@ class AllocatorModule : public Module<CoreModule> {
     mem::InitTransientPool(4_G); //shirley: set larger during actual pmem // shirley: add it to command line options later
 
     // Legacy
+    //shirley: data region not used in this design anymore?
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
     //mem::GetDataRegion(true).ApplyFromConf(console.FindConfigSection("mem"));
     mem::GetPersistentPool().ApplyFromConf(console.FindConfigSection("mem"));
@@ -116,8 +117,8 @@ class AllocatorModule : public Module<CoreModule> {
     }
 
     // Setup GC
-    //shirley todo: set to 1?
-    GC::g_gc_every_epoch = 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
+    //shirley: set to 1 if want K = every epoch?
+    GC::g_gc_every_epoch = 1;// 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
     GC::g_lazy = Options::kMajorGCLazy;
 
     // logger->info("setting up regions {}", i);

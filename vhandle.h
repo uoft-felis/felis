@@ -106,7 +106,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
-    //shirley TODO: we should onlly use inlined pool bc all vhandles are inlined
+    //shirley TODO: we should only use inlined pool bc all vhandles are inlined
     if (phandle->is_inlined())
       inline_pool.Free(ptr, phandle->this_coreid);
     else
@@ -184,6 +184,9 @@ class SortedArrayVHandle : public BaseVHandle {
 
   //Corey: Old Design Alloc
   uint8_t *AllocFromInline(size_t sz) {
+    // shirley: use pmem version for new vhandle layout.
+    // return AllocFromInlinePmem(sz);
+
     if (inline_used != 0xFF) {
       sz = util::Align(sz, 32); // Here aligns to 32 but in free uses 16
       if (sz > 128) {

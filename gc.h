@@ -42,11 +42,13 @@ class GC {
   bool FreeIfGarbage(VHandle *row, VarStr *data, VarStr *next);
 
   size_t Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
+  size_t CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
 
   static unsigned int g_gc_every_epoch;
   static bool g_lazy;
  private:
   size_t Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
+  size_t ProcessPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
 };
 
 }

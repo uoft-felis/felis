@@ -307,10 +307,10 @@ void CallTxnsWorker::Run()
     //mem::GetDataRegion(true).Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
-    //SHIRLEY: this is major GC (?) disable for now
+    //SHIRLEY: this is major GC, use pmem GC version and reset transient pool
     //util::Instance<GC>().RunGC();
-    //util::Instance<GC>().RunPmemGC();
-    //mem::GetTransientPool().Reset();
+    util::Instance<GC>().RunPmemGC();
+    mem::GetTransientPool().Reset();
   }
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
@@ -381,8 +381,8 @@ void EpochClient::InitializeEpoch()
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
-  //SHIRLEY: remove major GC for now
-  // util::Instance<GC>().PrepareGCForAllCores();
+  //SHIRLEY: major GC preparing lists
+  util::Instance<GC>().PrepareGCForAllCores();
 
   commit_buffer->Reset();
   AllocStateTxnWorker::comp = nr_threads + 1;
@@ -399,7 +399,7 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::OnInsertComplete()
 {
-  // Shirley: remove major GC for now
+  // Shirley: major GC print stats
   // // GC must have been completed
   auto &gc = util::Instance<GC>();
   gc.PrintStats();

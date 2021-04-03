@@ -47,9 +47,8 @@ struct NewOrderState {
     Tuple<NewOrderStruct::OrderDetail> args;
     void operator()(int id, VHandle *row) {
       state->orderlines[id] = row;
-      // shirley TODO: handle(row).write sid1; Don't call append new version bc
-      // don't need version array yet.
-      handle(row).AppendNewVersion();
+      // shirley: Don't call append new version bc don't need version array yet.
+      // handle(row).AppendNewVersion();
 
       auto &[detail] = args;
       auto amount = detail.unit_price[id] * detail.order_quantities[id];
@@ -70,9 +69,8 @@ struct NewOrderState {
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     OOrder::Value args;
     void operator()(int id, VHandle *row) {
-      // shirley TODO: handle(row).write sid1; Don't call append new version bc 
-      // don't need version array yet.
-      handle(row).AppendNewVersion();
+      // shirley: don't call append new version bc don't need version array yet.
+      // handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;
         // shirley: use WriteInitialInline bc writing initial version after row insert

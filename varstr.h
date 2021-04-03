@@ -78,7 +78,9 @@ class VarStr final {
       ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
     }
     else {
-      ins = (VarStr *) mem::GetPersistentPool().Alloc(NewSize(length));
+      //shirley: use persistent pool 
+      // ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
+      ins = (VarStr *)mem::GetPersistentPool().Alloc(NewSize(length));
     }
     //VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
     

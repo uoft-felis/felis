@@ -338,6 +338,7 @@ class ClientBase {
   }
 
   static void OnUpdateRow(felis::VHandle *handle) {
+    if (!NodeConfiguration::g_data_migration) return;
     util::Instance<felis::SliceManager>().OnUpdateRow(handle);
   }
   ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes);

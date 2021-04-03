@@ -26,7 +26,10 @@ VHandleSyncService &BaseVHandle::sync()
 
 SortedArrayVHandle::SortedArrayVHandle()
 {
-  // shirley TODO: capacity = 0 (does this break stuff??) bc we initialized versions to nullptr
+  // shirley: capacity = 0 if we initialize versions to nullptr?
+  // shirley: actually, initial capacity field doesn't matter because
+  // we set capacity when we allocate version array
+  // so just leave it at 4.
   // capacity = 0;
   capacity = 4;
 
@@ -43,10 +46,10 @@ SortedArrayVHandle::SortedArrayVHandle()
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
   cont_affinity = -1;
 
-  // shirley TODO: versions should be initialized to null
-  // versions = nullptr;
+  // shirley: versions should be initialized to null
+  versions = nullptr;
   // shirley: old: alloc versions externally from data region or inline
-  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * 4 * sizeof(uint64_t)); 
+  // versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * 4 * sizeof(uint64_t)); 
   // versions = (uint64_t *) mem::GetTransientPool().Alloc(2 * capacity * sizeof(uint64_t)); 
   // versions = (uint64_t *) ((uint8_t *) this + 64);
   latest_version.store(-1);
@@ -69,9 +72,8 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   const size_t old_len = old_cap * sizeof(uint64_t);
   const size_t new_len = new_cap * sizeof(uint64_t);
 
-  // shirley todo: should grab new mem from parallel break pool
-  // auto new_p = (uint64_t *)mem::GetTransientPool().Alloc(2 * new_len);
-  auto new_p = (uint64_t *)mem::GetDataRegion().Alloc(2 * new_len);
+  // shirley: grab new mem for version array from transient pool
+  auto new_p = (uint64_t *)mem::GetTransientPool().Alloc(2 * new_len);
   if (!new_p) {
     return nullptr;
   }
@@ -79,9 +81,9 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   std::copy(old_p, old_p + old_cap, new_p);
   // memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
   std::copy(old_p + old_cap, old_p + 2 * old_cap, new_p + new_cap);
-  //shirley todo: after using parallel break pool, don't need the free here (cleaned at end of epoch)
-  if ((uint8_t *) old_p - (uint8_t *) row != 64)
-    mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
+  //shirley: after using parallel break pool, don't need the free here (cleaned at end of epoch)
+  // if ((uint8_t *) old_p - (uint8_t *) row != 64)
+  //   mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
   return new_p;
 }
 
@@ -251,36 +253,38 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
     probes::VHandleAppendSlowPath{this}();
     // shirley: this is used by default
     // shirley: if versions is nullptr, allocate new version array, copy sid1 &
-    // ptr1, set capacity = 4, size = 1, latest_version = 0, (cur_start = 0?) 
-    // shirley TODO: don't need to check capacity = 0?
-    if ((!versions) || (capacity == 0)) {
+    // ptr1, set capacity = 4, size = 1, latest_version = 0, cur_start = 0 
+    if ((!versions)) {
       // printf("AppendNewVersion: version array is null. SHOULDN'T REACH HERE!\n");
       // printf("AppendNewVersion: trying to allocate new version array\n");
       // shirley: initial size 64 is ok. (fits 4 versions)
-      versions = (uint64_t *)mem::GetDataRegion().Alloc(64); //shirley TODO: use get transient pool
-      versions[0] = GetInlineSid(sid1);
-      versions[4] = (uint64_t)GetInlinePtr(sid1); //shirley: 4 because we allocate for capacity of 4.
-      if (!versions[4]) {
-        //printf("AppendNewVersion: ptr1 is null?\n");
-        //std::abort();
-      }
-      // printf("AppendNewVersion: veresions[0]: %d\n", versions[0]);
-      // printf("AppendNewVersion: veresions[4]: %d\n", versions[4]);
+      //shirley: use transient pool for version array
+      //shirley note: if use data region there'll be races (idk why)
+      versions = (uint64_t *)mem::GetTransientPool().Alloc(2*4*sizeof(uint64_t));
       capacity = 4;
-      size = 1;
-      cur_start = 0; //shirley: should it be 0 or 1? Is cur_start used only by GC?
-      latest_version.store(0);
+      size = 0;
+      cur_start = 0; 
+      latest_version.store(-1);
 
-      // shirley why do we fill kpendingvalue after increase size, but not for initial version array?
-      // shirley: do we need to fill versions with kPendingValue?
-      // versions[5] = kPendingValue;
-      // versions[6] = kPendingValue;
-      // versions[7] = kPendingValue;
+      // now add initial version (sid1, ptr1) to the new version array
+      auto my_sid1 = GetInlineSid(felis::SortedArrayVHandle::sid1);
+      auto my_ptr1 = GetInlinePtr(felis::SortedArrayVHandle::sid1);
+      versions[0] = my_sid1;
+      versions[4] = (uint64_t)my_ptr1;
+      size = 1;
+      latest_version.store(0);
+      //shirley debug: do we need to init to 0? I don't think so?
+      versions[1] = 0;
+      versions[2] = 0;
+      versions[3] = 0;
+      versions[5] = 0;
+      versions[6] = 0;
+      versions[7] = 0;
 
       //shirley future: we need to use gc_handle if we want to remove row during minor GC
-      //shirley todo: add row to GC
-      // auto &gc = util::Instance<GC>();
-      // gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
+      //shirley: add row to GC bc it's appended to
+      auto &gc = util::Instance<GC>();
+      gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
     }
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
     lock.Unlock(&qnode);
@@ -343,16 +347,18 @@ found:
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   //shirley: if versions is nullptr, read from sid1/sid2
-  if ((!versions) || (capacity == 0)) { //shirley TODO: don't need to check capacity = 0
+  if (!versions) {
     // printf("ReadWithVersion: versions is null. SHOULDNT REACH HERE\n");
     // printf("ReadWithVersion try read from inline\n");
     // shirley: if (sid >= sid1) return ptr1;
     if (sid >= GetInlineSid(sid1)) {
       // printf("ReadWithVersion try read from inline SUCCESS\n");
-      return (VarStr *)GetInlinePtr(sid1);
+      VarStr *my_ptr1 = (VarStr *)GetInlinePtr(sid1);
+      return my_ptr1;
     }
     else {
-      // printf("ReadWithVersion: returning nullptr! sid = %u, sid1 = %u\n", sid, GetInlineSid(sid1));
+      // printf("ReadWithVersion: !versions, returning nullptr! sid = %u, sid1 = %u\n", sid, GetInlineSid(sid1));
+      // std::abort();
       return nullptr;
     }
 
@@ -489,10 +495,9 @@ void SortedArrayVHandle::GarbageCollect()
 }
 #endif
 
-//shirley TODO: should be removed
 SortedArrayVHandle *SortedArrayVHandle::New()
 {
-  //shirley: should remove this in the future. for now, just replace with NewInline()
+  //shirley: this function shouldn't be called bc we configured all tables to use inline
   return new (pool.Alloc()) SortedArrayVHandle();
 }
 

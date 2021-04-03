@@ -7,26 +7,22 @@ namespace felis {
 
 std::map<std::string, Checkpoint *> Checkpoint::impl;
 
-//shirley TODO: InitVersion should write to sid1, ptr1, similar to a row insert. 
-//shirley TODO: We wouldn't call AppendNewVersion or WriteWithVersion
+//shirley: InitVersion should write to sid1, ptr1, similar to a row insert. 
 void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
 {
-  if (!obj) {
-    printf("InitVersion: obj is null?\n");
-    std::abort();
-  }
   // handle-> sid1 = 0; //bc initial version of database, sid is 0.
   handle->SetInlineSid(felis::SortedArrayVHandle::sid1,0);
   // handle -> ptr1 = obj; // shirley: don't need to check pendingValue. tpcc always creates initial value 
   handle->SetInlinePtr(felis::SortedArrayVHandle::sid1,(uint8_t *)obj);
 
-  // shirley todo: don't need these things below. we're only creating sid1, ptr1, 
+  // shirley: don't need these things below. we're only creating sid1, ptr1, 
   // not using version array (should be nullptr).
-  handle->AppendNewVersion(0, 0);
-  if (obj != (void *) kPendingValue) {
-    abort_if(!handle->WriteWithVersion(0, obj, 0),
-              "Diverging outcomes during setup setup");
-  }
+  
+  // handle->AppendNewVersion(0, 0);
+  // if (obj != (void *) kPendingValue) {
+  //   abort_if(!handle->WriteWithVersion(0, obj, 0),
+  //             "Diverging outcomes during setup setup");
+  // }
 }
 
 VHandle *Table::NewRow()

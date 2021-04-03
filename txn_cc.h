@@ -223,16 +223,19 @@ class Txn : public BaseTxn {
       //shirley: probe transient vs persistent
       //probes::TransientPersistentCount{usePmem}();
 
-      //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
+      //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
+        bool result = WriteVarStr(val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::sid2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::sid2,(uint8_t *)val); 
-        return WriteVarStr(val);
+        return result;
       }
-      return WriteVarStr(o.Encode(usePmem));
+      else {
+        return WriteVarStr(o.Encode(usePmem));
+      }
     }
 
     // shirley: WriteTryInline is the same as Write (use WriteInitialInline for row insert)
@@ -244,16 +247,19 @@ class Txn : public BaseTxn {
       //shirley: probe transient vs persistent
       //probes::TransientPersistentCount{usePmem}();
 
-      //shirley TODO: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
+      //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
+        bool result = WriteVarStr(val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::sid2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::sid2,(uint8_t *)val); 
-        return WriteVarStr(val);
+        return result;
       }
-      return WriteVarStr(o.Encode(usePmem));
+      else {
+        return WriteVarStr(o.Encode(usePmem));
+      }
 
       //shirley: removed inline (from original Caracal) since we have new inline design
       // bool usePmem = ((vhandle->last_version()) == sid);
@@ -261,7 +267,7 @@ class Txn : public BaseTxn {
       //     vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem));
     }
 
-    //shirley: this should be used for writing initial versino after row insert.
+    //shirley: this should be used for writing initial version after row insert.
     template <typename T> bool WriteInitialInline(const T &o) {
       //shirley: probe size of version value
       //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
@@ -281,9 +287,9 @@ class Txn : public BaseTxn {
       // vhandle -> ptr1 = val
       vhandle->SetInlinePtr(felis::SortedArrayVHandle::sid1,(uint8_t *)val); 
       
-      //shirley TODO: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
-      // return true;
-      return WriteVarStr(val);
+      //shirley: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
+      return true;
+      // return WriteVarStr(val);
     }
   };
 

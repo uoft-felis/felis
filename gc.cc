@@ -226,7 +226,7 @@ void GC::RunGC()
 
       auto old = s.nr_bytes;
       auto nr_processed = Process(b->rows[i], cur_epoch_nr, 16_K);
-      //shirley TODO: after we remove the hard limit, don't need this check anymore.
+      
       if (nr_processed < 16_K) {
         b->rows[i]->gc_handle = 0;
         b->bitmap &= ~(1ULL << i);
@@ -280,39 +280,32 @@ void GC::RunPmemGC()
       }
     }
 
+    size_t i = 0;
+    // After processing this block, we always need to put it back into the slab!
+    // util::MCSSpinLock::QNode qnode;
     auto slab = g_slabs[b->alloc_core];
-    auto half_queue = &slab->half[q_idx];
-
     b->Initialize();
-    
-    int idx = 0;
-    if (!half_queue->empty()) {
-      idx = __builtin_ffsll(~b->bitmap) - 1;
-      abort_if(idx < 0 || idx >= GarbageBlock::kBlockSize, "inconsistent garbage block slab!");
-    } else {
-      idx = 0;
+
+    while (b->bitmap != 0) {
+      i = __builtin_ffsll(b->bitmap) - 1;
+      // logger->info("Found {} bitmap {:x}", i, b->bitmap);
+      // abort_if((uint64_t) &b->rows[i] != b->rows[i]->gc_handle.load(),
+      //          "gc_handle {:x} i {} blk {}", b->rows[i]->gc_handle.load(), i,
+      //          (void *) b);
+
+      auto old = s.nr_bytes;
+      auto nr_processed = ProcessPmem(b->rows[i], cur_epoch_nr, 16_K);
+      // shirley: after we remove the hard limit, don't need this check anymore.
+      // shirley: don't require limit on gc. clean everything
+      // if (nr_processed < 16_K) {
+        b->rows[i]->gc_handle = 0;
+        b->bitmap &= ~(1ULL << i);
+        s.nr_rows++;
+        continue;
+      // }
+
+      // shirley: dont care if we're straggler. clean everything
     }
-
-    //set the version array pointers to NULL
-
-    for (int i = 0; i < idx; i++)
-    {
-      if(b->rows[i])
-      {
-        b->rows[i]->versions = nullptr;
-        
-        //shirley TODO: need to free ptr1 if it's not from inline (call corresponding function in vhandle)
-
-        //shirley TODO: later we will call functions in vhandle that perform these for us. this is temporary
-        //get sid2 and ptr2
-        auto my_sid2 = b->rows[i]->GetInlineSid(felis::SortedArrayVHandle::sid2);
-        auto my_ptr2 = b->rows[i]->GetInlinePtr(felis::SortedArrayVHandle::sid2);
-        //set sid1 and ptr1
-        b->rows[i]->SetInlineSid(felis::SortedArrayVHandle::sid1,my_sid2);
-        b->rows[i]->SetInlinePtr(felis::SortedArrayVHandle::sid1,my_ptr2);
-      }
-    }
-    
     // Mark this block free
     // slab->lock.Acquire(&qnode);
     b->InsertAfter(&g_slabs[b->alloc_core]->free);
@@ -328,6 +321,14 @@ size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   util::MCSSpinLock::QNode qnode;
   handle->lock.Lock(&qnode);
   size_t n = Collect(handle, cur_epoch_nr, limit);
+  handle->lock.Unlock(&qnode);
+  return n;
+}
+
+size_t GC::ProcessPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
+  util::MCSSpinLock::QNode qnode;
+  handle->lock.Lock(&qnode);
+  size_t n = CollectPmem(handle, cur_epoch_nr, limit);
   handle->lock.Unlock(&qnode);
   return n;
 }
@@ -351,7 +352,6 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   auto *versions = handle->versions;
   uintptr_t *objects = handle->versions + handle->capacity;
   int i = 0;
-  //shirley TODO: we don't want a hard limit bc we need to clean everything. (comment out the limit check)
   while (i < handle->size - 1 && i < limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
     i++;
   }
@@ -376,6 +376,34 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   if (is_trace_enabled(TRACE_GC)) {
     trace(TRACE_GC "GC on row {} {}", (void *) handle, handle->ToString());
   }
+  return i;
+}
+
+size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
+  auto *versions = handle->versions;
+  uintptr_t *objects = handle->versions + handle->capacity;
+  int i = handle->size;
+
+  //printf("RunPmemGC: cleaning vhandle %p\n", handle);
+  handle->versions = nullptr;
+  handle->size = 0;
+  handle->cur_start = 0;
+  handle->latest_version.store(-1);
+
+  // shirley TODO: we should make these steps into a functions in vhandle. this is temporary 
+  // shirley: free ptr1 if it's not from inline
+  auto my_ptr1 = handle->GetInlinePtr(felis::SortedArrayVHandle::sid1);
+  if (my_ptr1 < (unsigned char *)handle ||
+      my_ptr1 >= (unsigned char *)handle + 256) {
+        delete ((VarStr *)my_ptr1);
+  }
+  //get sid2 and ptr2
+  auto my_sid2 = handle->GetInlineSid(felis::SortedArrayVHandle::sid2); 
+  auto my_ptr2 = handle->GetInlinePtr(felis::SortedArrayVHandle::sid2);
+  //set sid1 and ptr1
+  handle->SetInlineSid(felis::SortedArrayVHandle::sid1,my_sid2);
+  handle->SetInlinePtr(felis::SortedArrayVHandle::sid1,my_ptr2);
+
   return i;
 }
 
