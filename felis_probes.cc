@@ -120,6 +120,15 @@ template <> void OnProbe(felis::probes::VHandleAppendSlowPath p)
   statcnt.msc_wait_cnt_avg << msc_wait;
 }
 
+//Corey: Comparing total # inline allocations to # external allocations
+static std::mutex version_alloc_comparison_m;
+int countInlineAlloc;
+int countExtAlloc;
+template <> void OnProbe(felis::probes::VersionAllocCountInlineToExternal p) {
+  std::lock_guard _(version_alloc_comparison_m);
+  countInlineAlloc += p.countInlineAlloc;
+  countExtAlloc += p.countExtAlloc;
+}
 
 
 #if 0
@@ -207,6 +216,7 @@ template <> void OnProbe(felis::probes::RegionPoolVarstr p)
 }
 #endif
 
+
 static std::mutex trans_pers_m;
 // number of bytes allocated for varstr
 static long long total_transient = 0;
@@ -242,6 +252,8 @@ ProbeMain::~ProbeMain()
     }
   }
   std::cout << "DONE printing version value size" << std::endl;
+
+  std::cout << "Verison Alloc compare | Inline: " << countInlineAlloc << " , External: " << countExtAlloc << std::endl;
 
 #if 0
   std::cout << "number of bytes allocated for varstr: "

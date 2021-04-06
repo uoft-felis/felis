@@ -121,6 +121,13 @@ struct VersionValueSizeArray {
   int cur_size;
   void operator()() const;
 };
+
+// Corey: Comparing total # inline allocations to # external allocations
+struct VersionAllocCountInlineToExternal {
+  int countInlineAlloc;
+  int countExtAlloc;
+  void operator()() const;
+};
 }
 }
 
@@ -142,6 +149,7 @@ struct VersionValueSizeArray {
   PROBE_PROXY(felis::probes::RegionPoolVarstr);                                \
   PROBE_PROXY(felis::probes::TransientPersistentCount);                        \
   PROBE_PROXY(felis::probes::VersionSizeArray);                                \
-  PROBE_PROXY(felis::probes::VersionValueSizeArray);
+  PROBE_PROXY(felis::probes::VersionValueSizeArray);                           \
+  PROBE_PROXY(felis::probes::VersionAllocCountInlineToExternal);
 
 #endif /* FELIS_PROBES_H */
