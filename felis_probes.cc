@@ -98,6 +98,9 @@ template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
   
   total_mem_allocated += offset;
   
+  // dividing by 256 because we call the probe 16*16 times. Reset function is called 16 times right after Garbage Collections
+  //Inside reset function, we call the pool reset function one per core so thus another 16 times
+  //therfor in total this probe is called 16*16 per epoch
   int epoch_index = mem_probe_index / 256 ;
   
   if(epoch_index >= 50)
