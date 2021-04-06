@@ -13,6 +13,7 @@
 #include "util/locks.h"
 #include "util/linklist.h"
 #include "literals.h"
+#include "felis_probes.h"
 
 namespace mem {
 
@@ -470,7 +471,11 @@ class Brk {
   }
 
   bool Check(size_t s) { return offset + s <= limit; }
-  void Reset() { offset = 0; }
+  void Reset() 
+  { 
+    felis::probes::MemAllocParallelBrkPool{(int)offset}();
+    offset = 0; 
+  }
 
   void *Alloc(size_t s);
   uint8_t *ptr() const { return data; }

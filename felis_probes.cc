@@ -88,6 +88,25 @@ template <> void OnProbe(felis::probes::VersionSizeArray p)
 
 }
 
+static std::mutex mem_alloc_parallel_brk_pool_m;
+static int mem_alloc_parallel_brk_pool_per_epoch[52] = {0}; // all elements 0
+static unsigned long total_mem_allocated = 0;
+static int epoch_index = 0;
+template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
+  std::lock_guard _(mem_alloc_parallel_brk_pool_m);
+  int offset = p.cur_offset;
+  
+  total_mem_allocated += offset;
+  
+  if(epoch_index >= 51)
+  {
+    epoch_index = 51;
+  } 
+
+  mem_alloc_parallel_brk_pool_per_epoch[epoch_index] = offset;
+  epoch_index += 1;
+}
+
 //shirley: version values sizes in the database
 static std::mutex version_value_size_array_m;
 static int version_value_size_array[162] = {0}; // all elements 0
@@ -254,6 +273,15 @@ ProbeMain::~ProbeMain()
   std::cout << "DONE printing version value size" << std::endl;
 
   std::cout << "Verison Alloc compare | Inline: " << countInlineAlloc << " , External: " << countExtAlloc << std::endl;
+
+  std::cout << "Total Amount of Memory Allocated through Transient Parallel Brk Pool : " << total_mem_allocated << std::endl;
+
+  std::cout << "MOMO printing Memory Allocated per epoch" << std::endl;
+
+  for(int i = 0; i < 51; i++) {
+    std::cout << "MOMO mem_allocated_for_epoch[" << i << "]:" << mem_alloc_parallel_brk_pool_per_epoch[i] << std::endl;
+  }
+  std::cout << "MOMO DONE printing mem_allocated_for_epoch" << std::endl;
 
 #if 0
   std::cout << "number of bytes allocated for varstr: "

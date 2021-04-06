@@ -128,6 +128,12 @@ struct VersionAllocCountInlineToExternal {
   int countExtAlloc;
   void operator()() const;
 };
+
+struct MemAllocParallelBrkPool {
+  int cur_offset;
+  void operator()() const;
+};
+
 }
 }
 
@@ -150,6 +156,7 @@ struct VersionAllocCountInlineToExternal {
   PROBE_PROXY(felis::probes::TransientPersistentCount);                        \
   PROBE_PROXY(felis::probes::VersionSizeArray);                                \
   PROBE_PROXY(felis::probes::VersionValueSizeArray);                           \
-  PROBE_PROXY(felis::probes::VersionAllocCountInlineToExternal);
+  PROBE_PROXY(felis::probes::VersionAllocCountInlineToExternal);               \
+  PROBE_PROXY(felis::probes::MemAllocParallelBrkPool);
 
 #endif /* FELIS_PROBES_H */
