@@ -214,14 +214,14 @@ class Txn : public BaseTxn {
     // to use vhandle->AllocFromInline, and EncodeFromPtrOrDefault
     template <typename T> bool Write(const T &o) {
       //shirley: probe size of version value
-      //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+      // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
       if (!vhandle) {
         printf("Write: vhandle is null???\n");
         std::abort();
       }
       bool usePmem = ((vhandle->last_version()) == sid);
       //shirley: probe transient vs persistent
-      //probes::TransientPersistentCount{usePmem}();
+      // probes::TransientPersistentCount{usePmem}();
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
@@ -241,11 +241,11 @@ class Txn : public BaseTxn {
     // shirley: WriteTryInline is the same as Write (use WriteInitialInline for row insert)
     template <typename T> bool WriteTryInline(const T &o) {
       //shirley: probe size of version value
-      //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+      // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
       bool usePmem = ((vhandle->last_version()) == sid);
       //shirley: probe transient vs persistent
-      //probes::TransientPersistentCount{usePmem}();
+      // probes::TransientPersistentCount{usePmem}();
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
@@ -270,12 +270,12 @@ class Txn : public BaseTxn {
     //shirley: this should be used for writing initial version after row insert.
     template <typename T> bool WriteInitialInline(const T &o) {
       //shirley: probe size of version value
-      //felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
+      // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
       //shirley: initial version (after insert) should be inlined if possible.
       bool usePmem = true;
       //shirley: probe transient vs persistent
-      //probes::TransientPersistentCount{usePmem}();
+      // probes::TransientPersistentCount{usePmem}();
       VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
       
       if (!val) {

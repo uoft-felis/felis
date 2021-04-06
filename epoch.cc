@@ -305,6 +305,8 @@ void CallTxnsWorker::Run()
 
     mem::GetDataRegion().Quiescence();
     //mem::GetDataRegion(true).Quiescence();
+    //shirley test: quiescence persistent pool? faster if in dram, similar(slower?) if in pmem
+    mem::GetPersistentPool().Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {
     //SHIRLEY: this is major GC, use pmem GC version and reset transient pool

@@ -696,7 +696,8 @@ namespace mem {
   }
 
   void InitTransientPool(size_t t_mem) {
-    g_transient_pool = ParallelBrk(t_mem, true); //remember to change this to false!
+    //shirley pmem: when on pmem machine, set to false. when on our machine, set to true
+    g_transient_pool = ParallelBrk(t_mem, true);
   }
 
   void *Brk::Alloc(size_t s) {
@@ -756,13 +757,13 @@ namespace mem {
 
   void ParallelBrk::Reset()
   {
-    //shirley: this var is used for probing.
-    //size_t transient_size = 0;
+    //shirley: transient_size var is used for probing.
+    // size_t transient_size = 0;
     for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
-      //transient_size += pools[i]->current_size();
+      // transient_size += pools[i]->current_size();
       pools[i]->Reset();
     }
-    //felis::probes::MemAllocParallelBrkPool{transient_size}();
+    // felis::probes::MemAllocParallelBrkPool{transient_size}();
   }
 
   ParallelBrk::~ParallelBrk()
@@ -857,6 +858,7 @@ namespace mem {
   {
     //file name
     char pmem_file_name[50];
+    //shirley pmem: when on pmem machine, use /mnt/pmem0. when on our machine, use ../temp_files
     //sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
     sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
 

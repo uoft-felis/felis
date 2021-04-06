@@ -238,7 +238,7 @@ class SortedArrayVHandle : public BaseVHandle {
         inline_used = 0;
         // *inline_used_duplicate = (uint8_t)0;
 
-        //felis::probes::VersionAllocCountInlineToExternal{0, 1}();
+        // felis::probes::VersionAllocCountInlineToExternal{0, 1}();
         return nullptr;
       }
 
@@ -247,11 +247,11 @@ class SortedArrayVHandle : public BaseVHandle {
         // if ((((uint8_t)*inline_used_duplicate) & (mask << off)) == 0) {
         if ((inline_used & (mask << off)) == 0) {
           //inline_used |= (mask << off);
-          //shirley test: what if we only record latest write. It still works.
+          //shirley: what if we only record latest write? It still works.
           inline_used = (mask << off);
           // *inline_used_duplicate = (uint8_t)(mask << off);
           //printf("alloced from inline\n");
-          //felis::probes::VersionAllocCountInlineToExternal{1, 0}();
+          // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
           return (uint8_t *) this + 128 + (off << 5);
         }
       }
@@ -259,7 +259,7 @@ class SortedArrayVHandle : public BaseVHandle {
     //shirley: set inline_used to 0 bc we didn't allocate for this version & we're only tracking latest alloc
     inline_used = 0;
     // *inline_used_duplicate = (uint8_t)0;
-    //felis::probes::VersionAllocCountInlineToExternal{0, 1}();
+    // felis::probes::VersionAllocCountInlineToExternal{0, 1}();
     return nullptr;
   }
 

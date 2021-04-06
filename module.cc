@@ -73,8 +73,8 @@ class AllocatorModule : public Module<CoreModule> {
 
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads);
     mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
-    mem::InitTransientPool(4_G); //shirley: set larger during actual pmem // shirley: add it to command line options later
-
+    //shirley: can't be too big (e.g. 4_G) or else alloc memory fails, use command line options later
+    mem::InitTransientPool(128_M); 
     // Legacy
     //shirley: data region not used in this design anymore?
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
@@ -124,6 +124,7 @@ class AllocatorModule : public Module<CoreModule> {
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     //tasks.emplace_back([]() { mem::GetDataRegion(true).InitPools(true); });
+    //shirley test: don't set to true to put everything in dram
     tasks.emplace_back([]() { mem::GetPersistentPool().InitPools(true); });
     tasks.emplace_back(VHandle::InitPool);
     tasks.emplace_back(RowEntity::InitPool);

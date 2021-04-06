@@ -76,6 +76,9 @@ buck-out/gen/db#release -c 142.150.234.169:3148 -n host1 -w tpcc -Xcpu16 -Xmem16
 
 lldb -- buck-out/gen/db#debug -c 142.150.234.169:3148 -n host1 -w tpcc -Xcpu16 -Xmem16G
 
+on pmem machine:
+buck-out/gen/db#release -c 127.0.0.1:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
+
 for ycsb, need to run with 17G (idk why)
 ```
 
@@ -101,6 +104,9 @@ proceed:
 curl localhost:<http_port>/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 curl 127.0.0.1:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 curl 142.150.234.169:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
+
+on pmem machine:
+curl localhost:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 ```
 
 Upon receiving this, the controller would broadcast to every node to

@@ -123,7 +123,7 @@ static std::mutex version_value_size_array_m;
 static int version_value_size_array[162] = {0}; // all elements 0
 template <> void OnProbe(felis::probes::VersionValueSizeArray p) {
   std::lock_guard _(version_value_size_array_m);
-  int index = p.cur_size;
+  int index = p.cur_size + 4; //shirley: plus 4 because each varstr has header of 4 bytes
   if (index >= 161) {
     index = 161;
   }
@@ -266,17 +266,20 @@ ProbeMain::~ProbeMain()
 {
   std::cout << "number of transient varstr: " << total_transient << std::endl;
   std::cout << "number of persistent varstr: " << total_persistent << std::endl;
-  // std::cout << "MOMO printing versionSizeArray of size: " << version_size_array.size()  << std::endl;
+  std::cout << std::endl;
 
   std::cout << "Total Bytes VarStr::New use_pmem=true: " << total_varstr_new_pmem_bytes << std::endl;
   std::cout << "Total Number VarStr::New use_pmem=true: " << total_varstr_new_pmem_number << std::endl;
+  std::cout << std::endl;
 
-  std::cout << "MOMO printing versionSizeArray for upto size 20 out of 5000" << std::endl;
-
-  for(int i = 0; i < 20; i++) {
-    std::cout << "MOMO versionSizeArray[" << i << "]:" << version_size_array[i] << std::endl;
+  std::cout << "MOMO printing versionSizeArray" << std::endl;
+  for(int i = 0; i < 5002; i++) {
+    if (version_size_array[i]) {
+      std::cout << "MOMO versionSizeArray[" << i << "]:" << version_size_array[i] << std::endl;
+    }
   }
   std::cout << "MOMO DONE printing versionSizeArray" << std::endl;
+  std::cout << std::endl;
 
   std::cout << "START print version values sizes" << std::endl;
   for(int i = 0; i < 162; i++) {
@@ -285,20 +288,20 @@ ProbeMain::~ProbeMain()
     }
   }
   std::cout << "DONE printing version value size" << std::endl;
+  std::cout << std::endl;
 
   std::cout << "Verison Alloc compare | Inline: " << countInlineAlloc << " , External: " << countExtAlloc << std::endl;
+  std::cout << std::endl;
 
   std::cout << "Total Amount of Memory Allocated through Transient Parallel Brk Pool : " << total_mem_allocated << std::endl;
   std::cout << "Max Amount of Memory Allocated through Transient Parallel Brk Pool In An Epoch: " << max_mem_allocated_per_epoch << std::endl;
 
-  // std::cout << "epoch_index : " << epoch_index << std::endl;
-
   std::cout << "MOMO printing Memory Allocated per epoch" << std::endl;
-
   for(int i = 0; i < 51; i++) {
     std::cout << "MOMO mem_allocated_for_epoch[" << i << "]:" << mem_alloc_parallel_brk_pool_per_epoch[i] << std::endl;
   }
   std::cout << "MOMO DONE printing mem_allocated_for_epoch" << std::endl;
+  std::cout << std::endl;
 
 #if 0
   std::cout << "number of bytes allocated for varstr: "
