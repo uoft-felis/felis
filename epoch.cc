@@ -310,7 +310,8 @@ void CallTxnsWorker::Run()
     //SHIRLEY: this is major GC, use pmem GC version and reset transient pool
     //util::Instance<GC>().RunGC();
     util::Instance<GC>().RunPmemGC();
-    mem::GetTransientPool().Reset();
+    //SHIRLEY: don't clear transient pool here bc it'll be executed by every core (16 times)
+    //mem::GetTransientPool().Reset();
   }
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
@@ -399,6 +400,8 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::OnInsertComplete()
 {
+  // Shirley: clear transient pool here (only 1 thread)
+  mem::GetTransientPool().Reset();
   // Shirley: major GC print stats
   // // GC must have been completed
   auto &gc = util::Instance<GC>();

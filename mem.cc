@@ -738,7 +738,7 @@ namespace mem {
       }
       
       pools[i] = new (p) Brk(p_buf, brk_pool_size, use_pmem);
-      pools[i]->set_thread_safe(false);
+      pools[i]->set_thread_safe(false); //shirley: false means don't need to be thread safe
 
       p += sizeof(Brk);
       free_lists[i] = (uintptr_t *) p;
@@ -756,10 +756,13 @@ namespace mem {
 
   void ParallelBrk::Reset()
   {
+    //shirley: this var is used for probing.
+    //size_t transient_size = 0;
     for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
-      felis::probes::MemAllocParallelBrkPool{pools[i]->current_size()}();
+      //transient_size += pools[i]->current_size();
       pools[i]->Reset();
     }
+    //felis::probes::MemAllocParallelBrkPool{transient_size}();
   }
 
   ParallelBrk::~ParallelBrk()

@@ -91,23 +91,17 @@ template <> void OnProbe(felis::probes::VersionSizeArray p)
 static std::mutex mem_alloc_parallel_brk_pool_m;
 static int mem_alloc_parallel_brk_pool_per_epoch[51] = {0}; // all elements 0
 static unsigned long total_mem_allocated = 0;
+static unsigned long max_mem_allocated_per_epoch = 0;
 static int mem_probe_index = 0;
 template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
   std::lock_guard _(mem_alloc_parallel_brk_pool_m);
   int offset = p.cur_offset;
   
   total_mem_allocated += offset;
-  
-  // dividing by 256 because we call the probe 16*16 times. Reset function is called 16 times right after Garbage Collections
-  //Inside reset function, we call the pool reset function one per core so thus another 16 times
-  //therfor in total this probe is called 16*16 per epoch
-  int epoch_index = mem_probe_index / 256 ;
-  
-  if(epoch_index >= 50)
-  {
-    std::cout << "MOMO p.cur_offset:" << p.cur_offset <<" --- total_mem_allocated:" << total_mem_allocated << std::endl;
-    epoch_index = 50;
+  if (offset > max_mem_allocated_per_epoch){
+    max_mem_allocated_per_epoch = offset;
   }
+  int epoch_index = mem_probe_index;
 
   mem_alloc_parallel_brk_pool_per_epoch[epoch_index] += offset;
   mem_probe_index += 1;
@@ -147,8 +141,8 @@ template <> void OnProbe(felis::probes::VHandleAppendSlowPath p)
 
 //Corey: Comparing total # inline allocations to # external allocations
 static std::mutex version_alloc_comparison_m;
-int countInlineAlloc;
-int countExtAlloc;
+int countInlineAlloc = 0;
+int countExtAlloc = 0;
 template <> void OnProbe(felis::probes::VersionAllocCountInlineToExternal p) {
   std::lock_guard _(version_alloc_comparison_m);
   countInlineAlloc += p.countInlineAlloc;
@@ -281,6 +275,7 @@ ProbeMain::~ProbeMain()
   std::cout << "Verison Alloc compare | Inline: " << countInlineAlloc << " , External: " << countExtAlloc << std::endl;
 
   std::cout << "Total Amount of Memory Allocated through Transient Parallel Brk Pool : " << total_mem_allocated << std::endl;
+  std::cout << "Max Amount of Memory Allocated through Transient Parallel Brk Pool In An Epoch: " << max_mem_allocated_per_epoch << std::endl;
 
   // std::cout << "epoch_index : " << epoch_index << std::endl;
 
