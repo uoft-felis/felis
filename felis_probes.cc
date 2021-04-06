@@ -91,21 +91,23 @@ template <> void OnProbe(felis::probes::VersionSizeArray p)
 static std::mutex mem_alloc_parallel_brk_pool_m;
 static int mem_alloc_parallel_brk_pool_per_epoch[51] = {0}; // all elements 0
 static unsigned long total_mem_allocated = 0;
-static int epoch_index = 0;
+static int mem_probe_index = 0;
 template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
   std::lock_guard _(mem_alloc_parallel_brk_pool_m);
   int offset = p.cur_offset;
   
   total_mem_allocated += offset;
   
-  if(epoch_index >= 51)
+  int epoch_index = mem_probe_index / 256 ;
+  
+  if(epoch_index >= 50)
   {
-    // std::cout << "MOMO p.cur_offset:" << p.cur_offset <<" --- total_mem_allocated:" << total_mem_allocated << std::endl;
+    std::cout << "MOMO p.cur_offset:" << p.cur_offset <<" --- total_mem_allocated:" << total_mem_allocated << std::endl;
     epoch_index = 50;
-  } 
+  }
 
   mem_alloc_parallel_brk_pool_per_epoch[epoch_index] += offset;
-  epoch_index += 1;
+  mem_probe_index += 1;
 }
 
 //shirley: version values sizes in the database
@@ -276,6 +278,8 @@ ProbeMain::~ProbeMain()
   std::cout << "Verison Alloc compare | Inline: " << countInlineAlloc << " , External: " << countExtAlloc << std::endl;
 
   std::cout << "Total Amount of Memory Allocated through Transient Parallel Brk Pool : " << total_mem_allocated << std::endl;
+
+  // std::cout << "epoch_index : " << epoch_index << std::endl;
 
   std::cout << "MOMO printing Memory Allocated per epoch" << std::endl;
 
