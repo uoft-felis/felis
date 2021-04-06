@@ -78,6 +78,8 @@ class VarStr final {
       ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
     }
     else {
+      //shirley probe
+      //probes::VarStrNewPmem{NewSize(length)}();
       //shirley: use persistent pool 
       // ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
       ins = (VarStr *)mem::GetPersistentPool().Alloc(NewSize(length));

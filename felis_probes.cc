@@ -107,6 +107,17 @@ template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
   mem_probe_index += 1;
 }
 
+
+//shirley: # versions allocated through varstr new use_pmem=true, total bytes allocated for them
+static std::mutex varstr_new_pmem_m;
+static size_t total_varstr_new_pmem_bytes = 0;
+static unsigned long total_varstr_new_pmem_number = 0;
+template <> void OnProbe(felis::probes::VarStrNewPmem p) {
+  std::lock_guard _(varstr_new_pmem_m);
+  total_varstr_new_pmem_bytes += p.num_bytes;
+  total_varstr_new_pmem_number += 1;
+}
+
 //shirley: version values sizes in the database
 static std::mutex version_value_size_array_m;
 static int version_value_size_array[162] = {0}; // all elements 0
@@ -256,6 +267,9 @@ ProbeMain::~ProbeMain()
   std::cout << "number of transient varstr: " << total_transient << std::endl;
   std::cout << "number of persistent varstr: " << total_persistent << std::endl;
   // std::cout << "MOMO printing versionSizeArray of size: " << version_size_array.size()  << std::endl;
+
+  std::cout << "Total Bytes VarStr::New use_pmem=true: " << total_varstr_new_pmem_bytes << std::endl;
+  std::cout << "Total Number VarStr::New use_pmem=true: " << total_varstr_new_pmem_number << std::endl;
 
   std::cout << "MOMO printing versionSizeArray for upto size 20 out of 5000" << std::endl;
 

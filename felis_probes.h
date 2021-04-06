@@ -134,6 +134,10 @@ struct MemAllocParallelBrkPool {
   void operator()() const;
 };
 
+struct VarStrNewPmem {
+  size_t num_bytes;
+  void operator()() const;
+};
 }
 }
 
@@ -157,6 +161,7 @@ struct MemAllocParallelBrkPool {
   PROBE_PROXY(felis::probes::VersionSizeArray);                                \
   PROBE_PROXY(felis::probes::VersionValueSizeArray);                           \
   PROBE_PROXY(felis::probes::VersionAllocCountInlineToExternal);               \
-  PROBE_PROXY(felis::probes::MemAllocParallelBrkPool);
+  PROBE_PROXY(felis::probes::MemAllocParallelBrkPool);                         \
+  PROBE_PROXY(felis::probes::VarStrNewPmem);
 
 #endif /* FELIS_PROBES_H */
