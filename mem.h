@@ -473,7 +473,6 @@ class Brk {
   bool Check(size_t s) { return offset + s <= limit; }
   void Reset() 
   { 
-    felis::probes::MemAllocParallelBrkPool{(int)offset}();
     offset = 0; 
   }
 

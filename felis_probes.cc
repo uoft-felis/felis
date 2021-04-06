@@ -89,7 +89,7 @@ template <> void OnProbe(felis::probes::VersionSizeArray p)
 }
 
 static std::mutex mem_alloc_parallel_brk_pool_m;
-static int mem_alloc_parallel_brk_pool_per_epoch[52] = {0}; // all elements 0
+static int mem_alloc_parallel_brk_pool_per_epoch[51] = {0}; // all elements 0
 static unsigned long total_mem_allocated = 0;
 static int epoch_index = 0;
 template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
@@ -100,10 +100,11 @@ template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
   
   if(epoch_index >= 51)
   {
-    epoch_index = 51;
+    // std::cout << "MOMO p.cur_offset:" << p.cur_offset <<" --- total_mem_allocated:" << total_mem_allocated << std::endl;
+    epoch_index = 50;
   } 
 
-  mem_alloc_parallel_brk_pool_per_epoch[epoch_index] = offset;
+  mem_alloc_parallel_brk_pool_per_epoch[epoch_index] += offset;
   epoch_index += 1;
 }
 

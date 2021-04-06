@@ -130,7 +130,7 @@ struct VersionAllocCountInlineToExternal {
 };
 
 struct MemAllocParallelBrkPool {
-  int cur_offset;
+  size_t cur_offset;
   void operator()() const;
 };
 
