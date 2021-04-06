@@ -228,9 +228,9 @@ class Txn : public BaseTxn {
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
         bool result = WriteVarStr(val);
         // sid2 = sid;
-        vhandle->SetInlineSid(felis::SortedArrayVHandle::sid2,sid); 
+        vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
-        vhandle->SetInlinePtr(felis::SortedArrayVHandle::sid2,(uint8_t *)val); 
+        vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
         return result;
       }
       else {
@@ -252,9 +252,9 @@ class Txn : public BaseTxn {
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
         bool result = WriteVarStr(val);
         // sid2 = sid;
-        vhandle->SetInlineSid(felis::SortedArrayVHandle::sid2,sid); 
+        vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
-        vhandle->SetInlinePtr(felis::SortedArrayVHandle::sid2,(uint8_t *)val); 
+        vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
         return result;
       }
       else {
@@ -283,9 +283,9 @@ class Txn : public BaseTxn {
         std::abort();
       }
       // vhandle -> sid1 = sid
-      vhandle->SetInlineSid(felis::SortedArrayVHandle::sid1,sid); 
+      vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType1,sid); 
       // vhandle -> ptr1 = val
-      vhandle->SetInlinePtr(felis::SortedArrayVHandle::sid1,(uint8_t *)val); 
+      vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)val); 
       
       //shirley: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
       return true;

@@ -125,14 +125,14 @@ class SortedArrayVHandle : public BaseVHandle {
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
 
   enum SidType {
-    sid1,
-    sid2
+    SidType1,
+    SidType2
   };
 
   //Corey: Get Sid value
   uint64_t GetInlineSid(SidType sidType) const {
     uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
-    if (sidType == sid2) {
+    if (sidType == SidType2) {
       sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
     }
     return *((uint64_t *)sidPtr);
@@ -141,7 +141,7 @@ class SortedArrayVHandle : public BaseVHandle {
   //Corey: Write Sid value
   void SetInlineSid(SidType sidType, uint64_t sidValue) {
     uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
-    if (sidType == sid2) {
+    if (sidType == SidType2) {
       sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
     }
     *((uint64_t *)sidPtr) = sidValue;
@@ -151,7 +151,7 @@ class SortedArrayVHandle : public BaseVHandle {
   //Corey: This one returns a pointer to ptr1 or ptr2
   uint8_t **GetInlinePtrPtr(SidType sidType) const {
     uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
-    if (sidType == sid2) {
+    if (sidType == SidType2) {
       sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
     }
     return sidPtr;
@@ -160,7 +160,7 @@ class SortedArrayVHandle : public BaseVHandle {
   //Corey: This one returns ptr1 or ptr2
   uint8_t *GetInlinePtr(SidType sidType) const {
     uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
-    if (sidType == sid2) {
+    if (sidType == SidType2) {
       sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
     }
     return *sidPtr;
@@ -169,10 +169,42 @@ class SortedArrayVHandle : public BaseVHandle {
   //Corey: Set Inline Ptr value to the address passed in to function
   void SetInlinePtr(SidType sidType, uint8_t *miniHeapPtrAddr) {
     uint8_t **sidPtr = (uint8_t **)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
-    if (sidType == sid2) {
+    if (sidType == SidType2) {
       sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
     }
     *sidPtr = miniHeapPtrAddr;
+  }
+
+  //Corey: Free ptr1 (only if it’s external pmem call Persistent Pool. free()  )
+  void FreePtr1() {
+    uint8_t *sid1Ptr = GetInlinePtr(SidType1);
+    uint8_t *startOfMiniHeap = (uint8_t *)this + vhandleMetadataSize + inlineTwoVersionArraySize + inlineMiniHeapMask1Size + inlineMiniHeapMask2Size;
+
+    // Check if Ptr1 is using miniheap, if so do nothing
+    if (startOfMiniHeap <= sid1Ptr && sid1Ptr < (startOfMiniHeap + inlineMiniHeapSize)) {
+      return;
+    } 
+
+    //TODO: Not sure on this? Where do we extend the memory allocation for inline version array extension?
+    //Need size of allocated amount or have it passed into this function
+    VarStr *ins = (VarStr *) sid1Ptr;
+    delete ins;
+    // mem::GetPersistentPool().Free(sid1Ptr, ins-> region_id, sizeof(VarStr) + ins->len);      
+  }
+
+  //Corey: Copy (sid2, ptr2) to (sid1, ptr1)
+  void CopySid2ToSid1() {
+    uint64_t sid2Val = GetInlineSid(SidType2);
+    uint8_t *sid2Ptr = GetInlinePtr(SidType2);
+
+    SetInlinePtr(SidType1, sid2Ptr);
+    SetInlineSid(SidType1, sid2Val);
+  }
+
+  //Corey: Set (sid2, ptr2) to (0, null) //is it correct to use 0?
+  void ResetSid2() {
+    SetInlineSid(SidType2, 0);
+    SetInlinePtr(SidType2, nullptr);
   }
 
   void Prefetch() const { __builtin_prefetch(versions); }
@@ -180,7 +212,7 @@ class SortedArrayVHandle : public BaseVHandle {
   std::string ToString() const;
 
   //shirley TODO: we don't use inline_used variable for our design
-  bool is_inlined() const { return inline_used != 0xFF; } // Corey: this is confusing?
+  bool is_inlined() const { return inline_used != 0xFF; }
 
   //Corey: Old Design Alloc
   uint8_t *AllocFromInline(size_t sz) {
@@ -205,6 +237,7 @@ class SortedArrayVHandle : public BaseVHandle {
         //shirley: set inline_used to 0 bc we didn't allocate for this version & we're only tracking latest alloc
         inline_used = 0;
         // *inline_used_duplicate = (uint8_t)0;
+
         return nullptr;
       }
 
@@ -253,7 +286,6 @@ class SortedArrayVHandle : public BaseVHandle {
 
     //printf("AllocFromInlinePmem: this: %p, &(this->size): %p, this->size: %u\n", this, &(this->size), this->size);
     
-
     // Check requests size fits in miniheap
     if (sz > inlineMiniHeapSize) return nullptr;
 
@@ -332,7 +364,7 @@ class SortedArrayVHandle : public BaseVHandle {
   const size_t current_start() const { return cur_start;}
   uint64_t first_version() const { 
     if (!versions)
-      return GetInlineSid(sid1); // shirley: return sid1 when version array is null
+      return GetInlineSid(SidType1); // shirley: return sid1 when version array is null
     else 
       return versions[0];
   }

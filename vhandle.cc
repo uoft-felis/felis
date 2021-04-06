@@ -267,10 +267,10 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       latest_version.store(-1);
 
       // now add initial version (sid1, ptr1) to the new version array
-      auto my_sid1 = GetInlineSid(felis::SortedArrayVHandle::sid1);
-      auto my_ptr1 = GetInlinePtr(felis::SortedArrayVHandle::sid1);
-      versions[0] = my_sid1;
-      versions[4] = (uint64_t)my_ptr1;
+      auto sid1 = GetInlineSid(felis::SortedArrayVHandle::SidType1);
+      auto ptr1 = GetInlinePtr(felis::SortedArrayVHandle::SidType1);
+      versions[0] = sid1;
+      versions[4] = (uint64_t)ptr1;
       size = 1;
       latest_version.store(0);
       //shirley debug: do we need to init to 0? I don't think so?
@@ -299,7 +299,6 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 
   //shirley TODO: how can we prefetch in our new design?
   if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
-
   uint64_t *p = versions;
   uint64_t *start = versions + cur_start;
   uint64_t *end = versions + size;
@@ -351,10 +350,10 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
     // printf("ReadWithVersion: versions is null. SHOULDNT REACH HERE\n");
     // printf("ReadWithVersion try read from inline\n");
     // shirley: if (sid >= sid1) return ptr1;
-    if (sid >= GetInlineSid(sid1)) {
+    if (sid >= GetInlineSid(SidType1)) {
       // printf("ReadWithVersion try read from inline SUCCESS\n");
-      VarStr *my_ptr1 = (VarStr *)GetInlinePtr(sid1);
-      return my_ptr1;
+      VarStr *ptr1 = (VarStr *)GetInlinePtr(SidType1);
+      return ptr1;
     }
     else {
       // printf("ReadWithVersion: !versions, returning nullptr! sid = %u, sid1 = %u\n", sid, GetInlineSid(sid1));

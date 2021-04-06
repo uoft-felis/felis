@@ -11,9 +11,9 @@ std::map<std::string, Checkpoint *> Checkpoint::impl;
 void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
 {
   // handle-> sid1 = 0; //bc initial version of database, sid is 0.
-  handle->SetInlineSid(felis::SortedArrayVHandle::sid1,0);
+  handle->SetInlineSid(felis::SortedArrayVHandle::SidType1,0);
   // handle -> ptr1 = obj; // shirley: don't need to check pendingValue. tpcc always creates initial value 
-  handle->SetInlinePtr(felis::SortedArrayVHandle::sid1,(uint8_t *)obj);
+  handle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)obj);
 
   // shirley: don't need these things below. we're only creating sid1, ptr1, 
   // not using version array (should be nullptr).

@@ -392,17 +392,17 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
 
   // shirley TODO: we should make these steps into a functions in vhandle. this is temporary 
   // shirley: free ptr1 if it's not from inline
-  auto my_ptr1 = handle->GetInlinePtr(felis::SortedArrayVHandle::sid1);
-  if (my_ptr1 < (unsigned char *)handle ||
-      my_ptr1 >= (unsigned char *)handle + 256) {
-        delete ((VarStr *)my_ptr1);
+  auto ptr1 = handle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
+  if (ptr1 < (unsigned char *)handle ||
+      ptr1 >= (unsigned char *)handle + 256) {
+        delete ((VarStr *)ptr1);
   }
   //get sid2 and ptr2
-  auto my_sid2 = handle->GetInlineSid(felis::SortedArrayVHandle::sid2); 
-  auto my_ptr2 = handle->GetInlinePtr(felis::SortedArrayVHandle::sid2);
+  auto sid2 = handle->GetInlineSid(felis::SortedArrayVHandle::SidType2); 
+  auto ptr2 = handle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
   //set sid1 and ptr1
-  handle->SetInlineSid(felis::SortedArrayVHandle::sid1,my_sid2);
-  handle->SetInlinePtr(felis::SortedArrayVHandle::sid1,my_ptr2);
+  handle->SetInlineSid(felis::SortedArrayVHandle::SidType1, sid2);
+  handle->SetInlinePtr(felis::SortedArrayVHandle::SidType1, ptr2);
 
   return i;
 }
