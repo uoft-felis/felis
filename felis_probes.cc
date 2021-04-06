@@ -298,7 +298,11 @@ ProbeMain::~ProbeMain()
 
   std::cout << "MOMO printing Memory Allocated per epoch" << std::endl;
   for(int i = 0; i < 51; i++) {
-    std::cout << "MOMO mem_allocated_for_epoch[" << i << "]:" << mem_alloc_parallel_brk_pool_per_epoch[i] << std::endl;
+    if (mem_alloc_parallel_brk_pool_per_epoch[i]) {
+      std::cout << "MOMO mem_allocated_for_epoch[" << i << "]:" 
+                << mem_alloc_parallel_brk_pool_per_epoch[i]
+                << std::endl;
+    }
   }
   std::cout << "MOMO DONE printing mem_allocated_for_epoch" << std::endl;
   std::cout << std::endl;
