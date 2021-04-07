@@ -81,6 +81,13 @@ HashtableIndex::HashtableIndex(std::tuple<HashFunc, size_t, bool> conf)
   // NUMA friendly hash function, we can make sure all pages are accessed from
   // local NUMA zone.
   auto nrpg = ((nr_buckets * row_size() - 1) >> 12) + 1;
+  // shirley todo: hashtable index?
+  // shirley: hash table index allocates an array of elements (each element is a vhandle? 4 cache lines?)
+  // then the first row that hashes to an element will use this element in the array (in DRAM)
+  // as its vhandle. When future rows hash to the same element (conflict), we will allocate
+  // "external" elements through the NewRow which actually calls vhandle::new_inline (or new)
+  // and will allocate from PMEM.
+  // the index itself is inlined in the vhandle, it's 32 bytes starting from byte 96.
   table = (uint8_t *)
           mmap(nullptr, nrpg << 12, PROT_READ | PROT_WRITE,
                MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
@@ -94,6 +101,8 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
   auto idx = hash(k) % nr_buckets;
   HashEntry *first = (HashEntry *) (table + idx * row_size() + kOffset);
 
+  // if element is uninitialized, use the inlined space immediately 
+  // this doesn't allocate from pmem because
   if (first->next == kNextForUninitialized) {
     HashEntry *old = kNextForUninitialized;
     if (first->next.compare_exchange_strong(old, kNextForInitializing)) {

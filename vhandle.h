@@ -285,7 +285,7 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t *AllocFromInlinePmem(size_t sz) {
     // printf("Size: %ld\n", sz);
     // return nullptr;
-    sz = util::Align(sz, 32); // align to 32 for now?
+    sz = util::Align(sz, 16); // shirley note: need to have align or else seg fault.
 
     //printf("AllocFromInlinePmem: this: %p, &(this->size): %p, this->size: %u\n", this, &(this->size), this->size);
     
