@@ -290,7 +290,10 @@ class SortedArrayVHandle : public BaseVHandle {
     //printf("AllocFromInlinePmem: this: %p, &(this->size): %p, this->size: %u\n", this, &(this->size), this->size);
     
     // Check requests size fits in miniheap
-    if (sz > inlineMiniHeapSize) return nullptr;
+    if (sz > inlineMiniHeapSize) {
+      // felis::probes::VersionAllocCountInlineToExternal{0, 1}();
+      return nullptr;
+    }
 
     // Mask Offset stores byte offset = [0 to 158]
     uint8_t *mask1Ptr = (uint8_t *)this + (vhandleMetadataSize + inlineTwoVersionArraySize); // Store Byte Offset
@@ -304,10 +307,14 @@ class SortedArrayVHandle : public BaseVHandle {
     int trackedSize = (*mask1Ptr == *mask2Ptr && *mask1Ptr == 0) ? 0 : *mask2Ptr - *mask1Ptr + 1;
     //printf("TrackedSize: %d\n", trackedSize);
 
-    if (trackedSize >= inlineMiniHeapSize) return nullptr;
+    if (trackedSize >= inlineMiniHeapSize) {
+      // felis::probes::VersionAllocCountInlineToExternal{0, 1}();
+      return nullptr;
+    }
     else if (trackedSize <= 0) {
         *mask1Ptr = 0;
         *mask2Ptr = sz - 1;
+        // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
         // Return address start of new allocation
         //printf("Init | Mask1Val: %d | Mask2Val: %d\n\n", *mask1Ptr, *mask2Ptr);
         // assert(((startOfMiniHeap + *mask1Ptr) >= ((uint8_t *)this+64+32)) &&
@@ -325,6 +332,7 @@ class SortedArrayVHandle : public BaseVHandle {
     // Check if there was an error in above
     if (0 > diffSpaceAtEnd && 0 > diffSpaceAtFront) {
         // Error occured
+        // felis::probes::VersionAllocCountInlineToExternal{0, 1}();
         return nullptr;
     }
 
@@ -353,6 +361,7 @@ class SortedArrayVHandle : public BaseVHandle {
         *mask2Ptr = *mask1Ptr + sz - 1;
     }
 
+    // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
     // Return address start of new allocation
     //printf("Front: %d | Mask1Val: %d | Mask2Val: %d\n\n", addFront, *mask1Ptr, *mask2Ptr);
     // assert(((startOfMiniHeap + *mask1Ptr) >= ((uint8_t *)this+64+32)) &&

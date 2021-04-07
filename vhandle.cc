@@ -534,7 +534,7 @@ void BaseVHandle::InitPool()
 {
   //shirley TODO: pool should be removed, only need inline_pool
   //shirley pmem: when on pmem machine, set to true. when on our machines, set to false
-  //shirley test: don't set to true to test everything in dram
+  //shirley test: set to false to test everything in dram
   pool = mem::ParallelSlabPool(mem::VhandlePool, kSize, 4, false);
   inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
   pool.Register();
