@@ -105,20 +105,20 @@ static inline std::ostream &operator<<(std::ostream &out, const Average &avg)
 
 template <typename Type>
 struct Max {
-  uint64_t max = 0;
+  int64_t max = std::numeric_limits<int64_t>::min();
   Type properties;
-  Max &operator<<(uint64_t value) {
+  Max &operator<<(int64_t value) {
     if (value > max)
       max = value;
     return *this;
   }
-  void addData(uint64_t value, Type _properties) {
+  void addData(int64_t value, Type _properties) {
     if (value > max) {
       max = value;
       properties = _properties;
     }
   }
-  uint64_t getMax() { return this->max; }
+  int64_t getMax() { return this->max; }
   Max &operator<<(const Max &rhs) {
     if (rhs.max > max) {
       max = rhs.max;
@@ -143,7 +143,7 @@ std::string format_sid(uint64_t sid)
 }
 
 template <>
-std::ostream &operator<<(std::ostream &out, const Max<uint64_t> &max)
+std::ostream &operator<<(std::ostream &out, const Max<int64_t> &max)
 {
   out << max.max << " us, at txn " << format_sid(max.properties);
   return out;

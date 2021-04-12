@@ -15,37 +15,37 @@ static struct ProbeMain {
   agg::Agg<agg::Histogram<512, 0, 3>> init_queue_hist;
 
   agg::Agg<agg::Average> init_fail_avg;
-  agg::Agg<agg::Max<uint64_t>> init_fail_max;
+  agg::Agg<agg::Max<int64_t>> init_fail_max;
   agg::Agg<agg::Histogram<512, 0, 2>> init_fail_hist;
   agg::Agg<agg::Sum> init_fail_cnt;
 
   agg::Agg<agg::Average> init_succ_avg;
-  agg::Agg<agg::Max<uint64_t>> init_succ_max;
+  agg::Agg<agg::Max<int64_t>> init_succ_max;
   agg::Agg<agg::Histogram<128, 0, 2>> init_succ_hist;
 
   agg::Agg<agg::Average> exec_issue_avg;
-  agg::Agg<agg::Max<uint64_t>> exec_issue_max;
+  agg::Agg<agg::Max<int64_t>> exec_issue_max;
   agg::Agg<agg::Histogram<128, 0, 1>> exec_issue_hist;
 
   agg::Agg<agg::Average> exec_queue_avg;
-  agg::Agg<agg::Max<uint64_t>> exec_queue_max;
+  agg::Agg<agg::Max<int64_t>> exec_queue_max;
   agg::Agg<agg::Histogram<512, 0, 3>> exec_queue_hist;
 
   agg::Agg<agg::Average> exec_avg;
-  agg::Agg<agg::Max<uint64_t>> exec_max;
+  agg::Agg<agg::Max<int64_t>> exec_max;
   agg::Agg<agg::Histogram<128, 0, 2>> exec_hist;
 
   agg::Agg<agg::Average> total_latency_avg;
-  agg::Agg<agg::Max<uint64_t>> total_latency_max;
+  agg::Agg<agg::Max<int64_t>> total_latency_max;
   agg::Agg<agg::Histogram<512, 0, 6>> total_latency_hist;
 
   agg::Agg<agg::Average> piece_avg;
-  agg::Agg<agg::Max<uint64_t>> piece_max;
-  agg::Agg<agg::Histogram<512, 0, 10>> piece_hist;
+  agg::Agg<agg::Max<int64_t>> piece_max;
+  agg::Agg<agg::Histogram<512, 0, 5>> piece_hist;
 
   agg::Agg<agg::Average> dist_avg;
-  agg::Agg<agg::Max<uint64_t>> dist_max;
-  agg::Agg<agg::Histogram<512, 0, 1>> dist_hist;
+  agg::Agg<agg::Max<int64_t>> dist_max;
+  agg::Agg<agg::Histogram<512, -10000, 40>> dist_hist;
   ~ProbeMain();
 } global;
 
