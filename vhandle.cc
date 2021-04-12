@@ -277,83 +277,90 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
   if (is_in) // if the previous version is in Extra VHandle, just use the result
     return extra_result;
 
-  if (!addr) {
-    logger->critical("CheckReadBit() {} cannot find for sid {} begin is {}",
-                     (void *) this, sid, *versions);
-    return false;
-  }
+  if (!addr)
+    return true;
 
   if (*addr == kPendingValue)
     return false; // if it's not written, it couldn't be read
   return *addr & kReadBitMask;
 }
 
+/** @brief Find a SID that, starting from this SID, all of the versions of this
+    row has not been read.
+    @param min search lower bound (SID returned cannot be smaller than min).
+    @return SID found. */
+uint64_t SortedArrayVHandle::SIDBackwardSearch(uint64_t min)
+{
+  // eg:    extra vhandle         6r            11      14r      16  18
+  //        original vhandle  5r      7  8  10      13       15          19
+  //        min = 12
+  // 1. search in extra, extra = 16
+  // 2. search in original, original = 12 (because 10 < min, use min as result)
+  // 3. return the larger of the two, 16
+  //    TODO: combine 1&2, allowing it to find 15
+  abort_if(!PriorityTxnService::g_read_bit, "SIDBackwardSearch() is called when read bit is off");
+  uint64_t original = 0, extra = 0;
+
+  auto handle = extra_vhandle.load();
+  if (handle) extra = handle->FindUnreadVersionLowerBound(min);
+  original = this->FindUnreadVersionLowerBound(min);
+
+  if (original == 0 && extra == 0)
+    return util::Instance<PriorityTxnService>().GetMaxProgress();
+  if (original == 0) return extra;
+  if (extra == 0) return original;
+  return (original > extra) ? original : extra;
+}
+
 /** @brief Find the lower bound of the last consecutive unread versions.
-    For example: 5R  7  8 11R  13  15  19, return 13.
-    @param min search lower bound
+    @param min search lower bound (SID returned can only be larger than min).
     @return the SID of the version.
     if answer found is smaller than min, return min;
-    if answer is larger than max_progress, return max_progress. */
+    if all versions are read, return 0. */
 uint64_t SortedArrayVHandle::FindUnreadVersionLowerBound(uint64_t min)
 {
-  // use max progress to help speed up finding the last read bit version
-  int upper_pos;
+  // searching backwards. use max_prog to help speed up finding the last read bit version
   uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
+  int upper_pos;
   volatile uintptr_t *ptr_obj = WithVersion(max_prog, upper_pos);
-  // logger->info("vhandle {}, max {}, min {}, pos {}", (void*)this, max_prog, min, upper_pos);
   if (ptr_obj == nullptr)
-    return min;
-
-  volatile uintptr_t *ptr_ver = &versions[upper_pos];
-  if (*ptr_ver <= min)
-    return min;
-
+    return 0;
   if (*ptr_obj & kReadBitMask) // all the versions are read
-    return max_prog;
+    return 0;
+  volatile uintptr_t *ptr_ver = &versions[upper_pos];
+  if (*ptr_ver <= min) // answer found is smaller than min
+    return min;
 
   while (!(*ptr_obj & kReadBitMask) && ptr_ver != versions) {
+    if (*ptr_ver <= min) // answer found is smaller than min
+      return min; // check this before moving the ptr!!!
     ptr_ver--;
     ptr_obj--;
-    if (*ptr_ver <= min)
-      return min;
   } // this while will at least happen once
 
-  if (ptr_ver == versions)
-    if (!(*ptr_obj & kReadBitMask)) {
-      return versions[0];
-    }
+  if (ptr_ver == versions && !(*ptr_obj & kReadBitMask))
+    return versions[0];
 
   return *(ptr_ver + 1);
 }
 
-/** @brief Find a SID that, starting from this SID, all of the versions of this
-    row has not been read.
+/** @brief Find the first SID > min that is unread.
     @param min search lower bound (if answer found is smaller than min, return min)
-    @return SID found. May not always be the first one (see example below) */
-uint64_t SortedArrayVHandle::FindUnreadSIDLowerBound(uint64_t min)
+    @return SID found.*/
+uint64_t SortedArrayVHandle::SIDForwardSearch(uint64_t min)
 {
-  // eg:    extra       6r             12      14r      16  18
-  //        vhandle 5r      7  8  11r      13       15          19
-  // 1. in extra, find unread versions' lower bound: 16
-  // 2. in vhandle, try to find unread versions' lower bound, 15<16, don't look further
-  // 3. return 16 (in this case if we search vhandle first we would return 15)
-  abort_if(!PriorityTxnService::g_read_bit, "FindUnreadSIDLowerBound() is called when read bit is off");
-  auto extra = extra_vhandle.load();
-  if (extra)
-    min = extra->FindUnreadVersionLowerBound(min);
-  min = this->FindUnreadVersionLowerBound(min);
-  return min;
-}
+  abort_if(!PriorityTxnService::g_read_bit, "SIDForwardSearch() is called when read bit is off");
+  uint64_t original = 0, extra = 0;
 
-// find the first sid > min that's unread
-uint64_t SortedArrayVHandle::FindFirstUnreadSID(uint64_t min)
-{
-  abort_if(!PriorityTxnService::g_read_bit, "FindUnreadSIDLowerBound() is called when read bit is off");
-  min = this->FindFirstUnreadVersion(min);
-  auto extra = extra_vhandle.load();
-  if (extra)
-    min = extra->FindFirstUnreadVersion(min);
-  return min;
+  original = this->FindFirstUnreadVersion(min);
+  auto handle = extra_vhandle.load();
+  if (handle) extra = handle->FindFirstUnreadVersion(min);
+
+  if (original == 0 && extra == 0)
+    return util::Instance<PriorityTxnService>().GetMaxProgress();
+  if (original == 0) return extra;
+  if (extra == 0) return original;
+  return (original < extra) ? original : extra;
 }
 
 uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
@@ -364,22 +371,19 @@ uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
     return min;
 
   volatile uintptr_t *ptr_ver = &versions[lower_pos];
-  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
-  if (*ptr_ver <= min)
-    return min;
-  if (*ptr_ver >= max_prog)
-      return max_prog;
 
   while (*ptr_obj & kReadBitMask) {
     ptr_ver++;
     ptr_obj++;
-    max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
-    if (ptr_ver - versions >= size) // search out of bound
-      return max_prog;
+    uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
+    if (ptr_ver - versions >= size) // search out of bound, all versions are read
+      return 0;
     if (*ptr_ver >= max_prog)
       return max_prog;
   }
 
+  if (*ptr_ver <= min)
+    return min;
   return *ptr_ver;
 }
 
@@ -760,23 +764,23 @@ void LinkedListExtraVHandle::PriorityDelete(uint64_t sid) {
 }
 
 /** @brief Find the lower bound of the last consecutive unread versions.
-    For example: 5R  7  8 11R  13  15  19, return 13.
+    For example: 6r <- 11 <- 14r <- 16 <- 18, return 16.
     @param min search lower bound
     @return the SID of the version.
     if answer found is smaller than min, return min;
-    if answer is larger than max_progress, return max_progress. */
+    if all versions are read, return 0. */
 uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
 {
   Entry dummy(0, 0, 0);
   dummy.next = head;
   Entry *cur = &dummy;
   while (cur->next && !(cur->next->object & kReadBitMask)) {
+    if (cur != &dummy && cur->version <= min)
+      return min; // check this before moving the ptr!!!
     cur = cur->next;
-    if (cur->version <= min)
-      return min;
   }
   if (cur == &dummy)
-    return util::Instance<PriorityTxnService>().GetMaxProgress();
+    return 0;
   return cur->version;
 }
 
@@ -785,7 +789,7 @@ uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
   Entry dummy(0, 0, 0);
   dummy.next = head;
   Entry *cur = &dummy;
-  uint64_t last_unread = ~0;
+  uint64_t last_unread = ~0; // last unread SID in the linked list
   while (cur->next && cur->next->version >= min) {
     cur = cur->next;
     if (!(cur->object & kReadBitMask)) {
@@ -793,8 +797,10 @@ uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
       last_unread = cur->version;
     }
   }
+  if (cur == &dummy)
+    return 0;
   uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
-  if (cur == &dummy || last_unread >= max_prog)
+  if (last_unread >= max_prog)
     return max_prog;
   return last_unread;
 }

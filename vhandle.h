@@ -18,7 +18,7 @@ static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer 
 static const uintptr_t kIgnoreValue = 0xFE19C02EFFFFFFFF;
 static const uintptr_t kRetryValue = 0xFE3E737EFFFFFFFF;
 static const uintptr_t kDeletePendingValue = 0xFEDE1E7EFFFFFFFF;
-const uint64_t kReadBitMask = 1ULL << 56;
+const uint64_t kReadBitMask = 1ULL << 56; // use 56 to avoid treating pending & ignore as read version
 
 class VHandleSyncService {
  public:
@@ -193,8 +193,8 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);
-  uint64_t FindUnreadSIDLowerBound(uint64_t min);
-  uint64_t FindFirstUnreadSID(uint64_t min);
+  uint64_t SIDBackwardSearch(uint64_t min);
+  uint64_t SIDForwardSearch(uint64_t min);
   bool InitDelete(uint64_t sid);
   void RevertInitDelete(uint64_t sid);
   void PriorityDelete(uint64_t sid);

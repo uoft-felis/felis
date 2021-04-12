@@ -258,14 +258,14 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 
     if (g_sid_read_bit) {
       for (auto handle : txn->update_handles)
-        min = handle->FindUnreadSIDLowerBound(min);
+        min = handle->SIDBackwardSearch(min);
       for (auto handle : txn->delete_handles)
-        min = handle->FindUnreadSIDLowerBound(min);
+        min = handle->SIDBackwardSearch(min);
     } else {
       for (auto handle : txn->update_handles)
-        min = handle->FindFirstUnreadSID(min);
+        min = handle->SIDForwardSearch(min);
       for (auto handle : txn->delete_handles)
-        min = handle->FindFirstUnreadSID(min);
+        min = handle->SIDForwardSearch(min);
     }
     if (min >> 32 < prog >> 32) // min is from last epoch
       new_seq = 1;
