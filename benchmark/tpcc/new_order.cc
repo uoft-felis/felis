@@ -405,6 +405,11 @@ void NewOrderTxn::Run()
                     params.supplier_warehouses[i] != warehouse_id,
                     i);
               }
+              void *buf = alloca(8);
+              auto warehouse = util::Instance<TableManager>().Get<tpcc::Warehouse>().Search(
+                  Warehouse::Key::New(warehouse_id).EncodeView(buf));
+              TxnRow row = index_handle(warehouse);
+              row.Read<Warehouse::Value>();
             },
             aff);
       } else {
