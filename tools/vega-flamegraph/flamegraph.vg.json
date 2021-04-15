@@ -1,0 +1,145 @@
+{ 
+  "$schema": "https://vega.github.io/schema/vega/v5.json",
+  "description": "An example of a space-fulling radial layout for hierarchical data.",
+  "width": 1000,
+  "height": 500,
+  "padding": 5,
+  "autosize": "none",
+
+  "data": [
+    {
+      "name": "tree",
+      "url": "flamegraph.json",
+      "transform": [
+        {
+          "type": "stratify",
+          "key": "id",
+          "parentKey": "parent"
+        },
+        {
+          "type": "partition",
+          "field": "count",
+          "sort": {"field": "value"},
+          "size": [{"signal": "width"}, {"signal": "height"}],
+          "as": ["x", "_y", "x2", "_y2", "depth", "children"]
+        }
+      ]
+    }
+  ],
+
+  "signals": [
+    {
+      "name": "zoom",
+      "value": [1, 0],
+      "on": [
+        {
+          "events": "wheel!",
+          "force": "true",
+          "update": "[max(0.1, zoom[0] - 0.002 * event.deltaY), x()]"
+        }
+      ]
+    },
+    {
+      "name": "xmousecurrent",
+      "value": 0,
+      "on": [
+        {
+          "events": {"type": "mousemove", "between": [{"type": "mousedown"}, {"type": "mouseup"}]},
+          "update": "x()"
+        }
+      ]
+    },
+    {
+      "name": "xoff",
+      "value": 0,
+      "on": [
+        {
+          "events": {"signal": "xmousecurrent"},
+          "update": "xoff + xmousecurrent - xmouseold"
+        },
+        {
+          "events": {"signal": "zoom"},
+          "update": "(xoff - zoom[1]) * (zoom[0] / oldzoom - 1) + xoff"
+        }
+      ]
+    },
+    {
+      "name": "oldzoom",
+      "value": 1,
+      "on": [
+        {
+          "events": {"signal": "xoff"},
+          "update": "zoom[0]"
+        }
+      ]
+    },
+    {
+      "name": "xmouseold",
+      "value": 0,
+      "on": [
+        {
+          "events": {"signal": "xoff"},
+          "update": "xmousecurrent"
+        },
+        {
+          "events": "mousedown",
+          "update": "x()"
+        }
+      ]
+    }
+  ],
+
+  "scales": [
+    {
+      "name": "color",
+      "type": "ordinal",
+      "domain": {"data": "tree", "field": "depth"},
+      "range": {"scheme": "tableau20"}
+    }
+  ],
+
+  "marks": [
+    {
+      "type": "rect",
+      "from": {"data": "tree"},
+      "encode": {
+        "enter": {
+          "fill": {"scale": "color", "field": "depth"},
+          "tooltip": {"signal": "datum.name + ' ' + datum.count + ' samples'"}
+        },
+        "update": {
+          "x": {"signal": "datum.x * zoom[0] + xoff"},
+          "x2": {"signal": "datum.x2 * zoom[0] + xoff"},
+          "y": {"signal": "datum.depth * 24"},
+          "height": {"value": 24},
+          "stroke": {"value": "white"},
+          "strokeWidth": {"value": 0.5},
+          "zindex": {"value": 0}
+        },
+        "hover": {
+          "stroke": {"value": "red"},
+          "strokeWidth": {"value": 2},
+          "zindex": {"value": 1}
+        }
+      }
+    },
+    {
+      "type": "text",
+      "from": {"data": "tree"},
+      "encode": {
+        "update": {
+          "x": {"signal": "(datum.x + datum.x2) * zoom[0] / 2 + xoff"},
+          "limit": {"signal": "zoom[0] * (datum.x2 - datum.x)"},
+          "y": {"signal": "datum.depth * 24 + 15"},
+          "height": {"value": 24},
+          "text": {"field": "name"},
+          "ellipsis": {"value": " "},
+          "align": {"value": "center"},
+          "font": {"value": "monospace"},
+          "fontSize": {"value": 10}
+        }
+      }
+    }
+  ]
+}
+
