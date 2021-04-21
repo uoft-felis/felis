@@ -204,10 +204,22 @@ BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpConte
     VarStrView range_end(ctx.key_len[idx + 1], ctx.key_data[idx + 1]);
     // auto &table = mgr[ctx.relation_ids[idx]];
     int i = 0;
+
+    // We need the scoped data for the iterators. Since we don't store the
+    // iterators, we can allocate on the stack.
+
+    auto r = go::Scheduler::Current()->current_routine();
+    auto *olddata = r->userdata();
+    if (olddata == nullptr) {
+      void *buf = alloca(512);
+      r->set_userdata(mem::Brk::New(buf, 512));
+    }
+
     for (auto it = tbl->IndexSearchIterator(range_start, range_end);
          it->IsValid(); it->Next(), i++) {
       result[i] = it->row();
     }
+    r->set_userdata(olddata);
   }
   return result;
 }
