@@ -15,9 +15,12 @@ static const auto kJsonResponseError = json11::Json::object({
     {"type", "error"},
   });
 
-json11::Json Console::HandleJsonAPI(json11::Json j)
+json11::Json Console::HandleJsonAPI(const json11::Json &j)
 {
-  auto req_type = j.object_items().find("type")->second.string_value();
+  auto pair = j.object_items().find("type");
+  if (pair == j.object_items().end())
+    return kJsonResponseError;
+  auto req_type = pair->second.string_value();
   auto it = g_handlers.find(req_type);
   if (it != g_handlers.end()) {
     return it->second(this, j);
@@ -31,7 +34,7 @@ static const std::string kStatusNames[] = {
 };
 static const size_t kNrStatusNames = 6;
 
-json11::Json Console::HandleStatusChange(json11::Json j)
+json11::Json Console::HandleStatusChange(const json11::Json &j)
 {
   std::string propsed_status = j.object_items().find("status")->second.string_value();
   auto it = std::find(kStatusNames, kStatusNames + kNrStatusNames, propsed_status);
@@ -49,7 +52,7 @@ json11::Json Console::HandleStatusChange(json11::Json j)
   return JsonResponse();
 }
 
-json11::Json Console::HandleGetStatus(json11::Json j)
+json11::Json Console::HandleGetStatus(const json11::Json &j)
 {
   if (server_status < kNrStatusNames) {
     std::string status = kStatusNames[server_status];
