@@ -98,7 +98,7 @@ void PWVGraph::Build()
     if (in_degree > 0) {
       node->in_degree.fetch_add(in_degree);
     } else {
-      // abort_if(node->sched_entry == nullptr, "WHY? seq {}", seq);
+      // abort_if(node->sched_entry == nullptr, "WHY? seq {} core {}", seq, go::Scheduler::CurrentThreadPoolId() - 1);
       NotifyFree(node);
     }
   }

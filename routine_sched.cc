@@ -73,7 +73,8 @@ void ConservativePriorityScheduler::Consume(PriorityQueueValue *node)
 }
 
 class PWVScheduler final : public PrioritySchedulingPolicy {
-  PWVScheduler(void *p, size_t lmt) : brk(p, lmt) {
+  PWVScheduler(void *p, size_t lmt)
+      : brk(p, lmt) {
     inactive.Initialize();
     free.Initialize();
     rvp.Initialize();
@@ -88,7 +89,8 @@ class PWVScheduler final : public PrioritySchedulingPolicy {
     bool in_rvp_queue;
   };
 
-  bool ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end) override;
+  bool ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end,
+                             std::atomic_uint *pq_start, std::atomic_uint *pq_end) override;
   bool ShouldPickWaiting(const WaitState &ws) override;
   PriorityQueueValue *Pick() override;
   void Consume(PriorityQueueValue *value) override;
@@ -176,7 +178,7 @@ RVPInfo *PWVScheduler::GetRVPInfo(PriorityQueueValue *value)
 
 void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value)
 {
-  abort_if(is_graph_built, "graph is already built!");
+  abort_if(is_graph_built, "graph is already built! core {}", go::Scheduler::CurrentThreadPoolId() - 1);
   auto g = util::Instance<PWVGraphManager>().local_graph();
   util::MCSSpinLock::QNode qnode;
   qlock.Acquire(&qnode);
@@ -205,12 +207,18 @@ void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValu
   qlock.Release(&qnode);
 }
 
-bool PWVScheduler::ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end)
+bool PWVScheduler::ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end,
+                                         std::atomic_uint *pq_start, std::atomic_uint *pq_end)
 {
-  while (CallTxnsWorker::g_finished < NodeConfiguration::g_nr_threads
-         && zq_start->load(std::memory_order_acquire) == zq_end->load(std::memory_order_acquire))
-      _mm_pause();
-  return zq_start->load(std::memory_order_acquire) < zq_end->load(std::memory_order_acquire);
+  while (CallTxnsWorker::g_finished < NodeConfiguration::g_nr_threads) {
+    if (zq_start->load(std::memory_order_acquire) < zq_end->load(std::memory_order_acquire))
+      return true;
+    if (pq_start->load(std::memory_order_acquire) < pq_end->load(std::memory_order_acquire))
+      return true;
+  }
+
+  return zq_start->load(std::memory_order_acquire) < zq_end->load(std::memory_order_acquire)
+      || pq_start->load(std::memory_order_acquire) < pq_end->load(std::memory_order_acquire);
 }
 
 bool PWVScheduler::ShouldPickWaiting(const WaitState &ws)
@@ -291,8 +299,8 @@ void PWVScheduler::Reset()
   abort_if(!inactive.empty(), "PWV: inactive queue isn't empty!");
   abort_if(!rvp.empty(), "PWV: RVP queue isn't empty!");
   brk.Reset();
-  logger->info("free {} inactive {} rvp {} len {} nr free {}",
-               (void *) &free, (void *) &inactive, (void *) &rvp, len, nr_free);
+  // logger->info("free {} inactive {} rvp {} len {} nr free {}",
+  //              (void *) &free, (void *) &inactive, (void *) &rvp, len, nr_free);
   is_graph_built = false;
 }
 
@@ -302,8 +310,8 @@ const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
   auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
-  logger->info("per_core pool capacity {}, element size {}",
-               max_item_percore, kPriorityQueuePoolElementSize);
+  logger->info("{} per_core pool capacity {}, element size {}",
+               (void *) this, max_item_percore, kPriorityQueuePoolElementSize);
   Queue *qmem = nullptr;
 
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
@@ -509,7 +517,7 @@ retry:
   }
 
   ProcessPending(q);
-  if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end))
+  if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end, &q.pending.start, &q.pending.end))
     goto retry;
 
   auto &ws = q.waiting.states[q.waiting.off];
