@@ -53,13 +53,13 @@ class Console {
     return it->second;
   }
 
-  std::string HandleAPI(json11::Json j) {
+  std::string HandleAPI(const json11::Json &j) {
     return HandleJsonAPI(j).dump();
   }
-  json11::Json HandleJsonAPI(json11::Json j);
+  json11::Json HandleJsonAPI(const json11::Json &j);
  private:
-  json11::Json HandleStatusChange(json11::Json j);
-  json11::Json HandleGetStatus(json11::Json j);
+  json11::Json HandleStatusChange(const json11::Json &j);
+  json11::Json HandleGetStatus(const json11::Json &j);
 
   json11::Json JsonResponse() {
     return json11::Json::object({
