@@ -5,6 +5,7 @@
 [alias]
   db = //:db#debug
   db_release = //:db#release
+  db_asan = //:db#asan
   test = //:dbtest#debug
 
 [cxx]
