@@ -26,6 +26,7 @@ enum MemAllocType {
   EpochQueuePool,
   EntityPool,
   VhandlePool,
+  EntryPool,
   RegionPool,
   Coroutine,
   NumMemTypes,

@@ -514,6 +514,7 @@ void *SortedArrayVHandle::operator new(size_t nr_bytes)
 }
 
 mem::ParallelSlabPool BaseVHandle::pool;
+mem::ParallelSlabPool LinkedListExtraVHandle::Entry::pool;
 
 void BaseVHandle::InitPool()
 {

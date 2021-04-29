@@ -82,26 +82,34 @@ class LinkedListExtraVHandle {
   short this_coreid;       // 2
   int size;                // 4
 
+ public:
   struct Entry {
     struct Entry *next;
     uint64_t version;
     uintptr_t object;
     int this_coreid;
+    static mem::ParallelSlabPool pool;
+    static void InitPool() {
+      pool = mem::ParallelSlabPool(mem::EntryPool, sizeof(Entry), 4);
+      pool.Register();
+    }
+    static void Quiescence() { pool.Quiescence(); }
 
     Entry(uint64_t _version, uintptr_t _object, int _coreid) :
       next(nullptr), version(_version), object(_object), this_coreid(_coreid) {}
 
     static void *operator new(size_t nr_bytes) {
-      return BaseVHandle::pool.Alloc();
+      return pool.Alloc();
     }
 
     static void operator delete(void *ptr) {
       Entry *phandle = (Entry *) ptr;
-      BaseVHandle::pool.Free(ptr, phandle->this_coreid);
+      pool.Free(ptr, phandle->this_coreid);
     }
   };
   static_assert(sizeof(Entry) <= 32, "LinkedListExtraVHandle Entry is too large");
 
+ private:
   std::atomic<Entry*> head;
 
  public:
