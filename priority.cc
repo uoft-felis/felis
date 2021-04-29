@@ -297,7 +297,7 @@ uint64_t PriorityTxnService::GetNextSIDSlot(uint64_t sequence)
 
   if (g_sid_local_inc) {
     // based on g_strip_priorty = # of cores
-    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1; // 0~31
     uint64_t next_slot = sequence/k * k + g_strip_batched + core_id + 1;
     uint64_t sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
     auto &last = *local_last_sid[core_id];
@@ -341,7 +341,7 @@ void PriorityTxnService::SetBitMapValue(uint64_t idx, int core_id, uint8_t value
 
 void PriorityTxnService::ClearBitMap(void)
 {
-  if (PriorityTxnService::g_sid_global_inc | PriorityTxnService::g_sid_local_inc)
+  if (!PriorityTxnService::g_sid_bitmap)
     return;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
