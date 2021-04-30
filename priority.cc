@@ -247,6 +247,8 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 
   if (g_sid_read_bit | g_sid_forward_read_bit) {
     uint64_t min = (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
+    if (txn->min_sid > min)
+      min = txn->min_sid;
 
     uint64_t last = 0;
     if (g_sid_global_inc)

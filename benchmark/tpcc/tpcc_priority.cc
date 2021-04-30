@@ -283,6 +283,7 @@ bool NewOrderTxn_Run(PriorityTxn *txn)
   PriorityTxn* next_txn = txn + 1;
   next_txn->SetCallback(&DeliveryTxn_Run);
   next_txn->ptr = din;
+  next_txn->min_sid = txn->serial_id();
 
   return txn->Commit();
 }

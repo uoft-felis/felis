@@ -112,6 +112,7 @@ class PriorityTxn {
     // assign only happens when the rhs is never Run(), so set init value
     this->update_handles.clear();
     this->piece_count.store(0);
+    this->min_sid = 0;
 
     this->sid = rhs.sid;
     this->initialized = rhs.initialized;
@@ -127,6 +128,7 @@ class PriorityTxn {
   void SetCallback(bool (*func)(PriorityTxn *)) { this->callback = func; }
 
   void *ptr; // hack, delivery use it to store input struct
+  uint64_t min_sid; // input, this txn cannot serialize before min_sid
   bool Run() {
     return this->callback(this);
   }
