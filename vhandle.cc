@@ -776,9 +776,9 @@ uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
   dummy.next = head;
   Entry *cur = &dummy;
   while (cur->next && !(cur->next->object & kReadBitMask)) {
-    if (cur != &dummy && cur->version <= min)
-      return min; // check this before moving the ptr!!!
     cur = cur->next;
+    if (cur->version <= min)
+      return min;
   }
   if (cur == &dummy)
     return 0;
