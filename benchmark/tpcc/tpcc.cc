@@ -905,7 +905,7 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
     rd -= threshold;
     txn_type_id++;
   }
-  return TxnFactory::Create(txn_type_id, this, serial_id);
+  return TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
 }
 
 using namespace felis;

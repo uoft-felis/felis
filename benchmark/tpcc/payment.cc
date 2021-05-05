@@ -23,19 +23,11 @@ PaymentStruct ClientBase::GenerateTransactionInput<PaymentStruct>()
   return s;
 }
 
-class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
-  Client *client;
- public:
-  PaymentTxn(Client *client, uint64_t serial_id)
-      : Txn<PaymentState>(serial_id),
-        PaymentStruct(client->GenerateTransactionInput<PaymentStruct>()),
-        client(client)
-  {}
-
-  void Prepare() override final;
-  void Run() override final;
-  void PrepareInsert() override final {}
-};
+PaymentTxn::PaymentTxn(Client *client, uint64_t serial_id)
+    : Txn<PaymentState>(serial_id),
+      PaymentStruct(client->GenerateTransactionInput<PaymentStruct>()),
+      client(client)
+{}
 
 void PaymentTxn::Prepare()
 {
@@ -264,20 +256,6 @@ void PaymentTxn::Run()
           });
     }
   }
-}
-
-}
-
-
-namespace util {
-
-using namespace felis;
-using namespace tpcc;
-
-template <>
-BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::Payment), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
-{
-  return new PaymentTxn(client, serial_id);
 }
 
 }

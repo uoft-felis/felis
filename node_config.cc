@@ -400,7 +400,7 @@ void NodeConfiguration::SendStartPhase()
   memcpy(buf + 8, &id, 4);
   memcpy(buf + 12, broadcast_buffer.data(), nr_ent * 4);
 
-  logger->info("Send StartPhase");
+  logger->info("Send StartPhase nr_ent {}", nr_ent);
   // Write out all the slice mapping table update commands.
   for (int i = 1; i <= nr_nodes(); i++) {
     if (i == node_id()) continue;

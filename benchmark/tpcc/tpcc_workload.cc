@@ -10,8 +10,38 @@
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 
+#include "new_order.h"
+#include "payment.h"
+#include "delivery.h"
+#include "stock_level.h"
+#include "order_status.h"
+
 using util::MixIn;
 using util::Instance;
+
+namespace util {
+
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::NewOrder> {
+  using Type = tpcc::NewOrderTxn;
+};
+
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::Payment> {
+  using Type = tpcc::PaymentTxn;
+};
+
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::Delivery> {
+  using Type = tpcc::DeliveryTxn;
+};
+
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::OrderStatus> {
+  using Type = tpcc::OrderStatusTxn;
+};
+
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::StockLevel> {
+  using Type = tpcc::StockLevelTxn;
+};
+
+}
 
 namespace felis {
 

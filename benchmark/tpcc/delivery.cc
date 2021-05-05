@@ -18,18 +18,11 @@ DeliveryStruct ClientBase::GenerateTransactionInput<DeliveryStruct>()
   return s;
 }
 
-class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
-  Client *client;
- public:
-  DeliveryTxn(Client *client, uint64_t serial_id)
-      : Txn<DeliveryState>(serial_id),
-        DeliveryStruct(client->GenerateTransactionInput<DeliveryStruct>()),
-        client(client)
-  {}
-  void Run() override final;
-  void Prepare() override final;
-  void PrepareInsert() override final;
-};
+DeliveryTxn::DeliveryTxn(Client *client, uint64_t serial_id)
+    : Txn<DeliveryState>(serial_id),
+      DeliveryStruct(client->GenerateTransactionInput<DeliveryStruct>()),
+      client(client)
+{}
 
 void DeliveryTxn::PrepareInsert()
 {
@@ -370,17 +363,3 @@ void DeliveryTxn::Run()
 }
 
 } // namespace tpcc
-
-
-namespace util {
-
-using namespace felis;
-using namespace tpcc;
-
-template <>
-BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::Delivery), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
-{
-  return new DeliveryTxn(client, serial_id);
-}
-
-}

@@ -15,19 +15,11 @@ StockLevelStruct ClientBase::GenerateTransactionInput<StockLevelStruct>()
   return s;
 }
 
-class StockLevelTxn : public Txn<StockLevelState>, public StockLevelStruct {
-  Client *client;
- public:
-  StockLevelTxn(Client *client, uint64_t serial_id)
-      : Txn<StockLevelState>(serial_id),
-        StockLevelStruct(client->GenerateTransactionInput<StockLevelStruct>()),
-        client(client)
-  {}
-
-  void PrepareInsert() override final;
-  void Prepare() override final;
-  void Run() override final;
-};
+StockLevelTxn::StockLevelTxn(Client *client, uint64_t serial_id)
+    : Txn<StockLevelState>(serial_id),
+      StockLevelStruct(client->GenerateTransactionInput<StockLevelStruct>()),
+      client(client)
+{}
 
 void StockLevelTxn::PrepareInsert()
 {
@@ -206,19 +198,6 @@ void StockLevelTxn::Run()
     state->last = root->last();
     RVPInfo::MarkRoutine(state->last);
   }
-}
-
-}
-
-namespace util {
-
-using namespace felis;
-using namespace tpcc;
-
-template <>
-BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::StockLevel), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
-{
-  return new StockLevelTxn(client, serial_id);
 }
 
 }
