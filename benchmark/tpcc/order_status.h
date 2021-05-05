@@ -21,6 +21,15 @@ struct OrderStatusState {
   int oid;
 };
 
+class OrderStatusTxn : public Txn<OrderStatusState>, public OrderStatusStruct {
+  Client *client;
+ public:
+  OrderStatusTxn(Client *client, uint64_t serial_id);
+  void Run() override final;
+  void PrepareInsert() override final {}
+  void Prepare() override final;
+};
+
 }
 
 #endif

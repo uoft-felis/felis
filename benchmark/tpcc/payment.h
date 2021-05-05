@@ -47,6 +47,16 @@ struct PaymentState {
   };
 };
 
+class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
+  Client *client;
+ public:
+  PaymentTxn(Client *client, uint64_t serial_id);
+
+  void Prepare() override final;
+  void Run() override final;
+  void PrepareInsert() override final {}
+};
+
 }
 
 #endif

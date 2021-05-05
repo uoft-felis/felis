@@ -108,6 +108,16 @@ struct NewOrderState {
   NodeBitmap stocks_nodes;
 };
 
+class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
+  Client *client;
+ public:
+  NewOrderTxn(Client *client, uint64_t serial_id);
+
+  void Run() override final;
+  void Prepare() override final;
+  void PrepareInsert() override final;
+};
+
 }
 
 #endif

@@ -69,6 +69,16 @@ struct DeliveryState {
   };
 };
 
+class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
+  Client *client;
+ public:
+  DeliveryTxn(Client *client, uint64_t serial_id);
+
+  void Run() override final;
+  void Prepare() override final;
+  void PrepareInsert() override final;
+};
+
 }
 
 #endif

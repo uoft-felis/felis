@@ -25,6 +25,16 @@ struct StockLevelState {
   int nr_res;
 };
 
+class StockLevelTxn : public felis::Txn<StockLevelState>, public StockLevelStruct {
+  Client *client;
+ public:
+  StockLevelTxn(Client *client, uint64_t serial_id);
+
+  void PrepareInsert() override final;
+  void Prepare() override final;
+  void Run() override final;
+};
+
 }
 
 #endif

@@ -433,7 +433,7 @@ class Client : public felis::EpochClient, public ClientBase {
 };
 
 using TxnFactory =
-    util::Factory <felis::BaseTxn, int(TxnType::AllTxn), Client *, uint64_t>;
+    util::Factory<felis::BaseTxn, TxnType, TxnType::AllTxn, Client *, uint64_t>;
 
 }
 

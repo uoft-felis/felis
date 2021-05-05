@@ -1,55 +1,33 @@
 #ifndef UTIL_FACTORY_H
 #define UTIL_FACTORY_H
-#include <vector>
+#include <utility>
 
 namespace util {
 
-template <typename T, typename ...Args>
-class BaseFactory {
- public:
-  // Don't use std::function. Complation speed is very slow.
+template <typename EnumType, EnumType Enum> struct FactoryTag {};
+
+template <typename T, typename EnumType, EnumType LastEnum, typename ...Args>
+class Factory {
   struct Callable { virtual T *operator()(Args...) = 0; };
-  template <typename F> struct GenericCallable : public Callable {
-    F f;
-    GenericCallable(F f) : f(f) {}
-    T *operator()(Args... args) override final {
-      return f(args...);
+  template <EnumType Enum>
+  struct Construct final : public Callable {
+    T *operator()(Args ...args) {
+      return new typename FactoryTag<EnumType, Enum>::Type(args...);
     }
   };
-  typedef std::vector<Callable *> Table;
- protected:
-  static Table table;
-  template <typename F>
-  static void AddToTable(F f) {
-    table.push_back(new GenericCallable<F>(f));
-  }
- public:
-  static T *Create(int n, Args... args) {
-    return (*table[n])(args...);
-  }
-};
 
-template <typename T, typename ...Args>
-typename BaseFactory<T, Args...>::Table BaseFactory<T, Args...>::table;
-
-template <typename T, int LastEnum, typename ...Args>
-class Factory : public Factory<T, LastEnum - 1, Args...> {
-  typedef Factory<T, LastEnum - 1, Args...> Super;
+  static inline Callable *table[int(LastEnum)];
+  template <std::size_t ...Ints>
+  static void InitializeTable(std::integer_sequence<std::size_t, Ints...> seq) {
+    ((table[Ints] = new Construct<EnumType(Ints)>()), ...);
+  }
  public:
   static void Initialize() {
-    Super::Initialize();
-    Super::AddToTable([](Args... args) {
-        return Factory<T, LastEnum - 1, Args...>::Construct(args...);
-      });
+    InitializeTable(std::make_index_sequence<int(LastEnum)>());
   }
-  static T *Construct(Args ...args);
-};
-
-template <typename T, typename ...Args>
-class Factory<T, 0, Args...> : public BaseFactory<T, Args...> {
- public:
-  static void Initialize() {}
-  static T *Construct(Args ...args);
+  static T *Create(EnumType n, Args... args) {
+    return table[int(n)]->operator()(args...);
+  }
 };
 
 }

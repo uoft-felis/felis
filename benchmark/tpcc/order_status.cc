@@ -12,18 +12,11 @@ OrderStatusStruct ClientBase::GenerateTransactionInput<OrderStatusStruct>()
   return s;
 }
 
-class OrderStatusTxn : public Txn<OrderStatusState>, public OrderStatusStruct {
-  Client *client;
- public:
-  OrderStatusTxn(Client *client, uint64_t serial_id)
-      : Txn<OrderStatusState>(serial_id),
-        OrderStatusStruct(client->GenerateTransactionInput<OrderStatusStruct>()),
-        client(client)
-  {}
-  void Run() override final;
-  void PrepareInsert() override final {}
-  void Prepare() override final;
-};
+OrderStatusTxn::OrderStatusTxn(Client *client, uint64_t serial_id)
+    : Txn<OrderStatusState>(serial_id),
+      OrderStatusStruct(client->GenerateTransactionInput<OrderStatusStruct>()),
+      client(client)
+{}
 
 static void LookupCustomerIndex(
     const OrderStatusTxn::State &state,
@@ -202,19 +195,6 @@ void OrderStatusTxn::Run()
         },
         aff);
   }
-}
-
-}
-
-namespace util {
-
-using namespace felis;
-using namespace tpcc;
-
-template <>
-BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::OrderStatus), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
-{
-  return new OrderStatusTxn(client, serial_id);
 }
 
 }

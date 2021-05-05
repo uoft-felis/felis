@@ -37,18 +37,11 @@ NewOrderStruct ClientBase::GenerateTransactionInput<NewOrderStruct>()
   return s;
 }
 
-class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
-  Client *client;
- public:
-  NewOrderTxn(Client *client, uint64_t serial_id)
-      : Txn<NewOrderState>(serial_id),
-        NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
-        client(client)
-  {}
-  void Run() override final;
-  void Prepare() override final;
-  void PrepareInsert() override final;
-};
+NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
+    : Txn<NewOrderState>(serial_id),
+      NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
+      client(client)
+{}
 
 void NewOrderTxn::PrepareInsert()
 {
@@ -502,20 +495,6 @@ void NewOrderTxn::Run()
 }
 
 }
-
-namespace util {
-
-using namespace felis;
-using namespace tpcc;
-
-template <>
-BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::NewOrder), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
-{
-  return new tpcc::NewOrderTxn(client, serial_id);
-}
-
-}
-
 
 #if 0
 struct NodePathAggregator {
