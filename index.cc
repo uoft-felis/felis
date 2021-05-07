@@ -23,6 +23,14 @@ void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
   //   abort_if(!handle->WriteWithVersion(0, obj, 0),
   //             "Diverging outcomes during setup setup");
   // }
+
+  //shirley:  flush cache after initial row insert
+  // _mm_clwb((char *)handle);
+  // _mm_clwb((char *)handle + 64);
+  // _mm_clwb((char *)handle + 128);
+  // _mm_clwb((char *)handle + 192);
+  //shirley: don't need flush obj. first insert always inlined in miniheap (max varstr is 83 bytes?)
+
 }
 
 VHandle *Table::NewRow()

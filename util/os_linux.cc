@@ -94,6 +94,7 @@ void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_
   }
   ftruncate(pmem_fd, length);
 
+  //mmap will return page-aligned address when using nullptr.
   void *mem = mmap(nullptr, length, prot, flags, pmem_fd, 0);
   // can close file after mmap
   close(pmem_fd);

@@ -23,13 +23,13 @@ namespace mem {
   static std::atomic_uint memAllocTypeCount[NumMemTypes];
 
   WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap,
-                     int numa_node)
+                     int numa_node, bool use_pmem)
       : WeakPool(alloc_type, chunk_size, cap, AllocMemory(alloc_type, cap * chunk_size, numa_node))
   {
     need_unmap = true;
   }
 
-  WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void *data)
+  WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void *data, bool use_pmem)
       : data(data), len(cap * chunk_size), capacity(cap), alloc_type(alloc_type), need_unmap(false)
   {
     head = data;
@@ -40,13 +40,28 @@ namespace mem {
           cap, chunk_size);
 #endif
 
-    for (size_t i = 0; i < cap; i++) {
-      uintptr_t p = (uintptr_t) head + i * chunk_size;
-      uintptr_t next = p + chunk_size;
-      if (i == cap - 1) next = 0;
-      *(uintptr_t *) p = next;
+    // shirley FIX: freelist is in pmem, each chunk points to next (i.e. freelist stored within free blocks)
+    if (!use_pmem) {
+      freelist_dram = nullptr;
+      for (size_t i = 0; i < cap; i++) {
+        uintptr_t p = (uintptr_t) head + i * chunk_size;
+        uintptr_t next = p + chunk_size;
+        if (i == cap - 1) next = 0;
+        *(uintptr_t *) p = next;
+      }
     }
-
+    else {
+      freelist_dram = (uintptr_t*)AllocMemory(GenericMemory, cap * sizeof(uintptr_t));
+      if (!freelist_dram) {
+        printf("WeakPool: couldn't allocate freelist in dram!\n");
+        std::abort();
+      }
+      head = freelist_dram;
+      for (size_t i = 0; i < cap; i++) {
+        freelist_dram[i] = (uintptr_t) &freelist_dram[i+1];
+        if (i == cap - 1) freelist_dram[i] = 0;
+      }
+    }
     memset(&stats, 0, sizeof(PoolStatistics));
   }
 
@@ -64,28 +79,58 @@ namespace mem {
 
   void *WeakPool::Alloc()
   {
-    void *r = nullptr, *next = nullptr;
+    if (!freelist_dram) {
+      void *r = nullptr, *next = nullptr;
 
-    r = head;
-    if (r == nullptr) {
+      r = head;
+      if (r == nullptr) {
+        return r;
+      }
+
+      next = (void *)*(uintptr_t *)r;
+      head = next;
+
+      stats.used += len / capacity;
+      stats.watermark = std::max(stats.used, stats.watermark);
+
       return r;
     }
+    else {
+      void *r = nullptr, *next = nullptr;
 
-    next = (void *) *(uintptr_t *) r;
-    head = next;
+      r = head;
+      if (r == nullptr) {
+        return r;
+      }
 
-    stats.used += len / capacity;
-    stats.watermark = std::max(stats.used, stats.watermark);
+      next = (void *)*(uintptr_t *)r;
+      head = next;
 
-    return r;
+      stats.used += len / capacity;
+      stats.watermark = std::max(stats.used, stats.watermark);
+
+      unsigned int chunk_size = len / capacity;
+      unsigned int chunk_position = (uintptr_t *)r-(uintptr_t *)freelist_dram;
+      void *alloc_chunk = ((char*)data) + (((uintptr_t *)r-(uintptr_t *)freelist_dram)*chunk_size);
+      return alloc_chunk;
+    }
   }
 
   void WeakPool::Free(void *ptr)
   {
-    *(uintptr_t *) ptr = (uintptr_t) head;
-    head = ptr;
+    int chunk_size = len / capacity;
 
-    stats.used -= len / capacity;
+    if (!freelist_dram) {
+      *(uintptr_t *)ptr = (uintptr_t)head;
+      head = ptr;
+    } 
+    else {
+      int i = ((char*)ptr - (char*)data) / chunk_size;
+      freelist_dram[i] = (uintptr_t)head;
+      head = &freelist_dram[i];
+    }
+
+    stats.used -= chunk_size;
   }
 
   long BasicPool::CheckPointer(void *ptr)
@@ -98,6 +143,7 @@ namespace mem {
       if (!suppress_warning)
         fprintf(stderr, "%p is out of bounds %p - %p\n",
                 ptr, data, (uint8_t *) data + len);
+      printf("freelist_dram: %p\n", freelist_dram);
       std::abort();
     }
     size_t off = (uint8_t *) ptr - (uint8_t *) data;
@@ -166,9 +212,9 @@ namespace mem {
     friend class SlabPool;
     BasicPool pool;
 
-    Slab(util::GenericListNode<Slab> *qhead, MemAllocType alloc_type, size_t chunk_size, void *p) {
+    Slab(util::GenericListNode<Slab> *qhead, MemAllocType alloc_type, size_t chunk_size, void *p, bool use_pmem = false) {
       InsertAfter(qhead);
-      pool = BasicPool(alloc_type, chunk_size, SlabPool::PageSize(chunk_size) / chunk_size, p);
+      pool = BasicPool(alloc_type, chunk_size, SlabPool::PageSize(chunk_size) / chunk_size, p, use_pmem);
     }
   };
 
@@ -190,7 +236,7 @@ namespace mem {
 
   struct SlabMemory {
     Pool pool;
-    uint8_t *p;
+    uint8_t *p; //whole memory allocated
     uint64_t data_offset;
     uint64_t data_len;
     uint64_t page_size;
@@ -259,7 +305,7 @@ namespace mem {
             m_pmem.data_len = memsz;
 
             nr_metaslabs -= m_pmem.data_offset / SlabPool::kLargeSlabPageSize;
-            m_pmem.pool = Pool(mem::GenericMemory, sizeof(MetaSlab), nr_metaslabs, m_pmem.p);
+            m_pmem.pool = Pool(mem::GenericMemory, sizeof(MetaSlab), nr_metaslabs, m_pmem.p, true);
             m_pmem.pool.set_suppress_warning(true);
             m_pmem.half_full.Initialize();
 
@@ -374,6 +420,7 @@ namespace mem {
       slabmem_size = slab_mem_size;
     }
     stats.used = stats.watermark = 0;
+    // shirley FIX: causes big overhead for slabpool alloc?
     empty.Initialize();
     half_full.Initialize();
     while (nr_empty < nr_buffer) {
@@ -411,7 +458,12 @@ namespace mem {
     g_mem_tracker[alloc_type].fetch_add(metaslab_page_size());
 
     nr_empty++;
-    return new (s) Slab(&empty, alloc_type, chunk_size, p);
+    //shirley: if use_pmem, slab will use separate dram freelist for its pool.
+    bool use_pmem = false;
+    if (slabmem_ptr == g_slabpmem) {
+      use_pmem = true;
+    }
+    return new (s) Slab(&empty, alloc_type, chunk_size, p, use_pmem);
   }
 
   void SlabPool::ReturnSlab()

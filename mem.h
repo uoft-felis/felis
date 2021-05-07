@@ -62,9 +62,10 @@ class WeakPool {
   friend class ParallelPool;
   friend class ParallelRegion;
   friend void PrintMemStats();
+  uintptr_t *freelist_dram; //shirley: if pool is allocating pmem, store free list separately.
   void *data;
   size_t len;
-  void * head;
+  void * head; //shirley: this is used differently depending if we have freelist_dram or not.
   size_t capacity;
   MemAllocType alloc_type;
   bool need_unmap;
@@ -73,8 +74,8 @@ class WeakPool {
  public:
   WeakPool() : data(nullptr), len(0), head(nullptr), capacity(0), need_unmap(false) {}
 
-  WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1);
-  WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void *data);
+  WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, int numa_node = -1, bool use_pmem = false);
+  WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap, void *data, bool use_pmem = false);
   WeakPool(const WeakPool &rhs) = delete;
   WeakPool(WeakPool &&rhs) {
     data = rhs.data;
@@ -84,11 +85,13 @@ class WeakPool {
     head = rhs.head;
     stats = rhs.stats;
     need_unmap = rhs.need_unmap;
+    freelist_dram = rhs.freelist_dram;
 
     rhs.data = nullptr;
     rhs.capacity = 0;
     rhs.head = nullptr;
     rhs.need_unmap = false;
+    rhs.freelist_dram = nullptr;
   }
   ~WeakPool();
 
@@ -113,7 +116,8 @@ class WeakPool {
 
 // This checks ownership of the pointer
 class BasicPool : public WeakPool {
-  bool suppress_warning = false;
+  // shirley: set suppress_warning as static constexpr bc size of basic pool exceeds cache size
+  static constexpr bool suppress_warning = false;
  public:
   using WeakPool::WeakPool;
 
@@ -122,7 +126,8 @@ class BasicPool : public WeakPool {
   void Free(void *ptr);
 
   void set_suppress_warning(bool suppress_warning) {
-    this->suppress_warning = suppress_warning;
+    // shirley: removed this variable bc size of basic pool exceeding cache size
+    // this->suppress_warning = suppress_warning;
   }
 };
 
@@ -445,6 +450,7 @@ class Brk {
     limit = rhs.limit;
     offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
     thread_safe = rhs.thread_safe;
+    use_pmem = rhs.use_pmem;
 
     rhs.offset = 0;
     rhs.limit = 0;

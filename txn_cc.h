@@ -231,10 +231,18 @@ class Txn : public BaseTxn {
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
+        //shirley: flush cache after last version write
+        // _mm_clwb((char *)vhandle); 
+        // _mm_clwb((char *)vhandle + 64);
+        // _mm_clwb((char *)vhandle + 128);
+        // _mm_clwb((char *)vhandle + 192);
+        //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
         return result;
       }
       else {
-        return WriteVarStr(o.Encode(usePmem));
+        bool result = WriteVarStr(o.Encode(usePmem));
+        // _mm_clwb((char *)vhandle); //shirley: flush cache bc we modified some info in vhandle. 
+        return result;
       }
     }
 
@@ -255,10 +263,18 @@ class Txn : public BaseTxn {
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
+        //shirley: flush cache after last version write
+        // _mm_clwb((char *)vhandle); 
+        // _mm_clwb((char *)vhandle + 64);
+        // _mm_clwb((char *)vhandle + 128);
+        // _mm_clwb((char *)vhandle + 192);
+        //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
         return result;
       }
       else {
-        return WriteVarStr(o.Encode(usePmem));
+        bool result = WriteVarStr(o.Encode(usePmem));
+        // _mm_clwb((char *)vhandle); //shirley: bc we modified some info in vhandle. 
+        return result;
       }
 
       //shirley: removed inline (from original Caracal) since we have new inline design
@@ -287,6 +303,13 @@ class Txn : public BaseTxn {
       // vhandle -> ptr1 = val
       vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)val); 
       
+      //shirley: flush cache after insert
+      // _mm_clwb((char *)vhandle);
+      // _mm_clwb((char *)vhandle + 64);
+      // _mm_clwb((char *)vhandle + 128);
+      // _mm_clwb((char *)vhandle + 192);
+      //shirley: don't need flush val. first insert always inlined in miniheap (max varstr is 83 bytes?)
+
       //shirley: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
       return true;
       // return WriteVarStr(val);

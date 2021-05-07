@@ -78,28 +78,24 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class ContentionManager;
   friend class HashtableIndex;
 
-  util::MCSSpinLock lock;
-  uint8_t alloc_by_regionid;
-  uint8_t this_coreid;
-  int8_t cont_affinity;
-  
-  //Corey: TODO comment out: Inline Mask (1bit = 32byte used for inline version array miniheap tracking)
-  uint8_t inline_used;
+  util::MCSSpinLock lock; //shirley: used by versions? vhandle?
+  uint8_t alloc_by_regionid; // shirley: used by vhandle, can remove?
+  uint8_t this_coreid; // shirley: can remove? used for alloc/free versions
+  int8_t cont_affinity; //shirley: versions? vhandle? used by contention manager
+  uint8_t inline_used; //shirley: doesn't need in new design
 
-  unsigned int capacity;
-  unsigned int size;
-  unsigned int cur_start; //shirley: is cur_start used only by GC?
+  unsigned int capacity; //shirley: used for versions
+  unsigned int size;     // shirley: used for versions
+  unsigned int cur_start; //shirley: used by GC. doesn't need in new design?
 
   //Corey: the latest written version's offset in *versions
-  std::atomic_int latest_version;
-  int nr_ondsplt;
-  //Corey: versions: ptr to the version array.
-  //Corey: [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
-  //Corey: TODO Inline Pmem or Transient
+  std::atomic_int latest_version; // shirley: used for versions
+  int nr_ondsplt; //shirley: used for versions, by contention manager
+  //[0, capacity - 1] stores version number, [capacity, 2*capacity - 1] stores ptr to data
   uint64_t *versions;
-  util::OwnPtr<RowEntity> row_entity;
-  std::atomic_long buf_pos = -1;
-  std::atomic<uint64_t> gc_handle = 0;
+  util::OwnPtr<RowEntity> row_entity; // shirley: used for data migration?
+  std::atomic_long buf_pos = -1; //shirley: used by contention manager
+  std::atomic<uint64_t> gc_handle = 0; // shirley: used by minor gc? doesn't need in new design?
 
   SortedArrayVHandle();
  public:
@@ -381,7 +377,7 @@ class SortedArrayVHandle : public BaseVHandle {
   }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed) + 1; }
   int nr_ondemand_split() const { return nr_ondsplt; }
-  uint8_t region_id() const { return alloc_by_regionid; }
+  uint8_t region_id() const { return alloc_by_regionid; } //shirley: not used?
   uint8_t object_coreid() const { return this_coreid; }
   int8_t contention_affinity() const { return cont_affinity; }
  private:
@@ -394,6 +390,8 @@ class SortedArrayVHandle : public BaseVHandle {
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 
+
+//shirley: can remove
 static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
 
 #ifdef LL_REPLAY
