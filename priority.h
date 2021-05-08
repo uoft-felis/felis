@@ -93,7 +93,6 @@ class PriorityTxn {
   uint64_t sid;
   bool initialized; // meaning the registered VHandles would be valid
   std::vector<VHandle*> update_handles;
-  std::vector<VHandle*> delete_handles;
   std::vector<BaseInsertKey*> insert_keys;
   std::vector<VHandle*> insert_handles;
   bool (*callback)(PriorityTxn *);
@@ -142,7 +141,6 @@ class PriorityTxn {
   }
 
   bool CheckUpdateConflict(VHandle* handle);
-  bool CheckDeleteConflict(VHandle* handle);
 
  public: // APIs for the callback to use
   uint64_t serial_id() { return sid; }
@@ -154,16 +152,6 @@ class PriorityTxn {
     handle = SearchExistingRow<Table>(key);
     abort_if(!handle, "Registring Update: found nullptr");
     this->update_handles.push_back(handle);
-    return true;
-  }
-
-  template <typename Table>
-  bool InitRegisterDelete(typename Table::Key key, VHandle*& handle) {
-    if (this->initialized)
-      std::abort();
-    handle = SearchExistingRow<Table>(key);
-    abort_if(!handle, "Registring Delete: found nullptr");
-    this->delete_handles.push_back(handle);
     return true;
   }
 
@@ -182,7 +170,7 @@ class PriorityTxn {
 
   bool Init();
 
-  void Rollback(int update_cnt, int delete_cnt, int insert_cnt);
+  void Rollback(int update_cnt, int insert_cnt);
 
   template <typename T>
   T Read(VHandle* handle) {
@@ -199,11 +187,7 @@ class PriorityTxn {
 
   bool Delete(VHandle* handle) {
     abort_if(!initialized, "before Delete, vhandle must be initialized, this {:p}", (void*) this)
-    if (!handle->WriteWithVersion(sid, nullptr, sid >> 32))
-      return false;
-    // mark all the versions after it as nullptr as well
-    handle->PriorityDelete(sid);
-    return true;
+    return handle->WriteWithVersion(sid, nullptr, sid >> 32);
   }
 
   template <typename T, typename Lambda>

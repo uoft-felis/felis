@@ -318,7 +318,7 @@ bool DeliveryTxn_Run(PriorityTxn *txn)
   auto neworder_key = NewOrder::Key::New(input.warehouse_id, input.district_id,
                                          input.oorder_id, input.customer_id);
   VHandle *neworder_row = nullptr;
-  abort_if(!txn->InitRegisterDelete<NewOrder>(neworder_key, neworder_row), "n_o init fail");
+  abort_if(!txn->InitRegisterUpdate<NewOrder>(neworder_key, neworder_row), "n_o init fail");
 
   // init
   uint64_t fail_tsc = start_tsc;

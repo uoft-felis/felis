@@ -261,12 +261,8 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
     if (g_sid_read_bit) {
       for (auto handle : txn->update_handles)
         min = handle->SIDBackwardSearch(min);
-      for (auto handle : txn->delete_handles)
-        min = handle->SIDBackwardSearch(min);
     } else {
       for (auto handle : txn->update_handles)
-        min = handle->SIDForwardSearch(min);
-      for (auto handle : txn->delete_handles)
         min = handle->SIDForwardSearch(min);
     }
     if (min >> 32 < prog >> 32) // min is from last epoch
@@ -363,7 +359,6 @@ bool PriorityTxn::Init()
 
   // acquire row lock in order (here addr order) to prevent deadlock
   std::sort(update_handles.begin(), update_handles.end());
-  std::sort(delete_handles.begin(), delete_handles.end());
 
   // 1) acquire SID
   sid = util::Instance<PriorityTxnService>().GetSID(this);
@@ -372,42 +367,22 @@ bool PriorityTxn::Init()
     return false; // hack
 
   // 2) apply changes, 3) validate, 4) rollback
-  int update_cnt = 0, delete_cnt = 0, insert_cnt = 0; // count for rollback
+  int update_cnt = 0, insert_cnt = 0; // count for rollback
   // updates
   for (int i = 0; i < update_handles.size(); ++i) {
     // pre-checking
     if (PriorityTxnService::g_conflict_read_bit && CheckUpdateConflict(update_handles[i])) {
-      Rollback(update_cnt, delete_cnt, insert_cnt);
+      Rollback(update_cnt, insert_cnt);
       return false;
     }
     // apply changes
     if (!update_handles[i]->AppendNewVersion(sid, sid >> 32, true)) {
-      Rollback(update_cnt, delete_cnt, insert_cnt);
+      Rollback(update_cnt, insert_cnt);
       return false;
     }
     update_cnt++;
     if (CheckUpdateConflict(update_handles[i])) {
-      Rollback(update_cnt, delete_cnt, insert_cnt);
-      return false;
-    }
-  }
-  // deletes
-  for (int i = 0; i < delete_handles.size(); ++i) {
-    if (PriorityTxnService::g_conflict_read_bit) {
-      // pre-checking
-      if (CheckDeleteConflict(delete_handles[i])) {
-        Rollback(update_cnt, delete_cnt, insert_cnt);
-        return false;
-      }
-    }
-    // apply changes
-    delete_cnt++;
-    if (!delete_handles[i]->InitDelete(sid)) {
-      Rollback(update_cnt, delete_cnt, insert_cnt);
-      return false;
-    }
-    if (CheckDeleteConflict(delete_handles[i])) {
-      Rollback(update_cnt, delete_cnt, insert_cnt);
+      Rollback(update_cnt, insert_cnt);
       return false;
     }
   }
@@ -416,12 +391,13 @@ bool PriorityTxn::Init()
     // apply changes
     VHandle *handle = nullptr;
     if ((handle = insert_keys[i]->Insert(sid)) == nullptr) {
-      Rollback(update_cnt, delete_cnt, insert_cnt);
+      Rollback(update_cnt, insert_cnt);
       return false;
     }
     insert_cnt++;
     insert_handles.push_back(handle);
-    handle->AppendNewVersion(sid, sid >> 32, true); // does VHandle come with some original version?
+    handle->AppendNewVersion(sid, sid >> 32, true);
+    // batched version array will have 0 version, priority version linked list will have 1 version
   }
   this->initialized = true;
   return true;
@@ -439,16 +415,10 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
   return true; // progress passed & no read bit to look precisely, deem it as conflict happened
 }
 
-bool PriorityTxn::CheckDeleteConflict(VHandle* handle) {
-  return this->CheckUpdateConflict(handle);
-}
 
-void PriorityTxn::Rollback(int update_cnt, int delete_cnt, int insert_cnt) {
+void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
   for (int i = 0; i < update_cnt; ++i)
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
-  for (int i = 0; i < delete_cnt; ++i) {
-    delete_handles[i]->RevertInitDelete(sid);
-  }
   // inserts: TODO
 }
 
