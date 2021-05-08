@@ -24,7 +24,7 @@ void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
   //             "Diverging outcomes during setup setup");
   // }
 
-  //shirley:  flush cache after initial row insert
+  //shirley pmem: flush cache after initial row insert
   // _mm_clwb((char *)handle);
   // _mm_clwb((char *)handle + 64);
   // _mm_clwb((char *)handle + 128);

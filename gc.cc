@@ -404,7 +404,7 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   handle->SetInlineSid(felis::SortedArrayVHandle::SidType1, sid2);
   handle->SetInlinePtr(felis::SortedArrayVHandle::SidType1, ptr2);
 
-  //shirley: flush cache after GC
+  //shirley pmem: flush cache after GC
   // _mm_clwb((char *)handle);
   // _mm_clwb((char *)handle + 64);
   // _mm_clwb((char *)handle + 128);

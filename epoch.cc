@@ -305,7 +305,7 @@ void CallTxnsWorker::Run()
 
     mem::GetDataRegion().Quiescence();
     //mem::GetDataRegion(true).Quiescence();
-    //shirley test: quiescence persistent pool? faster if in dram, similar(slower?) if in pmem
+    //shirley: quiescence persistent pool? faster if in dram, similar(slower?) if in pmem
     mem::GetPersistentPool().Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
   } else if (client->callback.phase == EpochPhase::Insert) {

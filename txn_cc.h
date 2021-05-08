@@ -231,7 +231,7 @@ class Txn : public BaseTxn {
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
-        //shirley: flush cache after last version write
+        //shirley pmem: flush cache after last version write
         // _mm_clwb((char *)vhandle); 
         // _mm_clwb((char *)vhandle + 64);
         // _mm_clwb((char *)vhandle + 128);
@@ -241,6 +241,7 @@ class Txn : public BaseTxn {
       }
       else {
         bool result = WriteVarStr(o.Encode(usePmem));
+        //shirley pmem: flush cache
         // _mm_clwb((char *)vhandle); //shirley: flush cache bc we modified some info in vhandle. 
         return result;
       }
@@ -263,7 +264,7 @@ class Txn : public BaseTxn {
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
-        //shirley: flush cache after last version write
+        //shirley pmem: flush cache after last version write
         // _mm_clwb((char *)vhandle); 
         // _mm_clwb((char *)vhandle + 64);
         // _mm_clwb((char *)vhandle + 128);
@@ -273,6 +274,7 @@ class Txn : public BaseTxn {
       }
       else {
         bool result = WriteVarStr(o.Encode(usePmem));
+        //shirley pmem: flush cache
         // _mm_clwb((char *)vhandle); //shirley: bc we modified some info in vhandle. 
         return result;
       }
@@ -303,7 +305,7 @@ class Txn : public BaseTxn {
       // vhandle -> ptr1 = val
       vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)val); 
       
-      //shirley: flush cache after insert
+      //shirley pmem: flush cache after insert
       // _mm_clwb((char *)vhandle);
       // _mm_clwb((char *)vhandle + 64);
       // _mm_clwb((char *)vhandle + 128);
