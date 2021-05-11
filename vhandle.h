@@ -126,6 +126,7 @@ class LinkedListExtraVHandle {
   uint64_t FindUnreadVersionLowerBound(uint64_t min);
   uint64_t FindFirstUnreadVersion(uint64_t min);
   bool WriteWithVersion(uint64_t sid, VarStr *obj);
+  void GarbageCollect();
 
   uint64_t first_version() {
     Entry *p = head.load();

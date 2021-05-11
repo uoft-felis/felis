@@ -174,13 +174,9 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   while (i < handle->size - 1 && i <= limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
     i++;
   }
-  while (i > 0 && objects[i] == kIgnoreValue) {
-    i--; // if last version is ignore, then we gc less versions
-  }
   if (i == 0) return 0;
 
   for (auto j = 0; j < i; j++) {
-    if (objects[j] == kIgnoreValue) continue;
     VarStr *o = (VarStr *) objects[j];
     o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
     delete o;
@@ -189,6 +185,10 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   std::move(versions + i, versions + handle->size, versions);
   handle->size -= i;
   handle->latest_version.fetch_sub(i);
+
+  auto extra = handle->extra_vhandle.load();
+  if (extra)
+    extra->GarbageCollect();
 
   if (is_trace_enabled(TRACE_GC)) {
     fmt::memory_buffer buf;

@@ -751,6 +751,44 @@ bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
   return true;
 }
 
+void LinkedListExtraVHandle::GarbageCollect()
+{
+  // GC all but one version: largest version with actual value (not ignore)
+  Entry *cur = this->head.load();
+  while (cur) {
+    if (cur->object != kIgnoreValue) {
+      Entry *front = head, *behind = cur->next;
+      while (front && front != cur) {
+        Entry *temp = front->next;
+        delete front;
+        // TODO: remember to collect VarStr as well
+        front = temp;
+      }
+      while (behind) {
+        Entry *temp = behind->next;
+        delete behind;
+        behind = temp;
+      }
+      cur->next = nullptr;
+      this->head = cur;
+      this->size = 1;
+      return;
+    } else {
+      cur = cur->next;
+    }
+  }
+
+  // if it reaches here, it means cur == nullptr, all Entry are ignore value
+  cur = this->head.load();
+  while (cur) {
+    Entry *temp = cur->next;
+    delete cur;
+    cur = temp;
+  }
+  this->head = nullptr;
+  this->size = 0;
+}
+
 #endif
 
 #ifdef LL_REPLAY
