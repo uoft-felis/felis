@@ -262,8 +262,20 @@ template <> void OnProbe(felis::probes::TransientPersistentCount p) {
   }
 }
 
+static std::mutex index_size_m;
+// number of bytes allocated for varstr
+static long long index_size_total = 0;
+template <> void OnProbe(felis::probes::IndexSizeTotal p) {
+  std::lock_guard _(index_size_m); // released automatically when lockguard
+                                   // variable is destroyed
+  index_size_total += p.num_bytes;
+}
+
 ProbeMain::~ProbeMain()
 {
+  std::cout << std::endl;
+  std::cout << "total size for (masstree) indexes (MB): " << index_size_total/1024/1024 << std::endl;
+
   std::cout << "number of transient varstr: " << total_transient << std::endl;
   std::cout << "number of persistent varstr: " << total_persistent << std::endl;
   std::cout << std::endl;

@@ -241,8 +241,8 @@ class Txn : public BaseTxn {
       }
       else {
         bool result = WriteVarStr(o.Encode(usePmem));
-        //shirley pmem: flush cache
-        // _mm_clwb((char *)vhandle); //shirley: flush cache bc we modified some info in vhandle. 
+        //shirley: should remove this flush bc only flushing 64 bytes. It's gonna invalidate the cacheline.
+        // // _mm_clwb((char *)vhandle); //shirley: flush cache bc we modified some info in vhandle. 
         return result;
       }
     }
@@ -274,8 +274,8 @@ class Txn : public BaseTxn {
       }
       else {
         bool result = WriteVarStr(o.Encode(usePmem));
-        //shirley pmem: flush cache
-        // _mm_clwb((char *)vhandle); //shirley: bc we modified some info in vhandle. 
+        //shirley: should remove this flush bc only flushing 64 bytes. It's gonna invalidate the cacheline.
+        // // _mm_clwb((char *)vhandle); //shirley: bc we modified some info in vhandle. 
         return result;
       }
 

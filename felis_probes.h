@@ -138,6 +138,12 @@ struct VarStrNewPmem {
   size_t num_bytes;
   void operator()() const;
 };
+
+struct IndexSizeTotal {
+  size_t num_bytes;
+  void operator()() const;
+};
+
 }
 }
 
@@ -162,6 +168,7 @@ struct VarStrNewPmem {
   PROBE_PROXY(felis::probes::VersionValueSizeArray);                           \
   PROBE_PROXY(felis::probes::VersionAllocCountInlineToExternal);               \
   PROBE_PROXY(felis::probes::MemAllocParallelBrkPool);                         \
-  PROBE_PROXY(felis::probes::VarStrNewPmem);
+  PROBE_PROXY(felis::probes::VarStrNewPmem);                                   \
+  PROBE_PROXY(felis::probes::IndexSizeTotal);
 
 #endif /* FELIS_PROBES_H */

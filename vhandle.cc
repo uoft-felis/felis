@@ -287,8 +287,8 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
     }
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
-    //shirley pmem: flush cache
-    // _mm_clwb((char *)this); // shirley: flush cache bc we modified some info in vhandle.
+    //shirley: should remove this flush bc only flushing 64 bytes. It's gonna invalidate the cacheline.
+    // // _mm_clwb((char *)this); // shirley: flush cache bc we modified some info in vhandle.
     lock.Unlock(&qnode);
   } else {
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
