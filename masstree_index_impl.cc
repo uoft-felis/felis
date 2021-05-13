@@ -39,7 +39,7 @@ class MasstreeMap : public Masstree::basic_table<MasstreeDollyParam> {
 
     static void *operator new(size_t sz) {
       // shirley: probe bytes allocated for masstree map iterator
-      felis::probes::IndexSizeTotal{sz}();
+      // felis::probes::IndexSizeTotal{sz}();
       return mem::AllocFromRoutine(sz);
     }
     static void operator delete(void *p) {}
