@@ -613,7 +613,11 @@ bool LinkedListExtraVHandle::AppendNewVersion(uint64_t sid)
   do {
     recycle = false;
     old = head.load();
-    if (old && old->version >= sid) {
+    if (old && old->version > sid) {
+      delete n;
+      return false;
+    }
+    if (old && old->version == sid && old->object != kIgnoreValue) {
       delete n;
       return false;
     }
@@ -731,10 +735,10 @@ uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
 bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
 {
   Entry *p = head;
-  while (p && p->version != sid)
+  while (p && p->version > sid)
     p = p->next;
 
-  if (!p) {
+  if (!p || p->version != sid) {
     logger->critical("Diverging outcomes! sid {}", sid);
     std::stringstream ss;
     Entry *p = head;
@@ -757,14 +761,24 @@ void LinkedListExtraVHandle::GarbageCollect()
   Entry *cur = this->head.load();
   while (cur) {
     if (cur->object != kIgnoreValue) {
+      // found the version to keep, start GC
       Entry *front = head, *behind = cur->next;
       while (front && front != cur) {
+        if (front->object != kIgnoreValue) {
+          VarStr *o = (VarStr *) front->object;
+          o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
+          delete o;
+        }
         Entry *temp = front->next;
         delete front;
-        // TODO: remember to collect VarStr as well
         front = temp;
       }
       while (behind) {
+        if (behind->object != kIgnoreValue) {
+          VarStr *o = (VarStr *) behind->object;
+          o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
+          delete o;
+        }
         Entry *temp = behind->next;
         delete behind;
         behind = temp;
@@ -774,6 +788,7 @@ void LinkedListExtraVHandle::GarbageCollect()
       this->size = 1;
       return;
     } else {
+      // keep trying to find the version to keep
       cur = cur->next;
     }
   }
