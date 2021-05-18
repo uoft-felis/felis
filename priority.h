@@ -20,8 +20,72 @@ class PriorityTxnService {
   util::SpinLock lock; // for global_last_sid
 
  public:
-  std::array<uint8_t*, NodeConfiguration::kMaxNrThreads> seq_bitmap;
-  size_t bitmap_size;
+  class Bitmap {
+    std::vector<bool> bitset;
+    size_t size;
+   public:
+    Bitmap() = delete;
+    Bitmap(const Bitmap& rhs) = delete;
+    Bitmap(size_t _size) {
+      size = _size;
+      bitset.resize(size, false);
+    }
+    void clear() {
+      bitset.clear();
+      bitset.resize(size, false);
+    }
+    void set(int idx, bool value) {
+      abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx = {}", idx);
+      bitset[idx] = value;
+    }
+    // find first element after idx that is false, set it to true
+    int set_first_unset_idx(int idx) {
+      abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx = {}", idx);
+      for (int i = idx; i < size; ++i) {
+        if (bitset[i] == false) {
+          set(i, true);
+          return i;
+        }
+      }
+      return -1;
+    }
+  };
+  std::array<Bitmap*, NodeConfiguration::kMaxNrThreads> seq_bitmap;
+
+  int idx2seq(int idx, int core_id)
+  {
+    // idx [0, nr_batch_txns - 1], core_id [0, nr_cores - 1]
+    size_t nr_batch_txns = EpochClient::g_txn_per_epoch;
+    size_t nr_cores = NodeConfiguration::g_nr_threads;
+    if (idx < 0 || idx >= nr_batch_txns || core_id < 0 || core_id >= nr_cores) {
+      logger->critical("idx2seq access out of bound, idx {}, core_id {}", idx, core_id);
+      std::abort();
+    }
+    /*
+      e.g. kStripBatched = 2, kStripPriority = nr_cores = 32, then
+        \  core_id |   batched    0   1   2   ...   30  31
+      idx  \       |
+      -------------
+            0           1   2     3   4   5   ...   33  34
+            1           35  36    37  38  39  ...   67  68
+      (seq starts with 1)
+    */
+    int k = g_strip_batched + g_strip_priority;
+    return idx * k + g_strip_batched + core_id + 1;
+  }
+
+  int seq2idx(int seq)
+  {
+    int k = g_strip_batched + g_strip_priority;
+    size_t seq_max = k * (EpochClient::g_txn_per_epoch / g_strip_batched) +
+                     EpochClient::g_txn_per_epoch % g_strip_batched;
+    if (seq < 1 || seq > seq_max) {
+      logger->critical("seq2idx access out of bound, seq {}", seq);
+      std::abort();
+    }
+    return (seq - 1) / k;
+  }
+
   // total number of priority txn queue length
   static size_t g_queue_length;
 
@@ -61,8 +125,6 @@ class PriorityTxnService {
   uint64_t SIDLowerBound();
   uint64_t GetSID(PriorityTxn* txn);
   uint64_t GetNextSIDSlot(uint64_t sequence);
-  bool BitMapValue(uint64_t idx, int core_id);
-  void SetBitMapValue(uint64_t idx, int core_id, uint8_t value);
 
  public:
   static void PrintStats();

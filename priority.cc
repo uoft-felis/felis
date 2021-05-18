@@ -82,15 +82,9 @@ PriorityTxnService::PriorityTxnService()
   if (Options::kSIDBitmap) g_sid_bitmap = true;
   int count = g_sid_global_inc + g_sid_local_inc + g_sid_bitmap;
   abort_if(count != 1, "Please specify one (and only one) way for SID reuse detection");
-  if (g_sid_bitmap) {
-    bitmap_size = (((EpochClient::g_txn_per_epoch / g_strip_batched + 1) * g_strip_priority)
-                  / NodeConfiguration::g_nr_threads + 1) / 8 + 1;
-  } else {
-    bitmap_size = 0;
-    if (g_sid_local_inc)
-      abort_if(NodeConfiguration::g_nr_threads != g_strip_priority,
-               "plz make priority strip = # cores"); // allow me to be lazy once
-  }
+  if (g_sid_bitmap || g_sid_local_inc)
+    abort_if(NodeConfiguration::g_nr_threads != g_strip_priority,
+            "plz make priority strip = # cores"); // allow me to be lazy once
 
   if (Options::kReadBit) {
     g_read_bit = true;
@@ -125,8 +119,8 @@ PriorityTxnService::PriorityTxnService()
     auto r = go::Make([this, i] {
       exec_progress[i] = new uint64_t(0);
       if (g_sid_bitmap) {
-        seq_bitmap[i] = (uint8_t*)malloc(bitmap_size);
-        memset(seq_bitmap[i], 0, bitmap_size);
+        seq_bitmap[i] = new Bitmap(EpochClient::g_txn_per_epoch);
+        // since g_strip_priority = #core (see above, lazy once), bitmap size = # of txn per epoch
       } else {
         seq_bitmap[i] = nullptr;
       }
@@ -222,7 +216,7 @@ bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
     return false;
   uint64_t seq = sid >> 8 & 0xFFFFFF;
   int k = PriorityTxnService::g_strip_batched + PriorityTxnService::g_strip_priority;
-  if (seq % k > PriorityTxnService::g_strip_batched)
+  if ((seq - 1) % k >= PriorityTxnService::g_strip_batched)
     return true;
   return false;
 }
@@ -270,7 +264,9 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
     else
       new_seq = min >> 8 & 0xFFFFFF;
   }
-
+  abort_if(new_seq <= 0, "new_seq <= 0, {}", new_seq);
+  auto seq_max = EpochClient::g_txn_per_epoch * (g_strip_batched + g_strip_priority);
+  abort_if(new_seq > seq_max, "new_seq > seq_max, {} > {}", new_seq, seq_max);
   return GetNextSIDSlot(new_seq);
 }
 
@@ -309,32 +305,10 @@ uint64_t PriorityTxnService::GetNextSIDSlot(uint64_t sequence)
 
   // use per-core bitmap to find an unused SID
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-  const size_t nr_cores = NodeConfiguration::g_nr_threads;
-  uint64_t strip = (sequence - 1) / k;
-  uint64_t idx = strip / (nr_cores / g_strip_priority);
-  while (BitMapValue(idx, core_id))
-    ++idx;
-  SetBitMapValue(idx, core_id, 1);
-  uint64_t new_strip = idx * (nr_cores / g_strip_priority) + core_id / g_strip_priority;
-  uint64_t new_seq = new_strip * k + g_strip_batched + core_id % g_strip_priority + 1;
+  int idx = seq2idx(sequence);
+  int available_idx = seq_bitmap[core_id]->set_first_unset_idx(idx);
+  uint64_t new_seq = idx2seq(available_idx, core_id);
   return (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
-}
-
-bool PriorityTxnService::BitMapValue(uint64_t idx, int core_id)
-{
-  abort_if(seq_bitmap[core_id]== nullptr, "sid bitmap not allocated");
-  uint64_t byte_idx = idx / 8;
-  uint8_t mask = 1 << (idx % 8);
-  return seq_bitmap[core_id][byte_idx] & mask;
-}
-
-void PriorityTxnService::SetBitMapValue(uint64_t idx, int core_id, uint8_t value)
-{
-  value = value & 1;
-  uint64_t byte_idx = idx / 8;
-  uint8_t mask = ~(value << (idx % 8));
-  auto &byte = seq_bitmap[core_id][byte_idx];
-  byte = (byte & mask) | (value << (idx % 8));
 }
 
 void PriorityTxnService::ClearBitMap(void)
@@ -343,7 +317,7 @@ void PriorityTxnService::ClearBitMap(void)
     return;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
-      memset(this->seq_bitmap[i], 0, this->bitmap_size);
+      this->seq_bitmap[i]->clear();
     });
     r->set_urgent(true);
     go::GetSchedulerFromPool(i + 1)->WakeUp(r);
@@ -417,6 +391,14 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 
 
 void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
+  if (PriorityTxnService::g_sid_bitmap) {
+    // since this txn aborted, reset the SID bit back to false
+    auto core = go::Scheduler::CurrentThreadPoolId() - 1;
+    auto seq = (this->serial_id() >> 8) & 0xFFFFFF;
+    auto idx = util::Instance<PriorityTxnService>().seq2idx(seq);
+    auto &bitmap = util::Instance<PriorityTxnService>().seq_bitmap[core];
+    bitmap->set(idx, false);
+  }
   for (int i = 0; i < update_cnt; ++i)
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
   // inserts: TODO
