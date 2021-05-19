@@ -102,6 +102,7 @@ struct Options {
   static inline const auto kSIDForwardReadBit = Option("SIDForwardReadBit");
 
   static inline const auto kBackoffDist = Option("BackoffDist");
+  static inline const auto kNoExpBackoff = Option("NoExpBackoff");
   static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
 
 

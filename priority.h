@@ -108,6 +108,7 @@ class PriorityTxnService {
   static bool g_sid_forward_read_bit; // use read bit info for SID, direction forward in time
 
   static int g_backoff_distance; // how many distance we are going to backoff, could be + or -
+  static bool g_distance_exponential_backoff; /// only works if g_backoff_distance is -
   static bool g_fastest_core;
 
   PriorityTxnService();
@@ -158,6 +159,7 @@ class PriorityTxn {
   std::vector<BaseInsertKey*> insert_keys;
   std::vector<VHandle*> insert_handles;
   bool (*callback)(PriorityTxn *);
+  int abort_cnt;
 
  public:
   std::atomic_int piece_count;
@@ -174,6 +176,7 @@ class PriorityTxn {
     this->update_handles.clear();
     this->piece_count.store(0);
     this->min_sid = 0;
+    this->abort_cnt = 0;
 
     this->sid = rhs.sid;
     this->initialized = rhs.initialized;
