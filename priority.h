@@ -24,10 +24,11 @@ class PriorityTxnService {
     std::vector<bool> bitset;
     size_t size;
    public:
+    static const int extra_strip = 10;
     Bitmap() = delete;
     Bitmap(const Bitmap& rhs) = delete;
     Bitmap(size_t _size) {
-      size = _size;
+      size = _size + extra_strip;
       bitset.resize(size, false);
     }
     void clear() {
@@ -35,12 +36,12 @@ class PriorityTxnService {
       bitset.resize(size, false);
     }
     void set(int idx, bool value) {
-      abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx = {}", idx);
+      abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx={}, size={}", idx, size);
       bitset[idx] = value;
     }
     // find first element after idx that is false, set it to true
     int set_first_unset_idx(int idx) {
-      abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx = {}", idx);
+      abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx={}, size={}", idx, size);
       for (int i = idx; i < size; ++i) {
         if (bitset[i] == false) {
           set(i, true);
@@ -57,7 +58,7 @@ class PriorityTxnService {
     // idx [0, nr_batch_txns - 1], core_id [0, nr_cores - 1]
     size_t nr_batch_txns = EpochClient::g_txn_per_epoch;
     size_t nr_cores = NodeConfiguration::g_nr_threads;
-    if (idx < 0 || idx >= nr_batch_txns || core_id < 0 || core_id >= nr_cores) {
+    if (idx < 0 || idx >= nr_batch_txns + Bitmap::extra_strip || core_id < 0 || core_id >= nr_cores) {
       logger->critical("idx2seq access out of bound, idx {}, core_id {}", idx, core_id);
       std::abort();
     }
@@ -77,7 +78,7 @@ class PriorityTxnService {
   int seq2idx(int seq)
   {
     int k = g_strip_batched + g_strip_priority;
-    size_t seq_max = k * (EpochClient::g_txn_per_epoch / g_strip_batched) +
+    size_t seq_max = k * (EpochClient::g_txn_per_epoch / g_strip_batched + Bitmap::extra_strip) +
                      EpochClient::g_txn_per_epoch % g_strip_batched;
     if (seq < 1 || seq > seq_max) {
       logger->critical("seq2idx access out of bound, seq {}", seq);

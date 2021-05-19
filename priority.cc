@@ -273,9 +273,6 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
     else
       new_seq = min >> 8 & 0xFFFFFF;
   }
-  abort_if(new_seq <= 0, "new_seq <= 0, {}", new_seq);
-  auto seq_max = EpochClient::g_txn_per_epoch * (g_strip_batched + g_strip_priority);
-  abort_if(new_seq > seq_max, "new_seq > seq_max, {} > {}", new_seq, seq_max);
   return GetNextSIDSlot(new_seq);
 }
 
