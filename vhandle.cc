@@ -389,15 +389,16 @@ uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
+  if (PriorityTxnService::isPriorityTxn(sid)) {
+    // go to extra array to find version
+    auto extra = extra_vhandle.load();
+    if (extra && (extra->WriteWithVersion(sid, obj)))
+      return true;
+  }
+
   // Finding the exact location
   auto it = std::lower_bound(versions, versions + size, sid);
   if (unlikely(it == versions + size || *it != sid)) {
-    auto extra = extra_vhandle.load();
-    if (extra) {
-      // go to extra array to find version. if still not found, doomed
-      if (extra->WriteWithVersion(sid, obj))
-        return true;
-    }
     // sid is greater than all the versions, or the located lower_bound isn't sid version
     logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
                      sid, it - versions, size);
