@@ -363,6 +363,7 @@ uint64_t SortedArrayVHandle::SIDForwardSearch(uint64_t min)
   return (original < extra) ? original : extra;
 }
 
+// if no unread version can be found in the range of [min, core_prog) can be found, return 0.
 uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
 {
   int lower_pos;
@@ -370,16 +371,17 @@ uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
   if (ptr_obj == nullptr)
     return min;
 
-  volatile uintptr_t *ptr_ver = &versions[lower_pos];
+  volatile uintptr_t *ptr_ver = &versions[lower_pos]; // could be smaller than min
 
   while (*ptr_obj & kReadBitMask) {
     ptr_ver++;
     ptr_obj++;
-    uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
     if (ptr_ver - versions >= size) // search out of bound, all versions are read
       return 0;
-    if (*ptr_ver >= max_prog)
-      return max_prog;
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    uint64_t core_prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+    if (*ptr_ver >= core_prog)
+      return 0; // since giving out SID is apprxiamte, using core_prog as boundary is enough
   }
 
   if (*ptr_ver <= min)
@@ -712,6 +714,7 @@ uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
   return cur->version;
 }
 
+// if no unread version can be found in the range of [min, core_prog) can be found, return 0.
 uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
 {
   Entry dummy(0, 0, 0);
@@ -719,17 +722,22 @@ uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
   Entry *cur = &dummy;
   uint64_t last_unread = ~0; // last unread SID in the linked list
   while (cur->next && cur->next->version >= min) {
+    // tricky, since linked list SID is in descending order
     cur = cur->next;
     if (!(cur->object & kReadBitMask)) {
       abort_if(last_unread < cur->version, "what? last_unread < cur->version");
       last_unread = cur->version;
     }
   }
-  if (cur == &dummy)
+
+  if (cur->next && cur->next->version < min && !(cur->next->object & kReadBitMask))
+    return min; // special case: if the version before min is unread, we can use min
+  if (last_unread == ~0)
     return 0;
-  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
-  if (last_unread >= max_prog)
-    return max_prog;
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  uint64_t core_prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+  if (last_unread >= core_prog)
+    return 0;
   return last_unread;
 }
 
