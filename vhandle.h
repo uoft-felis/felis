@@ -31,6 +31,7 @@ class BaseVHandle {
   //Corey: Vhandle_Metadata(64B) | Inline_Version_Array(32B) | Mask1(1B)|Mask2(1B)|MiniHeap(158B)
   //Corey: Inline_Version_Array(32B) = Sid1(8B)|Ptr1(8B)|Sid2(8B)|Ptr2(8B)
   //Corey: Set Inline offsets - Doesn't take up memory
+  static constexpr size_t VerArrayInfoSize = 32;
   static constexpr size_t vhandleMetadataSize = 64;
   static constexpr size_t ineTwoVersionArraySid1Size = 8;
   static constexpr size_t inlineTwoVersionArrayPtr1Size = 8;
@@ -150,6 +151,35 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
+
+
+  // shirley: define the layout of the info stored in version array. should be smaller than 32 bytes.
+  typedef struct VerArrayInfo {
+    unsigned int capacity;
+    unsigned int size;
+    std::atomic_int latest_version; // shirley: the latest written version's offset in *versions
+  } VerArrayInfo;
+
+  // shirley: return pointers to info given version array
+  static unsigned int *capacity_ptr(uint64_t *versions) {
+    return &(((VerArrayInfo*)versions)->capacity);
+  }
+
+  static unsigned int *size_ptr(uint64_t *versions) {
+    return &(((VerArrayInfo *)versions)->size);
+  }
+
+  static std::atomic_int *latest_version_ptr(uint64_t *versions) {
+    return &(((VerArrayInfo *)versions)->latest_version);
+  }
+
+  // shirley: return pointer to versions within transient version array
+  static uint64_t *versions_ptr(uint64_t *versions) {
+    return (uint64_t *)(((uint8_t *)versions) + VerArrayInfoSize);
+  }
+
+  static_assert(sizeof(VerArrayInfo) <= VerArrayInfoSize,
+                "VerArrayInfo is larger than VerArrayInfoSize bytes!\n");
 
   enum SidType {
     SidType1,
@@ -411,12 +441,14 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t first_version() const { 
     if (!versions)
       return GetInlineSid(SidType1); // shirley: return sid1 when version array is null
-    else 
-      return versions[0];
+    else
+      return versions_ptr(versions)[0]; 
+      //return versions[0];
   }
   uint64_t last_version() const { 
     if (versions)
-      return versions[size - 1]; 
+      return versions_ptr(versions)[size - 1];
+      // return versions[size - 1];
     else {
       printf("last_version(), versions is null???\n");
       std::abort();
@@ -431,12 +463,12 @@ class SortedArrayVHandle : public BaseVHandle {
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight);
   unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
   void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
-    versions[pos] = sid;
+    versions_ptr(versions)[pos] = sid;
+    //versions[pos] = sid;
   }
   void IncreaseSize(int delta, uint64_t epoch_nr);
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
-
 
 //shirley: can remove
 static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");

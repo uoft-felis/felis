@@ -73,14 +73,24 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   const size_t new_len = new_cap * sizeof(uint64_t);
 
   // shirley: grab new mem for version array from transient pool
-  auto new_p = (uint64_t *)mem::GetTransientPool().Alloc(2 * new_len);
+  auto new_p = (uint64_t *)mem::GetTransientPool().Alloc(BaseVHandle::VerArrayInfoSize + 2 * new_len);
   if (!new_p) {
     return nullptr;
   }
+
+  //shirley: copy header info in version array
+  //shirley todo: set new header accordingly. here or outside this function?
+  std::copy(old_p, (uint64_t*)((uint8_t*)old_p + BaseVHandle::VerArrayInfoSize), new_p);
+
+
   // memcpy(new_p, old_p, old_cap * sizeof(uint64_t));
-  std::copy(old_p, old_p + old_cap, new_p);
+  std::copy(SortedArrayVHandle::versions_ptr(old_p),
+            SortedArrayVHandle::versions_ptr(old_p) + old_cap,
+            SortedArrayVHandle::versions_ptr(new_p));
   // memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
-  std::copy(old_p + old_cap, old_p + 2 * old_cap, new_p + new_cap);
+  std::copy(SortedArrayVHandle::versions_ptr(old_p) + old_cap,
+            SortedArrayVHandle::versions_ptr(old_p) + 2 * old_cap,
+            SortedArrayVHandle::versions_ptr(new_p) + new_cap);
   //shirley: after using parallel break pool, don't need the free here (cleaned at end of epoch)
   // if ((uint8_t *) old_p - (uint8_t *) row != 64)
   //   mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
@@ -90,9 +100,9 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
 std::string SortedArrayVHandle::ToString() const
 {
   fmt::memory_buffer buf;
-  auto objects = versions + capacity;
+  auto objects = versions_ptr(versions) + capacity;
   for (auto j = 0u; j < size; j++) {
-    fmt::format_to(buf, "{}->0x{:x} ", versions[j], objects[j]);
+    fmt::format_to(buf, "{}->0x{:x} ", versions_ptr(versions)[j], objects[j]);
   }
   return std::string(buf.begin(), buf.size());
 }
@@ -123,7 +133,7 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 
     abort_if(new_versions == nullptr,
              "Memory allocation failure, second ver epoch {}",
-             versions[1] >> 32);
+             versions_ptr(versions)[1] >> 32);
     /*
     if (EpochClient::g_workload_client) {
       auto &lm = EpochClient::g_workload_client->get_execution_locality_manager();
@@ -137,7 +147,7 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
     //alloc_by_regionid = current_regionid;
   }
 
-  auto objects = versions + capacity;
+  auto objects = versions_ptr(versions) + capacity;
 
   std::fill(objects + size - delta,
             objects + size,
@@ -193,22 +203,22 @@ void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr,
 unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift)
 {
   if (end == 0) {
-    versions[extra_shift] = versions[0];
+    versions_ptr(versions)[extra_shift] = versions_ptr(versions)[0];
     return 0;
   }
 
-  uint64_t last = versions[end];
+  uint64_t last = versions_ptr(versions)[end];
   unsigned int mark = (end - 1) & ~(0x03FF);
   // int i = std::lower_bound(versions + mark, versions + end, last) - versions;
 
-  int i = util::FastLowerBound(versions + mark, versions + end, last) - versions;
+  int i = util::FastLowerBound(versions_ptr(versions) + mark, versions_ptr(versions) + end, last) - versions_ptr(versions);
   if (i == mark)
-    i = std::lower_bound(versions, versions + mark, last) - versions;
+    i = std::lower_bound(versions_ptr(versions), versions_ptr(versions) + mark, last) - versions_ptr(versions);
 
-  std::move(versions + i, versions + end, versions + i + 1 + extra_shift);
+  std::move(versions_ptr(versions) + i, versions_ptr(versions) + end, versions_ptr(versions) + i + 1 + extra_shift);
   probes::VHandleAbsorb{this, (int) end - i}();
 
-  versions[i + extra_shift] = last;
+  versions_ptr(versions)[i + extra_shift] = last;
 
   return i;
 }
@@ -258,11 +268,11 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
     if ((!versions)) {
       // printf("AppendNewVersion: version array is null. SHOULDN'T REACH HERE!\n");
       // printf("AppendNewVersion: trying to allocate new version array\n");
-      // shirley: initial size 64 is ok. (fits 4 versions)
+      // shirley: initial size 64 is ok. (fits 4 versions). note: this is without info in ver_array.
       //shirley: use transient pool for version array
-      //shirley note: if use data region there'll be races (idk why)
-      versions = (uint64_t *)mem::GetTransientPool().Alloc(2*4*sizeof(uint64_t));
-      capacity = 4;
+      int initial_cap = 2;
+      versions = (uint64_t *)mem::GetTransientPool().Alloc(VerArrayInfoSize + 2 * initial_cap * sizeof(uint64_t));
+      capacity = initial_cap;
       size = 0;
       //cur_start = 0; 
       latest_version.store(-1);
@@ -270,17 +280,17 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       // now add initial version (sid1, ptr1) to the new version array
       auto sid1 = GetInlineSid(felis::SortedArrayVHandle::SidType1);
       auto ptr1 = GetInlinePtr(felis::SortedArrayVHandle::SidType1);
-      versions[0] = sid1;
-      versions[4] = (uint64_t)ptr1;
+      versions_ptr(versions)[0] = sid1;
+      versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
       size = 1;
       latest_version.store(0);
       //shirley debug: do we need to init to 0? I don't think so?
-      versions[1] = 0;
-      versions[2] = 0;
-      versions[3] = 0;
-      versions[5] = 0;
-      versions[6] = 0;
-      versions[7] = 0;
+      // versions[1] = 0;
+      // versions[2] = 0;
+      // versions[3] = 0;
+      // versions[5] = 0;
+      // versions[6] = 0;
+      // versions[7] = 0;
 
       //shirley future: we need to use gc_handle if we want to remove row during minor GC
       //shirley: add row to GC bc it's appended to
@@ -307,19 +317,19 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   //shirley TODO: how can we prefetch in our new design?
   if (1) __builtin_prefetch((uint8_t *) this + 128);
 
-  uint64_t *p = versions;
-  uint64_t *start = versions;//+ cur_start;
-  uint64_t *end = versions + size;
+  uint64_t *p = versions_ptr(versions);
+  uint64_t *start = versions_ptr(versions);//+ cur_start;
+  uint64_t *end = versions_ptr(versions) + size;
   int latest = latest_version.load();
 
-  if (latest >= 0 && sid > versions[latest]) {
-    start = versions + latest + 1;
-    if (start >= versions + size || sid <= *start) {
+  if (latest >= 0 && sid > versions_ptr(versions)[latest]) {
+    start = versions_ptr(versions) + latest + 1;
+    if (start >= versions_ptr(versions) + size || sid <= *start) {
       p = start;
       goto found;
     }
   } else if (latest >= 0) {
-    end = versions + latest;
+    end = versions_ptr(versions) + latest;
     if (*(end - 1) < sid) {
       p = end;
       goto found;
@@ -327,13 +337,13 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   }
 
   p = std::lower_bound(start, end, sid);
-  if (p == versions) {
+  if (p == versions_ptr(versions)) {
     logger->critical("ReadWithVersion() {} cannot found for sid {} start is {} begin is {}",
-                     (void *) this, sid, *start, *versions);
+                     (void *) this, sid, *start, *versions_ptr(versions));
     return nullptr;
   }
 found:
-  auto objects = versions + capacity;
+  auto objects = versions_ptr(versions) + capacity;
 
   // A not very useful read-own-write implementation...
   /*
@@ -343,7 +353,7 @@ found:
   }
   */
 
-  pos = --p - versions;
+  pos = --p - versions_ptr(versions);
   return &objects[pos];
 }
 
@@ -383,7 +393,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
     return nullptr;
   }
 
-  sync().WaitForData(addr, sid, versions[pos], (void *) this);
+  sync().WaitForData(addr, sid, versions_ptr(versions)[pos], (void *)this);
 
   return (VarStr *) *addr;
 }
@@ -398,7 +408,7 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
   // granola / pwv / data migration if not, need to handle if versions is null
   // assert(0);
 
-  auto objects = versions + capacity;
+  auto objects = versions_ptr(versions) + capacity;
   volatile uintptr_t *addr = &objects[version_idx];
   assert(addr);
 
@@ -415,17 +425,17 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   if (1) __builtin_prefetch((uint8_t *) this + 128);
   // Finding the exact location
   int pos = latest_version.load();
-  uint64_t *it = versions + pos + 1;
+  uint64_t *it = versions_ptr(versions) + pos + 1;
   if (*it != sid) {
-    it = std::lower_bound(versions /*+ cur_start*/, versions + size, sid);
-    if (unlikely(it == versions + size || *it != sid)) {
+    it = std::lower_bound(versions_ptr(versions) /*+ cur_start*/, versions_ptr(versions) + size, sid);
+    if (unlikely(it == versions_ptr(versions) + size || *it != sid)) {
       // sid is greater than all the versions, or the located lower_bound isn't sid version
       logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
-                       sid, it - versions, size);
+                       sid, it - versions_ptr(versions), size);
       logger->critical("bufpos {}", buf_pos.load());
       fmt::memory_buffer buffer;
       for (int i = 0; i < size; i++) {
-        fmt::format_to(buffer, "{}{} ", versions[i], i == it - versions ? "*" : "");
+        fmt::format_to(buffer, "{}{} ", versions_ptr(versions)[i], i == it - versions_ptr(versions) ? "*" : "");
       }
       logger->critical("Versions: {}", std::string_view(buffer.data(), buffer.size()));
       std::abort();
@@ -433,13 +443,13 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     }
   }
 
-  auto objects = versions + capacity;
-  volatile uintptr_t *addr = &objects[it - versions];
+  auto objects = versions_ptr(versions) + capacity;
+  volatile uintptr_t *addr = &objects[it - versions_ptr(versions)];
 
   // Writing to exact location
   sync().OfferData(addr, (uintptr_t) obj);
 
-  int latest = it - versions;
+  int latest = it - versions_ptr(versions);
   probes::VersionWrite{this, latest, epoch_nr}();
   while (latest > pos) {
     if (latest_version.compare_exchange_strong(pos, latest))
@@ -470,7 +480,7 @@ bool SortedArrayVHandle::WriteExactVersion(unsigned int version_idx, VarStr *obj
   abort_if(version_idx >= size, "WriteExactVersion overflowed {} >= {}", version_idx, size);
   // TODO: GC?
 
-  volatile uintptr_t *addr = versions + capacity + version_idx;
+  volatile uintptr_t *addr = versions_ptr(versions) + capacity + version_idx;
   // sync().OfferData(addr, (uintptr_t) obj);
   *addr = (uintptr_t) obj;
 

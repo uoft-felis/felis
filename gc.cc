@@ -349,6 +349,8 @@ bool GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next)
 
 size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 {
+  printf("shouldn't reach old implementation of GC::Collect\n");
+  std::abort();
   auto *versions = handle->versions;
   uintptr_t *objects = handle->versions + handle->capacity;
   int i = 0;
@@ -380,8 +382,8 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 }
 
 size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
-  auto *versions = handle->versions;
-  uintptr_t *objects = handle->versions + handle->capacity;
+  //auto *versions = handle->versions;
+  //uintptr_t *objects = handle->versions + handle->capacity;
   int i = handle->size;
 
   //printf("RunPmemGC: cleaning vhandle %p\n", handle);
