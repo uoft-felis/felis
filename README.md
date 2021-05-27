@@ -170,3 +170,9 @@ all unit tests. We use google-test. To run partial test, please look
 at
 https://github.com/google/googletest/blob/master/googletest/docs/advanced.md#running-a-subset-of-the-tests
 .
+
+
+SHIRLEY VERSION HISTORY
+=======================
+20210527:
+ECE1724 version + freelist in DRAM + CLWB
