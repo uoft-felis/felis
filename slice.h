@@ -92,8 +92,8 @@ class SliceManager {
   void OnUpdateRow(VHandle *handle) {
     if (!NodeConfiguration::g_data_migration) return;
 
-    auto *ent = handle->row_entity.get();
-    OnUpdateRow(ent->slice_id(), ent);
+    // auto *ent = handle->row_entity.get();
+    // OnUpdateRow(ent->slice_id(), ent);
   }
 
   std::vector<RowShipment*> all_row_shipments();

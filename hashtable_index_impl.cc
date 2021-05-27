@@ -114,7 +114,7 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
       // shirley: need to initialize our fields here as well, because here just
       // calls vhandle constructor without initializing required fields as in
       // vhandle NewInline. shirley: we use inline for all tables!
-      row->inline_used = 0;
+      //row->inline_used = 0;
       
       first->next = kNextForEnd;
       *created = true;

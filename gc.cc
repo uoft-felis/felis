@@ -228,7 +228,7 @@ void GC::RunGC()
       auto nr_processed = Process(b->rows[i], cur_epoch_nr, 16_K);
       
       if (nr_processed < 16_K) {
-        b->rows[i]->gc_handle = 0;
+        // b->rows[i]->gc_handle = 0;
         b->bitmap &= ~(1ULL << i);
         s.nr_rows++;
         continue;
@@ -298,7 +298,7 @@ void GC::RunPmemGC()
       // shirley: after we remove the hard limit, don't need this check anymore.
       // shirley: don't require limit on gc. clean everything
       // if (nr_processed < 16_K) {
-        b->rows[i]->gc_handle = 0;
+        // b->rows[i]->gc_handle = 0;
         b->bitmap &= ~(1ULL << i);
         s.nr_rows++;
         continue;
@@ -370,7 +370,7 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   std::move(objects + i, objects + handle->size, objects);
   std::move(versions + i, versions + handle->size, versions);
   handle->size -= i;
-  handle->cur_start -= i;
+  //handle->cur_start -= i;
   handle->latest_version.fetch_sub(i);
 
   if (is_trace_enabled(TRACE_GC)) {
@@ -387,7 +387,7 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   //printf("RunPmemGC: cleaning vhandle %p\n", handle);
   handle->versions = nullptr;
   handle->size = 0;
-  handle->cur_start = 0;
+  //handle->cur_start = 0;
   handle->latest_version.store(-1);
 
   // shirley TODO: we should make these steps into a functions in vhandle. this is temporary 

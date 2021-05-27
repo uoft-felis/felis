@@ -35,15 +35,15 @@ SortedArrayVHandle::SortedArrayVHandle()
 
   // value_mark = 0;
   size = 0;
-  cur_start = 0;
+  //cur_start = 0;
   nr_ondsplt = 0;
   //shirley TODO: we don't need this inline_used variable with our design. we have our own flags/bitmaps.
-  inline_used = 0xFF; // disabled, 0x0F at most when enabled.
+  //inline_used = 0xFF; // disabled, 0x0F at most when enabled.
 
   // abort_if(mem::ParallelPool::CurrentAffinity() >= 256,
   //         "Too many cores, we need a larger vhandle");
 
-  this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+  this_coreid = mem::ParallelPool::CurrentAffinity();
   cont_affinity = -1;
 
   // shirley: versions should be initialized to null
@@ -117,7 +117,7 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
   if (unlikely(size > capacity)) {
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
     auto new_cap = std::max(8U, 1U << (32 - __builtin_clz((unsigned int) size)));
-    auto new_versions = EnlargePair64Array(this, versions, capacity, alloc_by_regionid, new_cap);
+    auto new_versions = EnlargePair64Array(this, versions, capacity, 0, new_cap);
 
     probes::VHandleExpand{(void *) this, capacity, new_cap}();
 
@@ -134,7 +134,7 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 
     versions = new_versions;
     capacity = new_cap;
-    alloc_by_regionid = current_regionid;
+    //alloc_by_regionid = current_regionid;
   }
 
   auto objects = versions + capacity;
@@ -216,7 +216,7 @@ unsigned int SortedArrayVHandle::AbsorbNewVersionNoLock(unsigned int end, unsign
 // Insert a new version into the version array, with value pending.
 void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight)
 {
-  probes::VHandleAppend{this, sid, alloc_by_regionid}();
+  probes::VHandleAppend{this, sid, 0}();
 
   if (likely(!VHandleSyncService::g_lock_elision)) {
     util::MCSSpinLock::QNode qnode;
@@ -227,7 +227,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       printf("AppendNewVersion: in batch append!\n");
       //shirley: this is turned off by default
       if (buf_pos.load(std::memory_order_acquire) == -1
-          && size - cur_start < EpochClient::g_splitting_threshold
+          //&& size - cur_start < EpochClient::g_splitting_threshold
           && lock.TryLock(&qnode)) {
         AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
         lock.Unlock(&qnode);
@@ -244,7 +244,8 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       //shirley: this is turned off by default
       // Even if batch append is off, we still create a buf_pos for splitting.
       if (buf_pos.load(std::memory_order_acquire) == -1
-          && size - cur_start >= EpochClient::g_splitting_threshold)
+          //&& size - cur_start >= EpochClient::g_splitting_threshold
+          )
         util::Instance<ContentionManager>().GetOrInstall((VHandle *) this);
     }
 
@@ -263,7 +264,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       versions = (uint64_t *)mem::GetTransientPool().Alloc(2*4*sizeof(uint64_t));
       capacity = 4;
       size = 0;
-      cur_start = 0; 
+      //cur_start = 0; 
       latest_version.store(-1);
 
       // now add initial version (sid1, ptr1) to the new version array
@@ -284,7 +285,11 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
       //shirley future: we need to use gc_handle if we want to remove row during minor GC
       //shirley: add row to GC bc it's appended to
       auto &gc = util::Instance<GC>();
-      gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
+      auto gchandle = gc.AddRow((VHandle *)this, epoch_nr);
+      // gc_handle.store(gchandle, std::memory_order_relaxed);
+
+      //shirley: this was the old gc add row.
+      // gc_handle.store(gc.AddRow((VHandle *) this, epoch_nr), std::memory_order_relaxed);
     }
     AppendNewVersionNoLock(sid, epoch_nr, ondemand_split_weight);
     //shirley: should remove this flush bc only flushing 64 bytes. It's gonna invalidate the cacheline.
@@ -300,9 +305,10 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
   assert(size > 0);
 
   //shirley TODO: how can we prefetch in our new design?
-  if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
+  if (1) __builtin_prefetch((uint8_t *) this + 128);
+
   uint64_t *p = versions;
-  uint64_t *start = versions + cur_start;
+  uint64_t *start = versions;//+ cur_start;
   uint64_t *end = versions + size;
   int latest = latest_version.load();
 
@@ -406,12 +412,12 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
     std::abort();
   }
   //shirley TODO: how to use prefetch for our new design?
-  if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
+  if (1) __builtin_prefetch((uint8_t *) this + 128);
   // Finding the exact location
   int pos = latest_version.load();
   uint64_t *it = versions + pos + 1;
   if (*it != sid) {
-    it = std::lower_bound(versions + cur_start, versions + size, sid);
+    it = std::lower_bound(versions /*+ cur_start*/, versions + size, sid);
     if (unlikely(it == versions + size || *it != sid)) {
       // sid is greater than all the versions, or the located lower_bound isn't sid version
       logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
@@ -508,7 +514,7 @@ SortedArrayVHandle *SortedArrayVHandle::NewInline()
 {
   auto r = new (inline_pool.Alloc()) SortedArrayVHandle();
   //shirley TODO: we don't use inline_used variable in our design. we have our own flags/bitmaps
-  r->inline_used = 0;
+  //r->inline_used = 0;
 
   // shirley: we can't modify the vhandle layout because for hashtable_index tables,
   // they store a HashEntry within the vhandle at vhandle+96. 

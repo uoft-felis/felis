@@ -78,24 +78,55 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class ContentionManager;
   friend class HashtableIndex;
 
-  util::MCSSpinLock lock; //shirley: used by versions? vhandle?
-  uint8_t alloc_by_regionid; // shirley: used by vhandle, can remove?
-  uint8_t this_coreid; // shirley: can remove? used for alloc/free versions
-  int8_t cont_affinity; //shirley: versions? vhandle? used by contention manager
-  uint8_t inline_used; //shirley: doesn't need in new design
+  // shirley: used by versions? vhandle? to lock vhandle during append. 
+  // shirley todo: Should move to index
+  util::MCSSpinLock lock; 
+
+  // shirley: used by version array (to know which region to free version array
+  // from). not used by new design bc version arrays are always from transient
+  // pool.
+  //shirley: remove.
+  //uint8_t alloc_by_regionid;
+
+  // shirley: keep in vhandle. used for freeing vhandles in delete
+  uint8_t this_coreid;
+
+  // shirley: versions? vhandle? used by contention manager.
+  // shirley todo: decide what to do with this.
+  int8_t cont_affinity;
+
+  // shirley todo: remove. doesn't need in new design
+  //uint8_t inline_used; 
 
   unsigned int capacity; //shirley: used for versions
   unsigned int size;     // shirley: used for versions
-  unsigned int cur_start; //shirley: used by GC. doesn't need in new design?
 
-  //Corey: the latest written version's offset in *versions
-  std::atomic_int latest_version; // shirley: used for versions
-  int nr_ondsplt; //shirley: used for versions, by contention manager
+  // shirley: used by GC. doesn't need in new design.
+  // shirley todo: remove
+  //unsigned int cur_start; 
+
+  // shirley: used for versions (the latest written version's offset in *versions)
+  std::atomic_int latest_version;
+
+  // shirley: used for versions, by contention manager
+  // shirley todo: decide what to do with this
+  int nr_ondsplt; 
+
+
   //[0, capacity - 1] stores version number, [capacity, 2*capacity - 1] stores ptr to data
   uint64_t *versions;
-  util::OwnPtr<RowEntity> row_entity; // shirley: used for data migration?
-  std::atomic_long buf_pos = -1; //shirley: used by contention manager
-  std::atomic<uint64_t> gc_handle = 0; // shirley: used by minor gc? doesn't need in new design?
+
+  // shirley: used for data migration?
+  // shirley todo: decide what to do with this (delete?)
+  // util::OwnPtr<RowEntity> row_entity;
+
+  // shirley: used by contention manager
+  // shirley todo: decide what to do with this
+  std::atomic_long buf_pos = -1;
+
+  // shirley: used by minor gc? doesn't need in new design?
+  // shirley todo: remove this if for sure new design doesn't need it.
+  // std::atomic<uint64_t> gc_handle = 0; 
 
   SortedArrayVHandle();
  public:
@@ -208,9 +239,15 @@ class SortedArrayVHandle : public BaseVHandle {
   std::string ToString() const;
 
   //shirley TODO: we don't use inline_used variable for our design
-  bool is_inlined() const { return inline_used != 0xFF; }
+  bool is_inlined() const { return 1; }
 
-  //Corey: Old Design Alloc
+  uint8_t *AllocFromInline(size_t sz) {
+    // shirley: use pmem version for new vhandle layout.
+    return AllocFromInlinePmem(sz);
+  }
+
+  //Old Design for Inline Alloc/Free
+  /*
   uint8_t *AllocFromInline(size_t sz) {
     // shirley: use pmem version for new vhandle layout.
     // return AllocFromInlinePmem(sz);
@@ -269,6 +306,7 @@ class SortedArrayVHandle : public BaseVHandle {
       inline_used &= ~(mask << off);
     }
   }
+  */
   
   /* Corey:
     1) Try offest [two 8-bit in mask space] | uses all bits for byte granularity
@@ -369,7 +407,7 @@ class SortedArrayVHandle : public BaseVHandle {
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   const size_t nr_capacity() const { return capacity; }
   const size_t nr_versions() const { return size; }
-  const size_t current_start() const { return cur_start;}
+  const size_t current_start() const { return 0;}
   uint64_t first_version() const { 
     if (!versions)
       return GetInlineSid(SidType1); // shirley: return sid1 when version array is null
@@ -386,7 +424,7 @@ class SortedArrayVHandle : public BaseVHandle {
   }
   unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed) + 1; }
   int nr_ondemand_split() const { return nr_ondsplt; }
-  uint8_t region_id() const { return alloc_by_regionid; } //shirley: not used?
+  //uint8_t region_id() const { return alloc_by_regionid; } //shirley: not used?
   uint8_t object_coreid() const { return this_coreid; }
   int8_t contention_affinity() const { return cont_affinity; }
  private:

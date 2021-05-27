@@ -63,8 +63,8 @@ RowEntity::RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id)
       rel_id(rel_id), k(k), handle_ptr(handle), shandle(this), slice(slice_id)
 {
   // TODO: in data replay, after row_entity exists, reset(this) somewhere else
-  if (handle_ptr)
-    handle_ptr->row_entity.reset(this);
+  // if (handle_ptr)
+  //   handle_ptr->row_entity.reset(this);
 }
 
 mem::ParallelSlabPool RowEntity::pool;
