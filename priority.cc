@@ -30,23 +30,24 @@ PriorityTxnService::PriorityTxnService()
   if (Options::kTxnQueueLength)
     g_queue_length = Options::kTxnQueueLength.ToLargeNumber();
 
-  if (Options::kIncomingRate) {
-    // two ways: you either specify incoming rate, or specify both # of priTxn per epoch and interval
+  if (Options::kPercentagePriorityTxn) {
+    // two ways: you either specify percentage, or specify both # of priTxn per epoch and interval
     if (Options::kNrPriorityTxn || Options::kIntervalPriorityTxn) {
-      logger->critical("When IncomingRate is specified, "
+      logger->critical("When PercentagePriorityTxn is specified, "
                        "please do not specify NrPriorityTxn or IntervalPriorityTxn");
       std::abort();
     }
-    int incoming_rate = Options::kIncomingRate.ToInt();
-    constexpr int exec_time = 85;
-    g_nr_priority_txn = incoming_rate * exec_time / 1000;
-    // for now, the number of priTxn in exec phase, execution phase takes 85ms, 1s = 1000ms
-    abort_if(g_nr_priority_txn == 0, "too less PriTxn in one epoch, please raise IncomingRate");
+    // 85: time of execution phase when batched epoch size=100k, in millisecond. out of experience
+    const int _exec_time = 85;
+    int percentage = Options::kPercentagePriorityTxn.ToInt();
+    abort_if(percentage <= 0, "priority transaction percentage cannot be smaller than 0");
+    int exec_time = int(float(_exec_time) * (1.0 + (float(percentage) / 100.0)));
+    g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
     g_interval_priority_txn = exec_time * 1000 / g_nr_priority_txn; // ms to us
   } else {
     if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn) {
       logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn "
-                       "(or only specify IncomingRate)");
+                       "(or only specify PercentagePriorityTxn)");
       std::abort();
     }
     g_nr_priority_txn = Options::kNrPriorityTxn.ToInt();
