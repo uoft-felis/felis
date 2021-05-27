@@ -78,12 +78,6 @@ bool MWTxn_Run(PriorityTxn *txn)
     fail_tsc = __rdtsc();
     ++fail_cnt;
   }
-  uint64_t succ_tsc = __rdtsc();
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  // fail = ((util::Instance<PriorityTxnService>().GetMaxProgress() -  util::Instance<PriorityTxnService>().GetProgress(core_id)) & 0xFFFFFFFF) >> 8;
-  // debug(TRACE_PRIORITY "Priority txn {:p} (MW) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
-
 
   struct Context {
     int nr;
@@ -128,11 +122,9 @@ bool MWTxn_Run(PriorityTxn *txn)
     // debug(TRACE_PRIORITY "Priority txn {:p} (MW) - Issued lambda into PQ", (void *)txn);
   }
 
-  // record exec issue time
-  uint64_t issue_tsc = __rdtsc();
-  diff = issue_tsc - succ_tsc;
-  txn->measure_tsc = issue_tsc;
-  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+  uint64_t succ_tsc = __rdtsc();
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
 
   return txn->Commit();
 }

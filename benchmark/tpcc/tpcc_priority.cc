@@ -83,17 +83,6 @@ bool StockTxn_Run(PriorityTxn *txn)
     fail_tsc = __rdtsc();
     ++fail_cnt;
   }
-  uint64_t succ_tsc = __rdtsc();
-  txn->measure_tsc = succ_tsc;
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
-
-  // record acquired SID's difference from current max progress
-  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
-  uint64_t seq = txn->serial_id() >> 8;
-  int64_t diff_to_max_progress = seq - max_prog;
-  probes::Distance{diff_to_max_progress, txn->serial_id()}();
 
   struct Context {
     uint warehouse_id;
@@ -135,11 +124,17 @@ bool StockTxn_Run(PriorityTxn *txn)
   txn->IssuePromise(ctx, lambda);
   // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
 
-  // record exec issue time
-  uint64_t issue_tsc = __rdtsc();
-  diff = issue_tsc - succ_tsc;
-  txn->measure_tsc = issue_tsc;
-  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+  uint64_t succ_tsc = __rdtsc();
+  txn->measure_tsc = succ_tsc;
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+
+  // record acquired SID's difference from current max progress
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
+  uint64_t seq = txn->serial_id() >> 8;
+  int64_t diff_to_max_progress = seq - max_prog;
+  probes::Distance{diff_to_max_progress, txn->serial_id()}();
 
   return txn->Commit();
 }
@@ -194,17 +189,6 @@ bool NewOrderTxn_Run(PriorityTxn *txn)
     fail_tsc = __rdtsc();
     ++fail_cnt;
   }
-  uint64_t succ_tsc = __rdtsc();
-  txn->measure_tsc = succ_tsc;
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  // debug(TRACE_PRIORITY "Priority txn {:p} (neworder) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
-
-  // record acquired SID's difference from current max progress
-  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
-  uint64_t seq = txn->serial_id() >> 8;
-  int64_t diff_to_max_progress = seq - max_prog;
-  probes::Distance{diff_to_max_progress, txn->serial_id()}();
 
   struct Context {
     NewOrderStruct in;
@@ -271,11 +255,17 @@ bool NewOrderTxn_Run(PriorityTxn *txn)
   txn->IssuePromise(ctx, lambda);
   // debug(TRACE_PRIORITY "Priority txn {:p} (neworder) - Issued lambda into PQ", (void *)txn);
 
-  // record exec issue time
-  uint64_t issue_tsc = __rdtsc();
-  diff = issue_tsc - succ_tsc;
-  txn->measure_tsc = issue_tsc;
-  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+  uint64_t succ_tsc = __rdtsc();
+  txn->measure_tsc = succ_tsc;
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  // debug(TRACE_PRIORITY "Priority txn {:p} (neworder) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+
+  // record acquired SID's difference from current max progress
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
+  uint64_t seq = txn->serial_id() >> 8;
+  int64_t diff_to_max_progress = seq - max_prog;
+  probes::Distance{diff_to_max_progress, txn->serial_id()}();
 
   // make the next PriTxn on this core into a priority Delivery transaction
   DeliveryTxnInput *din = new DeliveryTxnInput{input.warehouse_id, input.district_id, oorder_id,
@@ -327,17 +317,6 @@ bool DeliveryTxn_Run(PriorityTxn *txn)
     fail_tsc = __rdtsc();
     ++fail_cnt;
   }
-  uint64_t succ_tsc = __rdtsc();
-  txn->measure_tsc = succ_tsc;
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  // debug(TRACE_PRIORITY "Priority txn {:p} (delivery) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
-
-  // record acquired SID's difference from current max progress
-  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
-  uint64_t seq = txn->serial_id() >> 8;
-  int64_t diff_to_max_progress = seq - max_prog;
-  probes::Distance{diff_to_max_progress, txn->serial_id()}();
 
   struct Context {
     DeliveryTxnInput in;
@@ -393,11 +372,17 @@ bool DeliveryTxn_Run(PriorityTxn *txn)
   txn->IssuePromise(ctx, lambda);
   // debug(TRACE_PRIORITY "Priority txn {:p} (delivery) - Issued lambda into PQ", (void *)txn);
 
-  // record exec issue time
-  uint64_t issue_tsc = __rdtsc();
-  diff = issue_tsc - succ_tsc;
-  txn->measure_tsc = issue_tsc;
-  probes::PriExecIssueTime{diff / 2200, txn->serial_id()}();
+  uint64_t succ_tsc = __rdtsc();
+  txn->measure_tsc = succ_tsc;
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  // debug(TRACE_PRIORITY "Priority txn {:p} (delivery) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+
+  // record acquired SID's difference from current max progress
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
+  uint64_t seq = txn->serial_id() >> 8;
+  int64_t diff_to_max_progress = seq - max_prog;
+  probes::Distance{diff_to_max_progress, txn->serial_id()}();
 
   delete &input;
   return txn->Commit();

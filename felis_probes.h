@@ -41,12 +41,6 @@ struct PriInitTime {
   void operator()() const;
 };
 
-struct PriExecIssueTime {
-  uint64_t time;
-  uint64_t sid;
-  void operator()() const;
-};
-
 struct PriExecQueueTime {
   uint64_t time;
   uint64_t sid;
@@ -80,7 +74,6 @@ struct Distance {
   PROBE_PROXY(felis::probes::WaitCounters);     \
   PROBE_PROXY(felis::probes::PriInitQueueTime); \
   PROBE_PROXY(felis::probes::PriInitTime); \
-  PROBE_PROXY(felis::probes::PriExecIssueTime); \
   PROBE_PROXY(felis::probes::PriExecQueueTime); \
   PROBE_PROXY(felis::probes::PriExecTime); \
   PROBE_PROXY(felis::probes::PieceTime); \

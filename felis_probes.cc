@@ -27,10 +27,6 @@ static struct ProbeMain {
   agg::Agg<agg::Max<int64_t>> init_succ_max;
   agg::Agg<agg::Histogram<128, 0, 2>> init_succ_hist;
 
-  agg::Agg<agg::Average> exec_issue_avg;
-  agg::Agg<agg::Max<int64_t>> exec_issue_max;
-  agg::Agg<agg::Histogram<128, 0, 1>> exec_issue_hist;
-
   agg::Agg<agg::Average> exec_queue_avg;
   agg::Agg<agg::Max<int64_t>> exec_queue_max;
   agg::Agg<agg::Histogram<512, 0, 3>> exec_queue_hist;
@@ -69,9 +65,6 @@ thread_local struct ProbePerCore {
   AGG(init_succ_avg);
   AGG(init_succ_max);
   AGG(init_succ_hist);
-  AGG(exec_issue_avg);
-  AGG(exec_issue_max);
-  AGG(exec_issue_hist);
   AGG(exec_queue_avg);
   AGG(exec_queue_max);
   AGG(exec_queue_hist);
@@ -123,13 +116,6 @@ template <> void OnProbe(felis::probes::PriInitTime p)
   statcnt.init_succ_hist << p.succ_time;
 }
 
-template <> void OnProbe(felis::probes::PriExecIssueTime p)
-{
-  statcnt.exec_issue_avg << p.time;
-  statcnt.exec_issue_hist << p.time;
-  statcnt.exec_issue_max.addData(p.time, p.sid);
-}
-
 template <> void OnProbe(felis::probes::PriExecQueueTime p)
 {
   statcnt.exec_queue_avg << p.time;
@@ -165,7 +151,6 @@ enum PriTxnMeasureType : int{
   InitQueue,
   InitFail,
   InitSucc,
-  ExecIssue,
   ExecQueue,
   Exec,
   Total,
@@ -176,10 +161,9 @@ const std::string kPriTxnMeasureTypeLabel[] = {
   "1init_queue",
   "2init_fail",
   "3init_succ",
-  "4exec_issue",
-  "5exec_queue",
-  "6exec",
-  "7total_latency",
+  "4exec_queue",
+  "5exec",
+  "6total_latency",
 };
 
 ProbeMain::~ProbeMain()
@@ -210,10 +194,6 @@ ProbeMain::~ProbeMain()
             << "(max: " << global.init_succ_max() << ")" << std::endl;
   std::cout << global.init_succ_hist();
 
-  std::cout << "[Pri-stat] exec_issue " << global.exec_issue_avg() << " us "
-            << "(max: " << global.exec_issue_max() << ")" << std::endl;
-  std::cout << global.exec_issue_hist();
-
   std::cout << "[Pri-stat] exec_queue " << global.exec_queue_avg() << " us "
             << "(max: " << global.exec_queue_max() << ")" << std::endl;
   std::cout << global.exec_queue_hist();
@@ -235,14 +215,14 @@ ProbeMain::~ProbeMain()
     const int size = PriTxnMeasureType::NumPriTxnMeasureType;
     agg::Agg<agg::Average> *arr[size] = {
       &global.init_queue_avg, &global.init_fail_avg, &global.init_succ_avg,
-      &global.exec_issue_avg, &global.exec_queue_avg, &global.exec_avg,
+      &global.exec_queue_avg, &global.exec_avg,
       &global.total_latency_avg,
     };
 
     for (int i = 0; i < size; ++i) {
       result.insert({kPriTxnMeasureTypeLabel[i], arr[i]->getAvg()});
     }
-    result.insert({"8init_fail_cnt", std::to_string(global.init_fail_cnt.sum)});
+    result.insert({"7init_fail_cnt", std::to_string(global.init_fail_cnt.sum)});
 
     auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
     time_t tm;
