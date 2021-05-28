@@ -407,7 +407,8 @@ void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
   }
   for (int i = 0; i < update_cnt; ++i)
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
-  // inserts: TODO
+  for (int i = 0; i < insert_cnt; ++i)
+    insert_handles[i]->WriteWithVersion(sid, nullptr, sid >> 32);
 }
 
 } // namespace felis
