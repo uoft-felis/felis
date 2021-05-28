@@ -352,9 +352,9 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   printf("shouldn't reach old implementation of GC::Collect\n");
   std::abort();
   auto *versions = handle->versions;
-  uintptr_t *objects = handle->versions + handle->capacity;
+  uintptr_t *objects = handle->versions + handle->capacity_get(handle->versions);
   int i = 0;
-  while (i < handle->size - 1 && i < limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
+  while (i < handle->size_get(handle->versions) - 1 && i < limit && (versions[i + 1] >> 32) < cur_epoch_nr) {
     i++;
   }
   if (i == 0) return 0;
@@ -369,11 +369,11 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
     FreeIfGarbage(handle, p, next);
   }
 
-  std::move(objects + i, objects + handle->size, objects);
-  std::move(versions + i, versions + handle->size, versions);
-  handle->size -= i;
+  std::move(objects + i, objects + handle->size_get(handle->versions), objects);
+  std::move(versions + i, versions + handle->size_get(handle->versions), versions);
+  handle->size_set(handle->versions, handle->size_get(versions) - i);
   //handle->cur_start -= i;
-  handle->latest_version.fetch_sub(i);
+  handle->latest_version_ptr(handle->versions)->fetch_sub(i);
 
   if (is_trace_enabled(TRACE_GC)) {
     trace(TRACE_GC "GC on row {} {}", (void *) handle, handle->ToString());
@@ -384,13 +384,13 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
 size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   //auto *versions = handle->versions;
   //uintptr_t *objects = handle->versions + handle->capacity;
-  int i = handle->size;
+  //int i = handle->size; //shirley: don't need this return value. just return 1.
 
   //printf("RunPmemGC: cleaning vhandle %p\n", handle);
   handle->versions = nullptr;
-  handle->size = 0;
+  //handle->size = 0; //shirley: removed bc size is stored in versions
   //handle->cur_start = 0;
-  handle->latest_version.store(-1);
+  //handle->latest_version = -1; //shirley: removed bc latest version is stored in versions
 
   // shirley TODO: we should make these steps into a functions in vhandle. this is temporary 
   // shirley: free ptr1 if it's not from inline
@@ -412,7 +412,7 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   // _mm_clwb((char *)handle + 128);
   // _mm_clwb((char *)handle + 192);
 
-  return i;
+  return 1;
 }
 
 bool GC::IsDataGarbage(VHandle *row, VarStr *data)

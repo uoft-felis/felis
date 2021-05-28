@@ -118,7 +118,7 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
     if (is_ondemand_split) handle->nr_ondsplt++;
 
     handle->IncreaseSize(buf->buf_cnt, epoch_nr);
-    auto end = handle->size - buf->buf_cnt;
+    auto end = handle->size_get(handle->versions) - buf->buf_cnt;
     // handle->IncreaseSize(VersionBuffer::kMaxBatch + 1);
     // handle->BookNewVersionNoLock(sid, end);
 
@@ -138,7 +138,7 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
   if (buf->buf_cnt > VersionBuffer::kMaxBatch / 2
       && handle->lock.TryLock(&qnode)) {
     handle->IncreaseSize(buf->buf_cnt, epoch_nr);
-    auto end = handle->size - buf->buf_cnt;
+    auto end = handle->size_get(handle->versions) - buf->buf_cnt;
     FlushIntoNoLock(handle, epoch_nr, end);
     handle->lock.Release(&qnode);
   }
@@ -216,7 +216,7 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
         continue;
       }
       vhandle->IncreaseSize(buf->buf_cnt, epoch_nr);
-      buf_handle.FlushIntoNoLock(vhandle, epoch_nr, vhandle->size - buf->buf_cnt);
+      buf_handle.FlushIntoNoLock(vhandle, epoch_nr, vhandle->size_get(vhandle->versions) - buf->buf_cnt);
       vhandle->lock.Release(&qnode);
     }
 
@@ -302,7 +302,7 @@ void ContentionManager::Reset()
 
         if (!Options::kOnDemandSplitting) continue;
 
-        if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
+        if (row->size_get(row->versions) - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
         sum += row->nr_ondsplt;
         nr_splitted++;
       }
@@ -334,7 +334,7 @@ void ContentionManager::Reset()
 
       for (long i = 0; i < p->pos.load(std::memory_order_acquire); i++) {
         auto row = p->backrefs[i];
-        if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
+        if (row->size_get(row->versions) - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
 
         row->cont_affinity = NodeConfiguration::g_nr_threads * (s + row->nr_ondsplt / 2) / sum;
         s += row->nr_ondsplt;

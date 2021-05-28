@@ -99,15 +99,15 @@ class SortedArrayVHandle : public BaseVHandle {
   // shirley todo: remove. doesn't need in new design
   //uint8_t inline_used; 
 
-  unsigned int capacity; //shirley: used for versions
-  unsigned int size;     // shirley: used for versions
+  //unsigned int capacity; //shirley: used for versions
+  //unsigned int size;     // shirley: used for versions
 
   // shirley: used by GC. doesn't need in new design.
   // shirley todo: remove
   //unsigned int cur_start; 
 
   // shirley: used for versions (the latest written version's offset in *versions)
-  std::atomic_int latest_version;
+  //std::atomic_int latest_version;
 
   // shirley: used for versions, by contention manager
   // shirley todo: decide what to do with this
@@ -160,22 +160,58 @@ class SortedArrayVHandle : public BaseVHandle {
     std::atomic_int latest_version; // shirley: the latest written version's offset in *versions
   } VerArrayInfo;
 
+  // shirley: return pointer to versions within transient version array
+  static uint64_t *versions_ptr(uint64_t *versions) {
+    assert(versions);
+    return (uint64_t *)(((uint8_t *)versions) + VerArrayInfoSize);
+  }
+
   // shirley: return pointers to info given version array
   static unsigned int *capacity_ptr(uint64_t *versions) {
+    assert(versions);
     return &(((VerArrayInfo*)versions)->capacity);
   }
 
   static unsigned int *size_ptr(uint64_t *versions) {
+    assert(versions);
     return &(((VerArrayInfo *)versions)->size);
   }
 
   static std::atomic_int *latest_version_ptr(uint64_t *versions) {
+    assert(versions);
     return &(((VerArrayInfo *)versions)->latest_version);
   }
 
-  // shirley: return pointer to versions within transient version array
-  static uint64_t *versions_ptr(uint64_t *versions) {
-    return (uint64_t *)(((uint8_t *)versions) + VerArrayInfoSize);
+  // shirley: set info given version array
+  static void capacity_set(uint64_t *versions, unsigned int capacity) {
+    assert(versions);
+    ((VerArrayInfo *)versions)->capacity = capacity;
+  }
+
+  static void size_set(uint64_t *versions, unsigned int size) {
+    assert(versions);
+    ((VerArrayInfo *)versions)->size = size;
+  }
+
+  static void latest_version_set(uint64_t *versions, int latest_version) {
+    assert(versions);
+    ((VerArrayInfo *)versions)->latest_version.store(latest_version);
+  }
+
+  // shirley: get info given version array
+  static unsigned int capacity_get(uint64_t *versions) {
+    assert(versions);
+    return ((VerArrayInfo *)versions)->capacity;
+  }
+
+  static unsigned int size_get(uint64_t *versions) {
+    assert(versions);
+    return ((VerArrayInfo *)versions)->size;
+  }
+
+  static int latest_version_get(uint64_t *versions) {
+    assert(versions);
+    return ((VerArrayInfo *)versions)->latest_version.load();
   }
 
   static_assert(sizeof(VerArrayInfo) <= VerArrayInfoSize,
@@ -435,8 +471,8 @@ class SortedArrayVHandle : public BaseVHandle {
   }
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
-  const size_t nr_capacity() const { return capacity; }
-  const size_t nr_versions() const { return size; }
+  //const size_t nr_capacity() const { return capacity; }
+  const size_t nr_versions() const { if (!versions) return 0; return size_get(versions); }
   const size_t current_start() const { return 0;}
   uint64_t first_version() const { 
     if (!versions)
@@ -447,14 +483,14 @@ class SortedArrayVHandle : public BaseVHandle {
   }
   uint64_t last_version() const { 
     if (versions)
-      return versions_ptr(versions)[size - 1];
+      return versions_ptr(versions)[size_get(versions) - 1];
       // return versions[size - 1];
     else {
       printf("last_version(), versions is null???\n");
       std::abort();
     } // shirley: abort bc versions shouldn't be nullptr?
   }
-  unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed) + 1; }
+  unsigned int nr_updated() const { assert(versions); return latest_version_ptr(versions)->load(std::memory_order_relaxed) + 1; }
   int nr_ondemand_split() const { return nr_ondsplt; }
   //uint8_t region_id() const { return alloc_by_regionid; } //shirley: not used?
   uint8_t object_coreid() const { return this_coreid; }
