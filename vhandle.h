@@ -89,7 +89,7 @@ class SortedArrayVHandle : public BaseVHandle {
   //shirley: remove.
   //uint8_t alloc_by_regionid;
 
-  // shirley: keep in vhandle. used for freeing vhandles in delete
+  // shirley: keep in vhandle. used for freeing vhandles in delete, *** also read during payment txn run.
   uint8_t this_coreid;
 
   // shirley: versions? vhandle? used by contention manager.

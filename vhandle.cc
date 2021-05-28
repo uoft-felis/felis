@@ -180,7 +180,8 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 
 void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight)
 {
-  if (ondemand_split_weight) nr_ondsplt += ondemand_split_weight;
+  // shirley todo: we need this if we want contention manager optimizations. for now disable.
+  // if (ondemand_split_weight) nr_ondsplt += ondemand_split_weight;
 
   // append this version at the end of version array
   IncreaseSize(1, epoch_nr);
@@ -456,8 +457,9 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   }
 
   if (latest == size_get(versions) - 1) {
-    nr_ondsplt = 0;
-    cont_affinity = -1;
+    // shirley todo: we need these two if we want contention manager optimizations. for now disable.
+    // nr_ondsplt = 0;
+    // cont_affinity = -1;
   } else {
     //SHIRLEY: this is marking the row for GC which will be performed later?
     /*
