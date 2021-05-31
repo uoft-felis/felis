@@ -160,9 +160,9 @@ class PriorityTxn {
   std::vector<BaseInsertKey*> insert_keys;
   std::vector<VHandle*> insert_handles;
   bool (*callback)(PriorityTxn *);
-  int abort_cnt;
 
  public:
+  int backoff_distance;
   std::atomic_int piece_count;
   uint64_t epoch; // pre-generate. which epoch is this txn in
   uint64_t delay; // pre-generate. tsc delay w.r.t. the start of execution, in tsc
@@ -177,7 +177,8 @@ class PriorityTxn {
     this->update_handles.clear();
     this->piece_count.store(0);
     this->min_sid = 0;
-    this->abort_cnt = 0;
+    this->backoff_distance = PriorityTxnService::g_backoff_distance;
+    // every time will be halved, so double it first
 
     this->sid = rhs.sid;
     this->initialized = rhs.initialized;

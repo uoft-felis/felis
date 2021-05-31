@@ -82,6 +82,11 @@ bool StockTxn_Run(PriorityTxn *txn)
   while (!txn->Init()) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
+    if (txn->backoff_distance > 0) {
+      int ori_dist = PriorityTxnService::g_backoff_distance;
+      if (ori_dist < 0 && txn->backoff_distance > abs(ori_dist))
+        return false; // give up on this txn
+    }
   }
 
   struct Context {
@@ -188,6 +193,11 @@ bool NewOrderTxn_Run(PriorityTxn *txn)
   while (!txn->Init()) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
+    if (txn->backoff_distance > 0) {
+      int ori_dist = PriorityTxnService::g_backoff_distance;
+      if (ori_dist < 0 && txn->backoff_distance > abs(ori_dist))
+        return false; // give up on this txn
+    }
   }
 
   struct Context {
@@ -316,6 +326,11 @@ bool DeliveryTxn_Run(PriorityTxn *txn)
   while (!txn->Init()) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
+    if (txn->backoff_distance > 0) {
+      int ori_dist = PriorityTxnService::g_backoff_distance;
+      if (ori_dist < 0 && txn->backoff_distance > abs(ori_dist))
+        return false; // give up on this txn
+    }
   }
 
   struct Context {

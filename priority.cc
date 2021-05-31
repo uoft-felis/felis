@@ -237,12 +237,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
 {
   uint64_t prog = this->GetMaxProgress(), new_seq;
   int seq = prog >> 8 & 0xFFFFFF;
-  int backoff_dist = g_backoff_distance;
-  if (g_distance_exponential_backoff && txn->abort_cnt != 0 && backoff_dist < 0) {
-    // exponential backoff, half the distance
-    auto absolute = abs(backoff_dist);
-    backoff_dist = -1 * (absolute >> txn->abort_cnt);
-  }
+  int &backoff_dist = txn->backoff_distance;
 
   if (seq + backoff_dist < 1)
     new_seq = 1;
@@ -343,7 +338,6 @@ bool PriorityTxn::Init()
   // 1) acquire SID
   sid = util::Instance<PriorityTxnService>().GetSID(this);
   // debug(TRACE_PRIORITY "sid:         {}", format_sid(sid));
-  abort_if(sid == -1, "sid == -1"); // hack
 
   // 2) apply changes, 3) validate, 4) rollback
   int update_cnt = 0, insert_cnt = 0; // count for rollback
@@ -396,7 +390,15 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 
 
 void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
-  this->abort_cnt++;
+  if (PriorityTxnService::g_distance_exponential_backoff) {
+    // exponential backoff, -4 -> -2 -> -1 -> 0 -> 1 -> 2 -> ...
+    if (backoff_distance < 0)
+      backoff_distance /= 2;
+    else if (backoff_distance == 0)
+      backoff_distance = 1;
+    else
+      backoff_distance *= 2;
+  }
   if (PriorityTxnService::g_sid_bitmap) {
     // since this txn aborted, reset the SID bit back to false
     auto core = go::Scheduler::CurrentThreadPoolId() - 1;
