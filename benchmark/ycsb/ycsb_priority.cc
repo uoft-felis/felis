@@ -12,7 +12,8 @@ void GeneratePriorityTxn() {
     for (auto j = 1; j <= txn_per_epoch; ++j) {
       PriorityTxn txn(&MWTxn_Run);
       txn.epoch = i;
-      txn.delay = 2200 * PriorityTxnService::g_interval_priority_txn * j;
+      auto interval = PriorityTxnService::g_interval_priority_txn;
+      txn.delay = static_cast<uint64_t>(static_cast<double>(interval * j) * 2.2);
       util::Instance<PriorityTxnService>().PushTxn(&txn);
     }
   }

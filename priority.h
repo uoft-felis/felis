@@ -91,7 +91,7 @@ class PriorityTxnService {
   static size_t g_queue_length;
 
   static size_t g_nr_priority_txn;       // number of priority txns per epoch
-  static size_t g_interval_priority_txn; // interval of priority txn, in microseconds
+  static size_t g_interval_priority_txn; // interval of priority txn, in nanoseconds
 
   // for example, if strip_batched = 8 and strip_priority = 8, then
   // txn 1 - 8 are batched txns,  9-16 are priority txn slots,

@@ -37,13 +37,13 @@ PriorityTxnService::PriorityTxnService()
                        "please do not specify NrPriorityTxn or IntervalPriorityTxn");
       std::abort();
     }
-    // 85: time of execution phase when batched epoch size=100k, in millisecond. out of experience
+    // 85ms: time of execution phase when batched epoch size=100k. out of experience
     const int _exec_time = 85;
     int percentage = Options::kPercentagePriorityTxn.ToInt();
     abort_if(percentage <= 0, "priority transaction percentage cannot be smaller than 0");
     int exec_time = int(float(_exec_time) * (1.0 + (float(percentage) / 100.0)));
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
-    g_interval_priority_txn = exec_time * 1000 / g_nr_priority_txn; // ms to us
+    g_interval_priority_txn = exec_time * 1000000 / g_nr_priority_txn; // ms to ns
   } else {
     if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn) {
       logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn "
@@ -53,7 +53,7 @@ PriorityTxnService::PriorityTxnService()
     g_nr_priority_txn = Options::kNrPriorityTxn.ToInt();
     g_interval_priority_txn = Options::kIntervalPriorityTxn.ToInt();
   }
-  logger->info("[Pri-init] NrPriorityTxn: {}  IntervalPriorityTxn: {}",
+  logger->info("[Pri-init] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns",
                g_nr_priority_txn, g_interval_priority_txn);
 
   if (Options::kSlotPercentage) {
@@ -228,7 +228,7 @@ bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
 void PriorityTxnService::PrintStats() {
   if (!NodeConfiguration::g_priority_txn)
     return;
-  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {}  physical BackOffDist: {}",
+  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns  physical BackOffDist: {}",
                g_nr_priority_txn, g_interval_priority_txn, g_backoff_distance);
 }
 
