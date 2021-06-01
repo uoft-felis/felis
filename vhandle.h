@@ -89,7 +89,9 @@ class SortedArrayVHandle : public BaseVHandle {
   //shirley: remove.
   //uint8_t alloc_by_regionid;
 
-  // shirley: keep in vhandle. used for freeing vhandles in delete, *** also read during payment txn run.
+  // shirley: keep in vhandle. used for freeing vhandles in delete,
+  // *** also read for probing or printf in payment txn run and tpcc.cc through
+  // calling object_coreid(). Should remove
   uint8_t this_coreid;
 
   // shirley: versions? vhandle? used by contention manager.
@@ -125,12 +127,21 @@ class SortedArrayVHandle : public BaseVHandle {
   // shirley todo: decide what to do with this
   std::atomic_long buf_pos = -1;
 
-  // shirley: used by minor gc? doesn't need in new design?
-  // shirley todo: remove this if for sure new design doesn't need it.
-  // std::atomic<uint64_t> gc_handle = 0; 
+  // shirley: used by minor gc. Will need in new minorGC design to remove from majorGC list
+  std::atomic<uint64_t> gc_handle = 0; 
+
+  // shirley: declaring sid1/sid2/ptr1/ptr2 as actual variables of vhandle class
+  uint64_t sid1 = 0;
+  uint64_t sid2 = 0;
+  uint8_t *ptr1 = nullptr;
+  uint8_t *ptr2 = nullptr;
+
+  uint8_t mask1 = 0;
+  uint8_t mask2 = 0;
 
   SortedArrayVHandle();
- public:
+
+public:
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
@@ -224,80 +235,105 @@ class SortedArrayVHandle : public BaseVHandle {
 
   //Corey: Get Sid value
   uint64_t GetInlineSid(SidType sidType) const {
-    uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
-    if (sidType == SidType2) {
-      sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
-    }
-    return *((uint64_t *)sidPtr);
+    if (sidType == SidType1) 
+      return sid1;
+    else
+      return sid2;
+    // uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
+    // if (sidType == SidType2) {
+    //   sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
+    // }
+    // return *((uint64_t *)sidPtr);
   }
   
   //Corey: Write Sid value
   void SetInlineSid(SidType sidType, uint64_t sidValue) {
-    uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
-    if (sidType == SidType2) {
-      sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
-    }
-    *((uint64_t *)sidPtr) = sidValue;
+    if (sidType == SidType1)
+      sid1 = sidValue;
+    else
+      sid2 = sidValue;
+    // uint8_t *sidPtr = (uint8_t *)this + vhandleMetadataSize;
+    // if (sidType == SidType2) {
+    //   sidPtr += ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size;
+    // }
+    // *((uint64_t *)sidPtr) = sidValue;
   }
 
-  //Corey: Get Inline Ptr value
-  //Corey: This one returns a pointer to ptr1 or ptr2
-  uint8_t **GetInlinePtrPtr(SidType sidType) const {
-    uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
-    if (sidType == SidType2) {
-      sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
-    }
-    return sidPtr;
-  }
+  // //Corey: Get Inline Ptr value
+  // //Corey: This one returns a pointer to ptr1 or ptr2
+  // uint8_t **GetInlinePtrPtr(SidType sidType) const {
+  //   uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
+  //   if (sidType == SidType2) {
+  //     sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
+  //   }
+  //   return sidPtr;
+  // }
 
   //Corey: This one returns ptr1 or ptr2
   uint8_t *GetInlinePtr(SidType sidType) const {
-    uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
-    if (sidType == SidType2) {
-      sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
-    }
-    return *sidPtr;
+    if (sidType == SidType1)
+      return ptr1;
+    else
+      return ptr2;
+    // uint8_t **sidPtr = (uint8_t**)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
+    // if (sidType == SidType2) {
+    //   sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
+    // }
+    // return *sidPtr;
   }
 
   //Corey: Set Inline Ptr value to the address passed in to function
   void SetInlinePtr(SidType sidType, uint8_t *miniHeapPtrAddr) {
-    uint8_t **sidPtr = (uint8_t **)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
-    if (sidType == SidType2) {
-      sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
-    }
-    *sidPtr = miniHeapPtrAddr;
+    if (sidType == SidType1)
+      ptr1 = miniHeapPtrAddr;
+    else
+      ptr2 = miniHeapPtrAddr;
+    // uint8_t **sidPtr = (uint8_t **)((uint8_t *)this + vhandleMetadataSize + ineTwoVersionArraySid1Size);
+    // if (sidType == SidType2) {
+    //   sidPtr += inlineTwoVersionArrayPtr1Size + inlineTwoVersionArraySid2Size;
+    // }
+    // *sidPtr = miniHeapPtrAddr;
   }
 
   //Corey: Free ptr1 (only if it’s external pmem call Persistent Pool. free()  )
   void FreePtr1() {
-    uint8_t *sid1Ptr = GetInlinePtr(SidType1);
-    uint8_t *startOfMiniHeap = (uint8_t *)this + vhandleMetadataSize + inlineTwoVersionArraySize + inlineMiniHeapMask1Size + inlineMiniHeapMask2Size;
+    if (ptr1 < (uint8_t *) this || ptr1 >= ((uint8_t *) this + 256)) {
+      delete (VarStr *)ptr1;
+    }
+    return;
 
-    // Check if Ptr1 is using miniheap, if so do nothing
-    if (startOfMiniHeap <= sid1Ptr && sid1Ptr < (startOfMiniHeap + inlineMiniHeapSize)) {
-      return;
-    } 
+    // uint8_t *sid1Ptr = GetInlinePtr(SidType1);
+    // uint8_t *startOfMiniHeap = (uint8_t *)this + vhandleMetadataSize + inlineTwoVersionArraySize + inlineMiniHeapMask1Size + inlineMiniHeapMask2Size;
 
-    //TODO: Not sure on this? Where do we extend the memory allocation for inline version array extension?
-    //Need size of allocated amount or have it passed into this function
-    VarStr *ins = (VarStr *) sid1Ptr;
-    delete ins;
-    // mem::GetPersistentPool().Free(sid1Ptr, ins-> region_id, sizeof(VarStr) + ins->len);      
+    // // Check if Ptr1 is using miniheap, if so do nothing
+    // if (startOfMiniHeap <= sid1Ptr && sid1Ptr < (startOfMiniHeap + inlineMiniHeapSize)) {
+    //   return;
+    // } 
+
+    // //TODO: Not sure on this? Where do we extend the memory allocation for inline version array extension?
+    // //Need size of allocated amount or have it passed into this function
+    // VarStr *ins = (VarStr *) sid1Ptr;
+    // delete ins;
+    // // mem::GetPersistentPool().Free(sid1Ptr, ins-> region_id, sizeof(VarStr) + ins->len);      
   }
 
   //Corey: Copy (sid2, ptr2) to (sid1, ptr1)
-  void CopySid2ToSid1() {
-    uint64_t sid2Val = GetInlineSid(SidType2);
-    uint8_t *sid2Ptr = GetInlinePtr(SidType2);
+  void Copy2To1() {
+    sid1 = sid2;
+    ptr1 = ptr2;
+    // uint64_t sid2Val = GetInlineSid(SidType2);
+    // uint8_t *sid2Ptr = GetInlinePtr(SidType2);
 
-    SetInlinePtr(SidType1, sid2Ptr);
-    SetInlineSid(SidType1, sid2Val);
+    // SetInlinePtr(SidType1, sid2Ptr);
+    // SetInlineSid(SidType1, sid2Val);
   }
 
   //Corey: Set (sid2, ptr2) to (0, null) //is it correct to use 0?
   void ResetSid2() {
-    SetInlineSid(SidType2, 0);
-    SetInlinePtr(SidType2, nullptr);
+    sid2 = 0;
+    ptr2 = nullptr;
+    // SetInlineSid(SidType2, 0);
+    // SetInlinePtr(SidType2, nullptr);
   }
 
   void Prefetch() const { __builtin_prefetch(versions); }
@@ -385,7 +421,7 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t *AllocFromInlinePmem(size_t sz) {
     // printf("Size: %ld\n", sz);
     // return nullptr;
-    sz = util::Align(sz, 16); // shirley note: need to have align or else seg fault.
+    sz = util::Align(sz, 8); // shirley note: need to have align or else seg fault.
 
     //printf("AllocFromInlinePmem: this: %p, &(this->size): %p, this->size: %u\n", this, &(this->size), this->size);
     
@@ -396,15 +432,16 @@ class SortedArrayVHandle : public BaseVHandle {
     }
 
     // Mask Offset stores byte offset = [0 to 158]
-    uint8_t *mask1Ptr = (uint8_t *)this + (vhandleMetadataSize + inlineTwoVersionArraySize); // Store Byte Offset
-    uint8_t *mask2Ptr = mask1Ptr + inlineMiniHeapMask1Size; // Store Byte Offset
-    uint8_t *startOfMiniHeap = mask2Ptr + inlineMiniHeapMask2Size;
+    // uint8_t *mask1Ptr = (uint8_t *)this + (vhandleMetadataSize + inlineTwoVersionArraySize); // Store Byte Offset
+    // uint8_t *mask2Ptr = mask1Ptr + inlineMiniHeapMask1Size; // Store Byte Offset
+    uint8_t *startOfMiniHeap = (uint8_t *)this + (vhandleMetadataSize + inlineTwoVersionArraySize)
+                                               + inlineMiniHeapMask1Size + inlineMiniHeapMask2Size;
     
     //printf("Mask1: %p | Mask2: %p | MiniHeap: %p\n", mask1Ptr, mask2Ptr, startOfMiniHeap);
     //printf("Mask1Val: %d | Mask2Val: %d\n", *mask1Ptr, *mask2Ptr);
 
     // Check to make sure miniheap not full - Very big last version stored
-    int trackedSize = (*mask1Ptr == *mask2Ptr && *mask1Ptr == 0) ? 0 : *mask2Ptr - *mask1Ptr + 1;
+    int trackedSize = (mask1 == mask2 && mask1 == 0) ? 0 : mask2 - mask1 + 1;
     //printf("TrackedSize: %d\n", trackedSize);
 
     if (trackedSize >= inlineMiniHeapSize) {
@@ -412,20 +449,20 @@ class SortedArrayVHandle : public BaseVHandle {
       return nullptr;
     }
     else if (trackedSize <= 0) {
-        *mask1Ptr = 0;
-        *mask2Ptr = sz - 1;
+        mask1 = 0;
+        mask2 = sz - 1;
         // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
         // Return address start of new allocation
         //printf("Init | Mask1Val: %d | Mask2Val: %d\n\n", *mask1Ptr, *mask2Ptr);
         // assert(((startOfMiniHeap + *mask1Ptr) >= ((uint8_t *)this+64+32)) &&
         //        ((startOfMiniHeap + *mask1Ptr) < ((uint8_t *)this+256)));
         // printf("alloced from inline pmem this: %p, alloced: %p\n", this, (startOfMiniHeap + *mask1Ptr));
-        return (startOfMiniHeap + *mask1Ptr);
+        return (startOfMiniHeap + mask1);
     }
 
     // find closest space for allocation
-    int diffSpaceAtFront = (*mask1Ptr >= sz) ? *mask1Ptr - sz : -1; // Extra space between end of new allocation and start of last
-    int diffSpaceAtEnd = inlineMiniHeapSize - *mask2Ptr; // Space after end of last allocation
+    int diffSpaceAtFront = (mask1 >= sz) ? mask1 - sz : -1; // Extra space between end of new allocation and start of last
+    int diffSpaceAtEnd = inlineMiniHeapSize - mask2; // Space after end of last allocation
     diffSpaceAtEnd = (diffSpaceAtEnd >= sz) ? diffSpaceAtEnd - sz : -1; // Extra space after end of new allocation and end of miniheap
     //printf("diffSpaceAtFront: %d | diffSpaceAtEnd: %d\n", diffSpaceAtFront, diffSpaceAtEnd);
     
@@ -453,12 +490,12 @@ class SortedArrayVHandle : public BaseVHandle {
 
     // Track New Allocation
     if (addFront) {
-        *mask1Ptr = 0;
-        *mask2Ptr = sz - 1;
+        mask1 = 0;
+        mask2 = sz - 1;
     }
     else {
-        *mask1Ptr = *mask2Ptr + 1; // New start is taken from after last end
-        *mask2Ptr = *mask1Ptr + sz - 1;
+        mask1 = mask2 + 1; // New start is taken from after last end
+        mask2 = mask1 + sz - 1;
     }
 
     // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
@@ -467,7 +504,7 @@ class SortedArrayVHandle : public BaseVHandle {
     // assert(((startOfMiniHeap + *mask1Ptr) >= ((uint8_t *)this+64+32)) &&
     //            ((startOfMiniHeap + *mask1Ptr) < ((uint8_t *)this+256)));
     // printf("alloced from inline pmem this: %p, alloced: %p\n", this, (startOfMiniHeap + *mask1Ptr));
-    return (startOfMiniHeap + *mask1Ptr);
+    return (startOfMiniHeap + mask1);
   }
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
@@ -506,8 +543,10 @@ class SortedArrayVHandle : public BaseVHandle {
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 
-//shirley: can remove
-static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
+//shirley: modify based on design (make sure vhandle info doesn't interfere with miniheap)
+// shirley note: max value size is ~83. aligned to 8 then 88. 2*88 = 176. 256-176 = 80 (vhandle should be < 80)
+static_assert(sizeof(SortedArrayVHandle) <= 80, "SortedArrayVHandle is larger than a cache line");
+// static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
 
 #ifdef LL_REPLAY
 class LinkListVHandle : public BaseVHandle {
