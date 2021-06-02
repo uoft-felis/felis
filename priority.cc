@@ -392,12 +392,16 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
   if (PriorityTxnService::g_distance_exponential_backoff) {
     // exponential backoff, -4 -> -2 -> -1 -> 0 -> 1 -> 2 -> ...
-    if (backoff_distance < 0)
+    if (backoff_distance < 0) {
       backoff_distance /= 2;
-    else if (backoff_distance == 0)
+    } else if (backoff_distance == 0) {
       backoff_distance = 1;
-    else
+    } else {
       backoff_distance *= 2;
+      int ori_dist = abs(PriorityTxnService::g_backoff_distance);
+      if (backoff_distance > ori_dist)
+        backoff_distance = ori_dist;
+    }
   }
   if (PriorityTxnService::g_sid_bitmap) {
     // since this txn aborted, reset the SID bit back to false
