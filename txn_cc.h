@@ -225,7 +225,10 @@ class Txn : public BaseTxn {
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
-        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
+        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
+                                                      sizeof(VarStr) + o.EncodeSize(), 
+                                                      felis::SortedArrayVHandle::SidType2), 
+                                            usePmem);
         bool result = WriteVarStr(val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
@@ -258,7 +261,10 @@ class Txn : public BaseTxn {
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
-        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
+        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
+                                                      sizeof(VarStr) + o.EncodeSize(), 
+                                                      felis::SortedArrayVHandle::SidType2), 
+                                            usePmem);
         bool result = WriteVarStr(val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 

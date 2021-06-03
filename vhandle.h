@@ -32,16 +32,17 @@ class BaseVHandle {
   //Corey: Inline_Version_Array(32B) = Sid1(8B)|Ptr1(8B)|Sid2(8B)|Ptr2(8B)
   //Corey: Set Inline offsets - Doesn't take up memory
   static constexpr size_t VerArrayInfoSize = 32;
-  static constexpr size_t vhandleMetadataSize = 64;
-  static constexpr size_t ineTwoVersionArraySid1Size = 8;
-  static constexpr size_t inlineTwoVersionArrayPtr1Size = 8;
-  static constexpr size_t inlineTwoVersionArraySid2Size = 8;
-  static constexpr size_t inlineTwoVersionArrayPtr2Size = 8;
-  static constexpr size_t inlineTwoVersionArraySize = ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size + 
-              inlineTwoVersionArraySid2Size + inlineTwoVersionArrayPtr2Size; // 32
-  static constexpr size_t inlineMiniHeapMask1Size = 1;
-  static constexpr size_t inlineMiniHeapMask2Size = 1;
-  static constexpr size_t inlineMiniHeapSize = 158;
+  static constexpr size_t VhandleInfoSize = 80;
+  // static constexpr size_t vhandleMetadataSize = 64;
+  // static constexpr size_t ineTwoVersionArraySid1Size = 8;
+  // static constexpr size_t inlineTwoVersionArrayPtr1Size = 8;
+  // static constexpr size_t inlineTwoVersionArraySid2Size = 8;
+  // static constexpr size_t inlineTwoVersionArrayPtr2Size = 8;
+  // static constexpr size_t inlineTwoVersionArraySize = ineTwoVersionArraySid1Size + inlineTwoVersionArrayPtr1Size + 
+  //             inlineTwoVersionArraySid2Size + inlineTwoVersionArrayPtr2Size; // 32
+  // static constexpr size_t inlineMiniHeapMask1Size = 1;
+  // static constexpr size_t inlineMiniHeapMask2Size = 1;
+  // static constexpr size_t inlineMiniHeapSize = 158;
 
   //Corey TODO: Comment out Non-Inlined vhandle [vhandle info & pointer to version array | version array]
   static constexpr size_t kSize = 128;
@@ -51,6 +52,8 @@ class BaseVHandle {
                 //inlineMiniHeapMask1Size + inlineMiniHeapMask2Size +
                 //inlineMiniHeapSize; // Should be 256
   //shirley TODO: (un-inlined) pool can be removed bc all vhandles are inlined
+
+  static constexpr size_t MiniHeapSize = kInlinedSize - VhandleInfoSize;
   static mem::ParallelSlabPool pool;
 
   // Cicada uses inline data to reduce cache misses. These inline rows are much
@@ -78,6 +81,18 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class VersionBufferHandle;
   friend class ContentionManager;
   friend class HashtableIndex;
+
+  // shirley: declaring sid1/sid2/ptr1/ptr2 as actual variables of vhandle class
+  uint64_t sid1 = 0;
+  uint64_t sid2 = 0;
+  uint8_t *ptr1 = nullptr;
+  uint8_t *ptr2 = nullptr;
+
+  // shirley: tracking both version's location in inline
+  uint8_t ver1_start = 0; // 0 : MiniHeapSize - 1
+  uint8_t ver1_size = 0;  // 0 : MiniHeapSize
+  uint8_t ver2_start = 0;
+  uint8_t ver2_size = 0;
 
   // shirley: used by versions? vhandle? to lock vhandle during append. 
   // shirley todo: Should move to index
@@ -129,16 +144,6 @@ class SortedArrayVHandle : public BaseVHandle {
 
   // shirley: used by minor gc. Will need in new minorGC design to remove from majorGC list
   std::atomic<uint64_t> gc_handle = 0; 
-
-  // shirley: declaring sid1/sid2/ptr1/ptr2 as actual variables of vhandle class
-  uint64_t sid1 = 0;
-  uint64_t sid2 = 0;
-  uint8_t *ptr1 = nullptr;
-  uint8_t *ptr2 = nullptr;
-
-  uint8_t mask1 = 0;
-  uint8_t mask2 = 0;
-
   SortedArrayVHandle();
 
 public:
@@ -321,6 +326,8 @@ public:
   void Copy2To1() {
     sid1 = sid2;
     ptr1 = ptr2;
+    ver1_start = ver2_start;
+    ver1_size = ver2_size;
     // uint64_t sid2Val = GetInlineSid(SidType2);
     // uint8_t *sid2Ptr = GetInlinePtr(SidType2);
 
@@ -332,6 +339,7 @@ public:
   void ResetSid2() {
     sid2 = 0;
     ptr2 = nullptr;
+    // shirley note: I think don't need to reset mask here?
     // SetInlineSid(SidType2, 0);
     // SetInlinePtr(SidType2, nullptr);
   }
@@ -343,17 +351,71 @@ public:
   //shirley TODO: we don't use inline_used variable for our design
   bool is_inlined() const { return 1; }
 
-  uint8_t *AllocFromInline(size_t sz) {
-    // shirley: use pmem version for new vhandle layout.
-    return AllocFromInlinePmem(sz);
+
+  // shirley: for new data structure design. Default is allocating for sid1
+  uint8_t *AllocFromInline(size_t sz, SidType sidType = SidType1) {
+    // printf("Size: %ld\n", sz);
+    sz = util::Align(sz, 8); // shirley note: need to have align or else seg fault.
+
+    // Check requests size fits in miniheap
+    if (sz > (MiniHeapSize)) {
+      if (sidType == SidType1){
+        ver1_start = 0;
+        ver1_size = 0;
+      }
+      else{
+        ver2_start = 0;
+        ver2_size = 0;
+      }
+      // felis::probes::VersionAllocCountInlineToExternal{0, 1}();
+      return nullptr;
+    }
+
+    uint8_t *startOfMiniHeap = (uint8_t *)this + VhandleInfoSize;
+
+    // shirley: if allocating for sid1, return start of miniheap (already checked size limit above)
+    if (sidType == SidType1){
+      ver1_start = 0;
+      ver1_size = sz;
+      // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
+      return startOfMiniHeap;
+    }
+    
+    // shirley: if reached here, means allocating for sid2
+    // ver1 is external, can directly allocate ver2 at start of miniheap (already checked size limit above)
+    if (ver1_size == 0){
+      ver2_start = 0;
+      ver2_size = sz;
+      // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
+      return startOfMiniHeap;
+    }
+    
+    uint8_t space_front = ver1_start;
+    uint8_t space_back = MiniHeapSize - (ver1_start + ver1_size);
+
+    if (sz <= space_front){
+      ver2_start = 0;
+      ver2_size = sz;
+      // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
+      return startOfMiniHeap;
+    }
+    else if (sz <= space_back){
+      ver2_start = ver1_start + ver1_size;
+      ver2_size = sz;
+      // felis::probes::VersionAllocCountInlineToExternal{1, 0}();
+      return (startOfMiniHeap + ver2_start);
+    }
+    
+    // shirley: we couldn't find a spot for ver2
+    ver2_start = 0;
+    ver2_size = 0;
+    // felis::probes::VersionAllocCountInlineToExternal{0, 1}();
+    return nullptr;
   }
 
   //Old Design for Inline Alloc/Free
   /*
   uint8_t *AllocFromInline(size_t sz) {
-    // shirley: use pmem version for new vhandle layout.
-    // return AllocFromInlinePmem(sz);
-
     // uint8_t *inline_used_duplicate = (uint8_t *) this + (64 + 32);
     // if (inline_used != *inline_used_duplicate) {
     //   printf("AllocFromInline, inline_used != *inline_used_duplicate\n");
@@ -410,14 +472,14 @@ public:
   }
   */
   
-  /* Corey:
+  /* Corey's alloc from inline pmem design:
     1) Try offest [two 8-bit in mask space] | uses all bits for byte granularity
     2) Try 32 mask [one 8-bit in vhandle] | use 5-bits / wastes 3-bits for 32byte granularity
     3) Try 16 mask [two 8-bit in mask space] uses 10-bits / wastes 6-bits for 16byte granularity
 
     To allocate ptr1/ptr2 version data to be placed in PMem's vhandle inline version data area
     Total size to be used for VHandle + Inline for PMem design
-  */
+
   uint8_t *AllocFromInlinePmem(size_t sz) {
     // printf("Size: %ld\n", sz);
     // return nullptr;
@@ -506,6 +568,7 @@ public:
     // printf("alloced from inline pmem this: %p, alloced: %p\n", this, (startOfMiniHeap + *mask1Ptr));
     return (startOfMiniHeap + mask1);
   }
+  */
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   //const size_t nr_capacity() const { return capacity; }
@@ -544,8 +607,9 @@ public:
 };
 
 //shirley: modify based on design (make sure vhandle info doesn't interfere with miniheap)
-// shirley note: max value size is ~83. aligned to 8 then 88. 2*88 = 176. 256-176 = 80 (vhandle should be < 80)
-static_assert(sizeof(SortedArrayVHandle) <= 80, "SortedArrayVHandle is larger than a cache line");
+// shirley note: max value size is ~83. aligned to 8 then 88. 2*88 = 176. 256-176 = 80 (vhandle should be <= 80)
+static_assert(sizeof(SortedArrayVHandle) <= BaseVHandle::VhandleInfoSize,
+              "SortedArrayVHandle is larger than a cache line");
 // static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
 
 #ifdef LL_REPLAY
