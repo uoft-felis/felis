@@ -271,10 +271,22 @@ template <> void OnProbe(felis::probes::IndexSizeTotal p) {
   index_size_total += p.num_bytes;
 }
 
+static std::mutex num_vhdl_m;
+// number of bytes allocated for varstr
+static long long number_vhandles_total = 0;
+template <> void OnProbe(felis::probes::NumVHandlesTotal p) {
+  std::lock_guard _(num_vhdl_m); // released automatically when lockguard
+                                 // variable is destroyed
+  number_vhandles_total += p.num_vhandles;
+}
+
 ProbeMain::~ProbeMain()
 {
   std::cout << std::endl;
   std::cout << "total size for (masstree) indexes (MB): " << index_size_total/1024/1024 << std::endl;
+
+  std::cout << "number of vhandles: " << number_vhandles_total << std::endl;
+  std::cout << std::endl;
 
   std::cout << "number of transient varstr: " << total_transient << std::endl;
   std::cout << "number of persistent varstr: " << total_persistent << std::endl;

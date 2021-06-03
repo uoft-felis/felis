@@ -144,6 +144,11 @@ struct IndexSizeTotal {
   void operator()() const;
 };
 
+struct NumVHandlesTotal {
+  int num_vhandles;
+  void operator()() const;
+};
+
 }
 }
 
@@ -169,6 +174,7 @@ struct IndexSizeTotal {
   PROBE_PROXY(felis::probes::VersionAllocCountInlineToExternal);               \
   PROBE_PROXY(felis::probes::MemAllocParallelBrkPool);                         \
   PROBE_PROXY(felis::probes::VarStrNewPmem);                                   \
-  PROBE_PROXY(felis::probes::IndexSizeTotal);
+  PROBE_PROXY(felis::probes::IndexSizeTotal);                                  \
+  PROBE_PROXY(felis::probes::NumVHandlesTotal);
 
 #endif /* FELIS_PROBES_H */

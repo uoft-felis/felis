@@ -26,6 +26,7 @@ VHandleSyncService &BaseVHandle::sync()
 
 SortedArrayVHandle::SortedArrayVHandle()
 {
+  // probes::NumVHandlesTotal{1}();
   // shirley: capacity = 0 if we initialize versions to nullptr?
   // shirley: actually, initial capacity field doesn't matter because
   // we set capacity when we allocate version array
