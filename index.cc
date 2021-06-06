@@ -33,6 +33,9 @@ void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
 
 }
 
+// shirley: modify this to allocate new IndexInfo that contains ptr to new vhandle
+// shirley: maybe allocate new vhandle in IndexInfo constructor instead.
+// shirley: Maybe create a similar slabpool for the IndexInfo (similar to vhandle slabpool)
 VHandle *Table::NewRow()
 {
   if (enable_inline)

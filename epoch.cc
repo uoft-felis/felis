@@ -300,7 +300,8 @@ void CallTxnsWorker::Run()
   }
 
   if (client->callback.phase == EpochPhase::Execute) {
-    VHandle::Quiescence();
+    VHandle::Quiescence(); // shirley: this shouldn't be needed? bc we never delete vhandles
+    // IndexInfo::Quiescence(); // shirley: this shouldn't be needed too?
     RowEntity::Quiescence();
 
     mem::GetDataRegion().Quiescence();

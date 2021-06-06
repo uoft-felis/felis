@@ -75,14 +75,25 @@ class Table {
     auto_increment_cnt[zone] = ts;
   }
 
+  // typedef struct IndexInfo {
+  //   VHandle *vhandle;
+  //   uint64_t *versions;
+  //   util::MCSSpinLock lock;
+  // } IndexInfo;
+
   class Iterator {
     friend class Table;
    protected:
     VarStrView end_key;
     VarStrView cur_key;
     VHandle *vhandle;
+    // shirley note: when returning idx_info, return the pointer to it, not just a copy
+    // shirley note: or else the threads are not actually seeing anyone's changes to lock/versions
+    // shirley note: do we want to just store *idx_info here (but more mem usage)? Or do we want to
+    // shirley note: store the idx_info but return the address of it (is it harder to implement)?
+    // IndexInfo *idx_info;
 
-   public:
+  public:
     virtual void Next() = 0;
     virtual bool IsValid() const = 0;
 

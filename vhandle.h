@@ -15,6 +15,7 @@ namespace felis {
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
 
+// shirley todo: delete, moved to index_info
 class VHandleSyncService {
  public:
   static bool g_lock_elision;
@@ -31,7 +32,7 @@ class BaseVHandle {
   //Corey: Vhandle_Metadata(64B) | Inline_Version_Array(32B) | Mask1(1B)|Mask2(1B)|MiniHeap(158B)
   //Corey: Inline_Version_Array(32B) = Sid1(8B)|Ptr1(8B)|Sid2(8B)|Ptr2(8B)
   //Corey: Set Inline offsets - Doesn't take up memory
-  static constexpr size_t VerArrayInfoSize = 32;
+  static constexpr size_t VerArrayInfoSize = 32; // shirley: move to index_info
   static constexpr size_t VhandleInfoSize = 80;
   // static constexpr size_t vhandleMetadataSize = 64;
   // static constexpr size_t ineTwoVersionArraySid1Size = 8;
@@ -65,7 +66,7 @@ class BaseVHandle {
   static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
  public:
 
-  VHandleSyncService &sync();
+   VHandleSyncService &sync(); // shirley: move to index_info
 };
 
 class RowEntity;
@@ -149,6 +150,7 @@ class SortedArrayVHandle : public BaseVHandle {
 public:
 
   static void operator delete(void *ptr) {
+    // shirley: we currently don't ever delete vhandle
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
     //shirley TODO: we should only use inlined pool bc all vhandles are inlined
     if (phandle->is_inlined())
