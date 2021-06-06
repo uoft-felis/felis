@@ -37,7 +37,7 @@ static struct ProbeMain {
 
   agg::Agg<agg::Average> total_latency_avg;
   agg::Agg<agg::Max<int64_t>> total_latency_max;
-  agg::Agg<agg::Histogram<512, 0, 6>> total_latency_hist;
+  agg::Agg<agg::Histogram<2048, 0, 2>> total_latency_hist;
 
   agg::Agg<agg::Average> piece_avg;
   agg::Agg<agg::Max<int64_t>> piece_max;
@@ -172,43 +172,43 @@ ProbeMain::~ProbeMain()
 
   if (!felis::NodeConfiguration::g_priority_txn)
     return;
-  std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << "  us "
-            << "(max: " << global.piece_max() << ")" << std::endl;
-  std::cout << global.piece_hist();
+  // std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << "  us "
+  //           << "(max: " << global.piece_max() << ")" << std::endl;
+  // std::cout << global.piece_hist();
 
   std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
             << "(max: " << global.init_queue_max() << ")" << std::endl;
-  std::cout << global.init_queue_hist();
+  // std::cout << global.init_queue_hist();
 
   std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
             << "(failed txn cnt: " << global.init_fail_cnt() << ") "
             << "(max: " << global.init_fail_max() << ")" << std::endl;
-  std::cout << global.init_fail_hist();
+  // std::cout << global.init_fail_hist();
 
   std::cout << "[Pri-stat] failed txn cnt: " << global.init_fail_cnt()
             << " (avg: " << global.init_fail_cnt_avg() << " times,"
             << " max: " << global.init_fail_cnt_max() << ")" << std::endl;
-  std::cout << global.init_fail_cnt_hist();
+  // std::cout << global.init_fail_cnt_hist();
 
   std::cout << "[Pri-stat] init_succ " << global.init_succ_avg() << " us "
             << "(max: " << global.init_succ_max() << ")" << std::endl;
-  std::cout << global.init_succ_hist();
+  // std::cout << global.init_succ_hist();
 
   std::cout << "[Pri-stat] exec_queue " << global.exec_queue_avg() << " us "
             << "(max: " << global.exec_queue_max() << ")" << std::endl;
-  std::cout << global.exec_queue_hist();
+  // std::cout << global.exec_queue_hist();
 
   std::cout << "[Pri-stat] exec " << global.exec_avg() << " us "
             << "(max: " << global.exec_max() << ")" << std::endl;
-  std::cout << global.exec_hist();
+  // std::cout << global.exec_hist();
 
   std::cout << "[Pri-stat] total_latency " << global.total_latency_avg() << " us "
             << "(max: " << global.total_latency_max() << ")" << std::endl;
   std::cout << global.total_latency_hist();
 
-  std::cout << "[Pri-stat] dist " << global.dist_avg() << " sids "
-            << "(max: " << global.dist_max() << ")" << std::endl;
-  std::cout << global.dist_hist();
+  // std::cout << "[Pri-stat] dist " << global.dist_avg() << " sids "
+  //           << "(max: " << global.dist_max() << ")" << std::endl;
+  // std::cout << global.dist_hist();
 
   if (felis::NodeConfiguration::g_priority_txn && felis::Options::kOutputDir) {
     json11::Json::object result;
@@ -230,8 +230,12 @@ ProbeMain::~ProbeMain()
     time(&tm);
     strftime(now, 80, "-%F-%X", localtime(&tm));
     std::ofstream result_output(
-        felis::Options::kOutputDir.Get() + "/pri_" + node_name + now + ".json");
+        felis::Options::kOutputDir.Get() + "/pri_latency.json");
     result_output << json11::Json(result).dump() << std::endl;
+
+    std::ofstream latency_dist_output(
+        felis::Options::kOutputDir.Get() + "/latency_dist.log");
+    latency_dist_output << global.total_latency_hist();
   }
 
 }

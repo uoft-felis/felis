@@ -207,7 +207,7 @@ std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& 
       }
     }
   }
-  */
+  // */
 
   // percentile calc
   long sum = 0, accu = 0;
