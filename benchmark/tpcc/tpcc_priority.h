@@ -21,21 +21,11 @@ struct StockTxnInput {
   } detail;
 };
 
-struct DeliveryTxnInput {
-  uint warehouse_id;
-  uint district_id;
-  uint64_t oorder_id;
-  uint customer_id;
-  uint32_t ts;
-  uint nr_items; // order_line's primary key: (w_id, d_id, o_id, i), i in [1, nr_items]
-};
-
 template <>
 StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>();
 
 bool StockTxn_Run(felis::PriorityTxn *txn);
-bool NewOrderTxn_Run(felis::PriorityTxn *txn);
-bool DeliveryTxn_Run(felis::PriorityTxn *txn);
+bool NewOrderDeliveryTxn_Run(felis::PriorityTxn *txn);
 
 }
 
