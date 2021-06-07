@@ -313,6 +313,8 @@ enum class TxnType : int {
   Payment,
   Delivery,
   // CreditCheck,
+  PriStock,
+  PriNewOrderDelivery,
 
   AllTxn,
 };

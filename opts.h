@@ -105,6 +105,7 @@ struct Options {
   static inline const auto kNoExpBackoff = Option("NoExpBackoff");
   static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
 
+  static inline const auto kPriorityBatchMode = Option("PriorityBatchMode");
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

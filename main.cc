@@ -112,6 +112,12 @@ int main(int argc, char *argv[])
     NodeConfiguration::g_priority_txn = true;
     util::InstanceInit<PriorityTxnService>();
   }
+  logger->info("Priority Txn batch mode {}", Options::kPriorityBatchMode);
+  if (Options::kPriorityBatchMode) {
+    abort_if(Options::kPriorityTxn, "Cannot turn on both PriorityTxn and PriorityBatchMode");
+    NodeConfiguration::g_priority_batch_mode = true;
+    NodeConfiguration::g_priority_batch_mode_pct = Options::kPercentagePriorityTxn.ToInt();
+  }
 
   // init tables from the workload module
   Module<WorkloadModule>::InitModule(workload_name);

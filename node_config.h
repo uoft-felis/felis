@@ -105,6 +105,8 @@ class NodeConfiguration {
   static constexpr size_t kMaxNrThreads = 32;
   static bool g_data_migration;
   static bool g_priority_txn;
+  static bool g_priority_batch_mode;
+  static int g_priority_batch_mode_pct;
 
   struct NodePeerConfig {
     std::string host;

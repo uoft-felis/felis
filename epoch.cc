@@ -166,7 +166,7 @@ EpochClient::EpochClient()
 EpochTxnSet::EpochTxnSet()
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
-  auto d = std::div((int) EpochClient::g_txn_per_epoch, nr_threads);
+  auto d = std::div((int) EpochClient::g_workload_client->NumberOfTxns(), nr_threads);
   for (auto t = 0; t < nr_threads; t++) {
     size_t nr = d.quot;
     if (t < d.rem) nr++;

@@ -151,6 +151,10 @@ class EpochClient {
   virtual unsigned int LoadPercentage() = 0;
   unsigned long NumberOfTxns() {
     // return LoadPercentage() * kTxnPerEpoch / 100;
+    if (NodeConfiguration::g_priority_batch_mode) {
+      auto pct = NodeConfiguration::g_priority_batch_mode_pct;
+      return (g_txn_per_epoch * (100 + pct)) / 100;
+    }
     return g_txn_per_epoch;
   };
 

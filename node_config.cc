@@ -171,6 +171,8 @@ size_t NodeConfiguration::g_nr_threads = 8;
 int NodeConfiguration::g_core_shifting = 0;
 bool NodeConfiguration::g_data_migration = false;
 bool NodeConfiguration::g_priority_txn = false;
+bool NodeConfiguration::g_priority_batch_mode = false;
+int NodeConfiguration::g_priority_batch_mode_pct = 0;
 
 static NodeConfiguration::NodePeerConfig ParseNodePeerConfig(json11::Json json, std::string name)
 {
