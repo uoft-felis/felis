@@ -390,7 +390,8 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 
 
 void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
-  if (PriorityTxnService::g_distance_exponential_backoff) {
+  if (PriorityTxnService::g_distance_exponential_backoff
+   && PriorityTxnService::g_backoff_distance < 0) {
     // exponential backoff, -4 -> -2 -> -1 -> 0 -> 1 -> 2 -> ...
     if (backoff_distance < 0) {
       backoff_distance /= 2;
@@ -402,14 +403,6 @@ void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
       if (backoff_distance > ori_dist)
         backoff_distance = ori_dist;
     }
-  }
-  if (PriorityTxnService::g_sid_bitmap) {
-    // since this txn aborted, reset the SID bit back to false
-    auto core = go::Scheduler::CurrentThreadPoolId() - 1;
-    auto seq = (this->serial_id() >> 8) & 0xFFFFFF;
-    auto idx = util::Instance<PriorityTxnService>().seq2idx(seq);
-    auto &bitmap = util::Instance<PriorityTxnService>().seq_bitmap[core];
-    bitmap->set(idx, false);
   }
   for (int i = 0; i < update_cnt; ++i)
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
