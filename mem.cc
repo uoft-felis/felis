@@ -898,7 +898,7 @@ namespace mem {
   {
     void *p = util::OSMemory::g_default.Alloc(length, numa_node, on_demand);
     if (p == nullptr) {
-      printf("Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());
+      printf("Allocation of %s failed, length = %zu\n", MemTypeToString(alloc_type).c_str(), length);
       PrintMemStats();
       return nullptr;
     }

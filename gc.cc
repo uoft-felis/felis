@@ -388,15 +388,17 @@ size_t GC::CollectPmem(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
   //handle->cur_start = 0;
   //handle->latest_version = -1; //shirley: removed bc latest version is stored in versions
 
+  VHandle *vhandle = handle->vhandle;
+
   // shirley: free ptr1 if it's not from inline
-  handle->vhandle->FreePtr1();
+  vhandle->FreePtr1();
   // auto ptr1 = handle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
   // if (ptr1 < (unsigned char *)handle ||
   //     ptr1 >= (unsigned char *)handle + 256) {
   //       delete ((VarStr *)ptr1);
   // }
   // shirley: copy sid2, ptr2 to sid1, ptr1
-  handle->vhandle->Copy2To1();
+  vhandle->Copy2To1();
   // //get sid2 and ptr2
   // auto sid2 = handle->GetInlineSid(felis::SortedArrayVHandle::SidType2); 
   // auto ptr2 = handle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
@@ -404,13 +406,13 @@ size_t GC::CollectPmem(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
   // handle->SetInlineSid(felis::SortedArrayVHandle::SidType1, sid2);
   // handle->SetInlinePtr(felis::SortedArrayVHandle::SidType1, ptr2);
   // shirley: reset sid2, ptr2 (not needed in ECE1724 design)
-  handle->vhandle->ResetSid2();
+  vhandle->ResetSid2();
 
   //shirley pmem: flush cache after GC
-  // _mm_clwb((char *)handle);
-  // _mm_clwb((char *)handle + 64);
-  // _mm_clwb((char *)handle + 128);
-  // _mm_clwb((char *)handle + 192);
+  // _mm_clwb((char *)vhandle);
+  // _mm_clwb(((char *)vhandle) + 64);
+  // _mm_clwb(((char *)vhandle) + 128);
+  // _mm_clwb(((char *)vhandle) + 192);
 
   return 1;
 }

@@ -10,10 +10,11 @@ std::map<std::string, Checkpoint *> Checkpoint::impl;
 //shirley: InitVersion should write to sid1, ptr1, similar to a row insert. 
 void InitVersion(felis::IndexInfo *handle, VarStr *obj = (VarStr *) kPendingValue)
 {
+  VHandle *p_vhandle = handle->vhandle_ptr();
   // handle-> sid1 = 0; //bc initial version of database, sid is 0.
-  handle->vhandle_ptr()->SetInlineSid(felis::SortedArrayVHandle::SidType1, 0);
+  p_vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType1, 0);
   // handle -> ptr1 = obj; // shirley: don't need to check pendingValue. tpcc always creates initial value 
-  handle->vhandle_ptr()->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)obj);
+  p_vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)obj);
 
   // shirley: don't need these things below. we're only creating sid1, ptr1, 
   // not using version array (should be nullptr).
@@ -25,10 +26,10 @@ void InitVersion(felis::IndexInfo *handle, VarStr *obj = (VarStr *) kPendingValu
   // }
 
   //shirley pmem: flush cache after initial row insert
-  // _mm_clwb((char *)handle);
-  // _mm_clwb((char *)handle + 64);
-  // _mm_clwb((char *)handle + 128);
-  // _mm_clwb((char *)handle + 192);
+  // _mm_clwb((char *)p_vhandle);
+  // _mm_clwb(((char *)p_vhandle) + 64);
+  // _mm_clwb(((char *)p_vhandle) + 128);
+  // _mm_clwb(((char *)p_vhandle) + 192);
   //shirley: don't need flush obj. first insert always inlined in miniheap (max varstr is 83 bytes?)
 
 }

@@ -15,6 +15,7 @@ namespace felis {
 class VHandle;
 class IndexInfo;
 
+//shirley: is this the write buffer in the paper for read your writes?
 class CommitBuffer {
  public:
   struct Entry {

@@ -29,7 +29,7 @@ bool EpochClient::g_enable_granola = false;
 bool EpochClient::g_enable_pwv = false;
 long EpochClient::g_corescaling_threshold = 0;
 long EpochClient::g_splitting_threshold = std::numeric_limits<long>::max();
-size_t EpochClient::g_txn_per_epoch = 100000;
+size_t EpochClient::g_txn_per_epoch = 100000; //max is ~115,000(100,000) bc txn pool is hard-coded to 24M/epoch
 
 void EpochCallback::operator()(unsigned long cnt)
 {

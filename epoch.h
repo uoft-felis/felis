@@ -164,6 +164,7 @@ class EpochClient {
   static size_t g_txn_per_epoch;
   static constexpr size_t kMaxPiecesPerPhase = 12800000;
 
+  //shirley: g_max_epoch = number of epochs + 1.
   static inline size_t g_max_epoch = 50;
  protected:
   friend class BaseTxn;
