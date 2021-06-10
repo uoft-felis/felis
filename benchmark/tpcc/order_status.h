@@ -16,8 +16,8 @@ struct OrderStatusStruct {
 };
 
 struct OrderStatusState {
-  VHandle *customer;
-  VHandle *order_line[15];
+  IndexInfo *customer;
+  IndexInfo *order_line[15];
   int oid;
 };
 

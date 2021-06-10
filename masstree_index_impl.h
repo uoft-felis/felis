@@ -7,6 +7,7 @@
 #include "index_common.h"
 #include "log.h"
 #include "vhandle.h"
+#include "index_info.h"
 
 class threadinfo;
 
@@ -28,7 +29,7 @@ class MasstreeIndex final : public Table {
   }
 
   template <typename Func>
-  VHandle *SearchOrCreateImpl(const VarStrView &k, Func f);
+  IndexInfo *SearchOrCreateImpl(const VarStrView &k, Func f);
  public:
   static void ResetThreadInfo();
 
@@ -37,9 +38,9 @@ class MasstreeIndex final : public Table {
   static void *operator new(size_t sz);
   static void operator delete(void *p);
 
-  VHandle *SearchOrCreate(const VarStrView &k, bool *created) override;
-  VHandle *SearchOrCreate(const VarStrView &k) override;
-  VHandle *Search(const VarStrView &k) override;
+  IndexInfo *SearchOrCreate(const VarStrView &k, bool *created) override;
+  IndexInfo *SearchOrCreate(const VarStrView &k) override;
+  IndexInfo *Search(const VarStrView &k) override;
 
   Table::Iterator *IndexSearchIterator(const VarStrView &start, const VarStrView &end) override;
   Table::Iterator *IndexSearchIterator(const VarStrView &start) override;

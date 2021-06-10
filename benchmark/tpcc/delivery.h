@@ -20,10 +20,10 @@ struct DeliveryStruct {
 };
 
 struct DeliveryState {
-  VHandle *new_orders[10]; // NewOrder per-district
-  VHandle *order_lines[10][15]; // OrderLines per NewOrder
-  VHandle *oorders[10];
-  VHandle *customers[10];
+  IndexInfo *new_orders[10]; // NewOrder per-district
+  IndexInfo *order_lines[10][15]; // OrderLines per NewOrder
+  IndexInfo *oorders[10];
+  IndexInfo *customers[10];
 
   NodeBitmap nodes[10];
   InvokeHandle<DeliveryState, int, uint32_t> customer_future[10];

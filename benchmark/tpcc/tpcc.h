@@ -330,16 +330,16 @@ class ClientBase {
  public:
   template <typename TableType, typename KeyType>
   static void OnNewRow(int slice_id, TableType table, const KeyType &k,
-                       felis::VHandle *handle) {
+                       felis::IndexInfo *handle) {
     if (!NodeConfiguration::g_data_migration)
       return;
     util::Instance<felis::SliceManager>().OnNewRow(
-        slice_id, static_cast<int>(table), k.Encode(), handle);
+        slice_id, static_cast<int>(table), k.Encode(), handle->vhandle_ptr());
   }
 
-  static void OnUpdateRow(felis::VHandle *handle) {
+  static void OnUpdateRow(felis::IndexInfo *handle) {
     if (!NodeConfiguration::g_data_migration) return;
-    util::Instance<felis::SliceManager>().OnUpdateRow(handle);
+    util::Instance<felis::SliceManager>().OnUpdateRow(handle->vhandle_ptr());
   }
   ClientBase(const util::FastRandom &r, const int node_id, const int nr_nodes);
   static bool is_warehouse_hotspot(uint wid);

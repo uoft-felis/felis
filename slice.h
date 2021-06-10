@@ -13,6 +13,7 @@
 #include "log.h"
 #include "entity.h"
 #include "vhandle.h"
+#include "index_info.h"
 
 namespace felis {
 

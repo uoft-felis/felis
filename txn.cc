@@ -34,15 +34,15 @@ void BaseTxn::BaseTxnRow::AppendNewVersion(int ondemand_split_weight)
 #endif
 
     if (!is_dup) {
-      vhandle->AppendNewVersion(sid, epoch_nr, ondemand_split_weight);
+      index_info->AppendNewVersion(sid, epoch_nr, ondemand_split_weight);
     } else {
       // This should be rare. Let's warn the user.
-      logger->warn("Duplicate write detected in sid {} on row {}", sid, (void *) vhandle);
+      logger->warn("Duplicate write detected in sid {} on row {}", sid, (void *) index_info);
     }
   } else {
-    if (vhandle->nr_versions() == 0) {
-      vhandle->AppendNewVersion(sid, epoch_nr);
-      vhandle->WriteExactVersion(0, nullptr, epoch_nr);
+    if (index_info->nr_versions() == 0) {
+      index_info->AppendNewVersion(sid, epoch_nr);
+      index_info->WriteExactVersion(0, nullptr, epoch_nr);
     }
   }
 }
@@ -52,12 +52,12 @@ VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
   auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
   CommitBuffer::Entry *ent = nullptr;
 #ifdef READ_OWN_WRITE
-  ent = commit_buffer->LookupDuplicate(vhandle, sid);
+  ent = commit_buffer->LookupDuplicate(index_info, sid);
 #endif
   if (ent && ent->u.value != (VarStr *) kPendingValue)
     return ent->u.value;
   else
-    return vhandle->ReadWithVersion(sid);
+    return index_info->ReadWithVersion(sid);
 }
 
 bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
@@ -66,39 +66,40 @@ bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
     auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
     CommitBuffer::Entry *ent = nullptr;
 #ifdef READ_OWN_WRITE
-    ent = commit_buffer->LookupDuplicate(vhandle, sid);
+    ent = commit_buffer->LookupDuplicate(index_info, sid);
 #endif
     if (ent) {
       ent->u.value = obj;
       if (ent->wcnt.fetch_sub(1) - 1 > 0)
         return true;
     }
-    return vhandle->WriteWithVersion(sid, obj, epoch_nr);
+    return index_info->WriteWithVersion(sid, obj, epoch_nr);
   } else {
-    auto p = vhandle->ReadExactVersion(0);
+    auto p = index_info->ReadExactVersion(0);
     size_t nr_bytes = 0;
     // SHIRLEY: this is for granola so don't touch this GC (?)
-    util::Instance<GC>().FreeIfGarbage(vhandle, p, obj);
-    return vhandle->WriteExactVersion(0, obj, epoch_nr);
+    util::Instance<GC>().FreeIfGarbage(index_info, p, obj);
+    return index_info->WriteExactVersion(0, obj, epoch_nr);
   }
 }
 
-int64_t BaseTxn::UpdateForKeyAffinity(int node, VHandle *row)
+int64_t BaseTxn::UpdateForKeyAffinity(int node, IndexInfo *row)
 {
   if (Options::kOnDemandSplitting) {
-    auto &conf = util::Instance<NodeConfiguration>();
-    if (row->contention_affinity() == -1 || (node != 0 && conf.node_id() != node))
-      goto nosplit;
+    // shirley todo: if need contention manager, modify this code (use index_info not vhandle)
+    // auto &conf = util::Instance<NodeConfiguration>();
+    // if (row->contention_affinity() == -1 || (node != 0 && conf.node_id() != node))
+    //   goto nosplit;
 
-    auto client = EpochClient::g_workload_client;
-    auto commit_buffer = client->commit_buffer;
+    // auto client = EpochClient::g_workload_client;
+    // auto commit_buffer = client->commit_buffer;
 
-    if (commit_buffer->LookupDuplicate(row, sid))
-      goto nosplit;
+    // if (commit_buffer->LookupDuplicate(row, sid))
+    //   goto nosplit;
 
-    auto &mgr = client->get_contention_locality_manager();
-    auto aff = mgr.GetScheduleCore(row->contention_affinity());
-    return aff;
+    // auto &mgr = client->get_contention_locality_manager();
+    // auto aff = mgr.GetScheduleCore(row->contention_affinity());
+    // return aff;
   }
 
 nosplit:
@@ -213,7 +214,7 @@ BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpConte
   return result;
 }
 
-VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx)
+IndexInfo *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx)
 {
   auto tbl = util::Instance<TableManager>().GetTable(ctx.relation_ids[idx]);
 
@@ -222,14 +223,15 @@ VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx
            ctx.keys_bitmap, ctx.slices_bitmap);
   VarStrView key(ctx.key_len[idx], ctx.key_data[idx]);
   bool created = false;
-  VHandle *result = tbl->SearchOrCreate(key, &created);
+  IndexInfo *result = tbl->SearchOrCreate(key, &created);
 
   if (created && NodeConfiguration::g_data_migration) {
     VarStr *kstr = VarStr::New(ctx.key_len[idx]);
     memcpy((void *) kstr->data(), ctx.key_data[idx], ctx.key_len[idx]);
 
-    util::Instance<felis::SliceManager>().OnNewRow(
-        ctx.slice_ids[idx], ctx.relation_ids[idx], kstr, result);
+    // shirley: not used in new design.
+    // util::Instance<felis::SliceManager>().OnNewRow(
+    //     ctx.slice_ids[idx], ctx.relation_ids[idx], kstr, result);
   }
   return result;
 }

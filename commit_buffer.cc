@@ -2,6 +2,7 @@
 #include "epoch.h"
 #include "xxHash/xxhash.h"
 #include "vhandle.h"
+#include "index_info.h"
 
 namespace felis {
 
@@ -55,11 +56,11 @@ void CommitBuffer::EnsureReady()
     _mm_pause();
 }
 
-bool CommitBuffer::AddRef(int core_id, VHandle *vhandle, uint64_t sid)
+bool CommitBuffer::AddRef(int core_id, IndexInfo *index_info, uint64_t sid)
 {
   uint32_t short_sid = sid;
   uint32_t seq = ((1 << 24) - 1) & (((uint32_t) sid >> 8) - 1);
-  uintptr_t r = ((uintptr_t) vhandle) >> 6;
+  uintptr_t r = ((uintptr_t) index_info) >> 6;
   uint32_t hash = seq * kPerTxnHashSize;
   hash += XXH32(&r, sizeof(uintptr_t), seq) % (kPerTxnHashSize - 1);
   hash %= ref_hashtable_size;
@@ -74,7 +75,7 @@ bool CommitBuffer::AddRef(int core_id, VHandle *vhandle, uint64_t sid)
 
 again:
   while (p) {
-    if (p->short_sid == short_sid && p->vhandle == vhandle) {
+    if (p->short_sid == short_sid && p->index_info == index_info) {
       if ((tail = p->u.dup.load()))
         goto done;
       pp = &p->u.dup;
@@ -84,7 +85,7 @@ again:
     p = pp->load();
   }
 
-  new_ent = new (brk->ptr() + brk->current_size()) Entry(vhandle, seq);
+  new_ent = new (brk->ptr() + brk->current_size()) Entry(index_info, seq);
   tail = nullptr;
 
   if (pp->compare_exchange_strong(tail, new_ent)) {
@@ -116,14 +117,14 @@ done:
   return true;
 }
 
-CommitBuffer::Entry *CommitBuffer::LookupDuplicate(VHandle *vhandle, uint64_t sid)
+CommitBuffer::Entry *CommitBuffer::LookupDuplicate(IndexInfo *index_info, uint64_t sid)
 {
   uint32_t short_sid = sid;
   uint32_t seq = ((1 << 24) - 1) & (((uint32_t) sid >> 8) - 1);
   Entry *p = dup_hashtable[seq % dup_hashtable_size].load();
 
   while (p) {
-    if (p->vhandle == vhandle && p->short_sid == short_sid)
+    if (p->index_info == index_info && p->short_sid == short_sid)
       break;
     p = p->next.load();
   }

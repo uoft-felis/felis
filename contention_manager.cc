@@ -65,7 +65,7 @@ struct VersionBufferHead {
   std::atomic_int pos;
   int owner_core;
   VersionBufferHead *next_buffer_head;
-  VHandle *backrefs[kMaxPos];
+  IndexInfo *backrefs[kMaxPos];
 
   uint8_t *get_prealloc() {
     return g_preallocs[owner_core].ptr;
@@ -82,15 +82,15 @@ struct VersionBufferHead {
     prealloc.bitmap()[abs_pos / 64] &= ~(1ULL << (abs_pos % 64));
   }
 
-  long GetOrInstallBufferPos(ContentionManager *appender, VHandle *handle);
-  VersionBufferHandle GetOrInstallBuffer(ContentionManager *appender, VHandle *handle) {
+  long GetOrInstallBufferPos(ContentionManager *appender, IndexInfo *handle);
+  VersionBufferHandle GetOrInstallBuffer(ContentionManager *appender, IndexInfo *handle) {
     auto p = GetOrInstallBufferPos(appender, handle);
     return p == -1 ? VersionBufferHandle{nullptr, 0} : VersionBufferHandle{get_prealloc(), p};
   }
 
   // Scan on [from, to) version_buffers in the prealloc. Since BufferHead is
   // per-core, so we don't need to worry about locks inside the buffer.
-  static void ScanAndFinalize(int owner_core, long from, long to, VHandle **backrefs,
+  static void ScanAndFinalize(int owner_core, long from, long to, IndexInfo **backrefs,
                               uint64_t epoch_nr, bool reset);
 };
 
@@ -104,7 +104,7 @@ VersionBufferHead *VersionBufferHeadAllocation::AllocHead(int owner_core)
   return p;
 }
 
-void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_nr,
+void VersionBufferHandle::Append(IndexInfo *handle, uint64_t sid, uint64_t epoch_nr,
                                  bool is_ondemand_split)
 {
   VersionPrealloc prealloc(prealloc_ptr);
@@ -115,7 +115,7 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
     handle->lock.Acquire(&qnode);
 
     handle->AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
-    if (is_ondemand_split) handle->nr_ondsplt++;
+    if (is_ondemand_split) handle->vhandle_ptr()->nr_ondsplt++;
 
     handle->IncreaseSize(buf->buf_cnt, epoch_nr);
     auto end = handle->size_get(handle->versions) - buf->buf_cnt;
@@ -144,7 +144,7 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
   }
 }
 
-void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, unsigned int end)
+void VersionBufferHandle::FlushIntoNoLock(IndexInfo *handle, uint64_t epoch_nr, unsigned int end)
 {
   VersionPrealloc prealloc(prealloc_ptr);
   auto buf = prealloc.version_buffers() + pos;
@@ -154,15 +154,15 @@ void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, un
     // printf("absorb %d %d %lu %p\n", end, i, buf->versions[i], handle);
     end = handle->AbsorbNewVersionNoLock(end, i);
   }
-  handle->nr_ondsplt += buf->ondsplt_cnt;
+  handle->vhandle_ptr()->nr_ondsplt += buf->ondsplt_cnt;
   buf->buf_cnt = 0;
   buf->ondsplt_cnt = 0;
   prealloc.bitmap()[pos / 64] &= ~(1ULL << (pos % 64));
 }
 
-long VersionBufferHead::GetOrInstallBufferPos(ContentionManager *appender, VHandle *handle)
+long VersionBufferHead::GetOrInstallBufferPos(ContentionManager *appender, IndexInfo *handle)
 {
-  long p = handle->buf_pos.load();
+  long p = handle->vhandle_ptr()->buf_pos.load();
   if (p != -1) return p;
   long new_pos = pos.load(std::memory_order_acquire);
   if (new_pos >= kMaxPos) {
@@ -176,7 +176,7 @@ long VersionBufferHead::GetOrInstallBufferPos(ContentionManager *appender, VHand
     new_buf_head->next_buffer_head = this;
     appender->buffer_heads[owner_core] = new_buf_head;
     return new_buf_head->GetOrInstallBufferPos(appender, handle);
-  } else if (handle->buf_pos.compare_exchange_strong(p, base_pos + new_pos)) {
+  } else if (handle->vhandle_ptr()->buf_pos.compare_exchange_strong(p, base_pos + new_pos)) {
     backrefs[new_pos] = handle;
     IncrementPos();
     return base_pos + new_pos;
@@ -186,7 +186,7 @@ long VersionBufferHead::GetOrInstallBufferPos(ContentionManager *appender, VHand
 }
 
 void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
-                                        VHandle **backrefs, uint64_t epoch_nr,
+                                        IndexInfo **backrefs, uint64_t epoch_nr,
                                         bool reset)
 {
   VersionPrealloc prealloc(g_preallocs[owner_core].ptr);
@@ -199,7 +199,7 @@ void VersionBufferHead::ScanAndFinalize(int owner_core, long from, long to,
     for (long p = from; p < to; p++) {
       auto vhandle = backrefs[p - from];
       if (reset) {
-        vhandle->buf_pos.store(-1, std::memory_order_release);
+        vhandle->vhandle_ptr()->buf_pos.store(-1, std::memory_order_release);
       }
 
       if ((bitmap[p / 64] & (1ULL << (p % 64))) == 0)
@@ -258,7 +258,7 @@ ContentionManager::ContentionManager()
   Reset();
 }
 
-VersionBufferHandle ContentionManager::GetOrInstall(VHandle *handle)
+VersionBufferHandle ContentionManager::GetOrInstall(IndexInfo *handle)
 {
   int core = go::Scheduler::CurrentThreadPoolId() - 1;
   return buffer_heads[core]->GetOrInstallBuffer(this, handle);
@@ -281,8 +281,8 @@ void ContentionManager::FinalizeFlush(uint64_t epoch_nr)
   }
 }
 
-void Binpack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit);
-void PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label);
+void Binpack(IndexInfo **knapsacks, unsigned int nr_knapsack, int label, size_t limit);
+void PackLeftOver(IndexInfo **knapsacks, unsigned int nr_knapsack, int label);
 
 void ContentionManager::Reset()
 {
@@ -297,13 +297,13 @@ void ContentionManager::Reset()
       // Contention management
       for (long i = 0; i < p->pos.load(std::memory_order_acquire); i++) {
         auto row = p->backrefs[i];
-        row->buf_pos.store(-1, std::memory_order_release);
+        row->vhandle_ptr()->buf_pos.store(-1, std::memory_order_release);
         nr_cleared++;
 
         if (!Options::kOnDemandSplitting) continue;
 
         if (row->size_get(row->versions) - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
-        sum += row->nr_ondsplt;
+        sum += row->vhandle_ptr()->nr_ondsplt;
         nr_splitted++;
       }
     }
@@ -315,11 +315,11 @@ void ContentionManager::Reset()
 
   est_split = sum;
 
-  VHandle **knapsacks = nullptr;
+  IndexInfo **knapsacks = nullptr;
   size_t nr_knapsacks = 0;
   unsigned int s = 0;
   if (Options::kBinpackSplitting) {
-    knapsacks = new VHandle *[nr_cleared];
+    knapsacks = new IndexInfo *[nr_cleared];
   }
 
   for (int core = 0; core < nr_threads; core++) {
@@ -336,8 +336,10 @@ void ContentionManager::Reset()
         auto row = p->backrefs[i];
         if (row->size_get(row->versions) - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
 
-        row->cont_affinity = NodeConfiguration::g_nr_threads * (s + row->nr_ondsplt / 2) / sum;
-        s += row->nr_ondsplt;
+        row->vhandle_ptr()->cont_affinity =
+            NodeConfiguration::g_nr_threads *
+            (s + row->vhandle_ptr()->nr_ondsplt / 2) / sum;
+        s += row->vhandle_ptr()->nr_ondsplt;
 
         auto client = EpochClient::g_workload_client;
         // client->get_execution_locality_manager().PlanLoad(row->this_coreid, -1 * row->nr_ondsplt);
@@ -345,7 +347,8 @@ void ContentionManager::Reset()
           knapsacks[nr_knapsacks++] = row;
           continue;
         }
-        client->get_contention_locality_manager().PlanLoad(row->cont_affinity, row->nr_ondsplt);
+        client->get_contention_locality_manager().PlanLoad(
+            row->vhandle_ptr()->cont_affinity, row->vhandle_ptr()->nr_ondsplt);
       }
    done:
       g_alloc[numa_zone].pool.Free(p);
@@ -382,7 +385,7 @@ void ContentionManager::Reset()
   delete [] knapsacks;
 }
 
-size_t ContentionManager::BinPack(VHandle **knapsacks, unsigned int nr_knapsack, int label, size_t limit)
+size_t ContentionManager::BinPack(IndexInfo **knapsacks, unsigned int nr_knapsack, int label, size_t limit)
 {
   if (limit == 0) return 0;
 
@@ -395,7 +398,7 @@ size_t ContentionManager::BinPack(VHandle **knapsacks, unsigned int nr_knapsack,
     if (knapsacks[i] == nullptr) continue;
 
     trace[i].resize(limit);
-    auto wi = knapsacks[i]->nr_ondemand_split();
+    auto wi = knapsacks[i]->vhandle_ptr()->nr_ondemand_split();
     for (size_t w = 0; w < limit; w++) {
       f[w] = pf[w];
       if (w >= wi && pf[w - wi] + wi > f[w]) {
@@ -412,11 +415,11 @@ size_t ContentionManager::BinPack(VHandle **knapsacks, unsigned int nr_knapsack,
   for (int i = nr_knapsack - 1; i >= 0; i--) {
     if (knapsacks[i] == nullptr) continue;
 
-    auto wi = knapsacks[i]->nr_ondemand_split();
+    auto wi = knapsacks[i]->vhandle_ptr()->nr_ondemand_split();
     if (trace[i][w]) {
       printf(" %d", wi);
       w -= wi;
-      knapsacks[i]->cont_affinity = label;
+      knapsacks[i]->vhandle_ptr()->cont_affinity = label;
       knapsacks[i] = nullptr;
     }
   }
@@ -428,13 +431,13 @@ size_t ContentionManager::BinPack(VHandle **knapsacks, unsigned int nr_knapsack,
   return maxcap;
 }
 
-void ContentionManager::PackLeftOver(VHandle **knapsacks, unsigned int nr_knapsack, int label)
+void ContentionManager::PackLeftOver(IndexInfo **knapsacks, unsigned int nr_knapsack, int label)
 {
   printf("Binpack left:");
   for (int i = 0; i < nr_knapsack; i++) {
     if (knapsacks[i] != nullptr) {
-      printf(" %d", knapsacks[i]->nr_ondemand_split());
-      knapsacks[i]->cont_affinity = label;
+      printf(" %d", knapsacks[i]->vhandle_ptr()->nr_ondemand_split());
+      knapsacks[i]->vhandle_ptr()->cont_affinity = label;
     }
   }
   puts("");

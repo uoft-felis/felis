@@ -14,6 +14,7 @@
 
 namespace felis {
 
+// shirley todo: move sync to index_info
 class VHandleSyncService {
 public:
   static bool g_lock_elision;
@@ -29,12 +30,13 @@ public:
 class BaseIndexInfo {
 public:
   static constexpr size_t VerArrayInfoSize = 32;
-  static constexpr size_t kBaseIndexInfoSize = 32; // shirley todo: define/modify this later
+  static constexpr size_t kIndexInfoSize = 32; // shirley todo: define/modify this later
   static mem::ParallelSlabPool pool;
   static void InitPool();
   static void Quiescence() { pool.Quiescence(); }
 
 public:
+  // shirley todo: move sync to index_info
   VHandleSyncService &sync();
 };
 
@@ -88,6 +90,11 @@ public:
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj,
                          uint64_t epoch_nr);
+
+  // shirley: return pointer to vhandle
+  VHandle *vhandle_ptr() {
+    return vhandle;
+  }
 
   // shirley: define the layout of the info stored in version array. should be
   // smaller than 32 bytes.
@@ -214,7 +221,7 @@ private:
 };
 
 // shirley: probably don't need size checking for index info
-// static_assert(sizeof(IndexInfo) <= BaseIndexInfo::kBaseIndexInfoSize, "IndexInfo is too large!");
+// static_assert(sizeof(IndexInfo) <= BaseIndexInfo::kIndexInfoSize, "IndexInfo is too large!");
 
 
 } // namespace felis

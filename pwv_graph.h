@@ -13,6 +13,7 @@
 namespace felis {
 
 class VHandle;
+class IndexInfo;
 
 // Just two bytes. We steal the space from __padding__ in PromiseRoutine!
 struct RVPInfo {
@@ -26,7 +27,7 @@ static_assert(sizeof(RVPInfo) == 2);
 class PWVGraph {
  public:
   using Resource = uint64_t *;
-  static Resource VHandleToResource(VHandle *handle);
+  static Resource VHandleToResource(IndexInfo *handle);
   static size_t g_extra_node_brk_limit;
  private:
   friend class PWVGraphManager;

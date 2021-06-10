@@ -2,6 +2,7 @@
 #include <sys/time.h>
 #include <syscall.h>
 #include "vhandle.h"
+#include "index_info.h"
 #include "vhandle_sync.h"
 
 namespace felis {

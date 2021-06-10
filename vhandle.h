@@ -15,17 +15,17 @@ namespace felis {
 
 static const uintptr_t kPendingValue = 0xFE1FE190FFFFFFFF; // hope this pointer is weird enough
 
-// shirley todo: delete, moved to index_info
-class VHandleSyncService {
- public:
-  static bool g_lock_elision;
-  virtual void ClearWaitCountStats() = 0;
-  virtual long GetWaitCountStat(int core) = 0;
-  // virtual void Notify(uint64_t bitmap) = 0;
-  // virtual bool IsPendingVal(uintptr_t val) = 0;
-  virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;
-  virtual void OfferData(volatile uintptr_t *addr, uintptr_t obj) = 0;
-};
+// shirley todo: delete, move sync to index_info
+// class VHandleSyncService {
+//  public:
+//   static bool g_lock_elision;
+//   virtual void ClearWaitCountStats() = 0;
+//   virtual long GetWaitCountStat(int core) = 0;
+//   // virtual void Notify(uint64_t bitmap) = 0;
+//   // virtual bool IsPendingVal(uintptr_t val) = 0;
+//   virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;
+//   virtual void OfferData(volatile uintptr_t *addr, uintptr_t obj) = 0;
+// };
 
 class BaseVHandle {
  public:
@@ -66,7 +66,7 @@ class BaseVHandle {
   static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
  public:
 
-   VHandleSyncService &sync(); // shirley: move to index_info
+  //  VHandleSyncService &sync(); // shirley todo: move sync to index_info
 };
 
 class RowEntity;
@@ -97,7 +97,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
   // shirley: used by versions? vhandle? to lock vhandle during append. 
   // shirley todo: Should move to index
-  util::MCSSpinLock lock; 
+  // util::MCSSpinLock lock; 
 
   // shirley: used by version array (to know which region to free version array
   // from). not used by new design bc version arrays are always from transient
@@ -133,7 +133,7 @@ class SortedArrayVHandle : public BaseVHandle {
 
 
   //[0, capacity - 1] stores version number, [capacity, 2*capacity - 1] stores ptr to data
-  uint64_t *versions;
+  // uint64_t *versions;
 
   // shirley: used for data migration?
   // shirley todo: decide what to do with this (delete?)
@@ -153,22 +153,22 @@ public:
     // shirley: we currently don't ever delete vhandle
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
     //shirley TODO: we should only use inlined pool bc all vhandles are inlined
-    if (phandle->is_inlined())
+    // if (phandle->is_inlined())
       inline_pool.Free(ptr, phandle->this_coreid);
-    else
-      pool.Free(ptr, phandle->this_coreid);
+    // else
+    //   pool.Free(ptr, phandle->this_coreid);
   }
 
   //Corey: New() not necessary in new design
   static SortedArrayVHandle *New();
   static SortedArrayVHandle *NewInline();
 
-  bool ShouldScanSkip(uint64_t sid);
-  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight = 0);
-  VarStr *ReadWithVersion(uint64_t sid);
-  VarStr *ReadExactVersion(unsigned int version_idx);
-  bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
-  bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
+  // bool ShouldScanSkip(uint64_t sid);
+  // void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight = 0);
+  // VarStr *ReadWithVersion(uint64_t sid);
+  // VarStr *ReadExactVersion(unsigned int version_idx);
+  // bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
+  // bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
 
 
   // shirley: define the layout of the info stored in version array. should be smaller than 32 bytes.
@@ -346,12 +346,12 @@ public:
     // SetInlinePtr(SidType2, nullptr);
   }
 
-  void Prefetch() const { __builtin_prefetch(versions); }
+  // void Prefetch() const { __builtin_prefetch(versions); }
 
-  std::string ToString() const;
+  // std::string ToString() const;
 
   //shirley TODO: we don't use inline_used variable for our design
-  bool is_inlined() const { return 1; }
+  // bool is_inlined() const { return 1; }
 
 
   // shirley: for new data structure design. Default is allocating for sid1
@@ -574,38 +574,38 @@ public:
 
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
   //const size_t nr_capacity() const { return capacity; }
-  const size_t nr_versions() const { if (!versions) return 0; return size_get(versions); }
-  const size_t current_start() const { return 0;}
-  uint64_t first_version() const { 
-    if (!versions)
-      return GetInlineSid(SidType1); // shirley: return sid1 when version array is null
-    else
-      return versions_ptr(versions)[0]; 
-      //return versions[0];
-  }
-  uint64_t last_version() const { 
-    if (versions)
-      return versions_ptr(versions)[size_get(versions) - 1];
-      // return versions[size - 1];
-    else {
-      printf("last_version(), versions is null???\n");
-      std::abort();
-    } // shirley: abort bc versions shouldn't be nullptr?
-  }
-  unsigned int nr_updated() const { assert(versions); return latest_version_ptr(versions)->load(std::memory_order_relaxed) + 1; }
+  // const size_t nr_versions() const { if (!versions) return 0; return size_get(versions); }
+  // const size_t current_start() const { return 0;}
+  // uint64_t first_version() const { 
+  //   if (!versions)
+  //     return GetInlineSid(SidType1); // shirley: return sid1 when version array is null
+  //   else
+  //     return versions_ptr(versions)[0]; 
+  //     //return versions[0];
+  // }
+  // uint64_t last_version() const { 
+  //   if (versions)
+  //     return versions_ptr(versions)[size_get(versions) - 1];
+  //     // return versions[size - 1];
+  //   else {
+  //     printf("last_version(), versions is null???\n");
+  //     std::abort();
+  //   } // shirley: abort bc versions shouldn't be nullptr?
+  // }
+  // unsigned int nr_updated() const { assert(versions); return latest_version_ptr(versions)->load(std::memory_order_relaxed) + 1; }
   int nr_ondemand_split() const { return nr_ondsplt; }
   //uint8_t region_id() const { return alloc_by_regionid; } //shirley: not used?
   uint8_t object_coreid() const { return this_coreid; }
   int8_t contention_affinity() const { return cont_affinity; }
  private:
-  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight);
-  unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
-  void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
-    versions_ptr(versions)[pos] = sid;
-    //versions[pos] = sid;
-  }
-  void IncreaseSize(int delta, uint64_t epoch_nr);
-  volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
+  // void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight);
+  // unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
+  // void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
+  //   versions_ptr(versions)[pos] = sid;
+  //   //versions[pos] = sid;
+  // }
+  // void IncreaseSize(int delta, uint64_t epoch_nr);
+  // volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
 };
 
 //shirley: modify based on design (make sure vhandle info doesn't interfere with miniheap)

@@ -227,7 +227,7 @@ void DeliveryTxn::Run()
         if (bitmap & 0x01) {
           state->customer_future[i] = UpdateForKey(
               node, state->customers[i],
-              [](const auto &ctx, VHandle *row) {
+              [](const auto &ctx, IndexInfo *row) {
                 auto &[state, index_handle, i, ts] = ctx;
                 int sum = CalcSum(state, index_handle, i, ts);
                 WriteCustomer(state, index_handle, i, sum);

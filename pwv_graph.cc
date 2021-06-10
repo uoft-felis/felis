@@ -184,9 +184,9 @@ PWVGraph *PWVGraphManager::local_graph()
   return graphs.at(go::Scheduler::CurrentThreadPoolId() - 1);
 }
 
-PWVGraph::Resource PWVGraph::VHandleToResource(VHandle *vhandle)
+PWVGraph::Resource PWVGraph::VHandleToResource(IndexInfo *vhandle)
 {
-  auto p = (uint8_t *) vhandle;
+  auto p = (uint8_t *) (vhandle->vhandle_ptr());
   return (Resource) (p + 48);
 }
 

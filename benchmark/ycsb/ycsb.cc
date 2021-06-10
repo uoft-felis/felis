@@ -24,7 +24,7 @@ struct RMWStruct {
 };
 
 struct RMWState {
-  VHandle *rows[kTotal];
+  IndexInfo *rows[kTotal];
   InvokeHandle<RMWState> futures[kTotal];
 
   std::atomic_ulong signal; // Used only if g_dependency
@@ -166,7 +166,7 @@ void RMWTxn::Run()
     for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
       state->futures[i] = UpdateForKey(
           1, state->rows[i],
-          [](const auto &ctx, VHandle *row) {
+          [](const auto &ctx, IndexInfo *row) {
             auto &[state, index_handle] = ctx;
             WriteRow(index_handle(row));
             if (Client::g_dependency

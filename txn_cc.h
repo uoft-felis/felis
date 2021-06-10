@@ -164,10 +164,10 @@ template <typename TxnState> class Txn;
 template <typename TxnState, typename ...Types>
 struct InvokeHandle {
   using Context = typename Txn<TxnState>::template ContextType<Types...>;
-  using RowFuncPtr = void (*)(const Context&, VHandle *);
+  using RowFuncPtr = void (*)(const Context&, IndexInfo *);
 
   RowFuncPtr rowfunc = nullptr;
-  VHandle *row = nullptr;
+  IndexInfo *row = nullptr;
 
   void ClearCallback() {
     row = nullptr;
@@ -215,16 +215,17 @@ class Txn : public BaseTxn {
     template <typename T> bool Write(const T &o) {
       //shirley: probe size of version value
       // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
-      if (!vhandle) {
-        printf("Write: vhandle is null???\n");
+      if (!index_info) {
+        printf("Write: index_info is null???\n");
         std::abort();
       }
-      bool usePmem = ((vhandle->last_version()) == sid);
+      bool usePmem = ((index_info->last_version()) == sid);
       //shirley: probe transient vs persistent
       // probes::TransientPersistentCount{usePmem}();
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
+        VHandle *vhandle = index_info->vhandle_ptr();
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
@@ -255,12 +256,13 @@ class Txn : public BaseTxn {
       //shirley: probe size of version value
       // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
-      bool usePmem = ((vhandle->last_version()) == sid);
+      bool usePmem = ((index_info->last_version()) == sid);
       //shirley: probe transient vs persistent
       // probes::TransientPersistentCount{usePmem}();
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
+        VHandle *vhandle = index_info->vhandle_ptr();
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
@@ -298,6 +300,7 @@ class Txn : public BaseTxn {
 
       //shirley: initial version (after insert) should be inlined if possible.
       bool usePmem = true;
+      VHandle *vhandle = index_info->vhandle_ptr();
       //shirley: probe transient vs persistent
       // probes::TransientPersistentCount{usePmem}();
       VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
@@ -329,7 +332,7 @@ class Txn : public BaseTxn {
     using BaseTxnHandle::BaseTxnHandle;
     TxnHandle(const BaseTxnHandle &rhs) : BaseTxnHandle(rhs) {}
 
-    TxnRow operator()(VHandle *vhandle) const { return TxnRow(sid, epoch_nr, vhandle); }
+    TxnRow operator()(IndexInfo *index_info) const { return TxnRow(sid, epoch_nr, index_info); }
   };
 
   TxnHandle index_handle() const { return TxnHandle(sid, epoch->id()); }
@@ -424,7 +427,7 @@ class Txn : public BaseTxn {
 
   template <typename ...Types>
   InvokeHandle<TxnState, Types...> UpdateForKey(
-      int node, VHandle *row,
+      int node, IndexInfo *row,
       typename InvokeHandle<TxnState, Types...>::RowFuncPtr rowfunc,
       Types... params) {
     auto &conf = util::Instance<NodeConfiguration>();
@@ -560,8 +563,8 @@ class Txn : public BaseTxn {
     }
   };
   struct TxnIndexInsertOpImpl {
-    using ResultType = VHandle *;
-    VHandle *result;
+    using ResultType = IndexInfo *;
+    IndexInfo *result;
     TxnIndexInsertOpImpl(const BaseTxnIndexOpContext &ctx, int idx) {
       result = BaseTxnIndexOpInsert(ctx, idx);
     }

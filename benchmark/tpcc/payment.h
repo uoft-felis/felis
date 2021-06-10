@@ -20,9 +20,9 @@ struct PaymentStruct {
 };
 
 struct PaymentState {
-  VHandle *warehouse;
-  VHandle *district;
-  VHandle *customer;
+  IndexInfo *warehouse;
+  IndexInfo *district;
+  IndexInfo *customer;
 
   NodeBitmap nodes;
 

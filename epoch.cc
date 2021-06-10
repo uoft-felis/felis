@@ -7,6 +7,7 @@
 #include "txn.h"
 #include "log.h"
 #include "vhandle.h"
+#include "index_info.h"
 #include "contention_manager.h"
 #include "threshold_autotune.h"
 #include "pwv_graph.h"
@@ -301,7 +302,7 @@ void CallTxnsWorker::Run()
 
   if (client->callback.phase == EpochPhase::Execute) {
     VHandle::Quiescence(); // shirley: this shouldn't be needed? bc we never delete vhandles
-    // IndexInfo::Quiescence(); // shirley: this shouldn't be needed too?
+    IndexInfo::Quiescence(); // shirley: this shouldn't be needed too?
     RowEntity::Quiescence();
 
     mem::GetDataRegion().Quiescence();

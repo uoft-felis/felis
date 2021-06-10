@@ -317,7 +317,7 @@ void RowShipmentReceiver::Run()
                 InitVersion(handle, v);
               }
 
-              RowEntity *entity = new felis::RowEntity(rel_id, k, handle, slice_id);
+              RowEntity *entity = new felis::RowEntity(rel_id, k, handle->vhandle_ptr(), slice_id);
 
               // TODO: add row to its slice
 

@@ -42,10 +42,10 @@ struct NewOrderState {
   NodeBitmap items_nodes;
   */
 
-  VHandle *orderlines[15]; // insert
+  IndexInfo *orderlines[15]; // insert
   struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
     Tuple<NewOrderStruct::OrderDetail> args;
-    void operator()(int id, VHandle *row) {
+    void operator()(int id, IndexInfo *row) {
       state->orderlines[id] = row;
       // shirley: Don't call append new version bc don't need version array yet.
       // handle(row).AppendNewVersion();
@@ -62,13 +62,13 @@ struct NewOrderState {
   };
   NodeBitmap orderlines_nodes;
 
-  VHandle *oorder; // insert
-  VHandle *neworder; // insert
-  VHandle *cididx; // insert
+  IndexInfo *oorder; // insert
+  IndexInfo *neworder; // insert
+  IndexInfo *cididx; // insert
 
   struct OtherInsertCompletion : public TxnStateCompletion<NewOrderState> {
     OOrder::Value args;
-    void operator()(int id, VHandle *row) {
+    void operator()(int id, IndexInfo *row) {
       // shirley: don't call append new version bc don't need version array yet.
       // handle(row).AppendNewVersion();
       if (id == 0) {
@@ -89,7 +89,7 @@ struct NewOrderState {
   };
   NodeBitmap other_inserts_nodes;
 
-  VHandle *stocks[15]; // update
+  IndexInfo *stocks[15]; // update
   InvokeHandle<NewOrderState, unsigned int, bool, int> stock_futures[15];
   struct StocksLookupCompletion : public TxnStateCompletion<NewOrderState> {
     Tuple<int> args = Tuple<int>(-1);

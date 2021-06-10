@@ -3,6 +3,7 @@
 #include "index.h"
 #include "literals.h"
 #include "vhandle.h"
+#include "index_info.h"
 
 namespace felis {
 
@@ -43,10 +44,11 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
   vec[3].iov_len = klen;
   vec[3].iov_base = (void *) k->data();
 
-  VarStr *v = handle_ptr->ReadExactVersion(handle_ptr->latest_version_get(handle_ptr->versions));
-  vec[4].iov_len = v->length();
-  vec[4].iov_base = (void *) v->data();
-  encoded_len = 10 + klen + v->length();
+  // shirley: comment out for compile
+  // VarStr *v = handle_ptr->ReadExactVersion(handle_ptr->latest_version_get(handle_ptr->versions));
+  // vec[4].iov_len = v->length();
+  // vec[4].iov_base = (void *) v->data();
+  // encoded_len = 10 + klen + v->length();
 
   shipping_handle()->PrepareSend();
 
@@ -55,9 +57,11 @@ int RowEntity::EncodeIOVec(struct iovec *vec, int max_nr_vec)
 
 bool RowEntity::ShouldSkip()
 {
-  return (handle_ptr->size_get(handle_ptr->versions) == 0) ||
-         (handle_ptr->versions[handle_ptr->capacity_get(handle_ptr->versions) +
-                               handle_ptr->latest_version_get(handle_ptr->versions)] == kPendingValue);
+  return 1;
+  // shirley: comment out for compile
+  // return (handle_ptr->size_get(handle_ptr->versions) == 0) ||
+  //        (handle_ptr->versions[handle_ptr->capacity_get(handle_ptr->versions) +
+  //                              handle_ptr->latest_version_get(handle_ptr->versions)] == kPendingValue);
 }
 
 RowEntity::RowEntity(int rel_id, VarStr *k, VHandle *handle, int slice_id)

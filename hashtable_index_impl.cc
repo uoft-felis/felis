@@ -59,9 +59,9 @@ void ThreadInfo::FreeEntry(HashEntry *e)
 static thread_local ThreadInfo *local_ti = nullptr;
 
 
-VHandle *HashEntry::value() const
+IndexInfo *HashEntry::value() const
 {
-  return (VHandle *) ((uint8_t *) this - 96);
+  return (IndexInfo *) ((uint8_t *) this - 96);
 }
 
 static HashEntry *kNextForUninitialized = (HashEntry *) 0;
@@ -96,7 +96,7 @@ HashtableIndex::HashtableIndex(std::tuple<HashFunc, size_t, bool> conf)
 
 static constexpr size_t kOffset = 96;
 
-VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
+IndexInfo *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
 {
   auto idx = hash(k) % nr_buckets;
   HashEntry *first = (HashEntry *) (table + idx * row_size() + kOffset);
@@ -126,7 +126,7 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
   HashEntry *p = first, *newentry = nullptr;
   std::atomic<HashEntry *> *parent = nullptr;
   auto x = HashEntry::Convert(k);
-  VHandle *row = nullptr;
+  IndexInfo *row = nullptr;
 
   do {
     while (p != kNextForEnd) {
@@ -153,13 +153,13 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
   return row;
 }
 
-VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k)
+IndexInfo *HashtableIndex::SearchOrCreate(const VarStrView &k)
 {
   bool unused = false;
   return SearchOrCreate(k, &unused);
 }
 
-VHandle *HashtableIndex::Search(const VarStrView &k)
+IndexInfo *HashtableIndex::Search(const VarStrView &k)
 {
   auto idx = hash(k) % nr_buckets;
   auto p = (HashEntry *) (table + idx * row_size() + kOffset);

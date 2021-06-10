@@ -13,11 +13,12 @@ namespace felis {
 // parallel) at the epoch boundary.
 
 class VHandle;
+class IndexInfo;
 
 class CommitBuffer {
  public:
   struct Entry {
-    VHandle *vhandle;
+    IndexInfo *index_info;
     uint32_t short_sid; // sid inside the epoch.
     std::atomic_int32_t wcnt;
     union {
@@ -26,7 +27,7 @@ class CommitBuffer {
     } u;
     std::atomic<Entry *> next = nullptr;
 
-    Entry(VHandle *vhandle, uint32_t sid) : vhandle(vhandle), short_sid(sid), wcnt(1) {}
+    Entry(IndexInfo *index_info, uint32_t sid) : index_info(index_info), short_sid(sid), wcnt(1) {}
   };
  private:
   std::atomic<Entry *> *ref_hashtable;
@@ -46,8 +47,8 @@ class CommitBuffer {
 
   void Reset();
   void Clear(int core_id);
-  bool AddRef(int core_id, VHandle *vhandle, uint64_t sid);
-  Entry *LookupDuplicate(VHandle *vhandle, uint64_t sid);
+  bool AddRef(int core_id, IndexInfo *index_info, uint64_t sid);
+  Entry *LookupDuplicate(IndexInfo *index_info, uint64_t sid);
 };
 
 using WriteSetDesc = CommitBuffer::Entry;

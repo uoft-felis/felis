@@ -7,6 +7,7 @@
 #include "probe_utils.h"
 
 #include "vhandle.h" // Let's hope this won't slow down the build.
+#include "index_info.h"
 #include "gc.h"
 
 static struct ProbeMain {

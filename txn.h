@@ -16,10 +16,11 @@
 namespace felis {
 
 class VHandle;
+class IndexInfo;
 class Relation;
 class EpochClient;
 
-using UpdateForKeyCallback = void (*)(VHandle *row, void *ctx);
+using UpdateForKeyCallback = void (*)(IndexInfo *row, void *ctx);
 
 class BaseTxn {
  protected:
@@ -94,10 +95,11 @@ class BaseTxn {
    protected:
     uint64_t sid;
     uint64_t epoch_nr;
-    VHandle *vhandle;
+    // VHandle *vhandle;
+    IndexInfo *index_info;
    public:
-    BaseTxnRow(uint64_t sid, uint64_t epoch_nr, VHandle *vhandle)
-        : sid(sid), epoch_nr(epoch_nr), vhandle(vhandle) {}
+    BaseTxnRow(uint64_t sid, uint64_t epoch_nr, IndexInfo *index_info)
+        : sid(sid), epoch_nr(epoch_nr), index_info(index_info) {}
 
     uint64_t serial_id() const { return sid; }
 
@@ -118,14 +120,14 @@ class BaseTxn {
     uint64_t serial_id() const { return sid; }
 
     // C++ wrapper will name hide this.
-    BaseTxnRow operator()(VHandle *vhandle) const { return BaseTxnRow(sid, epoch_nr, vhandle); }
+    BaseTxnRow operator()(IndexInfo *index_info) const { return BaseTxnRow(sid, epoch_nr, index_info); }
   };
 
   // C++ wrapper will name hide this.
   BaseTxnHandle index_handle() { return BaseTxnHandle(sid, epoch->id()); }
 
   // Low level API for UpdateForKey (on demand splitting)
-  int64_t UpdateForKeyAffinity(int node, VHandle *row);
+  int64_t UpdateForKeyAffinity(int node, IndexInfo *row);
 
   struct BaseTxnIndexOpContext {
     static constexpr size_t kMaxPackedKeys = 15;
@@ -174,10 +176,10 @@ class BaseTxn {
   };
 
   static constexpr size_t kMaxRangeScanKeys = 32;
-  using LookupRowResult = std::array<VHandle *, kMaxRangeScanKeys>;
+  using LookupRowResult = std::array<IndexInfo *, kMaxRangeScanKeys>;
 
   static LookupRowResult BaseTxnIndexOpLookup(const BaseTxnIndexOpContext &ctx, int idx);
-  static VHandle *BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx);
+  static IndexInfo *BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx);
 };
 
 }

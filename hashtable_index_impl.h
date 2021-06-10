@@ -29,7 +29,7 @@ struct HashEntry {
     return __builtin_memcmp(key.data(), x.data(), 16) == 0;
   }
 
-  VHandle *value() const;
+  IndexInfo *value() const;
 };
 
 static_assert(sizeof(HashEntry) == 32);
@@ -41,9 +41,9 @@ class HashtableIndex final : public Table {
  public:
   HashtableIndex(std::tuple<HashFunc, size_t, bool> conf);
 
-  VHandle *SearchOrCreate(const VarStrView &k, bool *created) override;
-  VHandle *SearchOrCreate(const VarStrView &k) override;
-  VHandle *Search(const VarStrView &k) override;
+  IndexInfo *SearchOrCreate(const VarStrView &k, bool *created) override;
+  IndexInfo *SearchOrCreate(const VarStrView &k) override;
+  IndexInfo *Search(const VarStrView &k) override;
 };
 
 uint32_t DefaultHash(const VarStrView &);

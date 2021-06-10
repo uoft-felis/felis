@@ -123,7 +123,7 @@ void PaymentTxn::Run()
 
       state->warehouse_future = UpdateForKey(
           node, state->warehouse,
-          [](const auto &ctx, VHandle *row) {
+          [](const auto &ctx, IndexInfo *row) {
             auto &[state, index_handle, payment_amount] = ctx;
             TxnRow vhandle = index_handle(state->warehouse);
             auto w = vhandle.Read<Warehouse::Value>();
@@ -134,7 +134,7 @@ void PaymentTxn::Run()
 
       state->district_future = UpdateForKey(
           node, state->district,
-          [](const auto &ctx, VHandle *row) {
+          [](const auto &ctx, IndexInfo *row) {
             auto &[state, index_handle, payment_amount] = ctx;
             TxnRow vhandle = index_handle(state->district);
             auto d = vhandle.Read<District::Value>();
@@ -145,7 +145,7 @@ void PaymentTxn::Run()
 
       state->customer_future = UpdateForKey(
           node, state->customer,
-          [](const auto &ctx, VHandle *row) {
+          [](const auto &ctx, IndexInfo *row) {
             auto &[state, index_handle, payment_amount] = ctx;
             TxnRow vhandle = index_handle(state->customer);
             auto c = vhandle.Read<Customer::Value>();
@@ -195,7 +195,7 @@ void PaymentTxn::Run()
             [](const auto &ctx) {
               auto &[state, index_handle, payment_amount, bitmap, filter] = ctx;
 
-              probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
+              // probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
 
               if ((bitmap & 0x01) && (filter & 0x01)) {
                 state->warehouse_future.Invoke(state, index_handle, payment_amount);

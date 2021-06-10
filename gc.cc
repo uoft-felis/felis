@@ -3,6 +3,7 @@
 #include "util/locks.h"
 #include "log.h"
 #include "vhandle.h"
+#include "index_info.h"
 #include "index.h"
 #include "node_config.h"
 #include "epoch.h"
@@ -14,7 +15,7 @@ namespace felis {
 struct GarbageBlock : public util::GenericListNode<GarbageBlock> {
   static constexpr size_t kBlockSize = 512;
   static constexpr int kMaxNrRows = kBlockSize / 8 - 4;
-  std::array<VHandle *, kMaxNrRows> rows;
+  std::array<IndexInfo *, kMaxNrRows> rows;
   int alloc_core;
   int q_idx;
   uint64_t bitmap;
@@ -39,7 +40,7 @@ struct GarbageBlockSlab {
 
   GarbageBlockSlab(int core_id);
 
-  uint64_t Add(VHandle *row, int q_idx);
+  uint64_t Add(IndexInfo *row, int q_idx);
   void Remove(GarbageBlock *blk, int idx);
 };
 
@@ -47,7 +48,7 @@ GarbageBlockSlab::GarbageBlockSlab(int core_id)
     : core_id(core_id)
 {
   auto blks = (GarbageBlock *) mem::AllocMemory(
-      mem::VhandlePool, GarbageBlock::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
+      mem::IndexInfoPool, GarbageBlock::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
 
   for (size_t i = 0; i < kNrQueue; i++) {
     half[i].Initialize();
@@ -61,8 +62,7 @@ GarbageBlockSlab::GarbageBlockSlab(int core_id)
   }
 }
 
-uint64_t GarbageBlockSlab::Add(VHandle *row, int q_idx)
-{
+uint64_t GarbageBlockSlab::Add(IndexInfo *row, int q_idx) {
   auto half_queue = &half[q_idx];
   auto full_queue = &full[q_idx];
   int idx = 0;
@@ -115,16 +115,14 @@ void GarbageBlockSlab::Remove(GarbageBlock *blk, int idx)
   lock.Release(&qnode);
 }
 
-uint64_t GC::AddRow(VHandle *row, uint64_t epoch_nr)
-{
+uint64_t GC::AddRow(IndexInfo *row, uint64_t epoch_nr) {
   abort_if(epoch_nr == 0, "Should not even detect garbage during loader");
   int q_idx = epoch_nr % g_gc_every_epoch;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   return g_slabs[core_id]->Add(row, q_idx);
 }
 
-void GC::RemoveRow(VHandle *row, uint64_t gc_handle)
-{
+void GC::RemoveRow(IndexInfo *row, uint64_t gc_handle) {
   uint64_t base = GarbageBlock::kBlockSize * (gc_handle / GarbageBlock::kBlockSize);
   int idx = (gc_handle - base - sizeof(util::GenericListNode<GarbageBlock>)) / 8;
   auto blk = (GarbageBlock *) base;
@@ -316,8 +314,7 @@ void GC::RunPmemGC()
   }
 }
 
-size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
-{
+size_t GC::Process(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
   util::MCSSpinLock::QNode qnode;
   handle->lock.Lock(&qnode);
   size_t n = Collect(handle, cur_epoch_nr, limit);
@@ -325,7 +322,7 @@ size_t GC::Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   return n;
 }
 
-size_t GC::ProcessPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
+size_t GC::ProcessPmem(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
   util::MCSSpinLock::QNode qnode;
   handle->lock.Lock(&qnode);
   size_t n = CollectPmem(handle, cur_epoch_nr, limit);
@@ -333,7 +330,7 @@ size_t GC::ProcessPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   return n;
 }
 
-bool GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next)
+bool GC::FreeIfGarbage(IndexInfo *row, VarStr *p, VarStr *next)
 {
   auto &s = stats[go::Scheduler::CurrentThreadPoolId() - 1];
   bool deleted = false;
@@ -347,8 +344,7 @@ bool GC::FreeIfGarbage(VHandle *row, VarStr *p, VarStr *next)
   return deleted;
 }
 
-size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
-{
+size_t GC::Collect(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
   printf("shouldn't reach old implementation of GC::Collect\n");
   std::abort();
   auto *versions = handle->versions;
@@ -381,7 +377,7 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   return i;
 }
 
-size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
+size_t GC::CollectPmem(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
   //auto *versions = handle->versions;
   //uintptr_t *objects = handle->versions + handle->capacity;
   //int i = handle->size; //shirley: don't need this return value. just return 1.
@@ -392,16 +388,15 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   //handle->cur_start = 0;
   //handle->latest_version = -1; //shirley: removed bc latest version is stored in versions
 
-  // shirley TODO: we should make these steps into a functions in vhandle. this is temporary 
   // shirley: free ptr1 if it's not from inline
-  handle->FreePtr1();
+  handle->vhandle->FreePtr1();
   // auto ptr1 = handle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
   // if (ptr1 < (unsigned char *)handle ||
   //     ptr1 >= (unsigned char *)handle + 256) {
   //       delete ((VarStr *)ptr1);
   // }
   // shirley: copy sid2, ptr2 to sid1, ptr1
-  handle->Copy2To1();
+  handle->vhandle->Copy2To1();
   // //get sid2 and ptr2
   // auto sid2 = handle->GetInlineSid(felis::SortedArrayVHandle::SidType2); 
   // auto ptr2 = handle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
@@ -409,7 +404,7 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   // handle->SetInlineSid(felis::SortedArrayVHandle::SidType1, sid2);
   // handle->SetInlinePtr(felis::SortedArrayVHandle::SidType1, ptr2);
   // shirley: reset sid2, ptr2 (not needed in ECE1724 design)
-  handle->ResetSid2();
+  handle->vhandle->ResetSid2();
 
   //shirley pmem: flush cache after GC
   // _mm_clwb((char *)handle);
@@ -420,12 +415,14 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   return 1;
 }
 
-bool GC::IsDataGarbage(VHandle *row, VarStr *data)
-{
+// shirley: this function is not used for new design
+bool GC::IsDataGarbage(IndexInfo *row, VarStr *data) {
   if (data == nullptr) return false;
   auto p = (uint8_t *) data;
+  // shirley: this doesn't make sense in new design. ignore.
   if (p > (uint8_t *) row && p < (uint8_t *) row + 256) {
-    abort_if(!row->is_inlined(), "??? row {} p {}", (void *) row, (void *) p);
+    // shirley: removed. always inlined
+    // abort_if(!row->is_inlined(), "??? row {} p {}", (void *) row, (void *) p);
     return false;
   }
   return true;

@@ -4,6 +4,7 @@
 #include "locality_manager.h"
 #include "node_config.h"
 #include "vhandle.h"
+#include "index_info.h"
 #include "contention_manager.h"
 #include "opts.h"
 #include "felis_probes.h"

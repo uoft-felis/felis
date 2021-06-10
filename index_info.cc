@@ -19,7 +19,7 @@ namespace felis {
 
 bool VHandleSyncService::g_lock_elision = false;
 
-VHandleSyncService &BaseVHandle::sync() {
+VHandleSyncService &BaseIndexInfo::sync() {
   return util::Impl<VHandleSyncService>();
 }
 
@@ -518,7 +518,7 @@ IndexInfo *IndexInfo::New() {
 mem::ParallelSlabPool BaseIndexInfo::pool;
 
 void BaseIndexInfo::InitPool() {
-  pool = mem::ParallelSlabPool(mem::IndexInfoPool, kBaseIndexInfoSize, 4, false);
+  pool = mem::ParallelSlabPool(mem::IndexInfoPool, kIndexInfoSize, 4, false);
   pool.Register();
 }
 

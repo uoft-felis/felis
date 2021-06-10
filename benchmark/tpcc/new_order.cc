@@ -359,7 +359,7 @@ void NewOrderTxn::Run()
 
           state->stock_futures[i] = UpdateForKey(
               node, state->stocks[i],
-              [](const auto &ctx, VHandle *row) {
+              [](const auto &ctx, IndexInfo *row) {
                 auto &[state, index_handle, quantity, remote, i] = ctx;
                 debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
                       index_handle.serial_id(), i, (void *) row);

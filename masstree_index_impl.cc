@@ -19,7 +19,7 @@ kvepoch_t global_log_epoch;
 namespace felis {
 
 struct MasstreeDollyParam : public Masstree::nodeparams<15, 15> {
-  typedef VHandle* value_type;
+  typedef IndexInfo* value_type;
   // typedef VHandlePrinter value_print_type;
   typedef threadinfo threadinfo_type;
 };
@@ -56,7 +56,7 @@ void MasstreeMap::Iterator<MasstreeIteratorImpl>::Adapt()
     // wrap the iterator
     auto s = ((MasstreeIteratorImpl *) this)->key.full_string();
     cur_key = VarStrView(s.length(), (uint8_t *) s.data());
-    vhandle = this->entry.value();
+    index_info = this->entry.value();
   }
 }
 
@@ -89,9 +89,9 @@ MasstreeIndex::MasstreeIndex(std::tuple<bool> conf) noexcept
 }
 
 template <typename Func>
-VHandle *MasstreeIndex::SearchOrCreateImpl(const VarStrView &k, Func f)
+IndexInfo *MasstreeIndex::SearchOrCreateImpl(const VarStrView &k, Func f)
 {
-  VHandle *result;
+  IndexInfo *result;
   // result = this->Search(k);
   // if (result) return result;
   auto ti = GetThreadInfo();
@@ -107,21 +107,21 @@ VHandle *MasstreeIndex::SearchOrCreateImpl(const VarStrView &k, Func f)
   return result;
 }
 
-VHandle *MasstreeIndex::SearchOrCreate(const VarStrView &k)
+IndexInfo *MasstreeIndex::SearchOrCreate(const VarStrView &k)
 {
   return SearchOrCreateImpl(k, [=]() { return NewRow(); });
 }
 
-VHandle *MasstreeIndex::SearchOrCreate(const VarStrView &k, bool *created)
+IndexInfo *MasstreeIndex::SearchOrCreate(const VarStrView &k, bool *created)
 {
   *created = false;
   return SearchOrCreateImpl(k, [=]() { *created = true; return NewRow(); });
 }
 
-VHandle *MasstreeIndex::Search(const VarStrView &k)
+IndexInfo *MasstreeIndex::Search(const VarStrView &k)
 {
   auto ti = GetThreadInfo();
-  VHandle *result = nullptr;
+  IndexInfo *result = nullptr;
   get_map()->get(lcdf::Str(k.data(), k.length()), result, *ti);
   return result;
 }
@@ -174,7 +174,7 @@ void MasstreeIndex::ImmediateDelete(const VarStrView &k)
   auto ti = GetThreadInfo();
   typename MasstreeMap::cursor_type cursor(*get_map(), k.data(), k.length());
   bool found = cursor.find_locked(*ti);
-  VHandle *phandle = nullptr;
+  IndexInfo *phandle = nullptr;
   if (found) {
     phandle = cursor.value();
     cursor.value() = nullptr;

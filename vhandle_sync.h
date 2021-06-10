@@ -2,6 +2,7 @@
 #define _VHANDLE_SYNC_H
 
 #include "vhandle.h"
+#include "index_info.h"
 
 namespace felis {
 

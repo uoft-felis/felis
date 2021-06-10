@@ -14,6 +14,7 @@
 #include "util/linklist.h"
 
 #include "vhandle.h"
+#include "index_info.h"
 #include "node_config.h"
 #include "shipping.h"
 
@@ -86,7 +87,9 @@ class Table {
    protected:
     VarStrView end_key;
     VarStrView cur_key;
-    VHandle *vhandle;
+    // VHandle *vhandle;
+
+    IndexInfo *index_info;
     // shirley note: when returning idx_info, return the pointer to it, not just a copy
     // shirley note: or else the threads are not actually seeing anyone's changes to lock/versions
     // shirley note: do we want to just store *idx_info here (but more mem usage)? Or do we want to
@@ -98,8 +101,10 @@ class Table {
     virtual bool IsValid() const = 0;
 
     const VarStrView &key() const { return cur_key; }
-    const VHandle *row() const { return vhandle; }
-    VHandle *row() { return vhandle; }
+    // const VHandle *row() const { return vhandle; }
+    const IndexInfo *row() const { return index_info; }
+    // VHandle *row() { return vhandle; }
+    IndexInfo *row() { return index_info; }
   };
  protected:
   void set_iterator_end_key(Iterator *it, const VarStrView &end) {
@@ -108,9 +113,9 @@ class Table {
  public:
 
   // IndexBackend will implement these
-  virtual VHandle *SearchOrCreate(const VarStrView &k, bool *created) { return nullptr; }
-  virtual VHandle *SearchOrCreate(const VarStrView &k) { return nullptr; }
-  virtual VHandle *Search(const VarStrView &k) { return nullptr; }
+  virtual IndexInfo *SearchOrCreate(const VarStrView &k, bool *created) { return nullptr; }
+  virtual IndexInfo *SearchOrCreate(const VarStrView &k) { return nullptr; }
+  virtual IndexInfo *Search(const VarStrView &k) { return nullptr; }
   virtual Table::Iterator *IndexSearchIterator(const VarStrView &start) {
     return nullptr;
   }
@@ -124,7 +129,7 @@ class Table {
     return nullptr;
   }
 
-  VHandle *NewRow();
+  IndexInfo *NewRow();
   size_t row_size() const {
     if (is_enable_inline()) return VHandle::kInlinedSize;
     else return VHandle::kSize;
@@ -165,7 +170,7 @@ class TableManager {
   std::array<Table *, kMaxNrRelations> tables;
 };
 
-void InitVersion(felis::VHandle *, VarStr *);
+void InitVersion(felis::IndexInfo *, VarStr *);
 
 }
 
