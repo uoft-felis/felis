@@ -32,7 +32,7 @@ class BaseVHandle {
   //Corey: Vhandle_Metadata(64B) | Inline_Version_Array(32B) | Mask1(1B)|Mask2(1B)|MiniHeap(158B)
   //Corey: Inline_Version_Array(32B) = Sid1(8B)|Ptr1(8B)|Sid2(8B)|Ptr2(8B)
   //Corey: Set Inline offsets - Doesn't take up memory
-  static constexpr size_t VerArrayInfoSize = 32; // shirley: move to index_info
+  // static constexpr size_t VerArrayInfoSize = 32; // shirley: move to index_info
   static constexpr size_t VhandleInfoSize = 80;
   // static constexpr size_t vhandleMetadataSize = 64;
   // static constexpr size_t ineTwoVersionArraySid1Size = 8;
@@ -171,69 +171,69 @@ public:
   // bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
 
 
-  // shirley: define the layout of the info stored in version array. should be smaller than 32 bytes.
-  typedef struct VerArrayInfo {
-    unsigned int capacity;
-    unsigned int size;
-    std::atomic_int latest_version; // shirley: the latest written version's offset in *versions
-  } VerArrayInfo;
+  // // shirley: define the layout of the info stored in version array. should be smaller than 32 bytes.
+  // typedef struct VerArrayInfo {
+  //   unsigned int capacity;
+  //   unsigned int size;
+  //   std::atomic_int latest_version; // shirley: the latest written version's offset in *versions
+  // } VerArrayInfo;
 
-  // shirley: return pointer to versions within transient version array
-  static uint64_t *versions_ptr(uint64_t *versions) {
-    assert(versions);
-    return (uint64_t *)(((uint8_t *)versions) + VerArrayInfoSize);
-  }
+  // // shirley: return pointer to versions within transient version array
+  // static uint64_t *versions_ptr(uint64_t *versions) {
+  //   assert(versions);
+  //   return (uint64_t *)(((uint8_t *)versions) + VerArrayInfoSize);
+  // }
 
-  // shirley: return pointers to info given version array
-  static unsigned int *capacity_ptr(uint64_t *versions) {
-    assert(versions);
-    return &(((VerArrayInfo*)versions)->capacity);
-  }
+  // // shirley: return pointers to info given version array
+  // static unsigned int *capacity_ptr(uint64_t *versions) {
+  //   assert(versions);
+  //   return &(((VerArrayInfo*)versions)->capacity);
+  // }
 
-  static unsigned int *size_ptr(uint64_t *versions) {
-    assert(versions);
-    return &(((VerArrayInfo *)versions)->size);
-  }
+  // static unsigned int *size_ptr(uint64_t *versions) {
+  //   assert(versions);
+  //   return &(((VerArrayInfo *)versions)->size);
+  // }
 
-  static std::atomic_int *latest_version_ptr(uint64_t *versions) {
-    assert(versions);
-    return &(((VerArrayInfo *)versions)->latest_version);
-  }
+  // static std::atomic_int *latest_version_ptr(uint64_t *versions) {
+  //   assert(versions);
+  //   return &(((VerArrayInfo *)versions)->latest_version);
+  // }
 
-  // shirley: set info given version array
-  static void capacity_set(uint64_t *versions, unsigned int capacity) {
-    assert(versions);
-    ((VerArrayInfo *)versions)->capacity = capacity;
-  }
+  // // shirley: set info given version array
+  // static void capacity_set(uint64_t *versions, unsigned int capacity) {
+  //   assert(versions);
+  //   ((VerArrayInfo *)versions)->capacity = capacity;
+  // }
 
-  static void size_set(uint64_t *versions, unsigned int size) {
-    assert(versions);
-    ((VerArrayInfo *)versions)->size = size;
-  }
+  // static void size_set(uint64_t *versions, unsigned int size) {
+  //   assert(versions);
+  //   ((VerArrayInfo *)versions)->size = size;
+  // }
 
-  static void latest_version_set(uint64_t *versions, int latest_version) {
-    assert(versions);
-    ((VerArrayInfo *)versions)->latest_version.store(latest_version);
-  }
+  // static void latest_version_set(uint64_t *versions, int latest_version) {
+  //   assert(versions);
+  //   ((VerArrayInfo *)versions)->latest_version.store(latest_version);
+  // }
 
-  // shirley: get info given version array
-  static unsigned int capacity_get(uint64_t *versions) {
-    assert(versions);
-    return ((VerArrayInfo *)versions)->capacity;
-  }
+  // // shirley: get info given version array
+  // static unsigned int capacity_get(uint64_t *versions) {
+  //   assert(versions);
+  //   return ((VerArrayInfo *)versions)->capacity;
+  // }
 
-  static unsigned int size_get(uint64_t *versions) {
-    assert(versions);
-    return ((VerArrayInfo *)versions)->size;
-  }
+  // static unsigned int size_get(uint64_t *versions) {
+  //   assert(versions);
+  //   return ((VerArrayInfo *)versions)->size;
+  // }
 
-  static int latest_version_get(uint64_t *versions) {
-    assert(versions);
-    return ((VerArrayInfo *)versions)->latest_version.load();
-  }
+  // static int latest_version_get(uint64_t *versions) {
+  //   assert(versions);
+  //   return ((VerArrayInfo *)versions)->latest_version.load();
+  // }
 
-  static_assert(sizeof(VerArrayInfo) <= VerArrayInfoSize,
-                "VerArrayInfo is larger than VerArrayInfoSize bytes!\n");
+  // static_assert(sizeof(VerArrayInfo) <= VerArrayInfoSize,
+  //               "VerArrayInfo is larger than VerArrayInfoSize bytes!\n");
 
   enum SidType {
     SidType1,
