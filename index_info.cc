@@ -265,13 +265,15 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
     // shirley: this is used by default
     // shirley: if versions is nullptr, allocate new version array, copy sid1 &
     // ptr1, set capacity = 4, size = 1, latest_version = 0, cur_start = 0
-    if ((!versions)) {
+    auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    if (versions_ep != current_epoch_nr) {
       // printf("AppendNewVersion: version array is null. SHOULDN'T REACH
       // HERE!\n"); printf("AppendNewVersion: trying to allocate new version
       // array\n"); shirley: initial size 64 is ok. (fits 4 versions). note:
       // this is without info in ver_array.
       // shirley: use transient pool for version array
       int initial_cap = 2;
+      versions_ep = current_epoch_nr;
       versions = (uint64_t *)mem::GetTransientPool().Alloc(
           VerArrayInfoSize + 2 * initial_cap * sizeof(uint64_t));
       capacity_set(versions, initial_cap);
@@ -279,11 +281,19 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
       // cur_start = 0;
       latest_version_set(versions, -1);
 
-      // now add initial version (sid1, ptr1) to the new version array
-      auto sid1 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType1);
-      auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
-      versions_ptr(versions)[0] = sid1;
-      versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
+      // now add initial version (just set sid=0, ptr2/1) to the new version array
+      versions_ptr(versions)[0] = 0; //it's okay to set sid to 0 here.
+      auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+      if (ptr2){
+        // auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+        versions_ptr(versions)[initial_cap] = (uint64_t)ptr2;
+      }
+      else{
+        // auto sid1 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType1);
+        auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
+        versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
+      }
+      
       size_set(versions, 1);
       latest_version_set(versions, 0);
       // shirley debug: do we need to init to 0? I don't think so?
@@ -294,11 +304,9 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
       // versions[6] = 0;
       // versions[7] = 0;
 
-      // shirley future: we need to use gc_handle if we want to remove row
-      // during minor GC shirley: add row to GC bc it's appended to
-      auto &gc = util::Instance<GC>();
-      // shirley todo: modify GC to store IndexInfo.
-      auto gchandle = gc.AddRow((IndexInfo *)this, epoch_nr);
+      // shirley: add row to GC bc it's appended to (major GC method)
+      // auto &gc = util::Instance<GC>();
+      // auto gchandle = gc.AddRow((IndexInfo *)this, epoch_nr);
       // gc_handle.store(gchandle, std::memory_order_relaxed);
 
       // shirley: this was the old gc add row.
@@ -370,22 +378,25 @@ found:
 //   nullptr
 VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
   // shirley: if versions is nullptr, read from sid1/sid2
-  if (!versions) {
-    // printf("ReadWithVersion: versions is null. SHOULDNT REACH HERE\n");
+  auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+  if (versions_ep != current_epoch_nr)  {
     // printf("ReadWithVersion try read from inline\n");
-    // shirley: if (sid >= sid1) return ptr1;
-    if (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType1)) {
-      // printf("ReadWithVersion try read from inline SUCCESS\n");
+    auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+    // shirley: don't need to compare sid with sid2 bc sid2 should definitely be smaller.
+    if (ptr2 /*&& (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType2))*/){
+      // VarStr *ptr2 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType2));
+      return (VarStr *) ptr2;
+    }
+    // shirley: don't need to compare sid with sid1 bc sid1 should definitely be smaller.
+    else /*if (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType1))*/ {
       VarStr *ptr1 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType1));
       return ptr1;
-    } else {
-      // printf("ReadWithVersion: !versions, returning nullptr! sid = %u, sid1 =
-      // %u\n", sid, GetInlineSid(sid1)); std::abort();
-      return nullptr;
     }
+    // printf("ReadWithVersion: !versions, returning nullptr! sid = %u, sid1 =
+    // %u\n", sid, GetInlineSid(sid1)); std::abort();
+    // return nullptr;
 
-    // shirley TODO future: if we use the approach that uses minor GC (and not
-    // as much major GC) then we need to check sid2 before sid1. But, we don't
+    // shirley: for minor GC approach we need to check sid2 before sid1. But, we don't
     // need to sync().WaitForData bc if versions is null or out of date epoch,
     // then the data is already written in prev epoch. If it was updated in curr
     // epoch then we won't go into this code (i.e. there won't be null versions

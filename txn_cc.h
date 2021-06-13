@@ -226,6 +226,13 @@ class Txn : public BaseTxn {
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
         VHandle *vhandle = index_info->vhandle_ptr();
+        // shirley: minor GC
+        auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+        if (ptr2){
+          vhandle->FreePtr1(); // shirley: this is probably not needed but okay
+          vhandle->Copy2To1();
+        }
+
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
@@ -255,7 +262,10 @@ class Txn : public BaseTxn {
     template <typename T> bool WriteTryInline(const T &o) {
       //shirley: probe size of version value
       // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
-
+      if (!index_info) {
+        printf("Write: index_info is null???\n");
+        std::abort();
+      }
       bool usePmem = ((index_info->last_version()) == sid);
       //shirley: probe transient vs persistent
       // probes::TransientPersistentCount{usePmem}();
@@ -263,6 +273,13 @@ class Txn : public BaseTxn {
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
         VHandle *vhandle = index_info->vhandle_ptr();
+        // shirley: minor GC
+        auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+        if (ptr2){
+          vhandle->FreePtr1(); // shirley: this is probably not needed but okay
+          vhandle->Copy2To1();
+        }
+
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
@@ -283,14 +300,9 @@ class Txn : public BaseTxn {
       else {
         bool result = WriteVarStr(o.Encode(usePmem));
         //shirley: should remove this flush bc only flushing 64 bytes. It's gonna invalidate the cacheline.
-        // // _mm_clwb((char *)vhandle); //shirley: bc we modified some info in vhandle. 
+        // // _mm_clwb((char *)vhandle); //shirley: flush cache bc we modified some info in vhandle. 
         return result;
       }
-
-      //shirley: removed inline (from original Caracal) since we have new inline design
-      // bool usePmem = ((vhandle->last_version()) == sid);
-      // return WriteVarStr(o.EncodeToPtrOrDefault(
-      //     vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem));
     }
 
     //shirley: this should be used for writing initial version after row insert.

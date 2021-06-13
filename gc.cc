@@ -383,7 +383,7 @@ size_t GC::CollectPmem(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
   //int i = handle->size; //shirley: don't need this return value. just return 1.
 
   //printf("RunPmemGC: cleaning vhandle %p\n", handle);
-  handle->versions = nullptr;
+  // handle->versions = nullptr; // shirley: not needed in minor GC design
   //handle->size = 0; //shirley: removed bc size is stored in versions
   //handle->cur_start = 0;
   //handle->latest_version = -1; //shirley: removed bc latest version is stored in versions

@@ -11,6 +11,8 @@
 #include "varstr.h"
 #include <atomic>
 #include "vhandle.h"
+#include "util/objects.h"
+#include "epoch.h"
 
 namespace felis {
 
@@ -57,6 +59,7 @@ class IndexInfo : public BaseIndexInfo {
   util::MCSSpinLock lock;
   VHandle *vhandle;
   //[0, capacity - 1] stores version number, [capacity, 2*capacity - 1] stores ptr to data
+  uint64_t versions_ep = 0;
   uint64_t *versions;
 
   // shirley: versions? vhandle? used by contention manager.
@@ -175,30 +178,45 @@ public:
   // These function are racy. Be careful when you are using them. They are
   // perfectly fine for statistics.
   // const size_t nr_capacity() const { return capacity; }
+  // shirley: this is only used for granola / pwv
   const size_t nr_versions() const {
-    if (!versions)
+    auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    if (versions_ep != current_epoch_nr)
       return 0;
     return size_get(versions);
   }
   const size_t current_start() const { return 0; }
   uint64_t first_version() const {
-    if (!versions)
-      return vhandle->GetInlineSid(SortedArrayVHandle::SidType1); // shirley: return sid1 when version array is null
+    auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    if (versions_ep != current_epoch_nr) {
+      auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+      if (ptr2){
+        return vhandle->GetInlineSid(SortedArrayVHandle::SidType2);
+      }
+      else {
+        return vhandle->GetInlineSid(SortedArrayVHandle::SidType1); 
+      }
+    }
     else
       return versions_ptr(versions)[0];
     // return versions[0];
   }
   uint64_t last_version() const {
-    if (versions)
+    auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    if (versions_ep == current_epoch_nr)
       return versions_ptr(versions)[size_get(versions) - 1];
     // return versions[size - 1];
     else {
-      printf("last_version(), versions is null???\n");
+      // shirley: this function is called during write (execute) so versions should be current
+      // shirley note: but it's also used in shipping.cc but out of date and not supporting.
+      printf("last_version(), versions is not current???\n");
       std::abort();
     } // shirley: abort bc versions shouldn't be nullptr?
   }
   unsigned int nr_updated() const {
-    assert(versions);
+    // shirley todo: used by contention manager. TODO
+    auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    assert(versions_ep == current_epoch_nr);
     return latest_version_ptr(versions)->load(std::memory_order_relaxed) + 1;
   }
   // int nr_ondemand_split() const { return nr_ondsplt; }
@@ -221,7 +239,7 @@ private:
 };
 
 // shirley: probably don't need size checking for index info
-// static_assert(sizeof(IndexInfo) <= BaseIndexInfo::kIndexInfoSize, "IndexInfo is too large!");
+static_assert(sizeof(IndexInfo) <= BaseIndexInfo::kIndexInfoSize, "IndexInfo is too large!");
 
 
 } // namespace felis
