@@ -238,7 +238,7 @@ class Txn : public BaseTxn {
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
                                             usePmem);
-        
+        bool result = WriteVarStr(val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
@@ -251,7 +251,7 @@ class Txn : public BaseTxn {
         // _mm_clwb((char *)vhandle + 128);
         // _mm_clwb((char *)vhandle + 192);
         //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
-        bool result = WriteVarStr(val);
+        
         return result;
       }
       else {
@@ -289,7 +289,7 @@ class Txn : public BaseTxn {
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
                                             usePmem);
-        
+        bool result = WriteVarStr(val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
@@ -302,7 +302,7 @@ class Txn : public BaseTxn {
         // _mm_clwb((char *)vhandle + 128);
         // _mm_clwb((char *)vhandle + 192);
         //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
-        bool result = WriteVarStr(val);
+        
         return result;
       }
       else {
