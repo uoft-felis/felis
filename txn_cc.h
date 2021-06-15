@@ -229,7 +229,8 @@ class Txn : public BaseTxn {
         // shirley: minor GC
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
         if (ptr2){
-          vhandle->FreePtr1(); // shirley: this is probably not needed but okay
+          vhandle->remove_majorGC_if_ext();
+          vhandle->FreePtr1(); 
           vhandle->Copy2To1();
         }
 
@@ -237,17 +238,20 @@ class Txn : public BaseTxn {
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
                                             usePmem);
-        bool result = WriteVarStr(val);
+        
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
+        // shirley: add to major GC if ptr1 inlined
+        vhandle->add_majorGC_if_ext();
         //shirley pmem: flush cache after last version write
         // _mm_clwb((char *)vhandle); 
         // _mm_clwb((char *)vhandle + 64);
         // _mm_clwb((char *)vhandle + 128);
         // _mm_clwb((char *)vhandle + 192);
         //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
+        bool result = WriteVarStr(val);
         return result;
       }
       else {
@@ -276,7 +280,8 @@ class Txn : public BaseTxn {
         // shirley: minor GC
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
         if (ptr2){
-          vhandle->FreePtr1(); // shirley: this is probably not needed but okay
+          vhandle->remove_majorGC_if_ext();
+          vhandle->FreePtr1(); 
           vhandle->Copy2To1();
         }
 
@@ -284,17 +289,20 @@ class Txn : public BaseTxn {
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
                                             usePmem);
-        bool result = WriteVarStr(val);
+        
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
+        // shirley: add to major GC if ptr1 inlined
+        vhandle->add_majorGC_if_ext();
         //shirley pmem: flush cache after last version write
         // _mm_clwb((char *)vhandle); 
         // _mm_clwb((char *)vhandle + 64);
         // _mm_clwb((char *)vhandle + 128);
         // _mm_clwb((char *)vhandle + 192);
         //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
+        bool result = WriteVarStr(val);
         return result;
       }
       else {

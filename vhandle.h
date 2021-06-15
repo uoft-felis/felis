@@ -10,6 +10,8 @@
 #include "varstr.h"
 #include "shipping.h"
 #include "entity.h"
+#include "epoch.h"
+#include "gc.h"
 
 namespace felis {
 
@@ -239,6 +241,29 @@ public:
     SidType1,
     SidType2
   };
+
+  bool is_inline_ptr(uint8_t *ptr){
+    if (ptr < (uint8_t *)this || ptr >= (((uint8_t *)this) + 256)) {
+      return false;
+    }
+    return true;
+  }
+
+  // shirley: add/remove row to major GC if ptr1 points to external
+  void add_majorGC_if_ext(){
+    if (!is_inline_ptr(ptr1)){
+      auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+      auto &gc = util::Instance<GC>();
+      gc_handle.store(gc.AddRow((VHandle *)this, current_epoch_nr), std::memory_order_relaxed);
+    }
+  }
+
+  void remove_majorGC_if_ext(){
+    if (!is_inline_ptr(ptr1)) {
+      auto &gc = util::Instance<GC>();
+      gc.RemoveRow((VHandle *)this, gc_handle);
+    }
+  }
 
   //Corey: Get Sid value
   uint64_t GetInlineSid(SidType sidType) const {

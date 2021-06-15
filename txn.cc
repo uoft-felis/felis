@@ -78,7 +78,7 @@ bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
     auto p = index_info->ReadExactVersion(0);
     size_t nr_bytes = 0;
     // SHIRLEY: this is for granola so don't touch this GC (?)
-    util::Instance<GC>().FreeIfGarbage(index_info, p, obj);
+    util::Instance<GC>().FreeIfGarbage(index_info->vhandle_ptr(), p, obj);
     return index_info->WriteExactVersion(0, obj, epoch_nr);
   }
 }

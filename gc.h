@@ -8,7 +8,7 @@
 namespace felis {
 
 class VHandle;
-class IndexInfo;
+// class IndexInfo;
 struct GarbageBlockSlab;
 struct GarbageBlock;
 
@@ -25,8 +25,8 @@ class GC {
   } stats[NodeConfiguration::kMaxNrThreads];
 
  public:
-  uint64_t AddRow(IndexInfo *row, uint64_t epoch_nr);
-  void RemoveRow(IndexInfo *row, uint64_t gc_handle);
+  uint64_t AddRow(VHandle *row, uint64_t epoch_nr);
+  void RemoveRow(VHandle *row, uint64_t gc_handle);
   void PrepareGCForAllCores();
   void RunGC();
   void RunPmemGC();
@@ -39,17 +39,17 @@ class GC {
 
   static void InitPool();
 
-  static bool IsDataGarbage(IndexInfo *row, VarStr *data);
-  bool FreeIfGarbage(IndexInfo *row, VarStr *data, VarStr *next);
+  static bool IsDataGarbage(VHandle *row, VarStr *data);
+  bool FreeIfGarbage(VHandle *row, VarStr *data, VarStr *next);
 
-  size_t Collect(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit);
-  size_t CollectPmem(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit);
+  size_t Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
+  size_t CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
 
   static unsigned int g_gc_every_epoch;
   static bool g_lazy;
  private:
-   size_t Process(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit);
-   size_t ProcessPmem(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit);
+   size_t Process(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
+   size_t ProcessPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit);
 };
 
 }
