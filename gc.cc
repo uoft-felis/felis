@@ -408,11 +408,11 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   // shirley: reset sid2, ptr2 (not needed in ECE1724 design)
   handle->ResetSid2();
 
-  //shirley pmem: flush cache after GC
-  // _mm_clwb((char *)vhandle);
-  // _mm_clwb(((char *)vhandle) + 64);
-  // _mm_clwb(((char *)vhandle) + 128);
-  // _mm_clwb(((char *)vhandle) + 192);
+  //shirley pmem shirley test: flush cache after GC
+  // _mm_clwb((char *)handle);
+  // _mm_clwb(((char *)handle) + 64);
+  // _mm_clwb(((char *)handle) + 128);
+  // _mm_clwb(((char *)handle) + 192);
 
   return 1;
 }
