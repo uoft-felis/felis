@@ -96,6 +96,10 @@ public:
 
   // shirley: return pointer to vhandle
   VHandle *vhandle_ptr() {
+#ifndef NDEBUG
+    // we are in debug build
+    return (VHandle *)((int64_t)(this->vhandle) & 0x7FFFFFFFFFFFFFFF);
+#endif
     return vhandle;
   }
 
@@ -166,11 +170,15 @@ public:
                 "VerArrayInfo is larger than VerArrayInfoSize bytes!\n");
 
   void Prefetch() const { __builtin_prefetch(versions); }
-  void Prefetch_vhandle() const { 
+  void Prefetch_vhandle() const {
+#ifndef NDEBUG
+    // we are in debug build
+    VHandle *vhandle = (VHandle *)((int64_t)(this->vhandle) & 0x7FFFFFFFFFFFFFFF);
+#endif
     __builtin_prefetch(vhandle);
-    __builtin_prefetch((char*) (vhandle + 64));
-    __builtin_prefetch((char*) (vhandle + 128));
-    __builtin_prefetch((char*) (vhandle + 192));
+    __builtin_prefetch((char *)(vhandle + 64));
+    __builtin_prefetch((char *)(vhandle + 128));
+    __builtin_prefetch((char *)(vhandle + 192));
   }
 
   std::string ToString() const;
@@ -189,6 +197,10 @@ public:
   uint64_t first_version() const {
     auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
     if (versions_ep != current_epoch_nr) {
+#ifndef NDEBUG
+      // we are in debug build
+      VHandle *vhandle = (VHandle *)((int64_t)(this->vhandle) & 0x7FFFFFFFFFFFFFFF);
+#endif
       auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
       if (ptr2){
         return vhandle->GetInlineSid(SortedArrayVHandle::SidType2);

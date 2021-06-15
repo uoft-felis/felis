@@ -33,6 +33,11 @@ IndexInfo::IndexInfo() {
   // shirley note: need to make sure we only allocate vhandle once (here or in index.cc)
   vhandle = (VHandle *) VHandle::NewInline();
 
+#ifndef NDEBUG
+  // we are in debug build
+  vhandle = (VHandle *)((int64_t)vhandle | 0x8000000000000000);
+#endif
+
   // shirley: old: alloc versions externally from data region or inline
   // versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * 4 *
   // sizeof(uint64_t)); versions = (uint64_t *) mem::GetTransientPool().Alloc(2
@@ -283,6 +288,10 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
 
       // now add initial version (just set sid=0, ptr2/1) to the new version array
       versions_ptr(versions)[0] = 0; //it's okay to set sid to 0 here.
+#ifndef NDEBUG
+      // we are in debug build
+      VHandle *vhandle = vhandle_ptr();//(VHandle *)((int64_t)vhandle & 0x7FFFFFFFFFFFFFFF);
+#endif
       auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
       if (ptr2){
         // auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
@@ -377,6 +386,10 @@ found:
 //   but if sid = 4, then we don't have the value for it to read, then returns
 //   nullptr
 VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
+#ifndef NDEBUG
+  // we are in debug build
+  VHandle *vhandle = vhandle_ptr();//(VHandle *)((int64_t)vhandle & 0x7FFFFFFFFFFFFFFF);
+#endif
   // shirley: if versions is nullptr, read from sid1/sid2
   auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   if (versions_ep != current_epoch_nr)  {
