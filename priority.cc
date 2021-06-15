@@ -38,10 +38,10 @@ PriorityTxnService::PriorityTxnService()
       std::abort();
     }
     // 85ms: time of execution phase when batched epoch size=100k. out of experience
-    const int _exec_time = 85;
+    const int _exec_time = 77;
     int percentage = Options::kPercentagePriorityTxn.ToInt();
     abort_if(percentage <= 0, "priority transaction percentage cannot be smaller than 0");
-    int exec_time = int(float(_exec_time) * (1.0 + (float(percentage) / 100.0)));
+    int exec_time = _exec_time + int(float(_exec_time) * ((float(percentage) / 100.0)) * 3.6);
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
     g_interval_priority_txn = exec_time * 1000000 / g_nr_priority_txn; // ms to ns
   } else {
