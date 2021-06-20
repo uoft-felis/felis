@@ -414,26 +414,27 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
       util::MCSSpinLock::QNode qnode;
       lock.Lock(&qnode);
       if (!dram_version){
-        dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-        dram_version->ep_num = current_epoch_nr;
+        DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+        temp_dram_version->ep_num = current_epoch_nr;
         // printf("ReadWithVersion try read from inline\n");
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
         // shirley: don't need to compare sid with sid2 bc sid2 should definitely be smaller.
         if (ptr2 /*&& (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType2))*/){
           // VarStr *ptr2 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType2));
           // return (VarStr *) ptr2;
-          dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(((VarStr*)ptr2)->length()));
-          std::memcpy(dram_version->val, ptr2, VarStr::NewSize(((VarStr*)ptr2)->length()));
-          dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
+          temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(((VarStr*)ptr2)->length()));
+          std::memcpy(temp_dram_version->val, ptr2, VarStr::NewSize(((VarStr*)ptr2)->length()));
+          temp_dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
         }
         // shirley: don't need to compare sid with sid1 bc sid1 should definitely be smaller.
         else /*if (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType1))*/ {
           VarStr *ptr1 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType1));
           // return ptr1;
-          dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(ptr1->length()));
-          std::memcpy(dram_version->val, ptr1, VarStr::NewSize(ptr1->length()));
-          dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
+          temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(ptr1->length()));
+          std::memcpy(temp_dram_version->val, ptr1, VarStr::NewSize(ptr1->length()));
+          temp_dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
         }
+        dram_version = temp_dram_version;
       }
       lock.Unlock(&qnode);
       return dram_version->val;

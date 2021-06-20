@@ -288,6 +288,13 @@ class Txn : public BaseTxn {
       // probes::TransientPersistentCount{usePmem}();
       VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
       
+      // // shirley: also init dram cache
+      // index_info->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+      // index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
+      // std::memcpy(index_info->dram_version->val, val, VarStr::NewSize(val->length()));
+      // ((VarStr*)(index_info->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
+      // index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
+
       if (!val) {
         printf("WriteInitialInline val is null?\n");
         std::abort();
@@ -303,13 +310,6 @@ class Txn : public BaseTxn {
       // _mm_clwb((char *)vhandle + 128);
       // _mm_clwb((char *)vhandle + 192);
       //shirley: don't need flush val. first insert always inlined in miniheap (max varstr is 83 bytes?)
-
-      // shirley: also init dram cache
-      index_info->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-      index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
-      std::memcpy(index_info->dram_version->val, val, VarStr::NewSize(val->length()));
-      ((VarStr*)(index_info->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
-      index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
 
       //shirley: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
       return true;
