@@ -68,6 +68,14 @@ class VarStr final {
   VarStr(const VarStr &rhs) = delete;
   VarStr(VarStr &&rhs) = delete;
 
+  void set_region_id(int16_t reg){
+    region_id = reg;
+  }
+
+  int16_t get_region_id(){
+    return region_id;
+  }
+
   static size_t NewSize(uint16_t length) { return sizeof(VarStr) + length; }
 
   static VarStr *New(uint16_t length, bool use_pmem = true) {

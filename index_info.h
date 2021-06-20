@@ -32,7 +32,7 @@ public:
 class BaseIndexInfo {
 public:
   static constexpr size_t VerArrayInfoSize = 32;
-  static constexpr size_t kIndexInfoSize = 32; // shirley todo: define/modify this later
+  static constexpr size_t kIndexInfoSize = 40; // shirley todo: define/modify this later
   static mem::ParallelSlabPool pool;
   static void InitPool();
   static void Quiescence() { pool.Quiescence(); }
@@ -40,6 +40,11 @@ public:
 public:
   // shirley todo: move sync to index_info
   VHandleSyncService &sync();
+};
+
+struct DramVersion {
+  uint64_t ep_num = 0;
+  VarStr *val; // shirley: a VarStr ptr
 };
 
 class RowEntity;
@@ -61,6 +66,10 @@ class IndexInfo : public BaseIndexInfo {
   //[0, capacity - 1] stores version number, [capacity, 2*capacity - 1] stores ptr to data
   uint64_t versions_ep = 0;
   uint64_t *versions;
+  IndexInfo();
+
+public:
+  DramVersion* dram_version = nullptr;
 
   // shirley: versions? vhandle? used by contention manager.
   // shirley todo: decide what to do with this.
@@ -73,8 +82,6 @@ class IndexInfo : public BaseIndexInfo {
   // shirley: used by contention manager
   // shirley todo: decide what to do with this
   // std::atomic_long buf_pos = -1;
-
-  IndexInfo();
 
 public:
   static void operator delete(void *ptr) {

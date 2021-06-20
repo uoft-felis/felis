@@ -238,13 +238,22 @@ class Txn : public BaseTxn {
                                                       sizeof(VarStr) + o.EncodeSize(), 
                                                       felis::SortedArrayVHandle::SidType2), 
                                             usePmem);
-        bool result = WriteVarStr(val);
+
+        // shirley: update dram cache
+        // shirley TODO: move this to before accessing vhandle, and prefetch vhandle
+        index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
+        std::memcpy(index_info->dram_version->val, val, VarStr::NewSize(val->length()));
+        ((VarStr*)(index_info->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
+        index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
+
+        bool result = WriteVarStr(index_info->dram_version->val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
         // shirley: add to major GC if ptr1 inlined
         vhandle->add_majorGC_if_ext();
+        
         //shirley pmem: flush cache after last version write
         // _mm_clwb((char *)vhandle); 
         // _mm_clwb((char *)vhandle + 64);
@@ -262,56 +271,10 @@ class Txn : public BaseTxn {
       }
     }
 
-    // shirley: WriteTryInline is the same as Write (use WriteInitialInline for row insert)
-    template <typename T> bool WriteTryInline(const T &o) {
-      //shirley: probe size of version value
-      // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
-      if (!index_info) {
-        printf("Write: index_info is null???\n");
-        std::abort();
-      }
-      bool usePmem = ((index_info->last_version()) == sid);
-      //shirley: probe transient vs persistent
-      // probes::TransientPersistentCount{usePmem}();
-
-      //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
-      if (usePmem) {
-        VHandle *vhandle = index_info->vhandle_ptr();
-        // shirley: minor GC
-        auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
-        if (ptr2){
-          vhandle->remove_majorGC_if_ext();
-          vhandle->FreePtr1(); 
-          vhandle->Copy2To1();
-        }
-
-        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
-                                                      sizeof(VarStr) + o.EncodeSize(), 
-                                                      felis::SortedArrayVHandle::SidType2), 
-                                            usePmem);
-        bool result = WriteVarStr(val);
-        // sid2 = sid;
-        vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
-        // ptr2 = val;
-        vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
-        // shirley: add to major GC if ptr1 inlined
-        vhandle->add_majorGC_if_ext();
-        //shirley pmem: flush cache after last version write
-        // _mm_clwb((char *)vhandle); 
-        // _mm_clwb((char *)vhandle + 64);
-        // _mm_clwb((char *)vhandle + 128);
-        // _mm_clwb((char *)vhandle + 192);
-        //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
-        
-        return result;
-      }
-      else {
-        bool result = WriteVarStr(o.Encode(usePmem));
-        //shirley: should remove this flush bc only flushing 64 bytes. It's gonna invalidate the cacheline.
-        // // _mm_clwb((char *)vhandle); //shirley: flush cache bc we modified some info in vhandle. 
-        return result;
-      }
-    }
+    // shirley: WriteTryInline is the same as Write
+    // template <typename T> bool WriteTryInline(const T &o) {
+    //   // shirley: removed. not used. should always use Write.
+    // }
 
     //shirley: this should be used for writing initial version after row insert.
     template <typename T> bool WriteInitialInline(const T &o) {
@@ -340,6 +303,13 @@ class Txn : public BaseTxn {
       // _mm_clwb((char *)vhandle + 128);
       // _mm_clwb((char *)vhandle + 192);
       //shirley: don't need flush val. first insert always inlined in miniheap (max varstr is 83 bytes?)
+
+      // shirley: also init dram cache
+      index_info->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+      index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
+      std::memcpy(index_info->dram_version->val, val, VarStr::NewSize(val->length()));
+      ((VarStr*)(index_info->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
+      index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
 
       //shirley: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
       return true;

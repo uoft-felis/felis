@@ -292,15 +292,28 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
       // we are in debug build
       VHandle *vhandle = vhandle_ptr();//(VHandle *)((int64_t)vhandle & 0x7FFFFFFFFFFFFFFF);
 #endif
-      auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
-      if (ptr2){
-        // auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
-        versions_ptr(versions)[initial_cap] = (uint64_t)ptr2;
+
+      // shirley: try getting initial version from dram cache
+      if (dram_version){
+        VarStr *init_val = (VarStr *)mem::GetTransientPool().Alloc(VarStr::NewSize(dram_version->val->length()));
+        std::memcpy(init_val, dram_version->val, VarStr::NewSize(dram_version->val->length()));
+        versions_ptr(versions)[initial_cap] = (uint64_t)init_val;
+        mem::GetDataRegion().Free(dram_version->val, 
+                                  init_val->get_region_id(), 
+                                  VarStr::NewSize(init_val->length()));
       }
       else{
-        // auto sid1 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType1);
-        auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
-        versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
+        auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+        if (ptr2){
+          // auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+          versions_ptr(versions)[initial_cap] = (uint64_t)ptr2;
+        }
+        else{
+          // auto sid1 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType1);
+          auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
+          versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
+        }
+        dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
       }
       
       size_set(versions, 1);
@@ -393,18 +406,39 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
   // shirley: if versions is nullptr, read from sid1/sid2
   auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   if (versions_ep != current_epoch_nr)  {
-    // printf("ReadWithVersion try read from inline\n");
-    auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
-    // shirley: don't need to compare sid with sid2 bc sid2 should definitely be smaller.
-    if (ptr2 /*&& (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType2))*/){
-      // VarStr *ptr2 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType2));
-      return (VarStr *) ptr2;
+    if (dram_version){
+      dram_version->ep_num = current_epoch_nr;
+      return dram_version->val;
     }
-    // shirley: don't need to compare sid with sid1 bc sid1 should definitely be smaller.
-    else /*if (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType1))*/ {
-      VarStr *ptr1 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType1));
-      return ptr1;
+    else{
+      util::MCSSpinLock::QNode qnode;
+      lock.Lock(&qnode);
+      if (!dram_version){
+        dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+        dram_version->ep_num = current_epoch_nr;
+        // printf("ReadWithVersion try read from inline\n");
+        auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+        // shirley: don't need to compare sid with sid2 bc sid2 should definitely be smaller.
+        if (ptr2 /*&& (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType2))*/){
+          // VarStr *ptr2 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType2));
+          // return (VarStr *) ptr2;
+          dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(((VarStr*)ptr2)->length()));
+          std::memcpy(dram_version->val, ptr2, VarStr::NewSize(((VarStr*)ptr2)->length()));
+          dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
+        }
+        // shirley: don't need to compare sid with sid1 bc sid1 should definitely be smaller.
+        else /*if (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType1))*/ {
+          VarStr *ptr1 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType1));
+          // return ptr1;
+          dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(ptr1->length()));
+          std::memcpy(dram_version->val, ptr1, VarStr::NewSize(ptr1->length()));
+          dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
+        }
+      }
+      lock.Unlock(&qnode);
+      return dram_version->val;
     }
+    
     // printf("ReadWithVersion: !versions, returning nullptr! sid = %u, sid1 =
     // %u\n", sid, GetInlineSid(sid1)); std::abort();
     // return nullptr;

@@ -16,6 +16,13 @@ void InitVersion(felis::IndexInfo *handle, VarStr *obj = (VarStr *) kPendingValu
   // handle -> ptr1 = obj; // shirley: don't need to check pendingValue. tpcc always creates initial value 
   p_vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)obj);
 
+  // shirley: also init dram cache
+  handle->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+  handle->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(obj->length()));
+  std::memcpy(handle->dram_version->val, obj, VarStr::NewSize(obj->length()));
+  ((VarStr*)(handle->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
+  handle->dram_version->ep_num = 0;
+
   // shirley: don't need these things below. we're only creating sid1, ptr1, 
   // not using version array (should be nullptr).
   
