@@ -295,12 +295,11 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
 
       // shirley: try getting initial version from dram cache
       if (dram_version){
-        VarStr *init_val = (VarStr *)mem::GetTransientPool().Alloc(VarStr::NewSize(dram_version->val->length()));
-        std::memcpy(init_val, dram_version->val, VarStr::NewSize(dram_version->val->length()));
+        auto varstr_sz = sizeof(VarStr) + dram_version->val->length();
+        VarStr *init_val = (VarStr *)mem::GetTransientPool().Alloc(varstr_sz);
+        std::memcpy(init_val, dram_version->val, varstr_sz);
         versions_ptr(versions)[initial_cap] = (uint64_t)init_val;
-        mem::GetDataRegion().Free(dram_version->val, 
-                                  init_val->get_region_id(), 
-                                  VarStr::NewSize(init_val->length()));
+        mem::GetDataRegion().Free(dram_version->val, init_val->get_region_id(), varstr_sz);
       }
       else{
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
@@ -422,16 +421,18 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
         if (ptr2 /*&& (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType2))*/){
           // VarStr *ptr2 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType2));
           // return (VarStr *) ptr2;
-          temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(((VarStr*)ptr2)->length()));
-          std::memcpy(temp_dram_version->val, ptr2, VarStr::NewSize(((VarStr*)ptr2)->length()));
+          auto ptr2_sz = sizeof(VarStr) + ((VarStr*)ptr2)->length();
+          temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(ptr2_sz);
+          std::memcpy(temp_dram_version->val, ptr2, ptr2_sz);
           temp_dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
         }
         // shirley: don't need to compare sid with sid1 bc sid1 should definitely be smaller.
         else /*if (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType1))*/ {
           VarStr *ptr1 = (VarStr *)(vhandle->GetInlinePtr(SortedArrayVHandle::SidType1));
           // return ptr1;
-          temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(ptr1->length()));
-          std::memcpy(temp_dram_version->val, ptr1, VarStr::NewSize(ptr1->length()));
+          auto ptr1_sz = sizeof(VarStr) + ((VarStr*)ptr1)->length();
+          temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(ptr1_sz);
+          std::memcpy(temp_dram_version->val, ptr1, ptr1_sz);
           temp_dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
         }
         dram_version = temp_dram_version;

@@ -234,15 +234,16 @@ class Txn : public BaseTxn {
           vhandle->Copy2To1();
         }
 
+        auto val_sz = sizeof(VarStr) + o.EncodeSize();
         VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
-                                                      sizeof(VarStr) + o.EncodeSize(), 
+                                                      val_sz, 
                                                       felis::SortedArrayVHandle::SidType2), 
                                             usePmem);
 
         // shirley: update dram cache
         // shirley TODO: move this to before accessing vhandle, and prefetch vhandle
-        index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
-        std::memcpy(index_info->dram_version->val, val, VarStr::NewSize(val->length()));
+        index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(val_sz);
+        std::memcpy(index_info->dram_version->val, val, val_sz);
         ((VarStr*)(index_info->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
         index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
 
