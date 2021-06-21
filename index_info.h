@@ -183,9 +183,9 @@ public:
     VHandle *vhandle = (VHandle *)((int64_t)(this->vhandle) & 0x7FFFFFFFFFFFFFFF);
 #endif
     __builtin_prefetch(vhandle);
-    __builtin_prefetch((char *)(vhandle + 64));
-    __builtin_prefetch((char *)(vhandle + 128));
-    __builtin_prefetch((char *)(vhandle + 192));
+    __builtin_prefetch(((char *)vhandle) + 64);
+    __builtin_prefetch(((char *)vhandle) + 128);
+    __builtin_prefetch(((char *)vhandle) + 192);
   }
 
   std::string ToString() const;

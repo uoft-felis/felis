@@ -225,6 +225,21 @@ class Txn : public BaseTxn {
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
+        index_info->Prefetch_vhandle();
+        auto val_sz = sizeof(VarStr) + o.EncodeSize();
+
+        // shirley: assuming data region alloc will be successful.
+        VarStr *val_dram = o.EncodeToPtr(mem::GetDataRegion().Alloc(val_sz));
+
+        // shirley: update dram cache
+        // shirley TODO: move this to before accessing vhandle, and prefetch vhandle
+        index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
+        val_dram->set_region_id(mem::ParallelPool::CurrentAffinity());
+        index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
+
+        bool result = WriteVarStr(val_dram);
+        
+        // shirley: assume by now, prefetching vhandle has completed
         VHandle *vhandle = index_info->vhandle_ptr();
         // shirley: minor GC
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
@@ -234,20 +249,13 @@ class Txn : public BaseTxn {
           vhandle->Copy2To1();
         }
 
-        auto val_sz = sizeof(VarStr) + o.EncodeSize();
-        VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(
-                                                      val_sz, 
-                                                      felis::SortedArrayVHandle::SidType2), 
-                                            usePmem);
+        // alloc inline val and copy data
+        VarStr *val = (VarStr *) (vhandle->AllocFromInline(val_sz, felis::SortedArrayVHandle::SidType2));
+        if (!val){
+          val = (VarStr *) (mem::GetPersistentPool().Alloc(val_sz));
+        }
+        std::memcpy(val, val_dram, val_sz);
 
-        // shirley: update dram cache
-        // shirley TODO: move this to before accessing vhandle, and prefetch vhandle
-        index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(val_sz);
-        std::memcpy(index_info->dram_version->val, val, val_sz);
-        ((VarStr*)(index_info->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
-        index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
-
-        bool result = WriteVarStr(index_info->dram_version->val);
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
         // ptr2 = val;
