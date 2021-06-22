@@ -13,6 +13,7 @@
 #include "slice.h"
 #include "txn.h"
 #include "gc.h"
+#include "gc_dram.h"
 #include "vhandle_sync.h"
 #include "contention_manager.h"
 #include "pwv_graph.h"
@@ -120,6 +121,8 @@ class AllocatorModule : public Module<CoreModule> {
     //shirley: set to 1 if want K = every epoch?
     GC::g_gc_every_epoch = 1;// 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
     GC::g_lazy = Options::kMajorGCLazy;
+    GC_Dram::g_gc_every_epoch = 100; // shirley todo: tune later. I think it should still work if set to 1 or 2?
+    GC_Dram::g_lazy = false; // shirley todo: can modify this later
 
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
@@ -131,6 +134,7 @@ class AllocatorModule : public Module<CoreModule> {
     tasks.emplace_back(IndexInfo::InitPool);
     tasks.emplace_back(RowEntity::InitPool);
     tasks.emplace_back(GC::InitPool);
+    tasks.emplace_back(GC_Dram::InitPool);
     tasks.emplace_back([]() { BaseTxn::InitBrk(EpochClient::g_max_epoch - 1); });
 
     tasks.emplace_back(util::Impl<PromiseAllocationService>);

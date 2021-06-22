@@ -12,6 +12,7 @@
 #include "entity.h"
 #include "epoch.h"
 #include "gc.h"
+#include "gc_dram.h"
 
 namespace felis {
 

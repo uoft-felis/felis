@@ -3,6 +3,7 @@
 #include "util/objects.h"
 #include "literals.h"
 #include "gc.h"
+#include "gc_dram.h"
 #include "commit_buffer.h"
 
 namespace felis {

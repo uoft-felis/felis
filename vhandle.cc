@@ -10,6 +10,7 @@
 #include "node_config.h"
 #include "epoch.h"
 #include "gc.h"
+#include "gc_dram.h"
 
 #include "opts.h"
 #include "contention_manager.h"

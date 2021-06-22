@@ -15,6 +15,7 @@
 #include "console.h"
 #include "mem.h"
 #include "gc.h"
+#include "gc_dram.h"
 #include "opts.h"
 #include "commit_buffer.h"
 
@@ -314,6 +315,7 @@ void CallTxnsWorker::Run()
     //SHIRLEY: this is major GC, use pmem GC version and reset transient pool
     //util::Instance<GC>().RunGC();
     util::Instance<GC>().RunPmemGC();
+    util::Instance<GC_Dram>().RunGC();
     //SHIRLEY: don't clear transient pool here bc it'll be executed by every core (16 times)
     //mem::GetTransientPool().Reset();
   }
@@ -386,8 +388,9 @@ void EpochClient::InitializeEpoch()
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
-  //SHIRLEY: major GC preparing lists
+  //SHIRLEY: major GC & dram GC preparing lists
   util::Instance<GC>().PrepareGCForAllCores();
+  util::Instance<GC_Dram>().PrepareGCForAllCores();
 
   commit_buffer->Reset();
   AllocStateTxnWorker::comp = nr_threads + 1;
@@ -411,6 +414,10 @@ void EpochClient::OnInsertComplete()
   auto &gc = util::Instance<GC>();
   gc.PrintStats();
   gc.ClearStats();
+  // shirley: dram GC print stats
+  auto &gc_dram = util::Instance<GC_Dram>();
+  gc_dram.PrintStats();
+  gc_dram.ClearStats();
   probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 0}();
 
   stats.insert_time_ms += callback.perf.duration_ms();

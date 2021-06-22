@@ -3,6 +3,7 @@
 
 #include "epoch.h"
 #include "gc.h"
+#include "gc_dram.h"
 #include "log.h"
 #include "node_config.h"
 #include "util/arch.h"
@@ -313,6 +314,8 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
           versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
         }
         dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+        dram_version->this_coreid = mem::ParallelPool::CurrentAffinity();
+        util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
       }
       
       size_set(versions, 1);
@@ -414,6 +417,8 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
       lock.Lock(&qnode);
       if (!dram_version){
         DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+        int curAffinity = mem::ParallelPool::CurrentAffinity();
+        temp_dram_version->this_coreid = curAffinity;
         temp_dram_version->ep_num = current_epoch_nr;
         // printf("ReadWithVersion try read from inline\n");
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
@@ -424,7 +429,7 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
           auto ptr2_sz = sizeof(VarStr) + ((VarStr*)ptr2)->length();
           temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(ptr2_sz);
           std::memcpy(temp_dram_version->val, ptr2, ptr2_sz);
-          temp_dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
+          temp_dram_version->val->set_region_id(curAffinity);
         }
         // shirley: don't need to compare sid with sid1 bc sid1 should definitely be smaller.
         else /*if (sid >= vhandle->GetInlineSid(SortedArrayVHandle::SidType1))*/ {
@@ -433,9 +438,10 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
           auto ptr1_sz = sizeof(VarStr) + ((VarStr*)ptr1)->length();
           temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(ptr1_sz);
           std::memcpy(temp_dram_version->val, ptr1, ptr1_sz);
-          temp_dram_version->val->set_region_id(mem::ParallelPool::CurrentAffinity());
+          temp_dram_version->val->set_region_id(curAffinity);
         }
         dram_version = temp_dram_version;
+        util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
       }
       lock.Unlock(&qnode);
       return dram_version->val;

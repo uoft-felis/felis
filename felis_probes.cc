@@ -9,6 +9,7 @@
 #include "vhandle.h" // Let's hope this won't slow down the build.
 #include "index_info.h"
 #include "gc.h"
+#include "gc_dram.h"
 
 static struct ProbeMain {
   agg::Agg<agg::LogHistogram<16>> wait_cnt;

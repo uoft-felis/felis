@@ -20,8 +20,11 @@ void InitVersion(felis::IndexInfo *handle, VarStr *obj = (VarStr *) kPendingValu
   // handle->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
   // handle->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(obj->length()));
   // std::memcpy(handle->dram_version->val, obj, VarStr::NewSize(obj->length()));
-  // ((VarStr*)(handle->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
+  // int curAffinity = mem::ParallelPool::CurrentAffinity();
+  // ((VarStr*)(handle->dram_version->val))->set_region_id(curAffinity);
   // handle->dram_version->ep_num = 0;
+  // handle->dram_version->this_coreid = curAffinity;
+  // util::Instance<GC_Dram>().AddRow(handle, 0);
 
   // shirley: don't need these things below. we're only creating sid1, ptr1, 
   // not using version array (should be nullptr).

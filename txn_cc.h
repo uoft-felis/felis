@@ -301,8 +301,12 @@ class Txn : public BaseTxn {
       // index_info->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
       // index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
       // std::memcpy(index_info->dram_version->val, val, VarStr::NewSize(val->length()));
-      // ((VarStr*)(index_info->dram_version->val))->set_region_id(mem::ParallelPool::CurrentAffinity());
-      // index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
+      // int curAffinity = mem::ParallelPool::CurrentAffinity();
+      // ((VarStr*)(index_info->dram_version->val))->set_region_id(curAffinity);
+      // uint64_t curr_ep_nr = util::Instance<EpochManager>().current_epoch_nr();
+      // index_info->dram_version->ep_num = curr_ep_nr;// util::Instance<EpochManager>().current_epoch_nr();
+      // index_info->dram_version->this_coreid = curAffinity; 
+      // util::Instance<GC_Dram>().AddRow(index_info, curr_ep_nr);
 
       if (!val) {
         printf("WriteInitialInline val is null?\n");

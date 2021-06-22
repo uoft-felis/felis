@@ -3,6 +3,7 @@
 
 #include "contention_manager.h"
 #include "gc.h"
+#include "gc_dram.h"
 #include "node_config.h"
 #include "opts.h"
 #include "epoch.h"

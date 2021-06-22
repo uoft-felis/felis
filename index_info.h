@@ -44,7 +44,8 @@ public:
 
 struct DramVersion {
   uint64_t ep_num = 0;
-  VarStr *val; // shirley: a VarStr ptr
+  VarStr *val = nullptr; // shirley: a VarStr ptr
+  uint8_t this_coreid;
 };
 
 class RowEntity;
@@ -56,6 +57,7 @@ class IndexInfo : public BaseIndexInfo {
   friend class RowEntity;
   friend class SliceManager;
   friend class GC;
+  friend class GC_Dram;
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
   friend class ContentionManager;
