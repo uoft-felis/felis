@@ -301,6 +301,9 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         std::memcpy(init_val, dram_version->val, varstr_sz);
         versions_ptr(versions)[initial_cap] = (uint64_t)init_val;
         mem::GetDataRegion().Free(dram_version->val, init_val->get_region_id(), varstr_sz);
+        // shirley debug.
+        dram_version->val = nullptr; // (VarStr *)0x12345678;
+        dram_version->ep_num = current_epoch_nr;
       }
       else{
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
@@ -315,6 +318,9 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         }
         dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
         dram_version->this_coreid = mem::ParallelPool::CurrentAffinity();
+        // shirley debug.
+        dram_version->val = nullptr; // (VarStr *)0x87654321;
+        dram_version->ep_num = current_epoch_nr;
         util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
       }
       

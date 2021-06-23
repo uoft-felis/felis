@@ -124,12 +124,12 @@ uint64_t GC_Dram::AddRow(IndexInfo *row, uint64_t epoch_nr) {
 }
 
 // shirley: this shouldn't be used.
-void GC_Dram::RemoveRow(IndexInfo *row, uint64_t gc_handle) {
-  uint64_t base = GarbageBlockDram::kBlockSize * (gc_handle / GarbageBlockDram::kBlockSize);
-  int idx = (gc_handle - base - sizeof(util::GenericListNode<GarbageBlockDram>)) / 8;
-  auto blk = (GarbageBlockDram *) base;
-  return g_slabs[blk->alloc_core]->Remove(blk, idx);
-}
+// void GC_Dram::RemoveRow(IndexInfo *row, uint64_t gc_handle) {
+//   uint64_t base = GarbageBlockDram::kBlockSize * (gc_handle / GarbageBlockDram::kBlockSize);
+//   int idx = (gc_handle - base - sizeof(util::GenericListNode<GarbageBlockDram>)) / 8;
+//   auto blk = (GarbageBlockDram *) base;
+//   return g_slabs[blk->alloc_core]->Remove(blk, idx);
+// }
 
 unsigned int GC_Dram::g_gc_every_epoch = 0;
 bool GC_Dram::g_lazy = false;
@@ -172,7 +172,9 @@ void GC_Dram::PrepareGCForAllCores()
       new_head = full_queue->next->object();
       tail_node = full_queue->prev;
     } else {
-      return;
+      // shirley debug: changing this to continue (I think continue is correct, not return?)
+      continue; 
+      // return; // shirley: shouldn't this be continue?
     }
 
     GarbageBlockDram *tail_next = collect_head;
@@ -199,7 +201,8 @@ void GC_Dram::RunGC()
     return;
 
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
-  int q_idx = (cur_epoch_nr + 1) % g_gc_every_epoch;
+  // shirley: this is not used.
+  // int q_idx = (cur_epoch_nr + 1) % g_gc_every_epoch;
 
   auto &s = stats[go::Scheduler::CurrentThreadPoolId() - 1];
 
@@ -212,9 +215,12 @@ void GC_Dram::RunGC()
       }
     }
 
+    // shirley: get next block before initializing b or inserting to free list
+    auto b_next = b->next->object();
+
     size_t i = 0;
     // After processing this block, we always need to put it back into the slab!
-    // util::MCSSpinLock::QNode qnode;
+    util::MCSSpinLock::QNode qnode;
     auto slab = g_slabs[b->alloc_core];
     b->Initialize();
 
@@ -239,12 +245,14 @@ void GC_Dram::RunGC()
       // shirley: dont care if we're straggler. clean everything
     }
     // Mark this block free
-    // slab->lock.Acquire(&qnode);
+    // shirley note: must acquire lock for correct behavior (somehow it was working before)
+    slab->lock.Acquire(&qnode);
     b->InsertAfter(&g_slabs[b->alloc_core]->free);
-    // slab->lock.Release(&qnode);
+    slab->lock.Release(&qnode);
 
     s.nr_blocks++;
-    b = b->next->object();
+    // shirley: don't think it's right to set to b->next here bc already initialized & inserted to free list
+    b = b_next;// b->next->object();
   }
 }
 
@@ -268,8 +276,16 @@ size_t GC_Dram::Collect(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) 
     return 0;
   }
   // shirley: free dram cache
-  VarStr *dram_ver = handle->dram_version->val;
-  mem::GetDataRegion().Free(dram_ver, dram_ver->get_region_id(), sizeof(VarStr) + dram_ver->length());
+  VarStr *dram_ver = (VarStr *)(handle->dram_version->val);
+  if (dram_ver) {
+    auto var_reg_id = dram_ver->get_region_id();
+    auto var_len = dram_ver->length();
+    // shirley debug: something wrong if we free the dram val.
+    mem::GetDataRegion().Free(dram_ver, var_reg_id, sizeof(VarStr) + var_len);
+  }
+  else{
+    // felis::probes::NumUnwrittenDramCache{1}();
+  }
   mem::GetDataRegion().Free(handle->dram_version, handle->dram_version->this_coreid, sizeof(DramVersion));
   handle->dram_version = nullptr;
 

@@ -26,7 +26,7 @@ class GC_Dram {
 
  public:
   uint64_t AddRow(IndexInfo *row, uint64_t epoch_nr);
-  void RemoveRow(IndexInfo *row, uint64_t gc_handle);
+  // void RemoveRow(IndexInfo *row, uint64_t gc_handle);
   void PrepareGCForAllCores();
   void RunGC();
   void PrintStats();

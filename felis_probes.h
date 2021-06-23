@@ -149,6 +149,11 @@ struct NumVHandlesTotal {
   void operator()() const;
 };
 
+struct NumUnwrittenDramCache {
+  int num;
+  void operator()() const;
+};
+
 }
 }
 
@@ -175,6 +180,7 @@ struct NumVHandlesTotal {
   PROBE_PROXY(felis::probes::MemAllocParallelBrkPool);                         \
   PROBE_PROXY(felis::probes::VarStrNewPmem);                                   \
   PROBE_PROXY(felis::probes::IndexSizeTotal);                                  \
-  PROBE_PROXY(felis::probes::NumVHandlesTotal);
+  PROBE_PROXY(felis::probes::NumVHandlesTotal);                                \
+  PROBE_PROXY(felis::probes::NumUnwrittenDramCache);
 
 #endif /* FELIS_PROBES_H */
