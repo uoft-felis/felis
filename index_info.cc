@@ -295,7 +295,7 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
 #endif
 
       // shirley: try getting initial version from dram cache
-      if (dram_version){
+      if (dram_version && dram_version->val){
         auto varstr_sz = sizeof(VarStr) + dram_version->val->length();
         VarStr *init_val = (VarStr *)mem::GetTransientPool().Alloc(varstr_sz);
         std::memcpy(init_val, dram_version->val, varstr_sz);
@@ -414,14 +414,14 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
   // shirley: if versions is nullptr, read from sid1/sid2
   auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   if (versions_ep != current_epoch_nr)  {
-    if (dram_version){
+    if (dram_version && dram_version->val){
       dram_version->ep_num = current_epoch_nr;
       return dram_version->val;
     }
     else{
       util::MCSSpinLock::QNode qnode;
       lock.Lock(&qnode);
-      if (!dram_version){
+      if (!dram_version || !(dram_version->val)){
         DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
         int curAffinity = mem::ParallelPool::CurrentAffinity();
         temp_dram_version->this_coreid = curAffinity;
