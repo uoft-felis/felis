@@ -257,10 +257,10 @@ void GC_Dram::RunGC()
 }
 
 size_t GC_Dram::Process(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
-  // util::MCSSpinLock::QNode qnode;
-  // handle->lock.Lock(&qnode);
+  util::MCSSpinLock::QNode qnode;
+  handle->lock.Lock(&qnode);
   size_t n = Collect(handle, cur_epoch_nr, limit);
-  // handle->lock.Unlock(&qnode);
+  handle->lock.Unlock(&qnode);
   return n;
 }
 

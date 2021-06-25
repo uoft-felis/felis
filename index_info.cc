@@ -300,9 +300,10 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         VarStr *init_val = (VarStr *)mem::GetTransientPool().Alloc(varstr_sz);
         std::memcpy(init_val, dram_version->val, varstr_sz);
         versions_ptr(versions)[initial_cap] = (uint64_t)init_val;
-        mem::GetDataRegion().Free(dram_version->val, init_val->get_region_id(), varstr_sz);
+        auto dramval = dram_version->val;
         // shirley debug.
         dram_version->val = nullptr; // (VarStr *)0x12345678;
+        mem::GetDataRegion().Free(dramval, init_val->get_region_id(), varstr_sz);
         dram_version->ep_num = current_epoch_nr;
       }
       else{
@@ -316,11 +317,12 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
           auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
           versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
         }
-        dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-        dram_version->this_coreid = mem::ParallelPool::CurrentAffinity();
+        auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+        temp_dram_version->this_coreid = mem::ParallelPool::CurrentAffinity();
         // shirley debug.
-        dram_version->val = nullptr; // (VarStr *)0x87654321;
-        dram_version->ep_num = current_epoch_nr;
+        temp_dram_version->val = nullptr; // (VarStr *)0x87654321;
+        temp_dram_version->ep_num = current_epoch_nr;
+        dram_version = temp_dram_version;
         util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
       }
       
@@ -406,6 +408,8 @@ found:
 //   then we would like it to read version 10 (so pos = 1)
 //   but if sid = 4, then we don't have the value for it to read, then returns
 //   nullptr
+// shirley note: Read can happen simultaneously with GC!!!
+// shirley todo: maybe add a flag to indicate if this read is during insert (i.e. may race with GC)
 VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
 #ifndef NDEBUG
   // we are in debug build
@@ -414,13 +418,17 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
   // shirley: if versions is nullptr, read from sid1/sid2
   auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   if (versions_ep != current_epoch_nr)  {
+    // shirley: we need to lock bc might race with GC!
+    util::MCSSpinLock::QNode qnode;
+    lock.Lock(&qnode);
     if (dram_version && dram_version->val){
       dram_version->ep_num = current_epoch_nr;
+      lock.Unlock(&qnode);
       return dram_version->val;
     }
     else{
-      util::MCSSpinLock::QNode qnode;
-      lock.Lock(&qnode);
+      // util::MCSSpinLock::QNode qnode;
+      // lock.Lock(&qnode);
       if (!dram_version || !(dram_version->val)){
         DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
         int curAffinity = mem::ParallelPool::CurrentAffinity();

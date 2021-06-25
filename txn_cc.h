@@ -230,15 +230,13 @@ class Txn : public BaseTxn {
 
         // shirley: assuming data region alloc will be successful.
         VarStr *val_dram = o.EncodeToPtr(mem::GetDataRegion().Alloc(val_sz));
-
-        // shirley: update dram cache
-        // shirley TODO: move this to before accessing vhandle, and prefetch vhandle
-        index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
         val_dram->set_region_id(mem::ParallelPool::CurrentAffinity());
+        bool result = WriteVarStr(val_dram);
+        // shirley: update dram cache
+        // shirley: do this before accessing vhandle, and prefetch vhandle
+        index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
         index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
 
-        bool result = WriteVarStr(val_dram);
-        
         // shirley: assume by now, prefetching vhandle has completed
         VHandle *vhandle = index_info->vhandle_ptr();
         // shirley: minor GC
