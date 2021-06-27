@@ -48,7 +48,7 @@ void BaseTxn::BaseTxnRow::AppendNewVersion(int ondemand_split_weight)
   }
 }
 
-VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
+VarStr *BaseTxn::BaseTxnRow::ReadVarStr(bool is_insert)
 {
   auto commit_buffer = EpochClient::g_workload_client->commit_buffer;
   CommitBuffer::Entry *ent = nullptr;
@@ -58,7 +58,7 @@ VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
   if (ent && ent->u.value != (VarStr *) kPendingValue)
     return ent->u.value;
   else
-    return index_info->ReadWithVersion(sid);
+    return index_info->ReadWithVersion(sid, is_insert);
 }
 
 bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)

@@ -76,7 +76,7 @@ void NewOrderTxn::PrepareInsert()
 
   for (int i = 0; i < nr_items; i++) {
     auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeView(buf));
-    auto item_value = handle(item).Read<Item::Value>();
+    auto item_value = handle(item).Read<Item::Value>(true);
     detail.unit_price[i] = item_value.i_price;
   }
 

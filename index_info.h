@@ -97,7 +97,7 @@ public:
   bool ShouldScanSkip(uint64_t sid);
   void AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
                         int ondemand_split_weight = 0);
-  VarStr *ReadWithVersion(uint64_t sid);
+  VarStr *ReadWithVersion(uint64_t sid, bool is_insert = false);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj,

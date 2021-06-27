@@ -104,7 +104,7 @@ class BaseTxn {
     uint64_t serial_id() const { return sid; }
 
     void AppendNewVersion(int ondemand_split_weight = 0);
-    VarStr *ReadVarStr();
+    VarStr *ReadVarStr(bool is_insert = false);
     bool WriteVarStr(VarStr *obj);
     bool Delete() { return WriteVarStr(nullptr); }
   };

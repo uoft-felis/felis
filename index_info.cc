@@ -410,7 +410,7 @@ found:
 //   nullptr
 // shirley note: Read can happen simultaneously with GC!!!
 // shirley todo: maybe add a flag to indicate if this read is during insert (i.e. may race with GC)
-VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
+VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
 #ifndef NDEBUG
   // we are in debug build
   VHandle *vhandle = vhandle_ptr();//(VHandle *)((int64_t)vhandle & 0x7FFFFFFFFFFFFFFF);
@@ -418,17 +418,22 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid) {
   // shirley: if versions is nullptr, read from sid1/sid2
   auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   if (versions_ep != current_epoch_nr)  {
-    // shirley: we need to lock bc might race with GC!
     util::MCSSpinLock::QNode qnode;
-    lock.Lock(&qnode);
+    // shirley: we need to lock bc might race with GC!
+    if (is_insert){
+      lock.Lock(&qnode);
+    }
     if (dram_version && dram_version->val){
       dram_version->ep_num = current_epoch_nr;
-      lock.Unlock(&qnode);
+      if (is_insert){
+        lock.Unlock(&qnode);
+      }
       return dram_version->val;
     }
     else{
-      // util::MCSSpinLock::QNode qnode;
-      // lock.Lock(&qnode);
+      if (!is_insert){
+        lock.Lock(&qnode);
+      }
       if (!dram_version || !(dram_version->val)){
         DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
         int curAffinity = mem::ParallelPool::CurrentAffinity();

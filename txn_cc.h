@@ -205,8 +205,8 @@ class Txn : public BaseTxn {
    public:
     using BaseTxnRow::BaseTxnRow;
 
-    template <typename T> T Read() {
-      return ReadVarStr()->template ToType<T>();
+    template <typename T> T Read(bool is_insert = false) {
+      return ReadVarStr(is_insert)->template ToType<T>();
     }
 
     // shirley: since we want to allocate from inlined vhandle, 
