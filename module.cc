@@ -121,7 +121,7 @@ class AllocatorModule : public Module<CoreModule> {
     //shirley: set to 1 if want K = every epoch?
     GC::g_gc_every_epoch = 1;// 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
     GC::g_lazy = Options::kMajorGCLazy;
-    GC_Dram::g_gc_every_epoch = 1; // shirley: can't set to 1?
+    GC_Dram::g_gc_every_epoch = 20; // shirley: can't set to 1?
     GC_Dram::g_lazy = false; // shirley todo: can modify this later
 
     // logger->info("setting up regions {}", i);
