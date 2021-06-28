@@ -17,14 +17,15 @@ void InitVersion(felis::IndexInfo *handle, VarStr *obj = (VarStr *) kPendingValu
   p_vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)obj);
 
   // // shirley: also init dram cache
-  // handle->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-  // handle->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(obj->length()));
-  // std::memcpy(handle->dram_version->val, obj, VarStr::NewSize(obj->length()));
-  // int curAffinity = mem::ParallelPool::CurrentAffinity();
-  // ((VarStr*)(handle->dram_version->val))->set_region_id(curAffinity);
-  // handle->dram_version->ep_num = 0;
-  // handle->dram_version->this_coreid = curAffinity;
-  // util::Instance<GC_Dram>().AddRow(handle, 0);
+  auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+  temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(obj->length()));
+  std::memcpy(temp_dram_version->val, obj, VarStr::NewSize(obj->length()));
+  int curAffinity = mem::ParallelPool::CurrentAffinity();
+  ((VarStr*)(temp_dram_version->val))->set_region_id(curAffinity);
+  temp_dram_version->ep_num = 0;
+  temp_dram_version->this_coreid = curAffinity;
+  handle->dram_version = temp_dram_version;
+  util::Instance<GC_Dram>().AddRow(handle, 0);
 
   // shirley: don't need these things below. we're only creating sid1, ptr1, 
   // not using version array (should be nullptr).

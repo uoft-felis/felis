@@ -117,7 +117,7 @@ void GarbageBlockSlabDram::Remove(GarbageBlockDram *blk, int idx)
 
 uint64_t GC_Dram::AddRow(IndexInfo *row, uint64_t epoch_nr) {
   // shirley: note if we're adding to GC after insert, then remove this abort? double check if it causes other problems.
-  abort_if(epoch_nr == 0, "Should not even detect garbage during loader");
+  // abort_if(epoch_nr == 0, "Should not even detect garbage during loader");
   int q_idx = epoch_nr % g_gc_every_epoch;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   return g_slabs[core_id]->Add(row, q_idx);

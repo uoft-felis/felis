@@ -296,14 +296,15 @@ class Txn : public BaseTxn {
       VarStr *val = o.EncodeToPtrOrDefault(vhandle->AllocFromInline(sizeof(VarStr) + o.EncodeSize()), usePmem);
       
       // // shirley: also init dram cache
-      // index_info->dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-      // index_info->dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
-      // std::memcpy(index_info->dram_version->val, val, VarStr::NewSize(val->length()));
+      // auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+      // temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(val->length()));
+      // std::memcpy(temp_dram_version->val, val, VarStr::NewSize(val->length()));
       // int curAffinity = mem::ParallelPool::CurrentAffinity();
-      // ((VarStr*)(index_info->dram_version->val))->set_region_id(curAffinity);
+      // ((VarStr*)(temp_dram_version->val))->set_region_id(curAffinity);
       // uint64_t curr_ep_nr = util::Instance<EpochManager>().current_epoch_nr();
-      // index_info->dram_version->ep_num = curr_ep_nr;// util::Instance<EpochManager>().current_epoch_nr();
-      // index_info->dram_version->this_coreid = curAffinity; 
+      // temp_dram_version->ep_num = curr_ep_nr;// util::Instance<EpochManager>().current_epoch_nr();
+      // temp_dram_version->this_coreid = curAffinity; 
+      // index_info->dram_version = temp_dram_version;
       // util::Instance<GC_Dram>().AddRow(index_info, curr_ep_nr);
 
       if (!val) {
