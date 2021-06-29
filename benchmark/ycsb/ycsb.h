@@ -4,6 +4,7 @@
 #include "table_decl.h"
 #include "epoch.h"
 #include "slice.h"
+#include "index.h"
 
 #include "benchmark/ycsb/zipfian_random.h"
 
@@ -15,7 +16,15 @@ enum class TableType : int {
 };
 
 struct Ycsb {
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    auto x = (uint8_t *) k.data();
+    return *(uint32_t *) x;
+  }
+
   static constexpr auto kTable = TableType::Ycsb;
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 10000000, false);
+
+  using IndexBackend = felis::HashtableIndex;
   using Key = sql::YcsbKey;
   using Value = sql::YcsbValue;
 };
@@ -26,11 +35,11 @@ class Client : public felis::EpochClient {
   // Zipfian random generator
   RandRng rand;
 
+  friend class RMWTxn;
+  static char zero_data[100];
  public:
   static double g_theta;
   static size_t g_table_size;
-  static bool g_enable_partition;
-  static bool g_enable_lock_elision;
   static int g_extra_read;
   static int g_contention_key;
   static bool g_dependency;
@@ -43,13 +52,11 @@ class Client : public felis::EpochClient {
 };
 
 class YcsbLoader : public go::Routine {
-  std::mutex finish;
+  std::atomic_bool done = false;
  public:
-  YcsbLoader() {
-    finish.lock();
-  }
+  YcsbLoader() {}
   void Run() override final;
-  void Wait() { finish.lock(); }
+  void Wait() { while (!done) sleep(1); }
 };
 
 }

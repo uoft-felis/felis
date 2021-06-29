@@ -5,6 +5,7 @@
 [alias]
   db = //:db#debug
   db_release = //:db#release
+  db_asan = //:db#asan
   test = //:dbtest#debug
 
 [cxx]
@@ -19,4 +20,9 @@
 [cxx#release]
   cxxflags = -Ofast -march=native -flto=thin -std=c++17 -stdlib=libc++ -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers -DNDEBUG
   cflags = -Ofast -march=native -flto=thin -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers -DNDEBUG
-  ldflags = -fuse-ld=lld -Ofast -march=native -std=c++17 -flto=thin -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -nostdlib++
+  ldflags = -fuse-ld=lld -Ofast -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers -march=native -std=c++17 -flto=thin -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -nostdlib++
+
+[cxx#asan]
+  cxxflags = -Og -g -march=native -flto=thin -std=c++17 -stdlib=libc++ -DNDEBUG -fsanitize=address -fsanitize-recover=address
+  cflags = -Og -g -march=native -flto=thin -DNDEBUG -fsanitize=address -fsanitize-recover=address
+  ldflags = -fuse-ld=lld -Og -g -march=native -std=c++17 -flto=thin -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -nostdlib++ -fsanitize=address -fsanitize-recover=address

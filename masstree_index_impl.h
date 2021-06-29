@@ -5,7 +5,6 @@
 #include <atomic>
 
 #include "index_common.h"
-#include "util.h"
 #include "log.h"
 #include "vhandle.h"
 
@@ -13,93 +12,42 @@ class threadinfo;
 
 namespace felis {
 
-class RelationManager;
 class MasstreeMap;
-class MasstreeMapForwardScanIteratorImpl;
+class TableManager;
 
-class MasstreeIndex {
- protected:
-  MasstreeMap *map;
+class MasstreeIndex final : public Table {
+ private:
+  friend class MasstreeMap;
+  friend class TableManager;
+
   static threadinfo *GetThreadInfo();
+
+  MasstreeMap *get_map() {
+    // Let's reduce cache miss
+    return (MasstreeMap *) ((uint8_t *) (this + 1));
+  }
+
+  template <typename Func>
+  VHandle *SearchOrCreateImpl(const VarStrView &k, Func f);
  public:
   static void ResetThreadInfo();
 
-  struct Iterator {
-    const VarStr *end_key;
-    MasstreeMapForwardScanIteratorImpl *it;
-    threadinfo *ti;
-    VarStr cur_key;
-    VHandle *vhandle;
+  MasstreeIndex(std::tuple<bool> conf) noexcept; // no configuration required
 
-    Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
-             const VarStr *terminate_key);
+  static void *operator new(size_t sz);
+  static void operator delete(void *p);
 
-    void Next() __attribute__((noinline));
-    bool IsValid() const;
+  VHandle *SearchOrCreate(const VarStrView &k, bool *created) override;
+  VHandle *SearchOrCreate(const VarStrView &k) override;
+  VHandle *Search(const VarStrView &k, uint64_t sid = 0) override;
+  VHandle *PriorityInsert(const VarStr *k, uint64_t sid) override;
 
-    const VarStr &key() const { return cur_key; }
-    const VHandle *row() const { return vhandle; }
-    VHandle *row() { return vhandle; }
+  Table::Iterator *IndexSearchIterator(const VarStrView &start, const VarStrView &end) override;
+  Table::Iterator *IndexSearchIterator(const VarStrView &start) override;
+  Table::Iterator *IndexReverseIterator(const VarStrView &start, const VarStrView &end) override;
+  Table::Iterator *IndexReverseIterator(const VarStrView &start) override;
 
-   private:
-    void Adapt();
-  };
-  void Initialize(threadinfo *ti);
- protected:
-
-  struct {
-    uint64_t add_cnt;
-    uint64_t del_cnt;
-  } nr_keys [NodeConfiguration::kMaxNrThreads]; // scalable counting
-
- public:
-
-  struct SearchOrDefaultHandler {
-    virtual VHandle *operator()() const = 0;
-  };
-
-  VHandle *SearchOrDefaultImpl(const VarStr *k, const SearchOrDefaultHandler &default_handler);
-
-  template <typename Func>
-  VHandle *SearchOrDefault(const VarStr *k, Func default_func) {
-    struct SearchOrDefaultHandlerImpl : public SearchOrDefaultHandler {
-      Func f;
-      SearchOrDefaultHandlerImpl(Func f) : f(f) {}
-      VHandle *operator()() const override final {
-        return f();
-      }
-    };
-    return SearchOrDefaultImpl(k, SearchOrDefaultHandlerImpl(default_func));
-  }
-
-  VHandle *Search(const VarStr *k, uint64_t sid = 0);
-  VHandle *PriorityInsert(const VarStr *k, uint64_t sid);
-
-  Iterator IndexSearchIterator(const VarStr *start, const VarStr *end = nullptr) __attribute__((noinline));
-
-  size_t nr_unique_keys() const {
-    size_t rs = 0;
-    for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-      rs += nr_keys[i].add_cnt - nr_keys[i].del_cnt;
-    }
-    return rs;
-  }
-  void ImmediateDelete(const VarStr *k);
-  void FakeDelete(const VarStr *k) {
-    // delete an object, this won't be checkpointed
-    nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].del_cnt++;
-  }
-};
-
-class Relation : public felis::RelationPolicy<MasstreeIndex> {};
-
-class RelationManager : public RelationManagerPolicy<Relation> {
-  threadinfo *ti;
-
-  RelationManager();
-  template <typename T> friend T &util::Instance() noexcept;
- public:
-  threadinfo *GetThreadInfo() { return ti; }
+  void ImmediateDelete(const VarStrView &k);
 };
 
 }

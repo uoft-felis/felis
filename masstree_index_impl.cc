@@ -25,70 +25,79 @@ struct MasstreeDollyParam : public Masstree::nodeparams<15, 15> {
   typedef threadinfo threadinfo_type;
 };
 
-class MasstreeMap : public Masstree::basic_table<MasstreeDollyParam> {};
-class MasstreeMapForwardScanIteratorImpl : public MasstreeMap::forward_scan_iterator_impl {
+class MasstreeMap : public Masstree::basic_table<MasstreeDollyParam> {
  public:
-  using MasstreeMap::forward_scan_iterator_impl::forward_scan_iterator_impl;
+  template <class MasstreeIteratorImpl>
+  struct Iterator : public Table::Iterator,
+                    public MasstreeIteratorImpl {
+    threadinfo *ti;
+    void Adapt();
 
-  static void *operator new(size_t sz) {
-    return mem::AllocFromRoutine(sizeof(MasstreeMapForwardScanIteratorImpl));
-  }
+    using MasstreeIteratorImpl::MasstreeIteratorImpl;
 
-  static void operator delete(void *p) {
-    // noop;
-  }
+    void Next() override final;
+    bool IsValid() const override final;
+
+    static void *operator new(size_t sz) {
+      return mem::AllocFromRoutine(sz);
+    }
+    static void operator delete(void *p) {}
+  };
+
+  using ForwardIterator = Iterator<forward_scan_iterator_impl>;
+  using ReverseIterator = Iterator<reverse_scan_iterator_impl>;
 };
 
-MasstreeIndex::Iterator::Iterator(MasstreeMapForwardScanIteratorImpl *scan_it,
-                                  const VarStr *terminate_key)
-    : end_key(terminate_key), it(scan_it), ti(GetThreadInfo()), vhandle(nullptr)
+template <class MasstreeIteratorImpl>
+void MasstreeMap::Iterator<MasstreeIteratorImpl>::Adapt()
 {
-  Adapt();
-}
-
-void MasstreeIndex::Iterator::Adapt()
-{
-  if (!it->terminated) {
+  if (!this->terminated) {
     // wrap the iterator
-    auto s = it->key.full_string();
-    cur_key.len = s.length();
-    cur_key.data = (const uint8_t *) s.data();
-    vhandle = it->entry.value();
+    auto s = ((MasstreeIteratorImpl *) this)->key.full_string();
+    cur_key = VarStrView(s.length(), (uint8_t *) s.data());
+    vhandle = this->entry.value();
   }
 }
 
-void MasstreeIndex::Iterator::Next()
+template <class MasstreeIteratorImpl>
+void MasstreeMap::Iterator<MasstreeIteratorImpl>::Next()
 {
-  it->next(*ti);
+  this->next(*ti);
   Adapt();
 }
 
-bool MasstreeIndex::Iterator::IsValid() const
+template <>
+bool MasstreeMap::Iterator<MasstreeMap::forward_scan_iterator_impl>::IsValid() const
 {
-  if (end_key == nullptr)
-    return !it->terminated;
-  else
-    return !it->terminated && !(*end_key < cur_key);
+  return !this->terminated && !(end_key < cur_key);
 }
 
-void MasstreeIndex::Initialize(threadinfo *ti)
+template <>
+bool MasstreeMap::Iterator<MasstreeMap::reverse_scan_iterator_impl>::IsValid() const
 {
-  auto tree = new MasstreeMap();
+  return !this->terminated && !(cur_key < end_key);
+}
+
+MasstreeIndex::MasstreeIndex(std::tuple<bool> conf) noexcept
+    : Table()
+{
+  enable_inline = std::get<0>(conf);
+  auto tree = new (get_map()) MasstreeMap();
+  auto ti = GetThreadInfo();
   tree->initialize(*ti);
-  map = tree;
 }
 
-VHandle *MasstreeIndex::SearchOrDefaultImpl(const VarStr *k,
-                                            const SearchOrDefaultHandler &default_func)
+template <typename Func>
+VHandle *MasstreeIndex::SearchOrCreateImpl(const VarStrView &k, Func f)
 {
   VHandle *result;
   // result = this->Search(k);
   // if (result) return result;
   auto ti = GetThreadInfo();
-  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
+  typename MasstreeMap::cursor_type cursor(*get_map(), k.data(), k.length());
   bool found = cursor.find_insert(*ti);
   if (!found) {
-    cursor.value() = default_func();
+    cursor.value() = f();
     // nr_keys[go::Scheduler::CurrentThreadPoolId() - 1].add_cnt++;
   }
   result = cursor.value();
@@ -97,33 +106,44 @@ VHandle *MasstreeIndex::SearchOrDefaultImpl(const VarStr *k,
   return result;
 }
 
-VHandle *MasstreeIndex::Search(const VarStr *k, uint64_t sid)
+VHandle *MasstreeIndex::SearchOrCreate(const VarStrView &k)
+{
+  return SearchOrCreateImpl(k, [=]() { return NewRow(); });
+}
+
+VHandle *MasstreeIndex::SearchOrCreate(const VarStrView &k, bool *created)
+{
+  *created = false;
+  return SearchOrCreateImpl(k, [=]() { *created = true; return NewRow(); });
+}
+
+VHandle *MasstreeIndex::Search(const VarStrView &k, uint64_t sid)
 {
   auto ti = GetThreadInfo();
   VHandle *result = nullptr;
-  map->get(lcdf::Str(k->data, k->len), result, *ti, sid);
+  get_map()->get(lcdf::Str(k.data(), k.length()), result, *ti, sid);
   return result;
 }
 
 VHandle *MasstreeIndex::PriorityInsert(const VarStr *k, uint64_t sid)
 {
   auto ti = GetThreadInfo();
-  typename MasstreeMap::unlocked_cursor_type ucursor(*map, lcdf::Str(k->data, k->len));
+  typename MasstreeMap::unlocked_cursor_type ucursor(*get_map(), lcdf::Str(k->data(), k->length()));
   bool found = ucursor.find_unlocked(*ti);
   if (found || ucursor.node()->read_sid > sid || ucursor.node()->write_sid > sid)
     return nullptr; // mechanism C, D, E, F
 
-  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
+  typename MasstreeMap::cursor_type cursor(*get_map(), k->data(), k->length());
   found = cursor.find_insert(*ti);
   assert(!found);
-  cursor.value() = new VHandle();
+  cursor.value() = (VHandle *) VHandle::New();
   VHandle *result = cursor.value();
   cursor.finish(1, *ti);
   assert(result != nullptr);
   return result;
 }
 
-static __thread threadinfo *TLSThreadInfo;
+static thread_local threadinfo *TLSThreadInfo;
 
 threadinfo *MasstreeIndex::GetThreadInfo()
 {
@@ -137,34 +157,56 @@ void MasstreeIndex::ResetThreadInfo()
   TLSThreadInfo = nullptr;
 }
 
-MasstreeIndex::Iterator MasstreeIndex::IndexSearchIterator(const VarStr *start, const VarStr *end)
+Table::Iterator *MasstreeIndex::IndexSearchIterator(const VarStrView &start, const VarStrView &end)
 {
-  auto p = map->find_iterator<MasstreeMapForwardScanIteratorImpl>(
-      lcdf::Str(start->data, start->len), *GetThreadInfo());
-  return Iterator(p, end);
+  auto it = get_map()->find_iterator<MasstreeMap::ForwardIterator>(
+      lcdf::Str(start.data(), start.length()), *GetThreadInfo());
+  set_iterator_end_key(it, end);
+  it->Adapt();
+  return it;
 }
 
-void MasstreeIndex::ImmediateDelete(const VarStr *k)
+Table::Iterator *MasstreeIndex::IndexSearchIterator(const VarStrView &start)
+{
+  return IndexSearchIterator(start, VarStrView(std::numeric_limits<uint16_t>::max(), nullptr));
+}
+
+Table::Iterator *MasstreeIndex::IndexReverseIterator(const VarStrView &start, const VarStrView &end)
+{
+  auto it = get_map()->find_iterator<MasstreeMap::ReverseIterator>(
+      lcdf::Str(start.data(), start.length()), *GetThreadInfo());
+  set_iterator_end_key(it, end);
+  it->Adapt();
+  return it;
+}
+
+Table::Iterator *MasstreeIndex::IndexReverseIterator(const VarStrView &start)
+{
+  return IndexReverseIterator(start, VarStrView());
+}
+
+void MasstreeIndex::ImmediateDelete(const VarStrView &k)
 {
   auto ti = GetThreadInfo();
-  typename MasstreeMap::cursor_type cursor(*map, k->data, k->len);
+  typename MasstreeMap::cursor_type cursor(*get_map(), k.data(), k.length());
   bool found = cursor.find_locked(*ti);
+  VHandle *phandle = nullptr;
   if (found) {
-    VHandle *phandle = cursor.value();
+    phandle = cursor.value();
     cursor.value() = nullptr;
-    asm volatile ("": : :"memory");
-    delete phandle;
   }
   cursor.finish(-1, *ti);
+  delete phandle;
 }
 
-RelationManager::RelationManager()
+void *MasstreeIndex::operator new(size_t sz)
 {
-  // initialize all relations
-  ti = threadinfo::make(threadinfo::TI_MAIN, -1);
-  for (int i = 0; i < kMaxNrRelations; i++) {
-    relations[i].Initialize(ti);
-  }
+  return malloc(sz + sizeof(MasstreeMap));
+}
+
+void MasstreeIndex::operator delete(void *p)
+{
+  return free(p);
 }
 
 }

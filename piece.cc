@@ -1,10 +1,11 @@
-#include "promise.h"
+#include "piece.h"
 #include "epoch.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 
 #include <queue>
-#include "util.h"
+#include "util/objects.h"
+#include "util/arch.h"
 #include "opts.h"
 #include "mem.h"
 #include "priority.h"
@@ -17,61 +18,35 @@ namespace felis {
 static constexpr size_t kPromiseRoutineHeader = sizeof(go::Routine);
 static_assert(kPromiseRoutineHeader % 8 == 0); // Has to be aligned!
 
-PromiseRoutine *PromiseRoutine::CreateFromCapture(size_t capture_len)
+PieceRoutine *PieceRoutine::CreateFromCapture(size_t capture_len)
 {
-  auto r = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
+  auto r = (PieceRoutine *) BasePieceCollection::Alloc(sizeof(PieceRoutine));
   r->capture_len = capture_len;
-  r->capture_data = (uint8_t *) BasePromise::Alloc(util::Align(capture_len));
+  r->capture_data = (uint8_t *) BasePieceCollection::Alloc(util::Align(capture_len));
   r->sched_key = 0;
   r->level = 0;
   r->affinity = std::numeric_limits<uint64_t>::max();
 
   r->callback = nullptr;
-  r->node_func = nullptr;
   r->next = nullptr;
+  std::fill(r->__padding__, r->__padding__ + 8, 0);
   return r;
 }
 
-PromiseRoutineWithInput
-PromiseRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
+PieceRoutine *
+PieceRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
 {
-  uint16_t len;
-  memcpy(&len, p, 2);
-
-  uint16_t aligned_len = util::Align(2 + len);
-  auto *input_ptr = (uint8_t *) BasePromise::Alloc(aligned_len);
-  memcpy(input_ptr, p + 2, aligned_len - 2);
-
-  p += aligned_len;
-
-  auto r = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
-  auto result_len = r->DecodeNode(p, packet_len - aligned_len);
-  abort_if(result_len != packet_len - aligned_len,
+  auto r = (PieceRoutine *) BasePieceCollection::Alloc(sizeof(PieceRoutine));
+  auto result_len = r->DecodeNode(p, packet_len);
+  abort_if(result_len != packet_len,
            "DecodeNode() consumes {} but passed in {} bytes",
-           result_len, packet_len - aligned_len);
-  VarStr input(len, 0, input_ptr);
-  return std::make_tuple(r, input);
+           result_len, packet_len);
+  return r;
 }
 
-size_t PromiseRoutine::TreeSize(const VarStr &input) const
+size_t PieceRoutine::NodeSize() const
 {
-  return util::Align(2 + input.len) + NodeSize();
-}
-
-void PromiseRoutine::EncodeTree(uint8_t *p, const VarStr &input)
-{
-  // Format: input data are placed before the tree root. Every tree node
-  // addressess are aligned to 8 bytes. (C standards)
-  uint8_t *start = p;
-  memcpy(p, &input.len, 2);
-  memcpy(p + 2, input.data, input.len);
-  p += util::Align(2 + input.len);
-  EncodeNode(p);
-}
-
-size_t PromiseRoutine::NodeSize() const
-{
-  size_t s = util::Align(sizeof(PromiseRoutine))
+  size_t s = util::Align(sizeof(PieceRoutine))
              + util::Align(capture_len)
              + 8;
 
@@ -83,11 +58,11 @@ size_t PromiseRoutine::NodeSize() const
   return s;
 }
 
-uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
+uint8_t *PieceRoutine::EncodeNode(uint8_t *p)
 {
-  memcpy(p, this, sizeof(PromiseRoutine));
-  auto node = (PromiseRoutine *) p;
-  p += util::Align(sizeof(PromiseRoutine));
+  memcpy(p, this, sizeof(PieceRoutine));
+  auto node = (PieceRoutine *) p;
+  p += util::Align(sizeof(PieceRoutine));
 
   memcpy(p, capture_data, capture_len);
   p += util::Align(capture_len);
@@ -103,15 +78,15 @@ uint8_t *PromiseRoutine::EncodeNode(uint8_t *p)
   return p;
 }
 
-size_t PromiseRoutine::DecodeNode(uint8_t *p, size_t len)
+size_t PieceRoutine::DecodeNode(uint8_t *p, size_t len)
 {
   uint8_t *orig_p = p;
-  size_t off = util::Align(sizeof(PromiseRoutine));
+  size_t off = util::Align(sizeof(PieceRoutine));
   memcpy(this, p, off);
   p += off;
 
   off = util::Align(capture_len);
-  capture_data = (uint8_t *) BasePromise::Alloc(off);
+  capture_data = (uint8_t *) BasePieceCollection::Alloc(off);
   memcpy(capture_data, p, off);
   p += off;
 
@@ -122,9 +97,9 @@ size_t PromiseRoutine::DecodeNode(uint8_t *p, size_t len)
   p += 8;
 
   if (nr_children > 0) {
-    next = new BasePromise(nr_children);
+    next = new BasePieceCollection(nr_children);
     for (int i = 0; i < nr_children; i++) {
-      auto child = (PromiseRoutine *) BasePromise::Alloc(sizeof(PromiseRoutine));
+      auto child = (PieceRoutine *) BasePieceCollection::Alloc(sizeof(PieceRoutine));
       off = child->DecodeNode(p, len - (p - orig_p));
       p += off;
       next->Add(child);
@@ -133,28 +108,28 @@ size_t PromiseRoutine::DecodeNode(uint8_t *p, size_t len)
   return p - orig_p;
 }
 
-size_t BasePromise::g_nr_threads = 0;
+size_t BasePieceCollection::g_nr_threads = 0;
 
-BasePromise::BasePromise(int limit)
+BasePieceCollection::BasePieceCollection(int limit)
     : limit(limit), nr_handlers(0), extra_handlers(nullptr)
 {
   if (limit > kInlineLimit) {
-    extra_handlers = (PromiseRoutine **)Alloc(util::Align(
-        sizeof(PromiseRoutine *) * (limit - kInlineLimit), CACHE_LINE_SIZE));
+    extra_handlers = (PieceRoutine **)Alloc(util::Align(
+        sizeof(PieceRoutine *) * (limit - kInlineLimit), CACHE_LINE_SIZE));
   }
 }
 
-void *BasePromise::operator new(std::size_t size)
+void *BasePieceCollection::operator new(std::size_t size)
 {
-  return BasePromise::Alloc(size);
+  return BasePieceCollection::Alloc(size);
 }
 
-void *BasePromise::Alloc(size_t size)
+void *BasePieceCollection::Alloc(size_t size)
 {
   return util::Impl<PromiseAllocationService>().Alloc(size);
 }
 
-void BasePromise::AssignSchedulingKey(uint64_t key)
+void BasePieceCollection::AssignSchedulingKey(uint64_t key)
 {
   for (int i = 0; i < nr_handlers; i++) {
     auto *child = routine(i);
@@ -165,7 +140,7 @@ void BasePromise::AssignSchedulingKey(uint64_t key)
   }
 }
 
-void BasePromise::AssignAffinity(uint64_t aff)
+void BasePieceCollection::AssignAffinity(uint64_t aff)
 {
   for (int i = 0; i < nr_handlers; i++) {
     auto *child = routine(i);
@@ -176,52 +151,23 @@ void BasePromise::AssignAffinity(uint64_t aff)
   }
 }
 
-void BasePromise::Add(PromiseRoutine *child)
+void BasePieceCollection::Add(PieceRoutine *child)
 {
-  abort_if(nr_handlers >= kMaxHandlersLimit,
+  abort_if(nr_handlers >= limit,
            "nr_handlers {} exceeding limits!", nr_handlers);
   routine(nr_handlers++) = child;
 }
 
-void BasePromise::Complete(const VarStr &in)
+void BasePieceCollection::Complete()
 {
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   for (size_t i = 0; i < nr_handlers; i++) {
     auto r = routine(i);
-
-    // This is a dynamically dispatched piece.
-    if (r->node_id == 255) {
-      auto real_node = r->node_func(r, in);
-      auto max_node = transport.GetNumberOfNodes();
-      VarStr bubble(0, 0, (uint8_t *) PromiseRoutine::kBubblePointer);
-      for (r->node_id = 1; r->node_id <= max_node; r->node_id++) {
-        if (r->node_id == real_node) {
-          transport.TransportPromiseRoutine(r, in);
-        } else {
-          transport.TransportPromiseRoutine(r, bubble);
-        }
-      }
-    } else {
-      transport.TransportPromiseRoutine(r, in);
-    }
-  }
-
-  // Recursively complete all bubbles.
-  if (in.data == (uint8_t *) PromiseRoutine::kBubblePointer) {
-    for (size_t i = 0; i < nr_handlers; i++) {
-      auto r = routine(i);
-      if (r->next) r->next->Complete(in);
-    }
+    transport.TransportPromiseRoutine(r);
   }
 }
 
-void BasePromise::ExecutionRoutine::RunPromiseRoutine(PromiseRoutine *r, const VarStr &in)
-{
-  INIT_ROUTINE_BRK(8192);
-  r->callback((PromiseRoutine *) r, in);
-}
-
-void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready)
+void BasePieceCollection::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready)
 {
   auto p = q;
   while (p->next != q) {
@@ -232,7 +178,7 @@ void BasePromise::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue *q, boo
   Add(p);
 }
 
-void BasePromise::ExecutionRoutine::Run()
+void BasePieceCollection::ExecutionRoutine::Run()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   auto &transport = util::Impl<PromiseRoutineTransportService>();
@@ -240,14 +186,14 @@ void BasePromise::ExecutionRoutine::Run()
   int core_id = scheduler()->thread_pool_id() - 1;
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
-  PromiseRoutineWithInput next_r;
+  PieceRoutine *next_r;
   bool give_up = false;
   // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
       [&next_r, &give_up, sched]
-      (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
+      (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
             trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
@@ -279,13 +225,13 @@ void BasePromise::ExecutionRoutine::Run()
         continue;
       }
 
-      cnt++;
       // Periodic flush
+      cnt++;
       if ((cnt & 0x01F) == 0) {
         transport.PeriodicIO(core_id);
       }
 
-      auto [rt, in] = next_r;
+      auto rt = next_r;
       if (rt->sched_key != 0)
         debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
 
@@ -301,7 +247,7 @@ void BasePromise::ExecutionRoutine::Run()
       }
 
       auto tsc = __rdtsc();
-      RunPromiseRoutine(rt, in);
+      rt->callback(rt);
       auto diff = (__rdtsc() - tsc) / 2200;
       if (rt->sched_key != 0)
         felis::probes::PieceTime{diff, rt->sched_key}();
@@ -315,10 +261,10 @@ void BasePromise::ExecutionRoutine::Run()
     }
   } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 
-  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
+  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {} give up {}", core_id, give_up);
 }
 
-bool BasePromise::ExecutionRoutine::Preempt()
+bool BasePieceCollection::ExecutionRoutine::Preempt()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
@@ -335,7 +281,7 @@ bool BasePromise::ExecutionRoutine::Preempt()
     spawn = true;
     auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
         [this, &spawn]
-        (PromiseRoutineWithInput r, BasePromise::ExecutionRoutine *state) -> bool {
+        (PieceRoutine *, BasePieceCollection::ExecutionRoutine *state) -> bool {
           if (state == this)
             return true;
           if (state != nullptr) {
@@ -361,12 +307,12 @@ bool BasePromise::ExecutionRoutine::Preempt()
   return false;
 }
 
-void BasePromise::QueueRoutine(felis::PromiseRoutineWithInput *routines, size_t nr_routines, int core_id)
+void BasePieceCollection::QueueRoutine(PieceRoutine **routines, size_t nr_routines, int core_id)
 {
   util::Impl<PromiseRoutineDispatchService>().Add(core_id, routines, nr_routines);
 }
 
-void BasePromise::FlushScheduler()
+void BasePieceCollection::FlushScheduler()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   for (int i = 0; i < g_nr_threads; i++) {

@@ -68,7 +68,7 @@ bool MWTxn_Run(PriorityTxn *txn)
   for (auto key : keys) {
     VHandle* row = nullptr;
     if (!(txn->InitRegisterUpdate<ycsb::Ycsb>(key, row))) {
-      // debug(TRACE_PRIORITY "init register failed!");
+      // trace(TRACE_PRIORITY "init register failed!");
       std::abort();
     }
     rows.push_back(row);
@@ -120,7 +120,7 @@ bool MWTxn_Run(PriorityTxn *txn)
                 rows[i],
                 txn};
     txn->IssuePromise(ctx, lambda);
-    // debug(TRACE_PRIORITY "Priority txn {:p} (MW) - Issued lambda into PQ", (void *)txn);
+    // trace(TRACE_PRIORITY "Priority txn {:p} (MW) - Issued lambda into PQ", (void *)txn);
   }
 
   uint64_t succ_tsc = __rdtsc();

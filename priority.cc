@@ -1,5 +1,6 @@
 #include "priority.h"
 #include "opts.h"
+#include "routine_sched.h"
 
 namespace felis {
 
@@ -37,11 +38,11 @@ PriorityTxnService::PriorityTxnService()
                        "please do not specify NrPriorityTxn or IntervalPriorityTxn");
       std::abort();
     }
-    // 85ms: time of execution phase when batched epoch size=100k. out of experience
-    const int _exec_time = 77;
+    // _exec_time: time of execution phase when batched epoch size=100k. out of experience
+    const int _exec_time = 20;
     int percentage = Options::kPercentagePriorityTxn.ToInt();
     abort_if(percentage <= 0, "priority transaction percentage cannot be smaller than 0");
-    int exec_time = _exec_time + int(float(_exec_time) * ((float(percentage) / 100.0)) * 3.6);
+    int exec_time = _exec_time + int(float(_exec_time) * ((float(percentage) / 100.0)) * 16);
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
     g_interval_priority_txn = exec_time * 1000000 / g_nr_priority_txn; // ms to ns
   } else {
@@ -206,7 +207,7 @@ bool PriorityTxnService::MaxProgressPassed(uint64_t sid)
 {
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     if (*exec_progress[i] > sid) {
-      // debug(TRACE_PRIORITY "progress passed sid {}, at core {} it's {}", format_sid(sid), i, format_sid(*exec_progress[i]));
+      // trace(TRACE_PRIORITY "progress passed sid {}, at core {} it's {}", format_sid(sid), i, format_sid(*exec_progress[i]));
       return true;
     }
   }
@@ -337,7 +338,7 @@ bool PriorityTxn::Init()
 
   // 1) acquire SID
   sid = util::Instance<PriorityTxnService>().GetSID(this);
-  // debug(TRACE_PRIORITY "sid:         {}", format_sid(sid));
+  // trace(TRACE_PRIORITY "sid:         {}", format_sid(sid));
 
   // 2) apply changes, 3) validate, 4) rollback
   int update_cnt = 0, insert_cnt = 0; // count for rollback
@@ -349,7 +350,7 @@ bool PriorityTxn::Init()
       return false;
     }
     // apply changes
-    if (!update_handles[i]->AppendNewVersion(sid, sid >> 32, true)) {
+    if (!update_handles[i]->AppendNewPriorityVersion(sid)) {
       Rollback(update_cnt, insert_cnt);
       return false;
     }
@@ -369,7 +370,7 @@ bool PriorityTxn::Init()
     }
     insert_cnt++;
     insert_handles.push_back(handle);
-    handle->AppendNewVersion(sid, sid >> 32, true);
+    handle->AppendNewPriorityVersion(sid);
     // batched version array will have 0 version, priority version linked list will have 1 version
   }
   this->initialized = true;

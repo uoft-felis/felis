@@ -7,11 +7,12 @@
 #include <mutex>
 #include <vector>
 
-#include "util.h"
+#include "util/linklist.h"
 #include "node_config.h"
 #include "shipping.h"
 #include "log.h"
 #include "entity.h"
+#include "vhandle.h"
 
 namespace felis {
 

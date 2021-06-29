@@ -11,84 +11,12 @@
 #include <cassert>
 
 #include "mem.h"
-#include "util.h"
+#include "varstr.h"
 
 namespace sql {
 
-// serve as the key of database
-struct VarStr {
-
-  static size_t NewSize(uint16_t length) { return sizeof(VarStr) + length; }
-
-  static VarStr *New(uint16_t length) {
-    int region_id = mem::ParallelPool::CurrentAffinity();
-    VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
-    ins->len = length;
-    ins->region_id = region_id;
-    ins->data = (uint8_t *) ins + sizeof(VarStr);
-    return ins;
-  }
-
-  static void operator delete(void *ptr) {
-    if (ptr == nullptr) return;
-    VarStr *ins = (VarStr *) ptr;
-    if (__builtin_expect(ins->data == (uint8_t *) ptr + sizeof(VarStr), 1)) {
-      mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
-    } else {
-      // Don't know who's gonna do that. Looks like it's a free from stack?!
-      std::abort();
-    }
-  }
-
-  static VarStr *FromAlloca(void *ptr, uint16_t length) {
-    VarStr *str = static_cast<VarStr *>(ptr);
-    str->len = length;
-    str->region_id = -5206; // something peculiar, making you realize it's allocated from stack
-    str->data = (uint8_t *) str + sizeof(VarStr);
-    return str;
-  }
-
-  uint16_t len;
-  int region_id;
-  const uint8_t *data;
-
-  VarStr() : len(0), region_id(0), data(nullptr) {}
-  VarStr(uint16_t len, int region_id, const uint8_t *data) : len(len), region_id(region_id), data(data) {}
-
-  bool operator<(const VarStr &rhs) const {
-    if (data == nullptr) return true;
-    else if (rhs.data == nullptr) return false;
-
-    return len == rhs.len ? memcmp(data, rhs.data, len) < 0 : len < rhs.len;
-  }
-
-  bool operator==(const VarStr &rhs) const {
-    if (len != rhs.len) return false;
-    return memcmp(data, rhs.data, len) == 0;
-  }
-
-  bool operator!=(const VarStr &rhs) const {
-    return !(*this == rhs);
-  }
-
-  template <typename T>
-  const T ToType() const {
-    T instance;
-    instance.Decode(this);
-    return instance;
-  }
-
-  std::string ToHex() const {
-    char buf[8];
-    std::stringstream ss;
-    for (int i = 0; i < len; i++) {
-      snprintf(buf, 8, "%x ", data[i]);
-      ss << buf;
-    }
-    return ss.str();
-  }
-};
-
+using VarStr = felis::VarStr;
+using VarStrView = felis::VarStrView;
 
 // types that looks like a built-in C++ type, let's keep them all in lower-case!
 // copied from Silo.
@@ -355,6 +283,31 @@ struct KeySerializer<uint32_t> : public Serializer<uint32_t> {
   }
 };
 
+struct InheritBasePtr {
+  VarStr *base = nullptr;
+};
+
+template <>
+struct KeySerializer<InheritBasePtr> {}; // Shouldn't call this!
+
+template <>
+struct ValueSerializer<InheritBasePtr> : public Serializer<InheritBasePtr> {
+  static void EncodeTo(uint8_t *buf, const InheritBasePtr *ptr) {
+    if (ptr->base == nullptr) {
+      // Encode where you are about to encode to! Also skips the VarStr header.
+      auto addr = (uintptr_t) (buf - sizeof(VarStr));
+      __builtin_memcpy(buf, &addr, sizeof(uintptr_t));
+    } else {
+      __builtin_memcpy(buf, &ptr->base, sizeof(uintptr_t));
+    }
+  }
+  static void DecodeFrom(InheritBasePtr *ptr, const uint8_t *buf) {
+    if (ptr->base != nullptr) {
+      __builtin_memcpy(&ptr->base, buf, sizeof(uintptr_t));
+    }
+  }
+};
+
 template <typename Base>
 class Object : public Base {
  public:
@@ -362,23 +315,42 @@ class Object : public Base {
 
   Object(const Base &b) : Base(b) {}
 
-  VarStr *Encode() const { return EncodeVarStr(VarStr::New(this->EncodeSize())); }
-
-  VarStr *EncodeFromAlloca(void *base_ptr) const {
-    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
-  }
-
-  VarStr *EncodeFromRoutine() const {
-    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
-    return EncodeVarStr(VarStr::FromAlloca(base_ptr, this->EncodeSize()));
-  }
-  void Decode(const VarStr *str) {
-    this->DecodeFrom(str->data);
-  }
- private:
-  VarStr *EncodeVarStr(VarStr *str) const {
-    this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+  VarStr *Encode() const {
+    VarStr *str = VarStr::New(this->EncodeSize());
+    // this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    this->EncodeTo(str->data());
     return str;
+  }
+
+  VarStr *EncodeToPtr(void *ptr) const {
+    VarStr *str = VarStr::FromPtr(ptr, this->EncodeSize());
+    // this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+    this->EncodeTo(str->data());
+    return str;
+  }
+
+  VarStr *EncodeToPtrOrDefault(void *ptr) const {
+    if (ptr) return EncodeToPtr(ptr);
+    else return Encode();
+  }
+
+  VarStrView EncodeView(void *ptr) const {
+    VarStrView v(this->EncodeSize(), (uint8_t *) ptr);
+    this->EncodeTo((uint8_t *) ptr);
+    return v;
+  }
+
+  VarStrView EncodeViewRoutine() const {
+    void *base_ptr = mem::AllocFromRoutine(VarStr::NewSize(this->EncodeSize()));
+    return EncodeView(base_ptr);
+  }
+
+  void Decode(const VarStr *str) {
+    this->DecodeFrom(str->data());
+  }
+
+  void DecodeView(const VarStrView &view) {
+    this->DecodeFrom(view.data());
   }
 };
 
@@ -406,15 +378,14 @@ class Field : public Field<FieldSerializer, N - 1>, public FieldValue<N> {
   const ImplType *pointer() const { return FieldValue<N>::ptr(); }
 
  protected:
-  static constexpr int kFieldOffset = PreviousFields::kFieldOffset + 1;
   Field() {}
 
   template <int K>
   using FieldType = Field<FieldSerializer, K>;
 
  public:
+  static constexpr int kFieldOffset = PreviousFields::kFieldOffset + 1;
   static constexpr int kOffset = N;
-
 
   template <typename T>
   struct FieldBuilder : public FieldValue<N>::template Builder<typename Field<FieldSerializer, N + 1>::template FieldBuilder<T>, T> {};
@@ -477,6 +448,7 @@ class Field<FieldSerializer, __COUNTER__> : public GapField<FieldSerializer> {};
 
 #define KEYS(name) DBOBJ(name, KeySerializer)
 #define VALUES(name) DBOBJ(name, ValueSerializer)
+#define DERIVED(name, basename, offset) using name = sql::DerivedSchemas<sql::Field<ValueSerializer, basename::kOffset - basename::kFieldOffset + offset - 1>>;
 
 // Serializable tuples. Tuples are different than fields, because their
 // members are anonymous.
@@ -547,27 +519,26 @@ class TupleImpl : public TupleField<Types...> {
   }
 
   template <size_t N>
+  void set(const typename TupleFieldType<N, TupleField, Types...>::ValueType &val) {
+    ((typename TupleFieldType<N, TupleField, Types...>::Type *) this)->value = val;
+  }
+
+  template <size_t N>
   typename TupleFieldType<N, TupleField, Types...>::ValueType get() const {
     return _<N>();
   }
 };
 
-
-template <typename AllFields>
-class SchemasImpl : public AllFields {
+template <typename LastField>
+class Schemas : public Object<LastField> {
  public:
-  // Concept:
-  // void EncodeTo(uint8_t *buf) const;
-  // size_t EncodeSize() const;
-  // void DecodeFrom(const uint8_t *buf);
+  Schemas() {}
 
-  SchemasImpl() {}
-
-  using ThisType = SchemasImpl<AllFields>;
-  using FirstBuilder = typename AllFields::template FieldType<AllFields::kOffset - AllFields::kFieldOffset>::template FieldBuilder<ThisType>;
+  using ThisType = Schemas<LastField>;
+  using FirstBuilder = typename LastField::template FieldType<LastField::kOffset - LastField::kFieldOffset>::template FieldBuilder<ThisType>;
 
   template <typename ...Args>
-  static Object<ThisType> New(Args... args) {
+  static ThisType New(Args... args) {
     ThisType o;
     o.Build().Init(args...);
     return o;
@@ -580,7 +551,15 @@ class SchemasImpl : public AllFields {
   }
 };
 
-template <typename AllFields> using Schemas = Object<SchemasImpl<AllFields>>;
+template <typename LastField>
+class DerivedSchemas : public Object<LastField> {
+ public:
+  static_assert(std::is_base_of<InheritBasePtr, typename FieldValue<LastField::kOffset - LastField::kFieldOffset>::Type>::value);
+  DerivedSchemas() {
+    ((InheritBasePtr *) this)->base = (VarStr *) 0x01;
+  }
+};
+
 template <typename ...Types> using Tuple = Object<TupleImpl<Types...>>;
 
 template <typename ...Types> Tuple<Types...> MakeTuple(Types... params) { return Tuple<Types...>(params...); }
@@ -589,8 +568,8 @@ template <typename ...Types> Tuple<Types...> MakeTuple(Types... params) { return
 
 namespace felis {
 
-using VarStr = sql::VarStr;
 using sql::Tuple;
+
 }
 
 // C++17 destructuring

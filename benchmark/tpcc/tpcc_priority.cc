@@ -9,6 +9,7 @@ void GeneratePriorityTxn() {
   if (!NodeConfiguration::g_priority_txn)
     return;
   int txn_per_epoch = PriorityTxnService::g_nr_priority_txn;
+  unsigned long interval = PriorityTxnService::g_interval_priority_txn;
   int stock_pct = 20;
   util::FastRandom r(__rdtsc());
   for (auto i = 1; i < EpochClient::g_max_epoch; ++i) {
@@ -20,8 +21,8 @@ void GeneratePriorityTxn() {
       else
         txn.SetCallback(&NewOrderDeliveryTxn_Run);
       txn.epoch = i;
-      auto interval = PriorityTxnService::g_interval_priority_txn;
       txn.delay = static_cast<uint64_t>(static_cast<double>(interval * j) * 2.2);
+      // convert from nanosecond to tsc (our CPU is 2.2GHz)
       util::Instance<PriorityTxnService>().PushTxn(&txn);
     }
   }
@@ -60,6 +61,7 @@ bool StockTxn_Run(PriorityTxn *txn)
   uint64_t start_tsc = __rdtsc();
   uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
   probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  INIT_ROUTINE_BRK(4096);
 
   // generate txn input
   StockTxnInput txnInput = dynamic_cast<tpcc::Client*>
@@ -86,6 +88,12 @@ bool StockTxn_Run(PriorityTxn *txn)
     ++fail_cnt;
   }
 
+  uint64_t succ_tsc = __rdtsc();
+  txn->measure_tsc = succ_tsc;
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  // trace(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+
   struct Context {
     uint warehouse_id;
     uint nr_items;
@@ -97,13 +105,13 @@ bool StockTxn_Run(PriorityTxn *txn)
   auto lambda =
       [](std::tuple<Context> capture) {
         auto [ctx] = capture;
-        auto piece_id = ctx.txn->piece_count.fetch_sub(1);
 
         // record exec queue time
         auto queue_tsc = __rdtsc();
         auto diff = queue_tsc - ctx.txn->measure_tsc;
         probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
         ctx.txn->measure_tsc = queue_tsc;
+        INIT_ROUTINE_BRK(4096);
 
         for (int i = 0; i < ctx.nr_items; ++i) {
           auto stock = ctx.txn->Read<Stock::Value>(ctx.stock_rows[i]);
@@ -123,14 +131,11 @@ bool StockTxn_Run(PriorityTxn *txn)
               txn};
   memcpy(ctx.stock_quantities, txnInput.detail.stock_quantities, sizeof(uint) * ctx.nr_items);
   memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * ctx.nr_items);
-  txn->IssuePromise(ctx, lambda);
-  // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
-
-  uint64_t succ_tsc = __rdtsc();
-  txn->measure_tsc = succ_tsc;
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  // debug(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  int core_id = -1;
+  // if (g_tpcc_config.IsWarehousePinnable())
+  //   core_id = g_tpcc_config.WarehouseToCoreId(txnInput.warehouse_id);
+  txn->IssuePromise(ctx, lambda, core_id);
+  // trace(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
 
   // record acquired SID's difference from current max progress
   uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
@@ -147,12 +152,13 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   uint64_t start_tsc = __rdtsc();
   uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
   probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  INIT_ROUTINE_BRK(4096);
 
   // generate txn input
   NewOrderStruct input = dynamic_cast<Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<NewOrderStruct>();
   std::vector<Stock::Key> stock_keys;
-  for (int i = 0; i < input.nr_items; ++i) {
+  for (int i = 0; i < input.detail.nr_items; ++i) {
     stock_keys.push_back(Stock::Key::New(input.detail.supplier_warehouse_id[i],
                                          input.detail.item_id[i]));
   }
@@ -169,19 +175,19 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
 
   // register new order insert
   auto auto_inc_zone = input.warehouse_id * 10 + input.district_id;
-  auto oorder_id = dynamic_cast<Client*>(EpochClient::g_workload_client)->
-                   relation(OOrder::kTable).AutoIncrement(auto_inc_zone);
+  auto &mgr = util::Instance<TableManager>();
+  auto oorder_id = mgr.Get<tpcc::OOrder>().AutoIncrement(auto_inc_zone);
 
   auto oorder_key = OOrder::Key::New(input.warehouse_id, input.district_id, oorder_id);
   auto neworder_key = NewOrder::Key::New(input.warehouse_id, input.district_id, oorder_id, input.customer_id);
   OrderLine::Key orderline_keys[input.kNewOrderMaxItems];
-  for (int i = 0; i < input.nr_items; i++)
+  for (int i = 0; i < input.detail.nr_items; i++)
     orderline_keys[i] = OrderLine::Key::New(input.warehouse_id, input.district_id, oorder_id, i + 1);
 
   BaseInsertKey *oorder_ikey, *neworder_ikey, *orderline_ikeys[input.kNewOrderMaxItems];
   txn->InitRegisterInsert<OOrder>(oorder_key, oorder_ikey);
   txn->InitRegisterInsert<NewOrder>(neworder_key, neworder_ikey);
-  for (int i = 0; i < input.nr_items; i++)
+  for (int i = 0; i < input.detail.nr_items; i++)
     txn->InitRegisterInsert<OrderLine>(orderline_keys[i], orderline_ikeys[i]);
 
   // register delivery update (insert rows' update doesn't need to be registered)
@@ -197,6 +203,11 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
     ++fail_cnt;
   }
 
+  uint64_t succ_tsc = __rdtsc();
+  txn->measure_tsc = succ_tsc;
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+
   struct Context {
     NewOrderStruct in;
     PriorityTxn *txn;
@@ -210,17 +221,17 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   auto lambda =
       [](std::tuple<Context> capture) {
         auto [ctx] = capture;
-        auto piece_id = ctx.txn->piece_count.fetch_sub(1);
 
         // record exec queue time
         auto queue_tsc = __rdtsc();
         auto diff = queue_tsc - ctx.txn->measure_tsc;
         probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
         ctx.txn->measure_tsc = queue_tsc;
+        INIT_ROUTINE_BRK(4096);
 
         // new order - update stock
         bool all_local = true;
-        for (int i = 0; i < ctx.in.nr_items; ++i) {
+        for (int i = 0; i < ctx.in.detail.nr_items; ++i) {
           auto stock = ctx.txn->Read<Stock::Value>(ctx.stock_rows[i]);
           if (stock.s_quantity - ctx.in.detail.order_quantities[i] < 10) {
             stock.s_quantity += 91;
@@ -235,18 +246,19 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
           ClientBase::OnUpdateRow(ctx.stock_rows[i]);
         }
         // new order - update (inserted) oorder, neworder
-        // actually can't write here, because final write of these rows are in the delivery part
-        auto oorder_value = OOrder::Value::New(ctx.in.customer_id, 0, ctx.in.nr_items,
+        auto oorder_value = OOrder::Value::New(ctx.in.customer_id, 0, ctx.in.detail.nr_items,
                                                all_local, ctx.in.ts_now);
+        // actually can't write here, because final write of these rows are in the delivery part
         // ctx.txn->Write(ctx.txn->InsertKeyToVHandle(ctx.oorder_ikey), oorder_value);
         auto neworder_value = NewOrder::Value();
         // ctx.txn->Write(ctx.txn->InsertKeyToVHandle(ctx.neworder_ikey), NewOrder::Value());
 
         // new order - update (inserted) orderline
-        OrderLine::Value ol_values[ctx.in.nr_items];
-        for (int i = 0; i < ctx.in.nr_items; ++i) {
-          auto item = util::Instance<RelationManager>().Get<Item>().
-                      Search(Item::Key::New(ctx.in.detail.item_id[i]).EncodeFromRoutine());
+        OrderLine::Value ol_values[ctx.in.detail.nr_items];
+        for (int i = 0; i < ctx.in.detail.nr_items; ++i) {
+          auto &mgr = util::Instance<TableManager>();
+          auto item = mgr.Get<tpcc::Item>().Search(
+                      Item::Key::New(ctx.in.detail.item_id[i]).EncodeViewRoutine());
           auto item_value = ctx.txn->Read<Item::Value>(item);
           auto amount = item_value.i_price * ctx.in.detail.order_quantities[i];
           ol_values[i] = OrderLine::Value::New(ctx.in.detail.item_id[i], 0, amount,
@@ -264,7 +276,7 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
         ClientBase::OnUpdateRow(oorder_row);
         // delivery - update orderline
         int sum = 0;
-        for (int i = 0; i < ctx.in.nr_items; ++i) {
+        for (int i = 0; i < ctx.in.detail.nr_items; ++i) {
           auto orderline_row = ctx.txn->InsertKeyToVHandle(ctx.orderline_ikeys[i]);
           sum += ol_values[i].ol_amount;
           ol_values[i].ol_delivery_d = 234567; /* ts */
@@ -286,13 +298,11 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
       };
   Context ctx {input, txn, oorder_ikey, neworder_ikey, customer_row};
   memcpy(ctx.orderline_ikeys, orderline_ikeys, sizeof(BaseInsertKey) * input.kNewOrderMaxItems);
-  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * input.nr_items);
-  txn->IssuePromise(ctx, lambda);
-
-  uint64_t succ_tsc = __rdtsc();
-  txn->measure_tsc = succ_tsc;
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * input.detail.nr_items);
+  int core_id = -1;
+  // if (g_tpcc_config.IsWarehousePinnable())
+  //   core_id = g_tpcc_config.WarehouseToCoreId(txnInput.warehouse_id);
+  txn->IssuePromise(ctx, lambda, core_id);
 
   // record acquired SID's difference from current max progress
   uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;

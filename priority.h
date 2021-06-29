@@ -3,6 +3,7 @@
 
 #include "epoch.h"
 #include "masstree_index_impl.h"
+#include "sqltypes.h"
 #include "json11/json11.hpp"
 
 namespace felis {
@@ -24,7 +25,7 @@ class PriorityTxnService {
     std::vector<bool> bitset;
     size_t size;
    public:
-    static const int extra_strip = 10;
+    static const int extra_strip = 1000;
     Bitmap() = delete;
     Bitmap(const Bitmap& rhs) = delete;
     Bitmap(size_t _size) {
@@ -145,13 +146,13 @@ struct InsertKey : public BaseInsertKey {
 
   virtual VHandle* Insert(uint64_t sid) final override{
     int table = static_cast<int>(Table::kTable);
-    auto &rel = util::Instance<felis::RelationManager>()[table];
-    return rel.PriorityInsert(key.Encode(), sid);
+    auto rel = util::Instance<TableManager>().GetTable(table);
+    return rel->PriorityInsert(key.Encode(), sid);
   }
 };
 
 class PriorityTxn {
- friend class BasePromise::ExecutionRoutine;
+ friend class BasePieceCollection::ExecutionRoutine;
  friend class PriorityTxnService;
  private:
   uint64_t sid;
@@ -178,7 +179,6 @@ class PriorityTxn {
     this->piece_count.store(0);
     this->min_sid = 0;
     this->backoff_distance = PriorityTxnService::g_backoff_distance;
-    // every time will be halved, so double it first
 
     this->sid = rhs.sid;
     this->initialized = rhs.initialized;
@@ -200,9 +200,9 @@ class PriorityTxn {
   template <typename Table>
   VHandle* SearchExistingRow(typename Table::Key key) {
     int table = static_cast<int>(Table::kTable);
-    auto &rel = util::Instance<RelationManager>()[table];
+    auto rel = util::Instance<TableManager>().GetTable(table);
     auto keyVarStr = key.Encode();
-    return rel.Search(keyVarStr, this->sid);
+    return rel->Search(keyVarStr->ToView(), this->sid);
   }
 
   bool CheckUpdateConflict(VHandle* handle);
@@ -256,14 +256,14 @@ class PriorityTxn {
   }
 
   template <typename T, typename Lambda>
-  void IssuePromise(T input, Lambda lambda) {
-    int core_id;
-    if (PriorityTxnService::g_fastest_core)
-      core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
-    else
-      core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  void IssuePromise(T input, Lambda lambda, int core_id = -1) {
+    if (core_id == -1) {
+      if (PriorityTxnService::g_fastest_core)
+        core_id = util::Instance<felis::PriorityTxnService>().GetFastestCore();
+      else
+        core_id = go::Scheduler::CurrentThreadPoolId() - 1; // issue to current core
+    }
     auto capture = std::make_tuple(input);
-    auto empty_input = felis::VarStr::FromAlloca(alloca(sizeof(felis::VarStr)), sizeof(felis::VarStr));
 
     // convert non-capture lambda to constexpr func ptr
     constexpr void (*native_func)(std::tuple<T> capture) = lambda;
@@ -273,14 +273,14 @@ class PriorityTxn {
     // it decodes routine->capture_data into capture, and pass it back to lambda
     using serializer = sql::Serializer<std::tuple<T>>;
     auto static_func =
-        [](felis::PromiseRoutine *routine, felis::VarStr input) {
+        [](PieceRoutine *routine) {
             std::tuple<T> capture;
             serializer::DecodeFrom(&capture, routine->capture_data);
             native_func(capture);
         };
 
     // construct PromiseRoutine
-    auto routine = PromiseRoutine::CreateFromCapture(serializer::EncodeSize(&capture));
+    auto routine = PieceRoutine::CreateFromCapture(serializer::EncodeSize(&capture));
     routine->callback = static_func;
     routine->sched_key = this->serial_id();
     routine->affinity = core_id;
@@ -288,8 +288,7 @@ class PriorityTxn {
 
     // put PromiseRoutineWithInput into PQ
     EpochClient::g_workload_client->completion_object()->Increment(1);
-    PromiseRoutineWithInput tuple = std::make_tuple(routine, *empty_input);
-    util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &tuple, 1);
+    util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &routine, 1);
   }
 
   // if doing OCC, check write set and commit and stuff

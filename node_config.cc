@@ -19,11 +19,11 @@ void TransportBatcher::Init(int nr_nodes, int nr_cores)
 {
   LocalMetadata *mem = nullptr;
   for (auto i = 0; i < nr_cores; i++) {
-    auto d = std::div(i + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto d = std::div(i, mem::kNrCorePerNode);
     auto numa_node = d.quot;
     auto numa_offset = d.rem;
     if (numa_offset == 0) {
-      mem = (LocalMetadata *) mem::MemMapAlloc(
+      mem = (LocalMetadata *) mem::AllocMemory(
           mem::Promise,
           sizeof(LocalMetadata) * kMaxLevels * mem::kNrCorePerNode,
           numa_node);
@@ -55,13 +55,13 @@ LocalDispatcherImpl::LocalDispatcherImpl(int idx)
     : idx(idx), dice(0)
 {
   auto mem =
-      (Queue *) mem::MemMapAlloc(mem::EpochQueueItem, sizeof(Queue), -1);
+      (Queue *) mem::AllocMemory(mem::EpochQueueItem, sizeof(Queue), -1);
 
   for (int i = 0; i <= NodeConfiguration::g_nr_threads; i++) {
     if (i > 0) {
-      auto d = std::div(i - 1 + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+      auto d = std::div(i - 1, mem::kNrCorePerNode);
       if (d.rem == 0) {
-        mem = (Queue *) mem::MemMapAlloc(
+        mem = (Queue *) mem::AllocMemory(
             mem::EpochQueueItem, sizeof(Queue) * mem::kNrCorePerNode, d.quot);
       }
       queues[i] = new (mem + d.rem) Queue();
@@ -71,13 +71,13 @@ LocalDispatcherImpl::LocalDispatcherImpl(int idx)
   }
 }
 
-void LocalDispatcherImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in)
+void LocalDispatcherImpl::QueueRoutine(PieceRoutine *routine)
 {
   int tid = go::Scheduler::CurrentThreadPoolId();
   auto q = queues[tid];
   auto nr_threads = NodeConfiguration::g_nr_threads;
   auto pos = q->append_start.load(std::memory_order_acquire);
-  q->routines[pos] = {routine, in};
+  q->routines[pos] = routine;
   if (routine->affinity == std::numeric_limits<uint64_t>::max()) routine->affinity = tid - 1;
   if (tid != routine->affinity + 1 || tid == 0) q->need_scan = true;
   q->append_start.store(pos + 1, std::memory_order_release);
@@ -92,15 +92,9 @@ void LocalDispatcherImpl::QueueRoutine(PromiseRoutine *routine, const VarStr &in
   }
 }
 
-void LocalDispatcherImpl::QueueBubble()
-{
-  // Currently we don't batch the bubbles, and we consider bubbles are rare.
-  util::Impl<PromiseRoutineDispatchService>().AddBubble();
-}
-
 void LocalDispatcherImpl::DoFlush()
 {
-  BasePromise::FlushScheduler();
+  BasePieceCollection::FlushScheduler();
 }
 
 bool LocalDispatcherImpl::PushRelease(int tid, unsigned int start, unsigned int end)
@@ -124,8 +118,7 @@ void LocalDispatcherImpl::FlushOnCore(int tid, unsigned int start, unsigned int 
 
     auto delta = dice.fetch_add((end - start) % nr_threads, std::memory_order_release);
     for (int j = start; j < end; j++) {
-      auto &p = q->routines[j];
-      auto [r, _] = p;
+      auto r = q->routines[j];
       auto core = 0;
       if (r->affinity < nr_threads) {
         core = r->affinity;
@@ -133,7 +126,7 @@ void LocalDispatcherImpl::FlushOnCore(int tid, unsigned int start, unsigned int 
         core = (delta + j - start) % nr_threads;
       }
       q->task_buffer[core]
-          .routines[q->task_buffer[core].nr++] = p;
+          .routines[q->task_buffer[core].nr++] = r;
     }
     for (int i = 0; i < nr_threads; i++) {
       SubmitOnCore(q->task_buffer[i].routines.data(), 0, q->task_buffer[i].nr, i + 1);
@@ -141,7 +134,7 @@ void LocalDispatcherImpl::FlushOnCore(int tid, unsigned int start, unsigned int 
   }
 }
 
-void LocalDispatcherImpl::SubmitOnCore(PromiseRoutineWithInput *routines, unsigned int start, unsigned int end, int thread)
+void LocalDispatcherImpl::SubmitOnCore(PieceRoutine **routines, unsigned int start, unsigned int end, int thread)
 {
   if (start == end) return;
 
@@ -149,26 +142,26 @@ void LocalDispatcherImpl::SubmitOnCore(PromiseRoutineWithInput *routines, unsign
   abort_if(thread == 0 || thread > NodeConfiguration::g_nr_threads,
            "{} is invalid, start {} end {}", thread, start, end);
 
-  BasePromise::QueueRoutine(routines + start, end - start, thread - 1);
+  BasePieceCollection::QueueRoutine(routines + start, end - start, thread - 1);
 }
 
 
 LocalTransport::LocalTransport() : lb(new LocalDispatcherImpl(0)) {}
 LocalTransport::~LocalTransport() { delete lb; }
 
-void LocalTransport::TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &input)
+void LocalTransport::TransportPromiseRoutine(PieceRoutine *routine)
 {
-  if (input.data == (uint8_t *) PromiseRoutine::kBubblePointer) {
-    lb->QueueBubble();
-  } else {
-    lb->QueueRoutine(routine, input);
-  }
+  lb->QueueRoutine(routine);
 }
 
 void LocalTransport::Flush() { lb->Flush(); }
+bool LocalTransport::TryFlushForCore(int core_id)
+{
+  auto [success, ___] = lb->TryFlushForThread(core_id + 1);
+  return success;
+}
 
 size_t NodeConfiguration::g_nr_threads = 8;
-int NodeConfiguration::g_core_shifting = 0;
 bool NodeConfiguration::g_data_migration = false;
 bool NodeConfiguration::g_priority_txn = false;
 bool NodeConfiguration::g_priority_batch_mode = false;
@@ -229,12 +222,12 @@ NodeConfiguration::NodeConfiguration()
 
   std::fill(total_batch_counters, total_batch_counters + nr, 0);
   std::fill(local_batch->counters, local_batch->counters + nr, 0);
-  local_batch->magic = PromiseRoutine::kUpdateBatchCounter;
+  local_batch->magic = PieceRoutine::kUpdateBatchCounter;
 
   outgoing.fill(nullptr);
   incoming.fill(nullptr);
 
-  BasePromise::g_nr_threads = g_nr_threads;
+  BasePieceCollection::g_nr_threads = g_nr_threads;
 
   transport_batcher.Init(nr_nodes(), g_nr_threads);
   ResetBufferPlan();
@@ -263,7 +256,7 @@ void NodeConfiguration::ResetBufferPlan()
   transport_batcher.Reset(nr_nodes(), g_nr_threads);
 }
 
-void NodeConfiguration::CollectBufferPlan(BasePromise *root, unsigned long *cnts)
+void NodeConfiguration::CollectBufferPlan(BasePieceCollection *root, unsigned long *cnts)
 {
   auto src_node = node_id();
   for (size_t i = 0; i < root->nr_routines(); i++) {
@@ -272,7 +265,7 @@ void NodeConfiguration::CollectBufferPlan(BasePromise *root, unsigned long *cnts
   }
 }
 
-void NodeConfiguration::CollectBufferPlanImpl(PromiseRoutine *routine, unsigned long *cnts,
+void NodeConfiguration::CollectBufferPlanImpl(PieceRoutine *routine, unsigned long *cnts,
                                               int level, int src_node)
 {
   abort_if(level >= PromiseRoutineTransportService::kPromiseMaxLevels,
@@ -333,8 +326,10 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
     out->WriteToNetwork(
         local_batch,
         16 + max_level * nr_nodes() * nr_nodes() * sizeof(unsigned long));
+    out->DoFlush(false);
   }
 
+  logger->info("Done Flushing buffer plan on {}", node_id());
   return true;
 }
 
@@ -408,12 +403,14 @@ void NodeConfiguration::SendStartPhase()
   memcpy(buf + 8, &id, 4);
   memcpy(buf + 12, broadcast_buffer.data(), nr_ent * 4);
 
+  logger->info("Send StartPhase nr_ent {}", nr_ent);
   // Write out all the slice mapping table update commands.
   for (int i = 1; i <= nr_nodes(); i++) {
     if (i == node_id()) continue;
     auto out = outgoing[i];
     out->WriteToNetwork(buf, buf_cnt);
   }
+  logger->info("Done Sending Start Phase");
 
   broadcast_buffer.clear();
 }

@@ -132,13 +132,13 @@ bool SliceScanner::IsConverging() {
 
 SliceScanner::SliceScanner(Slice * slice) : slice(slice)
 {
-  current_q = &slice->shared_q.elem;
+  current_q = &slice->shared_q;
   current_node = current_q->queue.next;
 }
 
 // reset the cursor used in GetNextHandle, so you can scan the slice again
 void SliceScanner::ResetCursor() {
-  current_q = &slice->shared_q.elem;
+  current_q = &slice->shared_q;
   current_node = current_q->queue.next;
 }
 
@@ -155,14 +155,14 @@ ShippingHandle *SliceScanner::GetNextHandle()
 
     // scan of current queue is over, switch to the next queue
     // queue order: shared_q, per_core_q[]
-    if (current_q == &slice->shared_q.elem) {
-      current_q = &slice->per_core_q[0].elem;
-    } else if (current_q == &slice->per_core_q[NodeConfiguration::g_nr_threads - 1].elem) {
+    if (current_q == &slice->shared_q) {
+      current_q = &slice->per_core_q[0];
+    } else if (current_q == &slice->per_core_q[NodeConfiguration::g_nr_threads - 1]) {
       current_q = nullptr;
     } else {
       for (int i = 0; i < NodeConfiguration::g_nr_threads - 1; i++) {
-        if (current_q == &slice->per_core_q[i].elem) {
-          current_q = &slice->per_core_q[i + 1].elem;
+        if (current_q == &slice->per_core_q[i]) {
+          current_q = &slice->per_core_q[i + 1];
           break;
         }
       }
@@ -267,7 +267,7 @@ void RowShipmentReceiver::Run()
   static constexpr int batchSize = 32; // entity batch num per lambda
   RowEntity ent[recvBufSize];
   for (int i = 0; i < recvBufSize; i++) {
-    ent[i].Prepare(VarStr::FromAlloca(alloca(64), 64), VarStr::FromAlloca(alloca(768), 768));
+    ent[i].Prepare(alloca(1024));
   }
 
   while (true) {
@@ -292,23 +292,23 @@ void RowShipmentReceiver::Run()
       int entCount = (i + batchSize > recvCount) ? (recvCount - i) : batchSize;
       auto r = go::Make(
           [en, entCount, complete] {
-            auto &mgr = util::Instance<RelationManager>();
+            auto &mgr = util::Instance<TableManager>();
             for (int i = 0; i < entCount; i++) {
               auto rel_id = en[i].get_rel_id();
               auto slice_id = en[i].slice_id();
 
-              VarStr *k = VarStr::New(en[i].k->len), *v = VarStr::New(en[i].v->len);
-              memcpy((uint8_t *)k->data, en[i].k->data, en[i].k->len);
-              memcpy((uint8_t *)v->data, en[i].v->data, en[i].v->len);
+              VarStr *k = VarStr::New(en[i].k->length()), *v = VarStr::New(en[i].v->length());
+              memcpy((uint8_t *)k->data(), en[i].k->data(), en[i].k->length());
+              memcpy((uint8_t *)v->data(), en[i].v->data(), en[i].v->length());
 
               // InsertOrDefault:
               //   If the key exists in the masstree, then return the value
               //   If the key does not exist, then execute the lambda function, insert the
               //     (key, return value of lambda) into the masstree, and return the value
-              auto &rel = mgr[rel_id];
-              bool exist = true;
-              auto handle = rel.SearchOrDefault(k, [&exist]() { exist = false; return new VHandle(); });
-              if (exist) {
+              auto rel = mgr.GetTable(rel_id);
+              bool created = true;
+              auto handle = rel->SearchOrCreate(k->ToView(), &created);
+              if (!created) {
                 auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
                 auto sid = handle->last_version() + 1;
                 handle->AppendNewVersion(sid, epoch_nr);

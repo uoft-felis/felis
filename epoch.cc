@@ -1,7 +1,5 @@
 #include <algorithm>
 #include <fstream>
-#include <sys/time.h>
-#include <sys/mman.h>
 
 #include <syscall.h>
 
@@ -9,23 +7,28 @@
 #include "txn.h"
 #include "log.h"
 #include "vhandle.h"
-#include "vhandle_batchappender.h"
+#include "contention_manager.h"
+#include "threshold_autotune.h"
+#include "pwv_graph.h"
+
 #include "console.h"
 #include "mem.h"
 #include "gc.h"
 #include "opts.h"
+#include "commit_buffer.h"
 #include "priority.h"
 
 #include "literals.h"
-
+#include "util/os.h"
 #include "json11/json11.hpp"
 
 namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
 bool EpochClient::g_enable_granola = false;
+bool EpochClient::g_enable_pwv = false;
 long EpochClient::g_corescaling_threshold = 0;
-long EpochClient::g_vhandle_parallel_threshold = 0;
+long EpochClient::g_splitting_threshold = std::numeric_limits<long>::max();
 size_t EpochClient::g_txn_per_epoch = 100000;
 
 void EpochCallback::operator()(unsigned long cnt)
@@ -40,8 +43,6 @@ void EpochCallback::operator()(unsigned long cnt)
     perf.Show(label);
     printf("\n");
 
-    if (phase == EpochPhase::Initialize)
-      logger->info("Callback handler on core {}", go::Scheduler::CurrentThreadPoolId() - 1);
     // TODO: We might Reset() the PromiseAllocationService, which would free the
     // current go::Routine. Is it necessary to run some function in the another
     // go::Routine?
@@ -53,8 +54,6 @@ void EpochCallback::operator()(unsigned long cnt)
     };
     abort_if(go::Scheduler::Current()->current_routine() == &client->control,
              "Cannot call control thread from itself");
-    if (Options::kVHandleBatchAppend)
-      util::Instance<BatchAppender>().Reset();
 
     client->control.Reset(phase_mem_funcs[p]);
     go::Scheduler::Current()->WakeUp(&client->control);
@@ -63,9 +62,9 @@ void EpochCallback::operator()(unsigned long cnt)
 
 void EpochCallback::PreComplete()
 {
-  if (Options::kVHandleBatchAppend) {
+  if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting) {
     if (phase == EpochPhase::Initialize || phase == EpochPhase::Insert) {
-      util::Instance<BatchAppender>().FinalizeFlush(
+      util::Instance<ContentionManager>().FinalizeFlush(
           util::Instance<EpochManager>().current_epoch_nr());
     }
   }
@@ -116,11 +115,12 @@ long EpochClient::WaitCountPerMS()
   return wait_cnt / dur;
 }
 
+static ThresholdAutoTuneController g_threshold_autotune;
+
 EpochClient::EpochClient()
     : control(this),
       callback(EpochCallback(this)),
       completion(0, callback),
-      disable_load_balance(false),
       conf(util::Instance<NodeConfiguration>())
 {
   callback.perf.End();
@@ -134,15 +134,15 @@ EpochClient::EpochClient()
   EpochWorkers *workers_mem = nullptr;
 
   for (int t = 0; t < NodeConfiguration::g_nr_threads; t++) {
-    auto d = std::div(t + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
+    auto d = std::div(t, mem::kNrCorePerNode);
     auto numa_node = d.quot;
     auto numa_offset = d.rem;
     if (numa_offset == 0) {
-      cnt_mem = (unsigned long *) mem::MemMapAlloc(
+      cnt_mem = (unsigned long *) mem::AllocMemory(
           mem::Epoch,
           cnt_len * sizeof(unsigned long) * mem::kNrCorePerNode,
           numa_node);
-      workers_mem = (EpochWorkers *) mem::MemMapAlloc(
+      workers_mem = (EpochWorkers *) mem::AllocMemory(
           mem::Epoch,
           sizeof(EpochWorkers) * mem::kNrCorePerNode,
           numa_node);
@@ -158,9 +158,11 @@ EpochClient::EpochClient()
                  wc, g_corescaling_threshold);
   }
 
-  if (Options::kVHandleParallel) {
-    g_vhandle_parallel_threshold = Options::kVHandleParallel.ToInt();
+  if (Options::kOnDemandSplitting) {
+    g_splitting_threshold = Options::kOnDemandSplitting.ToInt();
   }
+
+  commit_buffer = new CommitBuffer();
 }
 
 EpochTxnSet::EpochTxnSet()
@@ -170,8 +172,8 @@ EpochTxnSet::EpochTxnSet()
   for (auto t = 0; t < nr_threads; t++) {
     size_t nr = d.quot;
     if (t < d.rem) nr++;
-    auto numa_node = (t + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
-    auto p = mem::MemMapAlloc(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
+    auto numa_node = t / mem::kNrCorePerNode;
+    auto p = mem::AllocMemory(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
     per_core_txns[t] = new (p) TxnSet(nr);
   }
 }
@@ -223,10 +225,19 @@ uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 
 void AllocStateTxnWorker::Run()
 {
+  if (EpochClient::g_enable_pwv) {
+    util::Instance<PWVGraphManager>().local_graph()->Reset();
+  }
   for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
     auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
     txn->PrepareState();
   }
+  if (comp.fetch_sub(1) == 2) {
+    // client->insert_lmgr.Balance();
+    // client->insert_lmgr.PrintLoads();
+    comp.fetch_sub(1);
+  }
+  client->commit_buffer->Clear(t);
 }
 
 void CallTxnsWorker::Run()
@@ -238,6 +249,8 @@ void CallTxnsWorker::Run()
 
   set_urgent(true);
   auto pq = client->cur_txns.load()->per_core_txns[t];
+
+  while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
 
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
@@ -252,6 +265,7 @@ void CallTxnsWorker::Run()
   // assigned. Because transactions are already round-robinned, there is no
   // imbalanced here.
 
+  // These are used for corescaling, I think they are deprecated.
   long extra_offset = 0;
   for (auto i = client->core_limit; i < t; i++) {
     extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
@@ -269,9 +283,10 @@ void CallTxnsWorker::Run()
       // auto zone = t % avail_nr_zones;
       aff = (i + extra_offset) % client->core_limit;
     }
+
     auto root = txn->root_promise();
     root->AssignAffinity(aff);
-    root->Complete(VarStr());
+    root->Complete();
 
     // Doesn't seems to work that well, but just in case it works well for some
     // workloads. For example, issuing takes a longer time.
@@ -287,24 +302,21 @@ void CallTxnsWorker::Run()
   // Granola doesn't support out of order scheduling. In the original paper,
   // Granola uses a single thread to issue. We use multiple threads, so here we
   // have to barrier.
-  if (EpochClient::g_enable_granola && client->callback.phase == EpochPhase::Execute) {
+  if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv) && client->callback.phase == EpochPhase::Execute) {
     g_finished.fetch_add(1);
 
-    while (g_finished.load() != NodeConfiguration::g_nr_threads)
+    while (EpochClient::g_enable_granola && g_finished.load() != NodeConfiguration::g_nr_threads)
       _mm_pause();
   }
 
   if (client->callback.phase == EpochPhase::Execute) {
-    util::Instance<GC>().FinalizeGC();
-
     VHandle::Quiescence();
     RowEntity::Quiescence();
 
     mem::GetDataRegion().Quiescence();
   } else if (client->callback.phase == EpochPhase::Initialize) {
-    util::Instance<GC>().RunGC();
   } else if (client->callback.phase == EpochPhase::Insert) {
-    util::Instance<GC>().PrepareGC();
+    util::Instance<GC>().RunGC();
   }
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
@@ -324,7 +336,7 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   callback.perf.Clear();
   callback.perf.Start();
 
-  if (EpochClient::g_enable_granola && callback.phase == EpochPhase::Execute)
+  if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv) && callback.phase == EpochPhase::Execute)
     CallTxnsWorker::g_finished = 0;
 
   // When another node sends its counter to us, it will not send pieces
@@ -368,12 +380,17 @@ void EpochClient::InitializeEpoch()
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
 
-  disable_load_balance = true;
   cur_txns = &all_txns[epoch_nr - 1];
   total_nr_txn = NumberOfTxns();
 
+  cont_lmgr.Reset();
+
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
 
+  util::Instance<GC>().PrepareGCForAllCores();
+
+  commit_buffer->Reset();
+  AllocStateTxnWorker::comp = nr_threads + 1;
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->alloc_state_worker;
     r->Reset();
@@ -382,22 +399,31 @@ void EpochClient::InitializeEpoch()
   }
 
   callback.phase = EpochPhase::Insert;
-  CallTxns(epoch_nr, &BaseTxn::PrepareInsert, "Insert");
+  CallTxns(epoch_nr, &BaseTxn::PrepareInsert0, "Insert");
 }
 
 void EpochClient::OnInsertComplete()
 {
+  // GC must have been completed
+  auto &gc = util::Instance<GC>();
+  gc.PrintStats();
+  gc.ClearStats();
+  probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 0}();
+
   stats.insert_time_ms += callback.perf.duration_ms();
+
   callback.phase = EpochPhase::Initialize;
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
-      &BaseTxn::Prepare,
+      &BaseTxn::Prepare0,
       "Initialization");
 }
 
 void EpochClient::OnInitializeComplete()
 {
   stats.initialize_time_ms += callback.perf.duration_ms();
+  probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 1}();
+
   callback.phase = EpochPhase::Execute;
 
   if (NodeConfiguration::g_data_migration && util::Instance<EpochManager>().current_epoch_nr() == 1) {
@@ -407,13 +433,23 @@ void EpochClient::OnInitializeComplete()
       new felis::RowScannerRoutine());
   }
 
+  if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting) {
+    util::Instance<ContentionManager>().Reset();
+  }
+
   util::Impl<VHandleSyncService>().ClearWaitCountStats();
+
+  // exec_lmgr.PrintLoads();
+  if (!Options::kBinpackSplitting) {
+    cont_lmgr.Balance();
+    // cont_lmgr.PrintLoads();
+  }
 
   auto &mgr = util::Instance<EpochManager>();
 
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
-      &BaseTxn::RunAndAssignSchedulingKey,
+      &BaseTxn::Run0,
       "Execution");
 }
 
@@ -459,6 +495,16 @@ void EpochClient::OnExecuteComplete()
     logger->info("Contention Control new core_limit {}", core_limit);
   }
 
+  probes::EndOfPhase{cur_epoch_nr, 2}();
+
+  if (Options::kAutoTuneThreshold) {
+    g_splitting_threshold = g_threshold_autotune.GetNextThreshold(
+        g_splitting_threshold,
+        util::Instance<ContentionManager>().estimated_splits(),
+        callback.perf.duration_ms());
+    logger->info("Autotune threshold={}", g_splitting_threshold);
+  }
+
   if (cur_epoch_nr + 1 < g_max_epoch) {
     InitializeEpoch();
     util::Instance<PriorityTxnService>().ClearBitMap();
@@ -496,446 +542,7 @@ void EpochClient::OnExecuteComplete()
   }
 }
 
-size_t EpochExecutionDispatchService::g_max_item = 20_M;
-const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
-
-EpochExecutionDispatchService::EpochExecutionDispatchService()
-{
-  auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
-  auto max_txn_percore = PriorityTxnService::g_queue_length / NodeConfiguration::g_nr_threads;
-  Queue *qmem = nullptr;
-
-  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-    auto &queue = queues[i];
-    auto d = std::div(i + NodeConfiguration::g_core_shifting, mem::kNrCorePerNode);
-    auto numa_node = d.quot;
-    auto offset_in_node = d.rem;
-
-    if (offset_in_node == 0) {
-      qmem = (Queue *) mem::MemMapAlloc(
-          mem::EpochQueuePool, sizeof(Queue) * mem::kNrCorePerNode, numa_node);
-    }
-    queue = qmem + offset_in_node;
-
-    queue->zq.end = queue->zq.start = 0;
-    queue->zq.q = (PromiseRoutineWithInput *)
-                 mem::MemMapAlloc(
-                     mem::EpochQueuePromise,
-                     max_item_percore * sizeof(PromiseRoutineWithInput),
-                     numa_node);
-    queue->pq.len = 0;
-    queue->pq.q = (PriorityQueueHeapEntry *)
-                 mem::MemMapAlloc(
-                     mem::EpochQueueItem,
-                     max_item_percore * sizeof(PriorityQueueHeapEntry),
-                     numa_node);
-    queue->pq.ht = (PriorityQueueHashHeader *)
-                  mem::MemMapAlloc(
-                      mem::EpochQueueItem,
-                      kHashTableSize * sizeof(PriorityQueueHashHeader),
-                      numa_node);
-    queue->pq.pending.q = (PromiseRoutineWithInput *)
-                         mem::MemMapAlloc(
-                             mem::EpochQueuePromise,
-                             max_item_percore * sizeof(PromiseRoutineWithInput),
-                             numa_node);
-    queue->pq.pending.start = 0;
-    queue->pq.pending.end = 0;
-
-    queue->tq.start = queue->tq.end = 0;
-    queue->tq.q = nullptr;
-    if (NodeConfiguration::g_priority_txn) {
-      queue->tq.q = (PriorityTxn *)
-                   mem::MemMapAlloc(
-                       mem::EpochQueueItem,
-                       max_txn_percore * sizeof(PriorityTxn),
-                       numa_node);
-    }
-
-    for (size_t t = 0; t < kHashTableSize; t++) {
-      queue->pq.ht[t].Initialize();
-    }
-
-    queue->pq.pool = mem::BasicPool(
-        mem::EpochQueuePool,
-        kPriorityQueuePoolElementSize,
-        max_item_percore,
-        numa_node);
-
-    queue->pq.pool.Register();
-
-    new (&queue->lock) util::SpinLock();
-  }
-  tot_bubbles = 0;
-}
-
-void EpochExecutionDispatchService::Reset()
-{
-  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-    auto &q = queues[i];
-    while (q->state.running == State::kDeciding) _mm_pause();
-    q->zq.end.store(0);
-    q->zq.start.store(0);
-    // q->pq.len = 0;
-  }
-  tot_bubbles = 0;
-}
-
-static bool Greater(const EpochExecutionDispatchService::PriorityQueueHeapEntry &a,
-                    const EpochExecutionDispatchService::PriorityQueueHeapEntry &b)
-{
-  return a.key > b.key;
-}
-
-void EpochExecutionDispatchService::Add(int core_id, PromiseRoutineWithInput *routines,
-                                        size_t nr_routines)
-{
-  bool locked = false;
-  bool should_preempt = false;
-  auto &lock = queues[core_id]->lock;
-  lock.Lock();
-
-  auto &zq = queues[core_id]->zq;
-  auto &pq = queues[core_id]->pq.pending;
-  size_t i = 0;
-
-  auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
-
-again:
-  size_t zdelta = 0,
-           zend = zq.end.load(std::memory_order_acquire),
-         zlimit = max_item_percore;
-
-  size_t pdelta = 0,
-           pend = pq.end.load(std::memory_order_acquire),
-         plimit = max_item_percore
-                  - (pend - pq.start.load(std::memory_order_acquire));
-
-  for (; i < nr_routines; i++) {
-    auto r = routines[i];
-    auto key = std::get<0>(r)->sched_key;
-
-    if (key == 0) {
-      auto pos = zend + zdelta++;
-      abort_if(pos >= zlimit,
-               "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
-      zq.q[pos] = r;
-    } else {
-      if (pdelta >= plimit) goto again;
-      auto pos = pend + pdelta++;
-      pq.q[pos % max_item_percore] = r;
-    }
-  }
-  if (zdelta)
-    zq.end.fetch_add(zdelta, std::memory_order_release);
-  if (pdelta)
-    pq.end.fetch_add(pdelta, std::memory_order_release);
-  lock.Unlock();
-  // util::Impl<VHandleSyncService>().Notify(1 << core_id);
-}
-
-void EpochExecutionDispatchService::Add(int core_id, PriorityTxn *txn)
-{
-  auto &lock = queues[core_id]->lock;
-  lock.Lock();
-
-  auto &tq = queues[core_id]->tq;
-
-  size_t tlimit = PriorityTxnService::g_queue_length / NodeConfiguration::g_nr_threads,
-            pos = tq.end.load(std::memory_order_acquire);
-  abort_if(pos >= tlimit,
-           "Preallocation of priority txn queue is too small. {} < {}", pos, tlimit);
-
-  tq.q[pos] = *txn;
-  tq.end.fetch_add(1, std::memory_order_release);
-  lock.Unlock();
-
-  // debug(TRACE_PRIORITY "Priority txn {:p} - copied to queue {} at pos {}", (void*)txn, core_id, pos);
-}
-
-bool
-EpochExecutionDispatchService::AddToPriorityQueue(
-    PriorityQueue &q, PromiseRoutineWithInput &r,
-    BasePromise::ExecutionRoutine *state)
-{
-  bool smaller = false;
-  auto [rt, in] = r;
-  auto node = (PriorityQueueValue *) q.pool.Alloc();
-  node->Initialize();
-  node->promise_routine = r;
-  node->state = state;
-  auto key = rt->sched_key;
-
-  auto &hl = q.ht[Hash(key) % kHashTableSize];
-  auto *ent = hl.next;
-  while (ent != &hl) {
-    if (ent->object()->key == key) {
-      goto found;
-    }
-    ent = ent->next;
-  }
-
-  ent = (PriorityQueueHashEntry *) q.pool.Alloc();
-  ent->Initialize();
-  ent->object()->key = key;
-  ent->object()->values.Initialize();
-  ent->InsertAfter(hl.prev);
-
-  if (q.len > 0 && q.q[0].key > key) {
-    smaller = true;
-  }
-  q.q[q.len++] = {key, ent->object()};
-  std::push_heap(q.q, q.q + q.len, Greater);
-
-found:
-  node->InsertAfter(ent->object()->values.prev);
-  return smaller;
-}
-
-void
-EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
-{
-  size_t pstart = q.pending.start.load(std::memory_order_acquire);
-  long plen = q.pending.end.load(std::memory_order_acquire) - pstart;
-
-  for (size_t i = 0; i < plen; i++) {
-    auto pos = pstart + i;
-    AddToPriorityQueue(q, q.pending.q[pos % (g_max_item / NodeConfiguration::g_nr_threads)]);
-  }
-  if (plen)
-    q.pending.start.fetch_add(plen);
-}
-
-static long __SystemTime()
-{
-  timeval tv;
-  gettimeofday(&tv, nullptr);
-  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
-bool
-EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_pop)
-{
-  auto &zq = queues[core_id]->zq;
-  auto &q = queues[core_id]->pq;
-  auto &lock = queues[core_id]->lock;
-  auto &state = queues[core_id]->state;
-  uint64_t zstart = 0;
-
-  state.running = State::kDeciding;
-
-  if (!IsReady(core_id)) {
-    state.running = State::kSleeping;
-    return false;
-  }
-
-again:
-  zstart = zq.start.load(std::memory_order_acquire);
-  if (zstart < zq.end.load(std::memory_order_acquire)) {
-    state.running = State::kRunning;
-    auto r = zq.q[zstart];
-    if (should_pop(r, nullptr)) {
-      zq.start.store(zstart + 1, std::memory_order_relaxed);
-      state.current = r;
-      return true;
-    }
-    return false;
-  }
-
-  if (q.len == 0) {
-    if (q.pending.end.load() == q.pending.start.load()) {
-      state.running = State::kSleeping;
-    } else {
-      state.running = State::kRunning;
-    }
-  } else {
-    state.running = State::kRunning;
-  }
-
-  ProcessPending(q);
-
-  if (q.len > 0) {
-    auto node = q.q[0].ent->values.next;
-    auto promise_routine = node->object()->promise_routine;
-
-    state.running.store(true, std::memory_order_relaxed);
-    if (should_pop(promise_routine, node->object()->state)) {
-      node->Remove();
-      q.pool.Free(node);
-
-      auto top = q.q[0];
-      if (top.ent->values.empty()) {
-        std::pop_heap(q.q, q.q + q.len, Greater);
-        q.q[q.len - 1].ent = nullptr;
-        q.len--;
-
-        top.ent->Remove();
-        q.pool.Free(top.ent);
-      }
-
-      state.current = promise_routine;
-      return true;
-    }
-    return false;
-  }
-
-  /*
-  logger->info("pending start {} end {}, zstart {} zend {}, running {}, completed {}",
-               q.pending.start.load(), q.pending.end.load(),
-               zq.start.load(), zq.end.load(),
-               state.running.load(), state.complete_counter.completed);
-  */
-
-  // We do not need locks to protect completion counters. There can only be MT
-  // access on Pop() and Add(), the counters are per-core anyway.
-  auto &c = state.complete_counter;
-  auto n = c.completed;
-  auto comp = EpochClient::g_workload_client->completion_object();
-  c.completed = 0;
-
-  unsigned long nr_bubbles = tot_bubbles.load();
-  while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
-
-  if (n + nr_bubbles > 0) {
-    trace(TRACE_COMPLETION "DispatchService on core {} notifies {}+{} completions",
-          core_id, n, nr_bubbles);
-    comp->Complete(n + nr_bubbles);
-  }
-  return false;
-}
-
-bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn)
-{
-  if (!NodeConfiguration::g_priority_txn)
-    return false;
-
-  // hacks: for the time being we don't have occ yet, so only run priority txns
-  //        during execution phase's pieces execution.
-  // hack 1: if still during issuing, don't run
-  if (!IsReady(core_id)) {
-    return false;
-  }
-  // hack 2: if this phase's execution phase hasn't start, don't run
-  uint64_t prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
-  if (prog >> 32 != util::Instance<EpochManager>().current_epoch_nr())
-    return false;
-
-  // hack 3: make sure pq doesn't get run after this core has no piece to run
-  auto &pq = queues[core_id]->pq;
-  if (pq.len == 0)
-    return false;
-
-  auto &tq = queues[core_id]->tq;
-  auto tstart = tq.start.load(std::memory_order_acquire);
-  if (tstart < tq.end.load(std::memory_order_acquire)) {
-    PriorityTxn *candidate = tq.q + tstart;
-    auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
-    if (candidate->epoch != epoch_nr) {
-
-      // hack 4: if a priority txn is from a previous epoch, skip it
-      if (candidate->epoch < epoch_nr) {
-        auto from = tstart;
-        while (candidate->epoch < util::Instance<EpochManager>().current_epoch_nr())
-          candidate = tq.q + ++tstart;
-        tq.start.store(tstart, std::memory_order_release);
-        // debug(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
-      }
-
-      return false;
-    }
-
-    if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
-      return false;
-    tq.start.store(tstart + 1, std::memory_order_relaxed);
-    txn = candidate;
-    EpochClient::g_workload_client->completion_object()->Increment(1);
-
-    // debug(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
-    return true;
-  }
-  return false;
-}
-
-void EpochExecutionDispatchService::AddBubble()
-{
-  tot_bubbles.fetch_add(1);
-}
-
-bool EpochExecutionDispatchService::Preempt(int core_id, BasePromise::ExecutionRoutine *routine_state)
-{
-  auto &lock = queues[core_id]->lock;
-  bool can_preempt = true;
-  auto &zq = queues[core_id]->zq;
-  auto &q = queues[core_id]->pq;
-  auto &state = queues[core_id]->state;
-
-  ProcessPending(q);
-
-  auto &r = state.current;
-  auto key = std::get<0>(r)->sched_key;
-
-  if (zq.end.load(std::memory_order_acquire) == zq.start.load(std::memory_order_acquire)) {
-    if (q.len == 0 || key < q.q[0].key) {
-      can_preempt = false;
-      goto done;
-    }
-  }
-
-  if (key == 0) {
-    zq.q[zq.end.load(std::memory_order_acquire)] = r;
-    zq.end.fetch_add(1, std::memory_order_release);
-  } else  {
-    AddToPriorityQueue(q, r, routine_state);
-  }
-
-done:
-  return can_preempt;
-}
-
-
-void EpochExecutionDispatchService::Complete(int core_id)
-{
-  auto &state = queues[core_id]->state;
-  auto &c = state.complete_counter;
-  c.completed++;
-}
-
-int EpochExecutionDispatchService::TraceDependency(uint64_t key)
-{
-  for (int core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
-    auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
-    auto &q = queues[core_id]->pq.pending;
-    if (q.end.load() > max_item_percore) puts("pending queue wraps around");
-    abort_if(q.end.load() < q.start.load(), "WTF? pending queue underflows");
-    for (auto i = q.start.load(); i < q.end.load(); i++) {
-      if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
-        printf("found %lu in the pending area of %d\n", key, core_id);
-      }
-    }
-    for (auto i = 0; i < q.start.load(); i++) {
-      if (std::get<0>(q.q[i % max_item_percore])->sched_key == key) {
-        printf("found %lu in the consumed pending area of %d\n", key, core_id);
-      }
-    }
-
-    auto &hl = queues[core_id]->pq.ht[Hash(key) % kHashTableSize];
-    auto ent = hl.next;
-    while (ent != &hl) {
-      if (ent->object()->key == key) {
-        if (ent->object()->values.empty()) {
-          printf("found but empty hash entry of key %lu on core %d\n", key, core_id);
-        }
-        return core_id;
-      }
-      ent = ent->next;
-    }
-    if (std::get<0>(queues[core_id]->state.current)->sched_key == key)
-      return core_id;
-  }
-  return -1;
-}
-
-static constexpr size_t kEpochPromiseAllocationWorkerLimit = 512_M;
+static constexpr size_t kEpochPromiseAllocationWorkerLimit = 1024_M;
 static constexpr size_t kEpochPromiseAllocationMainLimit = 64_M;
 static constexpr size_t kEpochPromiseMiniBrkSize = 4 * CACHE_LINE_SIZE;
 
@@ -948,9 +555,9 @@ EpochPromiseAllocationService::EpochPromiseAllocationService()
     if (i == 0) {
       s = kEpochPromiseAllocationMainLimit;
     } else {
-      numa_node = (i - 1 + NodeConfiguration::g_core_shifting) / mem::kNrCorePerNode;
+      numa_node = (i - 1) / mem::kNrCorePerNode;
     }
-    brks[i] = mem::Brk::New(mem::MemMapAlloc(mem::Promise, s, numa_node), s);
+    brks[i] = mem::Brk::New(mem::AllocMemory(mem::Promise, s, numa_node), s);
     acc += s;
     constexpr auto mini_brk_size = 4 * CACHE_LINE_SIZE;
     minibrks[i] = mem::Brk::New(
@@ -996,24 +603,14 @@ EpochMemory::EpochMemory()
   auto &conf = util::Instance<NodeConfiguration>();
   for (int i = 0; i < conf.nr_nodes(); i++) {
     node_mem[i].mmap_buf =
-        (uint8_t *) mem::MemMap(
-            mem::Epoch, nullptr, kEpochMemoryLimitPerCore * conf.g_nr_threads,
-            PROT_READ | PROT_WRITE,
-            MAP_HUGETLB | MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+        (uint8_t *) mem::AllocMemory(
+            mem::Epoch, kEpochMemoryLimitPerCore * conf.g_nr_threads, -1, true);
     for (int t = 0; t < conf.g_nr_threads; t++) {
       auto p = node_mem[i].mmap_buf + t * kEpochMemoryLimitPerCore;
-      auto numa_node = (t + conf.g_core_shifting) / mem::kNrCorePerNode;
-      unsigned long nodemask = 1 << numa_node;
-      abort_if(syscall(
-          __NR_mbind,
-          p, kEpochMemoryLimitPerCore,
-          2 /* MPOL_BIND */,
-          &nodemask,
-          sizeof(unsigned long) * 8,
-          1 << 0 /* MPOL_MF_STRICT */) < 0, "mbind failed!");
+      auto numa_node = t / mem::kNrCorePerNode;
+      util::OSMemory::BindMemory(p, kEpochMemoryLimitPerCore, numa_node);
     }
-    abort_if(mlock(node_mem[i].mmap_buf, kEpochMemoryLimitPerCore * conf.g_nr_threads) < 0,
-             "Cannot allocate memory. mlock() failed.");
+    util::OSMemory::LockMemory(node_mem[i].mmap_buf, kEpochMemoryLimitPerCore * conf.g_nr_threads);
   }
   Reset();
 }

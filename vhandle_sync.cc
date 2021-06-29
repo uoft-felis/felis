@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include <sys/time.h>
 #include <syscall.h>
 #include "vhandle.h"
@@ -8,7 +9,7 @@ namespace felis {
 
 static void *AllocateBuffer()
 {
-  auto nr_zone = NodeConfiguration::g_nr_threads / mem::kNrCorePerNode;
+  auto nr_zone = (NodeConfiguration::g_nr_threads - 1) / mem::kNrCorePerNode + 1;
   auto p = (uint8_t *) mmap(
       nullptr,
       4096 * nr_zone,
@@ -131,8 +132,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
   auto routine = sched->current_routine();
   // routine->set_busy_poll(true);
 
-  abort_if(core_id < 0, "We should not run on thread pool 0!");
-
+  // abort_if(core_id < 0, "We should not run on thread pool 0!");
   while (!slot(core_id)->done.load(std::memory_order_acquire)) {
     wait_cnt++;
 
@@ -147,18 +147,22 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
       // Because periodic flush will run on all cores, we just have to flush our
       // own per-core buffer.
       transport.PeriodicIO(core_id);
+    }
 
-      if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
+    if ((wait_cnt & 0x00FF) == 0) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
         // logger->info("Preempt back");
+        // Broken???
         return true;
       }
     }
+
     if (slot(core_id)->done.load(std::memory_order_acquire))
       break;
     _mm_pause();
   }
 
-  probes::WaitCounters{wait_cnt, sid, ver}();
+  probes::WaitCounters{wait_cnt, sid, ver, *ptr}();
   slot(core_id)->done.store(false, std::memory_order_release);
   return true;
 }
@@ -204,10 +208,14 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
 
     if ((wait_cnt & 0x0FFFF) == 0) {
       transport.PeriodicIO(core_id);
-      if (((BasePromise::ExecutionRoutine *) routine)->Preempt()) {
+    }
+
+    if ((wait_cnt & 0x00FF) == 0) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
         continue;
       }
     }
+
     if (!IsPendingVal(*addr))
       break;
     _mm_pause();

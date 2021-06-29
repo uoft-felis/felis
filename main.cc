@@ -23,21 +23,6 @@ void show_usage(const char *progname)
   std::exit(-1);
 }
 
-#ifdef EL6_COMPAT
-
-// Platform Supports
-// We need to support EL6, which uses glibc 2.12
-extern "C" {
-  // Looks like we are not using memcpy anyway, so why don't we just make EL6 happy?
-  asm (".symver memcpy, memcpy@GLIBC_2.2.5");
-  asm (".symver getenv, getenv@GLIBC_2.2.5");
-  asm (".symver clock_gettime, clock_gettime@GLIBC_2.2.5");
-  void *__wrap_memcpy(void *dest, const void *src, size_t n) { return memcpy(dest, src, n); }
-  char *__wrap_secure_getenv(const char *name) { return getenv(name); }
-  int __wrap_clock_gettime(clockid_t clk_id, struct timespec *tp) { return clock_gettime(clk_id, tp); }
-}
-#endif
-
 namespace felis {
 
 void ParseControllerAddress(std::string arg);
@@ -66,6 +51,7 @@ int main(int argc, char *argv[])
       case 'X':
         if (!Options::ParseExtentedOptions(std::string(optarg))) {
           fprintf(stderr, "Ignoring extended argument %s\n", optarg);
+          std::exit(-1);
         }
         break;
       default:
@@ -76,10 +62,6 @@ int main(int argc, char *argv[])
 
 
   NodeConfiguration::g_nr_threads = Options::kCpu.ToInt("4");
-
-  if (Options::kCoreShifting) {
-    NodeConfiguration::g_core_shifting = Options::kCoreShifting.ToInt();
-  }
   NodeConfiguration::g_data_migration = Options::kDataMigration;
   if (Options::kEpochSize)
     EpochClient::g_txn_per_epoch = Options::kEpochSize.ToInt();

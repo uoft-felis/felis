@@ -3,8 +3,8 @@
 #ifndef ENTITY_H
 #define ENTITY_H
 
-#include "vhandle.h"
-#include "util.h"
+#include "mem.h"
+#include "shipping.h"
 
 // Entity is the minimum item we would like to send.
 // An IndexEntity is the index of a row, and a RowEntity is a row.
@@ -13,6 +13,7 @@
 namespace felis {
 
 class VHandle;
+class VarStr;
 
 class RowEntity final {
   friend class RowShipmentReceiver;
@@ -37,7 +38,7 @@ class RowEntity final {
   uint64_t encoded_len;
 
   void DecodeIOVec(struct iovec *vec);
-  void Prepare(VarStr *k, VarStr *v) { this->k = k; this->v = v; }
+  void Prepare(void *prepared_buf) { this->k = (VarStr *) prepared_buf; }
 
   int get_rel_id() const { return rel_id; }
   int slice_id() const { return slice; }

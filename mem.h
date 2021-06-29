@@ -3,18 +3,20 @@
 
 #include <cstdlib>
 #include <string>
-#include <atomic>
+#include <mutex>
 #include <cstdio>
 #include <array>
 #include <sys/mman.h>
 
 #include "json11/json11.hpp"
-#include "util.h"
+#include "util/arch.h"
+#include "util/locks.h"
+#include "util/linklist.h"
 #include "literals.h"
 
 namespace mem {
 
-const int kNrCorePerNode = 8;
+constexpr size_t kNrCorePerNode = 8;
 
 enum MemAllocType {
   GenericMemory,
@@ -23,7 +25,7 @@ enum MemAllocType {
   Txn,
   Promise,
   Epoch,
-  EpochQueuePool,
+  ContentionManagerPool,
   EntityPool,
   VhandlePool,
   EntryPool,
@@ -39,7 +41,7 @@ const std::string kMemAllocTypeLabel[] = {
   "txn input and state",
   "promise",
   "epoch",
-  "^pool:epoch queue",
+  "^pool:contention manager",
   "^pool:row entity",
   "^pool:vhandle",
   "^pool:extra version entry",
@@ -146,7 +148,7 @@ class Pool : public BasicPool {
 
 static_assert(sizeof(BasicPool) <= CACHE_LINE_SIZE);
 
-void InitTotalNumberOfCores(int nr_cores, int core_shifting = 0);
+void InitTotalNumberOfCores(int nr_cores);
 
 // Before we implement a region allocator, we need to implement a Slab
 // allocator. Slab allocator is to make memory from different pools shared at
@@ -398,18 +400,18 @@ class Brk {
   size_t limit;
   uint8_t *data;
 
-  std::memory_order ord = std::memory_order_relaxed;
+  bool thread_safe;
 
  public:
-  Brk() : offset(0), limit(0), data(nullptr) {}
-  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p) {}
+  Brk() : offset(0), limit(0), data(nullptr), thread_safe(false) {}
+  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), thread_safe(false) {}
   ~Brk() {}
 
   Brk(Brk &&rhs) {
     data = rhs.data;
     limit = rhs.limit;
     offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    ord = rhs.ord;
+    thread_safe = rhs.thread_safe;
 
     rhs.offset = 0;
     rhs.limit = 0;
@@ -425,10 +427,7 @@ class Brk {
   }
 
   void set_thread_safe(bool safe) {
-    if (safe)
-      ord = std::memory_order_seq_cst;
-    else
-      ord = std::memory_order_relaxed;
+    thread_safe = safe;
   }
 
   // This is a special New() function. It avoids memory allocation.
@@ -451,11 +450,10 @@ class Brk {
 
 void *AllocFromRoutine(size_t sz);
 
+PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();
-void *MemMap(mem::MemAllocType alloc_type, void *addr, size_t length, int prot,
-             int flags, int fd, off_t offset);
-void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node = -1);
-
+void *AllocMemory(mem::MemAllocType alloc_type, size_t length,
+                  int numa_node = -1, bool on_demand = false);
 long TotalMemoryAllocated();
 
 }

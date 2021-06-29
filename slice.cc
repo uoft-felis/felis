@@ -13,18 +13,18 @@ void SliceQueue::Append(ShippingHandle *handle)
 Slice::Slice(int slice_id)
     : slice_id(slice_id)
 {
-  shared_q->need_lock = true;
+  shared_q.need_lock = true;
 }
 
 void Slice::Append(ShippingHandle *handle)
 {
   // Detect current execution environment
   auto sched = go::Scheduler::Current();
-  SliceQueue *q = &shared_q.elem;
+  SliceQueue *q = &shared_q;
   if (sched && !sched->current_routine()->is_share()) {
     int coreid = sched->CurrentThreadPoolId() - 1;
     if (coreid > 0)
-      q = &per_core_q[coreid].elem;
+      q = &per_core_q[coreid];
   }
 
   q->Append(handle);

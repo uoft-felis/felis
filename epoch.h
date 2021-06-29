@@ -3,12 +3,11 @@
 
 #include <cstdint>
 #include <array>
-#include <map>
 #include "node_config.h"
-#include "util.h"
 #include "mem.h"
 #include "completion.h"
 #include "shipping.h"
+#include "locality_manager.h"
 
 namespace felis {
 
@@ -43,7 +42,7 @@ class EpochClientBaseWorker : public go::Routine {
  public:
   EpochClientBaseWorker(int t, EpochClient *client)
       : t(t), nr_threads(NodeConfiguration::g_nr_threads), client(client), finished(true) {
-    set_reuse(true);
+    set_reuse(true); // so that OnFinish() is invoked.
   }
   void Reset() {
     bool old = true;
@@ -68,6 +67,7 @@ class CallTxnsWorker : public EpochClientBaseWorker {
 
 class AllocStateTxnWorker : public EpochClientBaseWorker {
  public:
+  static inline std::atomic_ulong comp = 0;
   using EpochClientBaseWorker::EpochClientBaseWorker;
   void Run() override final;
 };
@@ -110,12 +110,15 @@ struct EpochTxnSet {
   ~EpochTxnSet();
 };
 
+class CommitBuffer;
+
 class EpochClient {
   friend class EpochCallback;
   friend class RunTxnPromiseWorker;
   friend class CallTxnsWorker;
   friend class AllocStateTxnWorker;
   friend class EpochExecutionDispatchService;
+  friend class ContentionManager;
 
   int core_limit;
   int best_core;
@@ -131,12 +134,15 @@ class EpochClient {
   PerfLog perf;
   EpochControl control;
   EpochWorkers *workers[NodeConfiguration::kMaxNrThreads];
+
+  CommitBuffer *commit_buffer;
  public:
   static EpochClient *g_workload_client;
   static bool g_enable_granola;
+  static bool g_enable_pwv;
 
   static long g_corescaling_threshold;
-  static long g_vhandle_parallel_threshold;
+  static long g_splitting_threshold;
 
   EpochClient();
   virtual ~EpochClient() {}
@@ -147,6 +153,7 @@ class EpochClient {
 
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
+  LocalityManager &get_contention_locality_manager() { return cont_lmgr; }
 
   virtual unsigned int LoadPercentage() = 0;
   unsigned long NumberOfTxns() {
@@ -189,8 +196,7 @@ class EpochClient {
   std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
-
-  bool disable_load_balance;
+  LocalityManager cont_lmgr;
 
   NodeConfiguration &conf;
 };
@@ -265,13 +271,13 @@ class GenericEpochObject : public EpochObject {
 // the offset related to the mmap backed buffer.
 class EpochMemory {
   friend class Epoch;
+  friend class EpochManager;
 
   struct {
     uint8_t *mmap_buf;
     std::array<mem::Brk *, NodeConfiguration::kMaxNrThreads> brks; // per-core brks
   } node_mem[kMaxNrNode];
 
-  friend class EpochManager;
  public:
   EpochMemory();
   ~EpochMemory();
@@ -284,6 +290,7 @@ class Epoch {
   uint64_t epoch_nr;
   EpochClient *client;
   EpochMemory *mem;
+
   friend class EpochManager;
 
   // std::array<int, NodeConfiguration::kMaxNrNode> counter;
@@ -310,130 +317,6 @@ class Epoch {
   EpochClient *epoch_client() const { return client; }
 };
 
-// For scheduling transactions during execution
-class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
-  template <typename T> friend T &util::Instance() noexcept;
-  EpochExecutionDispatchService();
-
-  using ExecutionRoutine = BasePromise::ExecutionRoutine;
-
-  struct CompleteCounter {
-    ulong completed;
-    CompleteCounter() : completed(0) {}
-  };
- public:
-
-  enum PriorityQueueLinkListEnum {
-    kHashList,
-    kValueList,
-  };
-
-  struct PriorityQueueValue : public util::GenericListNode<PriorityQueueValue> {
-    PromiseRoutineWithInput promise_routine;
-    BasePromise::ExecutionRoutine *state;
-  };
-
-  struct PriorityQueueHashEntry : public util::GenericListNode<PriorityQueueHashEntry> {
-    util::GenericListNode<PriorityQueueValue> values;
-    uint64_t key;
-  };
-
-  static constexpr size_t kPriorityQueuePoolElementSize =
-      std::max(sizeof(PriorityQueueValue), sizeof(PriorityQueueHashEntry));
-
-  static_assert(kPriorityQueuePoolElementSize < 64);
-
-  using PriorityQueueHashHeader = util::GenericListNode<PriorityQueueHashEntry>;
-  struct PriorityQueueHeapEntry {
-    uint64_t key;
-    PriorityQueueHashEntry *ent;
-  };
-
-  static unsigned int Hash(uint64_t key) { return key >> 8; }
-
- private:
-  // This is not a normal priority queue because lots of priorities are
-  // duplicates! Therefore, we use a hashtable to deduplicate them.
-  struct PriorityQueue {
-    PriorityQueueHeapEntry *q; // Heap
-    PriorityQueueHashHeader *ht; // Hashtable. First item is a sentinel
-    struct {
-      PromiseRoutineWithInput *q;
-      std::atomic_ulong start;
-      std::atomic_ulong end;
-    } pending; // Pending inserts into the heap and the hashtable
-    mem::BasicPool pool;
-    size_t len;
-  };
-
-  struct ZeroQueue {
-    PromiseRoutineWithInput *q;
-    std::atomic_ulong end;
-    std::atomic_ulong start;
-  };
-
-  // q for priority txns
-  struct TxnQueue {
-    PriorityTxn* q;
-    std::atomic_ulong end;
-    std::atomic_ulong start;
-  };
-
-  struct State {
-    PromiseRoutineWithInput current;
-    CompleteCounter complete_counter;
-
-    static constexpr int kSleeping = 0;
-    static constexpr int kRunning = 1;
-    static constexpr int kDeciding = -1;
-    std::atomic_int running;
-
-    State() : current({nullptr, VarStr()}), running(kSleeping) {}
-  };
-
-  struct Queue {
-    PriorityQueue pq;
-    ZeroQueue zq;
-    TxnQueue tq;
-    util::SpinLock lock;
-    State state;
-  };
- public:
-  static size_t g_max_item;
- private:
-
-  static const size_t kHashTableSize;
-  static constexpr size_t kMaxNrThreads = NodeConfiguration::kMaxNrThreads;
-
-  std::array<Queue *, kMaxNrThreads> queues;
-  std::atomic_ulong tot_bubbles;
-
- private:
-  bool AddToPriorityQueue(PriorityQueue &q, PromiseRoutineWithInput &r,
-                          BasePromise::ExecutionRoutine *state = nullptr);
-  void ProcessPending(PriorityQueue &q);
-
- public:
-  void Add(int core_id, PromiseRoutineWithInput *routines, size_t nr_routines) final override;
-  void Add(int core_id, PriorityTxn *txn) final override;
-  void AddBubble() final override;
-  bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
-  bool Peek(int core_id, PriorityTxn *&txn) final override;
-  bool Preempt(int core_id, BasePromise::ExecutionRoutine *state) final override;
-  void Reset() final override;
-  void Complete(int core_id) final override;
-  int TraceDependency(uint64_t key) final override;
-  bool IsRunning(int core_id) final override {
-    auto &s = queues[core_id]->state;
-    int running = -1;
-    while ((running = s.running.load(std::memory_order_seq_cst)) == State::kDeciding)
-      _mm_pause();
-    return running == State::kRunning;
-  }
-  bool IsReady(int core_id) final override {
-    return EpochClient::g_workload_client->get_worker(core_id)->call_worker.has_finished();
-  }
-};
 
 // We use thread-local brks to reduce the memory allocation cost for all
 // promises within an epoch. After an epoch is done, we can reclaim all of them.

@@ -2,7 +2,9 @@
 #define TCP_NODE_H
 
 #include "node_config.h"
-#include "promise.h"
+#include "piece.h"
+#include "gopp/gopp.h"
+#include "gopp/channels.h"
 
 namespace felis {
 namespace tcp {
@@ -30,7 +32,7 @@ class TcpNodeTransport : public PromiseRoutineTransportService {
  public:
   TcpNodeTransport();
 
-  void TransportPromiseRoutine(PromiseRoutine *routine, const VarStr &in) final override;
+  void TransportPromiseRoutine(PieceRoutine *routine) final override;
   void FinishCompletion(int level) final override;
   bool PeriodicIO(int core) final override;
   void PrefetchInbound() final override;

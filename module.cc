@@ -1,20 +1,23 @@
 #include <thread>
-#include <sys/mman.h>
 
 #include "module.h"
 #include "opts.h"
 
 #include "node_config.h"
 #include "epoch.h"
+#include "routine_sched.h"
 #include "console.h"
 #include "index.h"
 #include "log.h"
-#include "promise.h"
+#include "piece.h"
 #include "slice.h"
 #include "txn.h"
 #include "gc.h"
 #include "vhandle_sync.h"
-#include "vhandle_batchappender.h"
+#include "contention_manager.h"
+#include "pwv_graph.h"
+
+#include "util/os.h"
 
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
@@ -68,8 +71,7 @@ class AllocatorModule : public Module<CoreModule> {
     // An extra one region for the ShipmentReceivers
     std::vector<std::thread> tasks;
 
-    mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads,
-                                NodeConfiguration::g_core_shifting);
+    mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads);
     mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
 
     // Legacy
@@ -84,7 +86,35 @@ class AllocatorModule : public Module<CoreModule> {
     if (Options::kNrEpoch)
       EpochClient::g_max_epoch = Options::kNrEpoch.ToInt();
 
-    EpochClient::g_enable_granola = Options::kEnableGranola;
+    if (Options::kEnableGranola) {
+      abort_if(!Options::kEnablePartition, "EnablePartition should also be on with Granola");
+      abort_if(!Options::kVHandleLockElision, "VHandleLockElision should also be on with Granola");
+
+      abort_if(Options::kEnablePWV, "PWV and Granola cannot be on at the same time");
+      EpochClient::g_enable_granola = true;
+    }
+
+    if (Options::kEnablePWV) {
+      abort_if(!Options::kEnablePartition, "EnablePartition should also be on with PWV");
+      abort_if(!Options::kVHandleLockElision, "VHandleLockElision should also be on with PWV");
+
+      abort_if(Options::kEnableGranola, "Granola and PWV cannot be on at the same time");
+      EpochClient::g_enable_pwv = true;
+
+      if (Options::kPWVGraphAlloc)
+        PWVGraph::g_extra_node_brk_limit = Options::kPWVGraphAlloc.ToLargeNumber();
+
+      util::InstanceInit<PWVGraphManager>::instance = new PWVGraphManager();
+    }
+
+    if (Options::kBatchAppendAlloc) {
+      ContentionManager::g_prealloc_count = Options::kBatchAppendAlloc.ToLargeNumber();
+      abort_if(ContentionManager::g_prealloc_count % 64 != 0, "BatchAppend Memory must align to 64 bytes");
+    }
+
+    // Setup GC
+    GC::g_gc_every_epoch = 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
+    GC::g_lazy = Options::kMajorGCLazy;
 
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
@@ -102,8 +132,8 @@ class AllocatorModule : public Module<CoreModule> {
           util::InstanceInit<SliceMappingTable>();
           util::InstanceInit<SpinnerSlot>();
           util::InstanceInit<SimpleSync>();
-          if (Options::kVHandleBatchAppend)
-            util::InstanceInit<BatchAppender>();
+          if (Options::kVHandleBatchAppend || Options::kOnDemandSplitting)
+            util::InstanceInit<ContentionManager>();
         });
     for (auto &t: tasks) t.join();
 
@@ -129,10 +159,8 @@ class CoroutineModule : public Module<CoreModule> {
     };
    public:
     CoroutineStackAllocator() {
-      auto nr_numa_nodes = (NodeConfiguration::g_core_shifting
-                            + NodeConfiguration::g_nr_threads) / mem::kNrCorePerNode;
-      for (int node = NodeConfiguration::g_core_shifting / mem::kNrCorePerNode;
-           node < nr_numa_nodes; node++) {
+      auto nr_numa_nodes = (NodeConfiguration::g_nr_threads - 1) / mem::kNrCorePerNode + 1;
+      for (int node = 0; node < nr_numa_nodes; node++) {
         pools[node] = mem::Pool(
             mem::Coroutine,
             util::Align(sizeof(Chunk) + kContextSize, 8192),
@@ -186,18 +214,20 @@ class CoroutineModule : public Module<CoreModule> {
       // We need to change core affinity by kCoreShifting
       auto r = go::Make(
           [i]() {
-            util::PinToCPU(i - 1 + NodeConfiguration::g_core_shifting);
+            util::Cpu info;
+            info.set_affinity(i - 1);
+            info.Pin();
           });
       go::GetSchedulerFromPool(i)->WakeUp(r);
     }
 
     auto r = go::Make(
         []() {
-          std::vector<int> cpus;
+          util::Cpu info;
           for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-            cpus.push_back(i + NodeConfiguration::g_core_shifting);
+            info.set_affinity(i);
           }
-          util::PinToCPU(cpus);
+          info.Pin();
         });
     go::GetSchedulerFromPool(0)->WakeUp(r);
   }

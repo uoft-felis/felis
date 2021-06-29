@@ -12,16 +12,17 @@
 #include <memory>
 #include <string>
 
-#include "util.h"
+#include "util/objects.h"
+#include "util/random.h"
 #include "node_config.h"
 #include "console.h"
 #include "tpcc.h"
 #include "opts.h"
 
+#include "felis_probes.h"
+
 namespace tpcc {
 
-using felis::Relation;
-using felis::RelationManager;
 using felis::Console;
 using felis::VHandle;
 
@@ -51,6 +52,12 @@ unsigned int Config::max_slice_id() const
     return nr_warehouses;
   else
     return kRandomShardingMaxSliceId;
+}
+
+bool Config::IsWarehousePinnable()
+{
+  auto &conf = Instance<NodeConfiguration>();
+  return nr_warehouses % (conf.nr_nodes() * conf.g_nr_threads) == 0;
 }
 
 // install the TPC-C slices into the global SliceManager
@@ -102,11 +109,15 @@ void InitializeTPCC()
   if (felis::Options::kTpccHashShard)
     g_tpcc_config.shard_by_warehouse = false;
 
+  logger->info("Warehouses {}, Pin? {}",
+               g_tpcc_config.nr_warehouses,
+               g_tpcc_config.IsWarehousePinnable());
+
   logger->info("Hot Warehouses are {:x} (bitmap), load {} %",
                g_tpcc_config.hotspot_warehouse_bitmap,
                g_tpcc_config.hotspot_load_percentage);
 
-  /*
+    /*
   auto conf = Instance<Console>().FindConfigSection("tpcc").object_items();
   auto it = conf.find("hot_warehouses");
   if (it != conf.end()) {
@@ -132,12 +143,10 @@ void InitializeTPCC()
 
   logger->info("data migration mode {}", NodeConfiguration::g_data_migration);
 
-  auto &mgr = Instance<RelationManager>();
-  for (int table = static_cast<int>(TableType::TPCCBase) + 1;
-       table < static_cast<int>(TableType::NRTable);
-       table++) {
-    mgr.GetRelationOrCreate(int(table));
-  }
+  auto &mgr = Instance<felis::TableManager>();
+  mgr.Create<Customer, CustomerInfo, District, History, Item, NewOrder, OOrder, OOrderCIdIdx,
+             OrderLine, Stock, Warehouse>();
+
   logger->info("TPCC Table schemas created");
 }
 
@@ -322,6 +331,14 @@ uint ClientBase::GetCurrentTime()
   return ++tl_hack;
 }
 
+uint32_t ClientBase::AcquireLastNewOrderId(int warehouse, int district)
+{
+  abort_if(!g_tpcc_config.shard_by_warehouse, "TODO: needs to implement this under random sharding.");
+  auto node_id = util::Instance<NodeConfiguration>().node_id();
+  auto idx = (warehouse - 1) * g_tpcc_config.districts_per_warehouse + district - 1;
+  return (g_last_no_start[node_id][idx].fetch_add(1) << 8) | node_id;
+}
+
 struct Checker {
   // these sanity checks are just a few simple checks to make sure
   // the data is not entirely corrupted
@@ -332,7 +349,6 @@ struct Checker {
     assert(k->c_d_id >= 1 && static_cast<size_t>(k->c_d_id) <= g_tpcc_config.districts_per_warehouse);
     assert(k->c_id >= 1 && static_cast<size_t>(k->c_id) <= g_tpcc_config.customers_per_district);
     assert(v->c_credit == "BC" || v->c_credit == "GC");
-    assert(v->c_middle == "OE");
   }
 
   static inline  void
@@ -388,17 +404,14 @@ struct Checker {
 
 };
 
-felis::Relation &ClientBase::relation(TableType table)
-{
-  return Instance<RelationManager>()[static_cast<int>(table)];
-}
-
 bool ClientBase::is_warehouse_hotspot(uint wid)
 {
   return (g_tpcc_config.hotspot_warehouse_bitmap & (1 << (wid - 1))) != 0;
 }
 
-std::atomic_ulong *ClientBase::g_last_no_o_ids = nullptr;
+std::atomic_ulong *ClientBase::g_last_no_start[32];
+std::atomic_ulong *ClientBase::g_last_no_end[32];
+uint64_t *ClientBase::g_pwv_stock_resources;
 
 namespace loaders {
 
@@ -406,7 +419,7 @@ template <>
 void Loader<LoaderType::Warehouse>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  logger->info("Warehouse Loader starts");
+  // logger->info("Warehouse Loader starts");
   for (uint i = 1; i <= g_tpcc_config.nr_warehouses; i++) {
 
     // TODO: if multiple CPUs are sharing the same warehouse? This configuration
@@ -436,15 +449,14 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 
           Checker::SanityCheckWarehouse(&k, &v);
 
-          SetAllocAffinity(core_id);
-          auto handle = relation(TableType::Warehouse).SearchOrCreate(k.EncodeFromAlloca(large_buf));
+          auto handle = tables().Get<tpcc::Warehouse>().SearchOrCreate(k.EncodeView(large_buf));
+          printf("warehouse %d coreid %d\n", k.w_id, handle->object_coreid());
           OnNewRow(slice_id, TableType::Warehouse, k, handle);
           felis::InitVersion(handle, v.Encode());
         });
   }
 
-  relation(TableType::Warehouse).set_key_length(sizeof(Warehouse::Key));
-  logger->info("Warehouse Loader done.");
+  // logger->info("Warehouse Loader done.");
 }
 
 template <>
@@ -453,14 +465,10 @@ void Loader<LoaderType::Item>::DoLoad()
   // Item table is a read only table, we replicate this table on all nodes!
   int last_affinity = -1;
   void *large_buf = alloca(1024);
-  logger->info("Item Loader starts");
+  // logger->info("Item Loader starts");
   for (uint i = 1; i <= g_tpcc_config.nr_items; i++) {
-    int affinity = (i - 1) * NodeConfiguration::g_nr_threads / g_tpcc_config.nr_items;
-    if (affinity != last_affinity) {
-      // Just trying to be load balanced
-      SetAllocAffinity(affinity);
-      last_affinity = affinity;
-    }
+    int core_id = (i - 1) * NodeConfiguration::g_nr_threads / g_tpcc_config.nr_items;
+    if (go::Scheduler::CurrentThreadPoolId() - 1 != core_id) continue;
 
     auto k = Item::Key::New(i);
     auto v = Item::Value();
@@ -482,13 +490,12 @@ void Loader<LoaderType::Item>::DoLoad()
     v.i_im_id = RandomNumber(1, 10000);
 
     Checker::SanityCheckItem(&k, &v);
-    auto handle = relation(TableType::Item).SearchOrCreate(k.EncodeFromAlloca(large_buf));
+    auto handle = tables().Get<tpcc::Item>().SearchOrCreate(k.EncodeView(large_buf));
     // no OnNewRow() here, we don't ship Item table
-    felis::InitVersion(handle, v.Encode());
+    auto p = handle->AllocFromInline(v.EncodeSize());
+    felis::InitVersion(handle, v.EncodeToPtrOrDefault(p));
   }
-  relation(TableType::Item).set_key_length(sizeof(Item::Key));
-  logger->info("Item Loader done.");
-  RestoreAllocAffinity();
+  // logger->info("Item Loader done.");
 }
 
 template <>
@@ -497,12 +504,12 @@ void Loader<LoaderType::Stock>::DoLoad()
   // Stock and StockData table
   void *large_buf = alloca(1024);
   std::string s_dist = RandomStr(24);
-  logger->info("Stock Loader starts");
+  // logger->info("Stock Loader starts");
   for (uint w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
-    logger->info("Stock Loader on warehouse {}", w);
+    // logger->info("Stock Loader on warehouse {}", w);
     for(size_t i = 1; i <= g_tpcc_config.nr_items; i++) {
       const auto k = Stock::Key::New(w, i);
-      const auto k_data =  StockData::Key::New(w, i);
+      // const auto k_data =  StockData::Key::New(w, i);
 
       DoOnSlice<tpcc::Stock>(
           k,
@@ -515,13 +522,12 @@ void Loader<LoaderType::Stock>::DoLoad()
 
             Checker::SanityCheckStock(&k, &v);
 
-            SetAllocAffinity(core_id);
-            auto handle = relation(TableType::Stock).SearchOrCreate(k.EncodeFromAlloca(large_buf));
+            auto handle = tables().Get<tpcc::Stock>().SearchOrCreate(k.EncodeView(large_buf));
 
             OnNewRow(slice_id, TableType::Stock, k, handle);
             felis::InitVersion(handle, v.Encode());
           });
-
+#if 0
       DoOnSlice<tpcc::StockData>(
           k_data,
           [=](auto slice_id, auto core_id) {
@@ -548,23 +554,22 @@ void Loader<LoaderType::Stock>::DoLoad()
             v_data.s_dist_10.assign(s_dist);
 
             SetAllocAffinity(core_id);
-            auto data_handle = relation(TableType::StockData).SearchOrCreate(k_data.EncodeFromAlloca(large_buf));
+            auto data_handle = tables().Get<tpcc::StockData>().SearchOrCreate(k_data.EncodeView(large_buf));
 
             OnNewRow(slice_id, TableType::StockData, k_data, data_handle);
             felis::InitVersion(data_handle, v_data.Encode());
           });
+#endif
     }
   }
-  relation(TableType::Stock).set_key_length(sizeof(Stock::Key));
-  relation(TableType::StockData).set_key_length(sizeof(StockData::Key));
-  logger->info("Stock Loader done.");
+  // logger->info("Stock Loader done.");
 }
 
 template <>
 void Loader<LoaderType::District>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  logger->info("District Loader starts");
+  // logger->info("District Loader starts");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
     for (uint d = 1; d <= g_tpcc_config.districts_per_warehouse; d++) {
       const auto k = District::Key::New(w, d);
@@ -585,8 +590,7 @@ void Loader<LoaderType::District>::DoLoad()
 
             Checker::SanityCheckDistrict(&k, &v);
 
-            SetAllocAffinity(core_id);
-            auto handle = relation(TableType::District).SearchOrCreate(k.EncodeFromAlloca(large_buf));
+            auto handle = tables().Get<tpcc::District>().SearchOrCreate(k.EncodeView(large_buf));
 
             OnNewRow(slice_id, TableType::District, k, handle);
             felis::InitVersion(handle, v.Encode());
@@ -594,18 +598,23 @@ void Loader<LoaderType::District>::DoLoad()
 
     }
   }
-  relation(TableType::District).set_key_length(sizeof(District::Key));
-  logger->info("District Loader done.");
+  if (Client::g_enable_pwv) {
+    g_pwv_stock_resources = new uint64_t[g_tpcc_config.nr_warehouses];
+    std::fill(g_pwv_stock_resources,
+              g_pwv_stock_resources + g_tpcc_config.nr_warehouses,
+              0);
+  }
+  // logger->info("District Loader done.");
 }
 
 template <>
 void Loader<LoaderType::Customer>::DoLoad()
 {
   void *large_buf = alloca(1024);
-  logger->info("Customer Loader starts");
+  // logger->info("Customer Loader starts");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
     for (auto d = 1; d <= g_tpcc_config.districts_per_warehouse; d++) {
-      logger->info("Customer Loader on warehouse {}", w);
+      // logger->info("Customer Loader on warehouse {}", w);
       for (auto cidx0 = 0; cidx0 < g_tpcc_config.customers_per_district; cidx0++) {
         const uint c = cidx0 + 1;
         auto k = Customer::Key::New(w, d, c);
@@ -614,6 +623,7 @@ void Loader<LoaderType::Customer>::DoLoad()
             k,
             [=](auto slice_id, auto core_id) {
               Customer::Value v;
+              CustomerInfo::Value info_v;
               v.c_discount = RandomNumber(1, 5000) / 100;
               if (RandomNumber(1, 100) <= 10)
                 v.c_credit.assign("BC");
@@ -621,11 +631,11 @@ void Loader<LoaderType::Customer>::DoLoad()
                 v.c_credit.assign("GC");
 
               if (c <= 1000)
-                v.c_last.assign(GetCustomerLastName(c - 1));
+                info_v.c_last.assign(GetCustomerLastName(c - 1));
               else
-                v.c_last.assign(GetNonUniformCustomerLastNameLoad());
+                info_v.c_last.assign(GetNonUniformCustomerLastNameLoad());
 
-              v.c_first.assign(RandomStr(RandomNumber(8, 16)));
+              info_v.c_first.assign(RandomStr(RandomNumber(8, 16)));
               v.c_credit_lim = 50000;
 
               v.c_balance = -1000;
@@ -633,23 +643,25 @@ void Loader<LoaderType::Customer>::DoLoad()
               v.c_payment_cnt = 1;
               v.c_delivery_cnt = 0;
 
-              v.c_street_1.assign(RandomStr(RandomNumber(10, 20)));
-              v.c_street_2.assign(RandomStr(RandomNumber(10, 20)));
-              v.c_city.assign(RandomStr(RandomNumber(10, 20)));
-              v.c_state.assign(RandomStr(3));
-              v.c_zip.assign(RandomNStr(4) + "11111");
-              v.c_phone.assign(RandomNStr(16));
-              v.c_since = GetCurrentTime();
-              v.c_middle.assign("OE");
-              v.c_data.assign(RandomStr(RandomNumber(300, 500)));
+              info_v.c_street_1.assign(RandomStr(RandomNumber(10, 20)));
+              info_v.c_street_2.assign(RandomStr(RandomNumber(10, 20)));
+              info_v.c_city.assign(RandomStr(RandomNumber(10, 20)));
+              info_v.c_state.assign(RandomStr(3));
+              info_v.c_zip.assign(RandomNStr(4) + "11111");
+              info_v.c_phone.assign(RandomNStr(16));
+              info_v.c_since = GetCurrentTime();
+              info_v.c_middle.assign("OE");
+              info_v.c_data.assign(RandomStr(RandomNumber(300, 500)));
 
               Checker::SanityCheckCustomer(&k, &v);
 
-              SetAllocAffinity(core_id);
-              auto handle = relation(TableType::Customer).SearchOrCreate(k.EncodeFromAlloca(large_buf));
-
+              auto handle = tables().Get<tpcc::Customer>().SearchOrCreate(k.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::Customer, k, handle);
               felis::InitVersion(handle, v.Encode());
+
+              auto info_handle = tables().Get<tpcc::CustomerInfo>().SearchOrCreate(k.EncodeView(large_buf));
+              OnNewRow(slice_id, TableType::CustomerInfo, k, handle);
+              felis::InitVersion(info_handle, info_v.Encode());
             });
 
         // I don't think we ever used this, I'll just disable this for now.
@@ -661,7 +673,7 @@ void Loader<LoaderType::Customer>::DoLoad()
         // index structure is:
         // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-        handle = relation(TableType::CustomerNameIdx).SearchOrCreate(k_idx.EncodeFromAlloca(large_buf));
+        handle = tables().Get<tpcc::CustomerNameIdx>().SearchOrCreate(k_idx.EncodeView(large_buf));
         slice_id = util::Instance<SliceLocator<tpcc::CustomerNameIdx>>().Locate(k_idx);
         OnNewRow(slice_id, TableType::CustomerNameIdx, k_idx, handle);
         felis::InitVersion(handle, v_idx.Encode());
@@ -684,7 +696,7 @@ void Loader<LoaderType::Customer>::DoLoad()
               v_hist.h_data.assign(RandomStr(RandomNumber(10, 24)));
 
               SetAllocAffinity(core_id);
-              auto hist_handle = relation(TableType::History).SearchOrCreate(k_hist.EncodeFromAlloca(large_buf));
+              auto hist_handle = tables().Get<tpcc::History>().SearchOrCreate(k_hist.EncodeView(large_buf));
 
               OnNewRow(slice_id, TableType::History, k_hist, hist_handle);
               felis::InitVersion(hist_handle, v_hist.Encode());
@@ -693,23 +705,28 @@ void Loader<LoaderType::Customer>::DoLoad()
       }
     }
   }
-
-  relation(TableType::Customer).set_key_length(sizeof(Customer::Key));
-  relation(TableType::CustomerNameIdx).set_key_length(sizeof(CustomerNameIdx::Key));
-  relation(TableType::History).set_key_length(sizeof(History::Key));
-  logger->info("Customer Loader done.");
+  // logger->info("Customer Loader done.");
 }
 
 template <>
 void Loader<LoaderType::Order>::DoLoad()
 {
+  auto nr_all_districts = g_tpcc_config.nr_warehouses * g_tpcc_config.districts_per_warehouse;
+  for (int i = 1; i <= util::Instance<NodeConfiguration>().nr_nodes(); i++) {
+    g_last_no_start[i] = new std::atomic_ulong[nr_all_districts];
+    g_last_no_end[i] = new std::atomic_ulong[nr_all_districts];
+
+    std::fill(g_last_no_start[i], g_last_no_start[i] + nr_all_districts, 2101);
+    std::fill(g_last_no_end[i], g_last_no_end[i] + nr_all_districts, 3000);
+  }
+
   void *large_buf = alloca(1024);
   // a random permutation of customer IDs
   auto c_ids = new uint32_t[g_tpcc_config.customers_per_district];
 
-  logger->info("Order Loader starts.");
+  // logger->info("Order Loader starts.");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
-    logger->info("Order Loader on warehouse {}", w);
+    // logger->info("Order Loader on warehouse {}", w);
     for (auto d = 1; d <= g_tpcc_config.districts_per_warehouse; d++) {
       // Random shuffle
       for (auto c = 1; c <= g_tpcc_config.customers_per_district; c++) {
@@ -744,10 +761,10 @@ void Loader<LoaderType::Order>::DoLoad()
 
               Checker::SanityCheckOOrder(&k_oo, &v_oo);
 
-              SetAllocAffinity(core_id);
-              auto oo_handle = relation(TableType::OOrder).SearchOrCreate(k_oo.EncodeFromAlloca(large_buf));
+              auto oo_handle = tables().Get<tpcc::OOrder>().SearchOrCreate(k_oo.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::OOrder, k_oo, oo_handle);
-              felis::InitVersion(oo_handle, v_oo.Encode());
+              auto p = oo_handle->AllocFromInline(v_oo.EncodeSize());
+              felis::InitVersion(oo_handle, v_oo.EncodeToPtrOrDefault(p));
             });
 
         const auto k_oo_idx = OOrderCIdIdx::Key::New(k_oo.o_w_id, k_oo.o_d_id, c_ids[c - 1], k_oo.o_id);
@@ -756,10 +773,10 @@ void Loader<LoaderType::Order>::DoLoad()
         DoOnSlice<tpcc::OOrderCIdIdx>(
             k_oo_idx,
             [=](auto slice_id, auto core_id) {
-              SetAllocAffinity(core_id);
-              auto oo_idx_handle = relation(TableType::OOrderCIdIdx).SearchOrCreate(k_oo_idx.EncodeFromAlloca(large_buf));
+              auto oo_idx_handle = tables().Get<tpcc::OOrderCIdIdx>().SearchOrCreate(k_oo_idx.EncodeView(large_buf));
               OnNewRow(slice_id, TableType::OOrderCIdIdx, k_oo_idx, oo_idx_handle);
-              felis::InitVersion(oo_idx_handle, v_oo_idx.Encode());
+              auto p = oo_idx_handle->AllocFromInline(v_oo_idx.EncodeSize());
+              felis::InitVersion(oo_idx_handle, v_oo_idx.EncodeToPtrOrDefault(p));
             });
 
         if (c >= 2101) {
@@ -769,10 +786,10 @@ void Loader<LoaderType::Order>::DoLoad()
           DoOnSlice<tpcc::NewOrder>(
               k_no,
               [=](auto slice_id, auto core_id) {
-                SetAllocAffinity(core_id);
-                auto no_handle = relation(TableType::NewOrder).SearchOrCreate(k_no.EncodeFromAlloca(large_buf));
+                auto no_handle = tables().Get<tpcc::NewOrder>().SearchOrCreate(k_no.EncodeView(large_buf));
                 OnNewRow(slice_id, TableType::NewOrder, k_no, no_handle);
-                felis::InitVersion(no_handle, v_no.Encode());
+                auto p = no_handle->AllocFromInline(v_no.EncodeSize());
+                felis::InitVersion(no_handle, v_no.EncodeToPtrOrDefault(p));
               });
         }
 
@@ -800,37 +817,28 @@ void Loader<LoaderType::Order>::DoLoad()
 
                 Checker::SanityCheckOrderLine(&k_ol, &v_ol);
 
-                SetAllocAffinity(core_id);
-                auto ol_handle = relation(TableType::OrderLine).SearchOrCreate(k_ol.EncodeFromAlloca(large_buf));
+                auto ol_handle = tables().Get<tpcc::OrderLine>().SearchOrCreate(k_ol.EncodeView(large_buf));
 
                 OnNewRow(slice_id, TableType::OrderLine, k_ol, ol_handle);
-                felis::InitVersion(ol_handle, v_ol.Encode());
+                auto p = ol_handle->AllocFromInline(v_ol.EncodeSize());
+                felis::InitVersion(ol_handle, v_ol.EncodeToPtrOrDefault(p));
               });
         }
       }
       auto auto_inc_zone = w * 10 + d;
-      relation(TableType::OOrder).ResetAutoIncrement(
+      tables().Get<tpcc::OOrder>().ResetAutoIncrement(
           auto_inc_zone, g_tpcc_config.customers_per_district + 1);
     }
   }
 
-  auto nr_all_districts = g_tpcc_config.nr_warehouses * g_tpcc_config.districts_per_warehouse;
-  g_last_no_o_ids = new std::atomic_ulong[nr_all_districts];
-  std::fill(g_last_no_o_ids, g_last_no_o_ids + nr_all_districts, 2101 << 8);
-
   delete [] c_ids;
-
-  relation(TableType::OOrder).set_key_length(sizeof(OOrder::Key));
-  relation(TableType::OOrderCIdIdx).set_key_length(sizeof(OOrderCIdIdx::Key));
-  relation(TableType::NewOrder).set_key_length(sizeof(NewOrder::Key));
-  relation(TableType::OrderLine).set_key_length(sizeof(OrderLine::Key));
-  logger->info("Order Loader done.");
+  // logger->info("Order Loader done.");
 }
 
 }
 
 static constexpr int kTPCCTxnMix[] = {
-  49, 47, 4,
+  45, 43, 4, 4, 4
 };
 
 static int kTPCCPriTxnBatchThres[] = {
@@ -839,19 +847,16 @@ static int kTPCCPriTxnBatchThres[] = {
 
 felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
-  // TODO: generate standard TPC-C txn mix here. Currently, only NewOrder,
-  // Delivery and Payment are available.
-  auto x_pct = NodeConfiguration::g_priority_batch_mode_pct;
-  int rd = r.next_u32() % (100 + x_pct);
-  if (x_pct && rd >= 100) {
-    rd = r.next_u32() % 100; // re-random
-
-    if (rd < kTPCCPriTxnBatchThres[0])
-      return TxnFactory::Create(int(TxnType::PriStock), this, serial_id);
-    else
-      return TxnFactory::Create(int(TxnType::PriNewOrderDelivery), this, serial_id);
-
-  }
+  // auto x_pct = NodeConfiguration::g_priority_batch_mode_pct;
+  // int rd = r.next_u32() % (100 + x_pct);
+  // if (x_pct && rd >= 100) {
+  //   rd = r.next_u32() % 100; // re-random
+  //   if (rd < kTPCCPriTxnBatchThres[0])
+  //     return TxnFactory::Create(TxnType::PriStock, this, serial_id);
+  //   else
+  //     return TxnFactory::Create(TxnType::PriNewOrderDelivery, this, serial_id);
+  // }
+  int rd = r.next_u32() % 100;
   int txn_type_id = 0;
   while (true) {
     int threshold = kTPCCTxnMix[txn_type_id];
@@ -860,7 +865,7 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
     rd -= threshold;
     txn_type_id++;
   }
-  return TxnFactory::Create(txn_type_id, this, serial_id);
+  return TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
 }
 
 using namespace felis;

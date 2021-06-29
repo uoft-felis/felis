@@ -1,18 +1,15 @@
-#include "mem.h"
-
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
-#include <sys/types.h>
-#include <syscall.h>
-
-#include <fstream>
-
+#include "mem.h"
 #include "json11/json11.hpp"
-
 #include "log.h"
-#include "util.h"
+#include "util/linklist.h"
+#include "util/locks.h"
+#include "util/arch.h"
+#include "util/os.h"
 #include "gopp/gopp.h"
 #include "literals.h"
 
@@ -20,11 +17,11 @@ namespace mem {
 
 static std::atomic_llong g_mem_tracker[NumMemTypes];
 static std::mutex g_ps_lock;
-static std::vector<std::tuple<MemAllocType, PoolStatistics *>> g_ps;
+static std::vector<PoolStatistics *> g_ps[NumMemTypes];
 
 WeakPool::WeakPool(MemAllocType alloc_type, size_t chunk_size, size_t cap,
                    int numa_node)
-    : WeakPool(alloc_type, chunk_size, cap, MemMapAlloc(alloc_type, cap * chunk_size, numa_node))
+    : WeakPool(alloc_type, chunk_size, cap, AllocMemory(alloc_type, cap * chunk_size, numa_node))
 {
   need_unmap = true;
 }
@@ -59,7 +56,7 @@ WeakPool::~WeakPool()
 void WeakPool::Register()
 {
   std::lock_guard _(g_ps_lock);
-  g_ps.emplace_back(alloc_type, &stats);
+  g_ps[int(alloc_type)].emplace_back(&stats);
 }
 
 void *WeakPool::Alloc()
@@ -100,14 +97,15 @@ long BasicPool::CheckPointer(void *ptr)
               ptr, data, (uint8_t *) data + len);
     std::abort();
   }
-  auto r = std::div((uint8_t *) ptr - (uint8_t *) data, (long long) len / capacity);
-  if (r.rem != 0) {
+  size_t off = (uint8_t *) ptr - (uint8_t *) data;
+  size_t maxnr = len / capacity;
+  if (off % maxnr != 0) {
     if (!suppress_warning)
       fprintf(stderr, "%p is not aligned. %p with chunk_size %lu\n",
               ptr, data, len / capacity);
     std::abort();
   }
-  return r.quot;
+  return off / maxnr;
 }
 
 void *BasicPool::Alloc()
@@ -132,10 +130,9 @@ int ParallelAllocationPolicy::g_nr_cores = 0;
 int ParallelAllocationPolicy::g_core_shifting = 0;
 std::mutex * ParallelAllocationPolicy::g_core_locks;
 
-void InitTotalNumberOfCores(int nr_cores, int core_shifting)
+void InitTotalNumberOfCores(int nr_cores)
 {
   ParallelAllocationPolicy::g_nr_cores = nr_cores;
-  ParallelAllocationPolicy::g_core_shifting = core_shifting;
   ParallelAllocationPolicy::g_core_locks = new std::mutex[nr_cores];
 }
 
@@ -207,9 +204,9 @@ struct SlabMemory {
   }
 
   Slab *GetSlab(void *ptr, bool large_slab) {
-    auto d = std::lldiv(((uint8_t *) ptr - p) - data_offset, SlabPool::kLargeSlabPageSize);
-    auto idx = d.quot;
-    auto slab_idx = large_slab ? 0 : d.rem / SlabPool::kSlabPageSize;
+    size_t off = ((uint8_t *) ptr - p) - data_offset;
+    auto idx = off / SlabPool::kLargeSlabPageSize;
+    auto slab_idx = large_slab ? 0 : (off % SlabPool::kLargeSlabPageSize) / SlabPool::kSlabPageSize;
     return ((Slab *) ((MetaSlab *) p + idx)->slabs) + slab_idx;
   }
 
@@ -233,7 +230,7 @@ void InitSlab(size_t memsz)
     tasks.emplace_back(
         [memsz, n]() {
           auto &m = g_slabmem[n];
-          m.p = (uint8_t *) MemMapAlloc(mem::GenericMemory, memsz, n);
+          m.p = (uint8_t *) AllocMemory(mem::GenericMemory, memsz, n);
           auto nr_metaslabs = ((memsz - 1) / SlabPool::kLargeSlabPageSize + 1);
           m.data_offset = util::Align(nr_metaslabs * sizeof(MetaSlab), SlabPool::kLargeSlabPageSize);
           m.data_len = memsz;
@@ -343,7 +340,7 @@ SlabPool::SlabPool(MemAllocType alloc_type, unsigned int chunk_size,
 void SlabPool::Register()
 {
   std::lock_guard _(g_ps_lock);
-  g_ps.emplace_back(alloc_type, &stats);
+  g_ps[int(alloc_type)].emplace_back(&stats);
 }
 
 Slab *SlabPool::RefillSlab()
@@ -387,6 +384,7 @@ void SlabPool::ReturnSlab()
 void *SlabPool::Alloc()
 {
   if (chunk_size == 0) return nullptr;
+
   stats.used += chunk_size;
   stats.watermark = std::max(stats.used, stats.watermark);
 
@@ -442,7 +440,7 @@ ParallelPool::ParallelPool(MemAllocType alloc_type, size_t chunk_size, size_t to
         [alloc_type, chunk_size, cap, this, node]() {
           fprintf(stderr, "allocating %lu on node %d\n",
                   (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
-          auto mem = (uint8_t *) MemMapAlloc(
+          auto mem = (uint8_t *) AllocMemory(
               alloc_type, (kHeaderSize + chunk_size * cap) * kNrCorePerNode, node);
           int offset = node * kNrCorePerNode - g_core_shifting;
           for (int i = offset; i < offset + kNrCorePerNode; i++) {
@@ -491,12 +489,11 @@ ParallelSlabPool::ParallelSlabPool(MemAllocType alloc_type, size_t chunk_size, u
   this->total_cap = buffer * ParallelAllocationPolicy::g_nr_cores;
 
   uint8_t *mem = nullptr;
-  for (int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
-    auto d = std::div(i + g_core_shifting, kNrCorePerNode);
-    auto numa_node = d.quot;
-    auto numa_offset = d.rem;
+  for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+    auto numa_node = i / kNrCorePerNode;
+    auto numa_offset = i % kNrCorePerNode;
     if (numa_offset == 0) {
-      mem = (uint8_t *) MemMapAlloc(alloc_type, kHeaderSize * kNrCorePerNode);
+      mem = (uint8_t *) AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
     }
 
     auto p = mem + numa_offset * kHeaderSize;
@@ -617,11 +614,11 @@ void *Brk::Alloc(size_t s)
 {
   s = util::Align(s, 16);
   size_t off = 0;
-  if (ord == std::memory_order_relaxed) {
-    off = offset.load(ord);
-    offset.store(off + s, ord);
+  if (!thread_safe) {
+    off = offset.load(std::memory_order_relaxed);
+    offset.store(off + s, std::memory_order_relaxed);
   } else {
-    off = offset.fetch_add(s, ord);
+    off = offset.fetch_add(s, std::memory_order_seq_cst);
   }
 
   if (__builtin_expect(off + s > limit, 0)) {
@@ -656,9 +653,26 @@ std::string MemTypeToString(MemAllocType alloc_type) {
   return kMemAllocTypeLabel[alloc_type];
 }
 
+static PoolStatistics GetMemStatsNoLock(MemAllocType alloc_type)
+{
+  PoolStatistics stat;
+  memset(&stat, 0, sizeof(PoolStatistics));
+  for (auto ps: g_ps[int(alloc_type)]) {
+    stat.used += ps->used;
+    stat.watermark += ps->watermark;
+  }
+  return stat;
+}
+
+PoolStatistics GetMemStats(MemAllocType alloc_type)
+{
+  std::lock_guard _(g_ps_lock);
+  return GetMemStatsNoLock(alloc_type);
+}
+
 void PrintMemStats() {
   puts("General memory statistics:");
-  for (int i = 0; i < EpochQueuePool; i++) {
+  for (int i = 0; i < ContentionManagerPool; i++) {
     auto bucket = static_cast<MemAllocType>(i);
     auto size = g_mem_tracker[i].load();
     printf("   %s: %llu MB\n", MemTypeToString(bucket).c_str(), size / 1024 / 1024);
@@ -668,22 +682,15 @@ void PrintMemStats() {
 
   auto N = static_cast<int>(NumMemTypes);
   PoolStatistics stats[N];
-  memset(stats, 0, sizeof(PoolStatistics) * N);
 
   {
     std::lock_guard _(g_ps_lock);
-    for (auto ps: g_ps) {
-      auto i = static_cast<int>(std::get<0>(ps));
-      if (i >= N || i < EpochQueuePool) {
-        fprintf(stderr, "Invalid alloc type %d\n", i);
-        std::abort();
-      }
-      stats[i].used += std::get<1>(ps)->used;
-      stats[i].watermark += std::get<1>(ps)->watermark;
+    for (int i = ContentionManagerPool; i < N; i++) {
+      stats[i] = GetMemStatsNoLock((MemAllocType) i);
     }
   }
 
-  for (int i = EpochQueuePool; i < NumMemTypes; i++) {
+  for (int i = ContentionManagerPool; i < N; i++) {
     auto bucket = static_cast<MemAllocType>(i);
     printf("    %s: %llu/%llu MB used (max %llu MB)\n", MemTypeToString(bucket).c_str(),
                  stats[i].used / 1024 / 1024, g_mem_tracker[bucket].load() / 1024 / 1024,
@@ -691,7 +698,19 @@ void PrintMemStats() {
   }
 }
 
+void *AllocMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, bool on_demand)
+{
+  void *p = util::OSMemory::g_default.Alloc(length, numa_node, on_demand);
+  if (p == nullptr) {
+    printf("Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());
+    PrintMemStats();
+    return nullptr;
+  }
+  g_mem_tracker[alloc_type].fetch_add(length);
+  return p;
+}
 
+#if 0
 void *MemMapAlloc(mem::MemAllocType alloc_type, size_t length, int numa_node)
 {
   int flags = MAP_ANONYMOUS | MAP_PRIVATE;
@@ -749,6 +768,7 @@ void *MemMap(MemAllocType alloc_type, void *addr, size_t length, int prot, int f
 
   return mem;
 }
+#endif
 
 long TotalMemoryAllocated()
 {

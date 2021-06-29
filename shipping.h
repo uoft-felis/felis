@@ -5,11 +5,13 @@
 #include <mutex>
 #include <list>
 #include <climits>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
 
+#include "gopp/channels.h"
 #include "log.h"
 #include "node_config.h"
 

@@ -12,15 +12,17 @@ FIELD(uint32_t , c_d_id) ;
 FIELD(uint32_t , c_id)   ;
 KEYS(CustomerKey);
 
-FIELD(int                       , c_discount)     ;
-FIELD(sql::Char<2>  , c_credit)       ;
-FIELD(sql::inline_str_8<16>     , c_last)         ;
-FIELD(sql::inline_str_8<16>     , c_first)        ;
-FIELD(int                       , c_credit_lim)   ;
 FIELD(int                       , c_balance)      ;
 FIELD(int                       , c_ytd_payment)  ;
 FIELD(int32_t                   , c_payment_cnt)  ;
 FIELD(int32_t                   , c_delivery_cnt) ;
+FIELD(int                       , c_discount)     ;
+FIELD(int                       , c_credit_lim)   ;
+FIELD(sql::Char<2>  , c_credit)                   ;
+VALUES(CustomerValue);
+
+FIELD(sql::inline_str_8<16>     , c_last)         ;
+FIELD(sql::inline_str_8<16>     , c_first)        ;
 FIELD(sql::inline_str_8<20>     , c_street_1)     ;
 FIELD(sql::inline_str_8<20>     , c_street_2)     ;
 FIELD(sql::inline_str_8<20>     , c_city)         ;
@@ -30,7 +32,7 @@ FIELD(sql::Char<16> , c_phone)        ;
 FIELD(uint32_t                  , c_since)        ;
 FIELD(sql::Char<2>  , c_middle)       ;
 FIELD(sql::inline_str_16<500>   , c_data)         ;
-VALUES(CustomerValue);
+VALUES(CustomerInfoValue);
 
 FIELD(uint32_t,  c_w_id) ;
 FIELD(uint32_t,  c_d_id) ;

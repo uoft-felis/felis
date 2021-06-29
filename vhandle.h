@@ -8,7 +8,7 @@
 #include "gopp/gopp.h"
 #include "felis_probes.h"
 #include "mem.h"
-#include "sqltypes.h"
+#include "varstr.h"
 #include "shipping.h"
 #include "entity.h"
 
@@ -32,11 +32,16 @@ class VHandleSyncService {
 
 class BaseVHandle {
  public:
+  static constexpr size_t kSize = 128;
+  static constexpr size_t kInlinedSize = 256;
   static mem::ParallelSlabPool pool;
+
+  // Cicada uses inline data to reduce cache misses. These inline rows are much
+  // larger: 4-cache lines.
+  static mem::ParallelSlabPool inline_pool;
   static void InitPool();
-  static void Quiescence() { pool.Quiescence(); }
+  static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
  public:
-  void Prefetch() const {}
 
   VHandleSyncService &sync();
 };
@@ -120,7 +125,7 @@ class LinkedListExtraVHandle {
   LinkedListExtraVHandle();
   LinkedListExtraVHandle(LinkedListExtraVHandle &&rhs) = delete;
 
-  bool AppendNewVersion(uint64_t sid);
+  bool AppendNewPriorityVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
   bool CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in);
   uint64_t FindUnreadVersionLowerBound(uint64_t min);
@@ -157,41 +162,48 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class RowEntity;
   friend class SliceManager;
   friend class GC;
-  friend class VHandleContentionMetric;
   friend class VersionBufferHead;
   friend class VersionBufferHandle;
-  friend class BatchAppender;
+  friend class ContentionManager;
+  friend class HashtableIndex;
 
   util::MCSSpinLock lock;
-  short alloc_by_regionid;
-  short this_coreid;
+  uint8_t alloc_by_regionid;
+  uint8_t this_coreid;
+  int8_t cont_affinity;
+  uint8_t inline_used;
+
   unsigned int capacity;
   unsigned int size;
+  unsigned int cur_start;
 
-  // unsigned int value_mark;
-  std::atomic_uint latest_version; // the latest written version's offset in *versions
-  uint64_t contention = 0;
+  std::atomic_int latest_version; // the latest written version's offset in *versions
+  int nr_ondsplt;
   // versions: ptr to the version array.
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
   // util::OwnPtr<RowEntity> row_entity;
   std::atomic<ExtraVHandle*> extra_vhandle;
   std::atomic_long buf_pos = -1;
-  uint64_t last_gc_mark_epoch = 0;
- public:
+  std::atomic<uint64_t> gc_handle = 0;
 
-  static void *operator new(size_t nr_bytes);
+  SortedArrayVHandle();
+ public:
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
-    pool.Free(ptr, phandle->this_coreid);
+    if (phandle->is_inlined())
+      inline_pool.Free(ptr, phandle->this_coreid);
+    else
+      pool.Free(ptr, phandle->this_coreid);
   }
 
-  SortedArrayVHandle();
-  SortedArrayVHandle(SortedArrayVHandle &&rhs) = delete;
+  static SortedArrayVHandle *New();
+  static SortedArrayVHandle *NewInline();
 
   bool ShouldScanSkip(uint64_t sid);
-  bool AppendNewVersion(uint64_t sid, uint64_t epoch_nr, bool priority = false);
+  void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight = 0);
+  bool AppendNewPriorityVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);
@@ -199,11 +211,42 @@ class SortedArrayVHandle : public BaseVHandle {
   uint64_t SIDForwardSearch(uint64_t min);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
   bool WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr);
-  void GarbageCollect();
   void Prefetch() const { __builtin_prefetch(versions); }
 
+  std::string ToString() const;
+
+  bool is_inlined() const { return inline_used != 0xFF; }
+
+  uint8_t *AllocFromInline(size_t sz) {
+    if (inline_used != 0xFF) {
+      sz = util::Align(sz, 32);
+      if (sz > 128) return nullptr;
+
+      uint8_t mask = (1 << (sz >> 5)) - 1;
+      for (uint8_t off = 0; off <= 4 - (sz >> 5); off++) {
+        if ((inline_used & (mask << off)) == 0) {
+          inline_used |= (mask << off);
+          return (uint8_t *) this + 128 + (off << 5);
+        }
+      }
+    }
+    return nullptr;
+  }
+
+  void FreeToInline(uint8_t *p, size_t sz) {
+    if (inline_used != 0xFF) {
+      sz = util::Align(sz, 16);
+      if (sz > 128) return;
+      uint8_t mask = (1 << (sz >> 4)) - 1;
+      uint8_t off = (p - (uint8_t *) this - 128) >> 4;
+      inline_used &= ~(mask << off);
+    }
+  }
+
   // These function are racy. Be careful when you are using them. They are perfectly fine for statistics.
+  const size_t nr_capacity() const { return capacity; }
   const size_t nr_versions() const { return size; }
+  const size_t current_start() const { return cur_start;}
   uint64_t first_version() const {
     ExtraVHandle *handle = extra_vhandle.load();
     if (handle != nullptr) {
@@ -213,23 +256,18 @@ class SortedArrayVHandle : public BaseVHandle {
     return versions[0];
   }
   uint64_t last_version() const { return versions[size - 1]; }
-  unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed); }
-  short region_id() const { return alloc_by_regionid; }
-  uint64_t contention_weight() const { return contention; }
+  unsigned int nr_updated() const { return latest_version.load(std::memory_order_relaxed) + 1; }
+  int nr_ondemand_split() const { return nr_ondsplt; }
+  uint8_t region_id() const { return alloc_by_regionid; }
+  uint8_t object_coreid() const { return this_coreid; }
+  int8_t contention_affinity() const { return cont_affinity; }
  private:
-  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr);
+  void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight);
   unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
   void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {
     versions[pos] = sid;
   }
-  void EnsureSpace();
-  void IncreaseSize(int delta) {
-    size += delta;
-    EnsureSpace();
-
-    std::fill(versions + capacity + size - delta, versions + capacity + size,
-              kPendingValue);
-  }
+  void IncreaseSize(int delta, uint64_t epoch_nr);
   volatile uintptr_t *WithVersion(uint64_t sid, int &pos);
   uint64_t FindUnreadVersionLowerBound(uint64_t min);
   uint64_t FindFirstUnreadVersion(uint64_t min);

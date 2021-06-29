@@ -24,9 +24,6 @@ class YcsbModule : public Module<WorkloadModule> {
     if (Options::kYcsbSkewFactor) {
       ycsb::Client::g_theta = 0.01 * Options::kYcsbSkewFactor.ToInt();
     }
-
-    ycsb::Client::g_enable_partition = Options::kYcsbEnablePartition;
-    ycsb::Client::g_enable_lock_elision = Options::kVHandleLockElision;
     if (Options::kYcsbReadOnly)
       ycsb::Client::g_extra_read = Options::kYcsbReadOnly.ToInt();
 
