@@ -52,25 +52,21 @@ bool MWTxn_Run(PriorityTxn *txn)
   INIT_ROUTINE_BRK(4096);
 
   // generate txn input
-  MWTxnInput txnInput = dynamic_cast<ycsb::Client*>
+  MWTxnInput input = dynamic_cast<ycsb::Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<MWTxnInput>();
-  std::vector<Ycsb::Key> keys;
-  for (int i = 0; i < txnInput.nr; ++i) {
-    keys.push_back(Ycsb::Key::New(txnInput.keys[i]));
+  std::vector<Ycsb::Key> keys(input.nr);
+  for (int i = 0; i < input.nr; ++i) {
+    keys[i] = Ycsb::Key::New(input.keys[i]);
   }
   // hack, subtract random gen time
   start_tsc = __rdtsc();
 
-  // init
-  std::vector<VHandle*> rows;
-  for (auto key : keys) {
-    VHandle* row = nullptr;
-    if (!(txn->InitRegisterUpdate<ycsb::Ycsb>(key, row))) {
-      // trace(TRACE_PRIORITY "init register failed!");
-      std::abort();
-    }
-    rows.push_back(row);
+  // register update
+  std::vector<VHandle*> rows(input.nr);
+  for (int i = 0; i < input.nr; ++i) {
+    abort_if(!txn->InitRegisterUpdate<ycsb::Ycsb>(keys[i], rows[i]), "init register failed!");
   }
+  // init
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;
   while (!txn->Init()) {
@@ -92,8 +88,8 @@ bool MWTxn_Run(PriorityTxn *txn)
   };
 
   // issue promise
-  txn->piece_count.store(txnInput.nr);
-  for (int i = 0; i < txnInput.nr; ++i) {
+  txn->piece_count.store(input.nr);
+  for (int i = 0; i < input.nr; ++i) {
     auto lambda =
         [](std::tuple<Context> capture) {
           auto [ctx] = capture;
@@ -120,10 +116,7 @@ bool MWTxn_Run(PriorityTxn *txn)
             probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
           }
         };
-    Context ctx{txnInput.nr,
-                txnInput.keys[i],
-                rows[i],
-                txn};
+    Context ctx{input.nr, input.keys[i], rows[i], txn};
     txn->IssuePromise(ctx, lambda);
     // trace(TRACE_PRIORITY "Priority txn {:p} (MW) - Issued lambda into PQ", (void *)txn);
   }

@@ -41,10 +41,10 @@ PriorityTxnService::PriorityTxnService()
     // _exec_time: time of execution phase when batched epoch size=100k. out of experience
     const int _exec_time = 20;
     int percentage = Options::kPercentagePriorityTxn.ToInt();
-    abort_if(percentage <= 0, "priority transaction percentage cannot be smaller than 0");
+    abort_if(percentage < 0, "priority transaction percentage cannot be smaller than 0");
     int exec_time = _exec_time + int(float(_exec_time) * ((float(percentage) / 100.0)) * 16);
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
-    g_interval_priority_txn = exec_time * 1000000 / g_nr_priority_txn; // ms to ns
+    g_interval_priority_txn = (percentage == 0) ? 0 : (exec_time * 1000000 / g_nr_priority_txn); // ms to ns
   } else {
     if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn) {
       logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn "

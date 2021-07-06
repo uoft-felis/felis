@@ -768,7 +768,7 @@ bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
 VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
 {
   Entry *p = head;
-  while (p && p->version >= sid)
+  while (p && ((p->version >= sid) || (p->version < sid && p->object == kIgnoreValue)))
     p = p->next;
 
   if (!p)

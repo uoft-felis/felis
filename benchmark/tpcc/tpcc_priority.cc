@@ -63,23 +63,21 @@ bool StockTxn_Run(PriorityTxn *txn)
   INIT_ROUTINE_BRK(4096);
 
   // generate txn input
-  StockTxnInput txnInput = dynamic_cast<tpcc::Client*>
+  StockTxnInput input = dynamic_cast<tpcc::Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<StockTxnInput>();
-  std::vector<Stock::Key> stock_keys;
-  for (int i = 0; i < txnInput.nr_items; ++i) {
-    stock_keys.push_back(Stock::Key::New(txnInput.warehouse_id,
-                                         txnInput.detail.item_id[i]));
+  std::vector<Stock::Key> stock_keys(input.nr_items);
+  for (int i = 0; i < input.nr_items; ++i) {
+    stock_keys[i] = Stock::Key::New(input.warehouse_id, input.detail.item_id[i]);
   }
   // hack, subtract random gen time
   start_tsc = __rdtsc();
 
-  // init
-  std::vector<VHandle*> stock_rows;
-  for (auto key : stock_keys) {
-    VHandle* row = nullptr;
-    abort_if(!txn->InitRegisterUpdate<Stock>(key, row), "init register failed!");
-    stock_rows.push_back(row);
+  // register stock update
+  std::vector<VHandle*> stock_rows(input.nr_items, nullptr);
+  for (int i = 0; i < input.nr_items; ++i) {
+    abort_if(!txn->InitRegisterUpdate<Stock>(stock_keys[i], stock_rows[i]), "init register failed!");
   }
+  // init
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;
   while (!txn->Init()) {
@@ -125,10 +123,8 @@ bool StockTxn_Run(PriorityTxn *txn)
         auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
         probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
       };
-  Context ctx{txnInput.warehouse_id,
-              txnInput.nr_items,
-              txn};
-  memcpy(ctx.stock_quantities, txnInput.detail.stock_quantities, sizeof(uint) * ctx.nr_items);
+  Context ctx {input.warehouse_id, input.nr_items, txn};
+  memcpy(ctx.stock_quantities, input.detail.stock_quantities, sizeof(uint) * ctx.nr_items);
   memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * ctx.nr_items);
   int core_id = -1;
   // if (g_tpcc_config.IsWarehousePinnable())
@@ -155,20 +151,17 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   // generate txn input
   NewOrderStruct input = dynamic_cast<Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<NewOrderStruct>();
-  std::vector<Stock::Key> stock_keys;
+  std::vector<Stock::Key> stock_keys(input.detail.nr_items);
   for (int i = 0; i < input.detail.nr_items; ++i) {
-    stock_keys.push_back(Stock::Key::New(input.detail.supplier_warehouse_id[i],
-                                         input.detail.item_id[i]));
+    stock_keys[i] = Stock::Key::New(input.detail.supplier_warehouse_id[i], input.detail.item_id[i]);
   }
   // hack, subtract random gen time
   start_tsc = __rdtsc();
 
   // register new order update
-  std::vector<VHandle*> stock_rows;
-  for (auto key : stock_keys) {
-    VHandle* row = nullptr;
-    abort_if(!txn->InitRegisterUpdate<Stock>(key, row), "init register failed!");
-    stock_rows.push_back(row);
+  std::vector<VHandle*> stock_rows(input.detail.nr_items, nullptr);
+  for (int i = 0; i < input.detail.nr_items; ++i) {
+    abort_if(!txn->InitRegisterUpdate<Stock>(stock_keys[i], stock_rows[i]), "init register failed!");
   }
 
   // register new order insert
