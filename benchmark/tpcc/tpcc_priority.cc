@@ -59,8 +59,7 @@ bool StockTxn_Run(PriorityTxn *txn)
 {
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
-  probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  uint64_t init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc)) / 2200;
   INIT_ROUTINE_BRK(4096);
 
   // generate txn input
@@ -89,10 +88,10 @@ bool StockTxn_Run(PriorityTxn *txn)
   }
 
   uint64_t succ_tsc = __rdtsc();
+  uint64_t fail = (fail_tsc - start_tsc) / 2200, succ = (succ_tsc - fail_tsc) / 2200;
   txn->measure_tsc = succ_tsc;
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  // trace(TRACE_PRIORITY "Priority txn {:p} (stock) - Init() succuess, sid {} - {}", (void *)txn, txn->serial_id(), format_sid(txn->serial_id()));
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
+  probes::PriInitTime{succ, fail, fail_cnt, txn->serial_id()}();
 
   struct Context {
     uint warehouse_id;
@@ -150,8 +149,7 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
 {
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
-  probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  uint64_t init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc)) / 2200;
   INIT_ROUTINE_BRK(4096);
 
   // generate txn input
@@ -206,6 +204,7 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   uint64_t succ_tsc = __rdtsc();
   txn->measure_tsc = succ_tsc;
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  probes::PriInitQueueTime{init_q, txn->serial_id()}();
   probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
 
   struct Context {

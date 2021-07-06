@@ -46,12 +46,10 @@ std::string format_sid(uint64_t sid)
 
 bool MWTxn_Run(PriorityTxn *txn)
 {
-  auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t diff = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
-  probes::PriInitQueueTime{diff / 2200, txn->epoch, txn->delay}();
+  uint64_t init_q = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
+  INIT_ROUTINE_BRK(4096);
 
   // generate txn input
   MWTxnInput txnInput = dynamic_cast<ycsb::Client*>
@@ -80,6 +78,12 @@ bool MWTxn_Run(PriorityTxn *txn)
     ++fail_cnt;
   }
 
+  uint64_t succ_tsc = __rdtsc();
+  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
+  txn->measure_tsc = succ_tsc;
+  probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
+  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+
   struct Context {
     int nr;
     uint64_t key;
@@ -94,6 +98,7 @@ bool MWTxn_Run(PriorityTxn *txn)
         [](std::tuple<Context> capture) {
           auto [ctx] = capture;
           auto piece_id = ctx.txn->piece_count.fetch_sub(1);
+          INIT_ROUTINE_BRK(4096);
 
           // record exec queue time
           if (piece_id == ctx.nr) {
@@ -123,9 +128,11 @@ bool MWTxn_Run(PriorityTxn *txn)
     // trace(TRACE_PRIORITY "Priority txn {:p} (MW) - Issued lambda into PQ", (void *)txn);
   }
 
-  uint64_t succ_tsc = __rdtsc();
-  uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
-  probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  // record acquired SID's difference from current max progress
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
+  uint64_t seq = txn->serial_id() >> 8;
+  int64_t diff_to_max_progress = seq - max_prog;
+  probes::Distance{diff_to_max_progress, txn->serial_id()}();
 
   return txn->Commit();
 }

@@ -104,8 +104,7 @@ struct TpccDelivery {
 
 struct PriInitQueueTime {
   uint64_t time;
-  uint64_t epoch_nr;
-  uint64_t delay;
+  uint64_t sid;
   void operator()() const;
 };
 
@@ -133,6 +132,7 @@ struct PriExecTime {
 struct PieceTime {
   uint64_t time;
   uint64_t sid;
+  uintptr_t addr;
   void operator()() const;
 };
 

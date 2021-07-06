@@ -137,22 +137,21 @@ static inline std::ostream &operator<<(std::ostream &out, const Max<Type> &max)
 
 std::string format_sid(uint64_t sid)
 {
-  return "node_id " + std::to_string(sid & 0x000000FF) +
-         ", epoch " + std::to_string(sid >> 32) +
+  return "epoch " + std::to_string(sid >> 32) +
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
 }
 
 template <>
-std::ostream &operator<<(std::ostream &out, const Max<int64_t> &max)
+std::ostream &operator<<(std::ostream &out, const Max<std::tuple<uint64_t, int>> &max)
 {
-  out << max.max << " us, at txn " << format_sid(max.properties);
+  out << max.max << " us (at core " << std::get<1>(max.properties) << ", txn " << format_sid(std::get<0>(max.properties)) << ")";
   return out;
 }
 
 template <>
-std::ostream &operator<<(std::ostream &out, const Max<std::tuple<uint64_t, uint64_t>> &max)
+std::ostream &operator<<(std::ostream &out, const Max<std::tuple<uint64_t, uintptr_t, int>> &max)
 {
-  out << max.max << " us, at epoch " << std::get<0>(max.properties) << ", delay " << std::get<1>(max.properties) / 2200 << " us";
+  out << max.max << " us (at core " << std::get<2>(max.properties) << ", txn " << format_sid(std::get<0>(max.properties)) << ", func addr 0x" << std::hex << std::get<1>(max.properties) << std::dec << ")";
   return out;
 }
 

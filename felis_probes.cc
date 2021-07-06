@@ -30,40 +30,40 @@ static struct ProbeMain {
   std::vector<long> expansion;
 
   agg::Agg<agg::Average> init_queue_avg;
-  agg::Agg<agg::Max<std::tuple<uint64_t, uint64_t>>> init_queue_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max;
   agg::Agg<agg::Histogram<1024, 0, 20>> init_queue_hist;
 
   agg::Agg<agg::Average> init_fail_avg;
-  agg::Agg<agg::Max<int64_t>> init_fail_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_max;
   agg::Agg<agg::Histogram<512, 0, 2>> init_fail_hist;
 
   agg::Agg<agg::Sum> init_fail_cnt;
   agg::Agg<agg::Average> init_fail_cnt_avg;
-  agg::Agg<agg::Max<int64_t>> init_fail_cnt_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_cnt_max;
   agg::Agg<agg::Histogram<128, 0, 8>> init_fail_cnt_hist;
 
   agg::Agg<agg::Average> init_succ_avg;
-  agg::Agg<agg::Max<int64_t>> init_succ_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_succ_max;
   agg::Agg<agg::Histogram<128, 0, 2>> init_succ_hist;
 
   agg::Agg<agg::Average> exec_queue_avg;
-  agg::Agg<agg::Max<int64_t>> exec_queue_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_queue_max;
   agg::Agg<agg::Histogram<512, 0, 3>> exec_queue_hist;
 
   agg::Agg<agg::Average> exec_avg;
-  agg::Agg<agg::Max<int64_t>> exec_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_max;
   agg::Agg<agg::Histogram<128, 0, 2>> exec_hist;
 
   agg::Agg<agg::Average> total_latency_avg;
-  agg::Agg<agg::Max<int64_t>> total_latency_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max;
   agg::Agg<agg::Histogram<2048, 0, 2>> total_latency_hist;
 
   agg::Agg<agg::Average> piece_avg;
-  agg::Agg<agg::Max<int64_t>> piece_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, uintptr_t, int>>> piece_max;
   agg::Agg<agg::Histogram<512, 0, 1>> piece_hist;
 
   agg::Agg<agg::Average> dist_avg;
-  agg::Agg<agg::Max<int64_t>> dist_max;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_max;
   agg::Agg<agg::Histogram<512, -10000, 40>> dist_hist;
   ~ProbeMain();
 } global;
@@ -222,58 +222,64 @@ template <> void OnProbe(felis::probes::VHandleExpand p)
 
 template <> void OnProbe(felis::probes::PriInitQueueTime p)
 {
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   statcnt.init_queue_avg << p.time;
   statcnt.init_queue_hist << p.time;
-  statcnt.init_queue_max.addData(p.time, std::make_tuple(p.epoch_nr, p.delay));
+  statcnt.init_queue_max.addData(p.time, std::make_tuple(p.sid, core_id));
 }
 
 template <> void OnProbe(felis::probes::PriInitTime p)
 {
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   if (p.fail_time != 0) {
     statcnt.init_fail_cnt << p.fail_cnt;
     statcnt.init_fail_cnt_avg << p.fail_cnt;
-    statcnt.init_fail_cnt_max.addData(p.fail_cnt, p.sid);
+    statcnt.init_fail_cnt_max.addData(p.fail_cnt, std::make_tuple(p.sid, core_id));
     statcnt.init_fail_cnt_hist << p.fail_cnt;
   }
 
   statcnt.init_fail_avg << p.fail_time;
-  statcnt.init_fail_max.addData(p.fail_time, p.sid);
+  statcnt.init_fail_max.addData(p.fail_time, std::make_tuple(p.sid, core_id));
   statcnt.init_fail_hist << p.fail_time;
 
   statcnt.init_succ_avg << p.succ_time;
-  statcnt.init_succ_max.addData(p.succ_time, p.sid);
+  statcnt.init_succ_max.addData(p.succ_time, std::make_tuple(p.sid, core_id));
   statcnt.init_succ_hist << p.succ_time;
 }
 
 template <> void OnProbe(felis::probes::PriExecQueueTime p)
 {
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   statcnt.exec_queue_avg << p.time;
   statcnt.exec_queue_hist << p.time;
-  statcnt.exec_queue_max.addData(p.time, p.sid);
+  statcnt.exec_queue_max.addData(p.time, std::make_tuple(p.sid, core_id));
 }
 
 template <> void OnProbe(felis::probes::PriExecTime p)
 {
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   statcnt.exec_avg << p.time;
   statcnt.exec_hist << p.time;
-  statcnt.exec_max.addData(p.time, p.sid);
+  statcnt.exec_max.addData(p.time, std::make_tuple(p.sid, core_id));
   statcnt.total_latency_avg << p.total_latency;
   statcnt.total_latency_hist << p.total_latency;
-  statcnt.total_latency_max.addData(p.total_latency, p.sid);
+  statcnt.total_latency_max.addData(p.total_latency, std::make_tuple(p.sid, core_id));
 }
 
 template <> void OnProbe(felis::probes::PieceTime p)
 {
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   statcnt.piece_avg << p.time;
   statcnt.piece_hist << p.time;
-  statcnt.piece_max.addData(p.time, p.sid);
+  statcnt.piece_max.addData(p.time, std::make_tuple(p.sid, p.addr, core_id));
 }
 
 template <> void OnProbe(felis::probes::Distance p)
 {
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   statcnt.dist_avg << p.dist;
   statcnt.dist_hist << p.dist;
-  statcnt.dist_max.addData(p.dist, p.sid);
+  statcnt.dist_max.addData(p.dist, std::make_tuple(p.sid, core_id));
 }
 
 enum PriTxnMeasureType : int{
@@ -340,7 +346,7 @@ ProbeMain::~ProbeMain()
             << std::endl;
   std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
 #endif
-  std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << "  us "
+  std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << " us "
             << "(max: " << global.piece_max() << ")" << std::endl;
   std::cout << global.piece_hist();
 
@@ -349,10 +355,9 @@ ProbeMain::~ProbeMain()
 
   std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
             << "(max: " << global.init_queue_max() << ")" << std::endl;
-  // std::cout << global.init_queue_hist();
+  std::cout << global.init_queue_hist();
 
   std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
-            << "(failed txn cnt: " << global.init_fail_cnt() << ") "
             << "(max: " << global.init_fail_max() << ")" << std::endl;
   // std::cout << global.init_fail_hist();
 
