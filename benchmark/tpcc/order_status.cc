@@ -195,6 +195,7 @@ void OrderStatusTxn::Run()
         },
         aff);
   }
+  // shirley zen: add sfence after txn run
   // _mm_sfence();
 }
 

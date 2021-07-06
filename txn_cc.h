@@ -272,8 +272,8 @@ class Txn : public BaseTxn {
       }
       else {
         bool result = WriteVarStr(o.Encode(usePmem));
-        //shirley: should remove this flush bc only flushing 64 bytes. It's gonna invalidate the cacheline.
-        // // _mm_clwb((char *)vhandle); //shirley: flush cache bc we modified some info in vhandle. 
+        // shirley zen: comparing Zen, also write varstr to pmem
+        // auto test_varstr = o.Encode(true);
         return result;
       }
     }

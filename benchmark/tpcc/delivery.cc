@@ -360,6 +360,7 @@ void DeliveryTxn::Run()
       }
     }
   }
+  // shirley zen: add sfence after txn run
   // _mm_sfence();
 }
 
