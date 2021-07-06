@@ -256,6 +256,7 @@ void PaymentTxn::Run()
           });
     }
   }
+  // _mm_sfence();
 }
 
 }

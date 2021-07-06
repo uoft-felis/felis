@@ -195,6 +195,7 @@ void OrderStatusTxn::Run()
         },
         aff);
   }
+  // _mm_sfence();
 }
 
 }

@@ -360,6 +360,7 @@ void DeliveryTxn::Run()
       }
     }
   }
+  // _mm_sfence();
 }
 
 } // namespace tpcc

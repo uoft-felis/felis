@@ -492,6 +492,7 @@ void NewOrderTxn::Run()
       }
     }
   }
+  // _mm_sfence();
 }
 
 }

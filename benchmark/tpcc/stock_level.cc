@@ -198,6 +198,7 @@ void StockLevelTxn::Run()
     state->last = root->last();
     RVPInfo::MarkRoutine(state->last);
   }
+  // _mm_sfence();
 }
 
 }
