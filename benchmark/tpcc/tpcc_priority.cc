@@ -33,7 +33,7 @@ template <>
 StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>()
 {
   StockTxnInput in;
-  in.warehouse_id = PickWarehouse();
+  in.warehouse_id = go::Scheduler::CurrentThreadPoolId(); // hack, pin warehouse to core
   in.nr_items = RandomNumber(1, StockTxnInput::kStockMaxItems);
 
   for (int i = 0; i < in.nr_items; i++) {
@@ -127,8 +127,8 @@ bool StockTxn_Run(PriorityTxn *txn)
   memcpy(ctx.stock_quantities, input.detail.stock_quantities, sizeof(uint) * ctx.nr_items);
   memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * ctx.nr_items);
   int core_id = -1;
-  // if (g_tpcc_config.IsWarehousePinnable())
-  //   core_id = g_tpcc_config.WarehouseToCoreId(txnInput.warehouse_id);
+  if (g_tpcc_config.IsWarehousePinnable())
+    core_id = g_tpcc_config.WarehouseToCoreId(input.warehouse_id);
   txn->IssuePromise(ctx, lambda, core_id);
   // trace(TRACE_PRIORITY "Priority txn {:p} (stock) - Issued lambda into PQ", (void *)txn);
 
@@ -151,6 +151,7 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   // generate txn input
   NewOrderStruct input = dynamic_cast<Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<NewOrderStruct>();
+  input.warehouse_id = go::Scheduler::CurrentThreadPoolId(); // hack, pin warehouse to core
   std::vector<Stock::Key> stock_keys(input.detail.nr_items);
   for (int i = 0; i < input.detail.nr_items; ++i) {
     stock_keys[i] = Stock::Key::New(input.detail.supplier_warehouse_id[i], input.detail.item_id[i]);
@@ -292,8 +293,8 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   memcpy(ctx.orderline_ikeys, orderline_ikeys, sizeof(BaseInsertKey) * input.kNewOrderMaxItems);
   memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * input.detail.nr_items);
   int core_id = -1;
-  // if (g_tpcc_config.IsWarehousePinnable())
-  //   core_id = g_tpcc_config.WarehouseToCoreId(txnInput.warehouse_id);
+  if (g_tpcc_config.IsWarehousePinnable())
+    core_id = g_tpcc_config.WarehouseToCoreId(input.warehouse_id);
   txn->IssuePromise(ctx, lambda, core_id);
 
   // record acquired SID's difference from current max progress
