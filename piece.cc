@@ -218,7 +218,6 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
   do {
     while ((hasTxn = svc.Peek(core_id, txn)) | (hasPiece = svc.Peek(core_id, should_pop))) {
-      // running priority: pieces from priority txn > issue of priority txn > pieces from batched txn
       if (hasTxn && !hasPiece) {
         txn->Run();
         svc.Complete(core_id);
@@ -235,9 +234,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
       if (rt->sched_key != 0)
         debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
 
-      bool pieceFromPriTxn = PriorityTxnService::isPriorityTxn(rt->sched_key);
-      if (hasTxn && !pieceFromPriTxn) {
-        // if piece is from batched txn, priority txn issue runs before piece exec
+      if (hasTxn) {
         txn->Run();
         svc.Complete(core_id);
       }
@@ -252,12 +249,6 @@ void BasePieceCollection::ExecutionRoutine::Run()
       if (rt->sched_key != 0)
         felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
-
-      if (hasTxn && pieceFromPriTxn) {
-        // priority txn issue runs after piece exec
-        txn->Run();
-        svc.Complete(core_id);
-      }
     }
   } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 

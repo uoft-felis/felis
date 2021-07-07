@@ -605,7 +605,7 @@ retry:
   return false;
 }
 
-bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn)
+bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dry_run)
 {
   if (!NodeConfiguration::g_priority_txn)
     return false;
@@ -648,9 +648,11 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn)
 
     if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
       return false;
-    tq.start.store(tstart + 1, std::memory_order_release);
-    txn = candidate;
-    EpochClient::g_workload_client->completion_object()->Increment(1);
+    if (!dry_run) {
+      tq.start.store(tstart + 1, std::memory_order_release);
+      txn = candidate;
+      EpochClient::g_workload_client->completion_object()->Increment(1);
+    }
 
     // trace(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
     return true;
@@ -683,6 +685,13 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   ws.preempt_ts = state.ts;
   ws.sched_key = state.current_sched_key;
   ws.state = routine_state;
+
+  PriorityTxn* tmp = nullptr;
+  if (NodeConfiguration::g_priority_txn && this->Peek(core_id, tmp, true)) {
+    abort_if(tmp != nullptr, "dry run didn't come out dry");
+    q.waiting.len++;
+    return true;
+  }
 
   // There is nothing to switch to!
   if (q.waiting.len == 0 && q.sched_pol->ShouldPickWaiting(ws))

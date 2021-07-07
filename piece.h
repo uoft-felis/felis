@@ -132,7 +132,7 @@ class PromiseRoutineDispatchService {
   virtual void AddBubble() = 0;
   virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
-  virtual bool Peek(int core_id, PriorityTxn *&txn) = 0;
+  virtual bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;
   virtual bool IsRunning(int core_id) = 0;
