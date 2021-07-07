@@ -60,12 +60,11 @@ bool StockTxn_Run(PriorityTxn *txn)
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
   uint64_t init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc)) / 2200;
-  INIT_ROUTINE_BRK(4096);
 
   // generate txn input
   StockTxnInput input = dynamic_cast<tpcc::Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<StockTxnInput>();
-  std::vector<Stock::Key> stock_keys(input.nr_items);
+  Stock::Key stock_keys[input.nr_items];
   for (int i = 0; i < input.nr_items; ++i) {
     stock_keys[i] = Stock::Key::New(input.warehouse_id, input.detail.item_id[i]);
   }
@@ -73,14 +72,14 @@ bool StockTxn_Run(PriorityTxn *txn)
   start_tsc = __rdtsc();
 
   // register stock update
-  std::vector<VHandle*> stock_rows(input.nr_items, nullptr);
+  VHandle *stock_rows[input.nr_items];
   for (int i = 0; i < input.nr_items; ++i) {
-    abort_if(!txn->InitRegisterUpdate<Stock>(stock_keys[i], stock_rows[i]), "init register failed!");
+    txn->InitRegisterUpdate<Stock>(stock_keys[i], stock_rows[i]);
   }
   // init
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;
-  while (!txn->Init()) {
+  while (!txn->Init(stock_rows, input.nr_items, nullptr, 0, nullptr)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
   }
@@ -108,7 +107,6 @@ bool StockTxn_Run(PriorityTxn *txn)
         auto diff = queue_tsc - ctx.txn->measure_tsc;
         probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
         ctx.txn->measure_tsc = queue_tsc;
-        INIT_ROUTINE_BRK(4096);
 
         for (int i = 0; i < ctx.nr_items; ++i) {
           auto stock = ctx.txn->Read<Stock::Value>(ctx.stock_rows[i]);
@@ -152,17 +150,18 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   NewOrderStruct input = dynamic_cast<Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<NewOrderStruct>();
   input.warehouse_id = go::Scheduler::CurrentThreadPoolId(); // hack, pin warehouse to core
-  std::vector<Stock::Key> stock_keys(input.detail.nr_items);
-  for (int i = 0; i < input.detail.nr_items; ++i) {
+  auto nr_items = input.detail.nr_items;
+  Stock::Key stock_keys[nr_items];
+  for (int i = 0; i < nr_items; ++i) {
     stock_keys[i] = Stock::Key::New(input.detail.supplier_warehouse_id[i], input.detail.item_id[i]);
   }
   // hack, subtract random gen time
   start_tsc = __rdtsc();
 
   // register new order update
-  std::vector<VHandle*> stock_rows(input.detail.nr_items, nullptr);
-  for (int i = 0; i < input.detail.nr_items; ++i) {
-    abort_if(!txn->InitRegisterUpdate<Stock>(stock_keys[i], stock_rows[i]), "init register failed!");
+  VHandle *stock_rows[nr_items];
+  for (int i = 0; i < nr_items; ++i) {
+    txn->InitRegisterUpdate<Stock>(stock_keys[i], stock_rows[i]);
   }
 
   // register new order insert
@@ -172,25 +171,32 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
 
   auto oorder_key = OOrder::Key::New(input.warehouse_id, input.district_id, oorder_id);
   auto neworder_key = NewOrder::Key::New(input.warehouse_id, input.district_id, oorder_id, input.customer_id);
-  OrderLine::Key orderline_keys[input.kNewOrderMaxItems];
-  for (int i = 0; i < input.detail.nr_items; i++)
+  OrderLine::Key orderline_keys[nr_items];
+  for (int i = 0; i < nr_items; i++)
     orderline_keys[i] = OrderLine::Key::New(input.warehouse_id, input.district_id, oorder_id, i + 1);
 
-  BaseInsertKey *oorder_ikey, *neworder_ikey, *orderline_ikeys[input.kNewOrderMaxItems];
+  BaseInsertKey *oorder_ikey, *neworder_ikey, *orderline_ikeys[nr_items];
   txn->InitRegisterInsert<OOrder>(oorder_key, oorder_ikey);
   txn->InitRegisterInsert<NewOrder>(neworder_key, neworder_ikey);
-  for (int i = 0; i < input.detail.nr_items; i++)
+  for (int i = 0; i < nr_items; i++)
     txn->InitRegisterInsert<OrderLine>(orderline_keys[i], orderline_ikeys[i]);
 
   // register delivery update (insert rows' update doesn't need to be registered)
   auto customer_key = Customer::Key::New(input.warehouse_id, input.district_id, input.customer_id);
   VHandle *customer_row = nullptr;
-  abort_if(!txn->InitRegisterUpdate<Customer>(customer_key, customer_row), "customer init fail");
+  txn->InitRegisterUpdate<Customer>(customer_key, customer_row);
 
   // init
+  VHandle *update_rows[nr_items + 1], *insert_rows[nr_items + 2];
+  BaseInsertKey *insert_ikeys[nr_items + 2];
+  update_rows[0] = customer_row;
+  memcpy(update_rows + 1, stock_rows, sizeof(VHandle*) * nr_items);
+  insert_ikeys[0] = oorder_ikey;
+  insert_ikeys[1] = neworder_ikey;
+  memcpy(insert_ikeys + 2, orderline_ikeys, sizeof(VHandle*) * nr_items);
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;
-  while (!txn->Init()) {
+  while (!txn->Init(update_rows, nr_items + 1, insert_ikeys, nr_items + 2, insert_rows)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
   }
@@ -204,10 +210,8 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   struct Context {
     NewOrderStruct in;
     PriorityTxn *txn;
-    BaseInsertKey *oorder_ikey;
-    BaseInsertKey *neworder_ikey;
-    VHandle *customer_row;
-    BaseInsertKey *orderline_ikeys[NewOrderStruct::kNewOrderMaxItems];
+    VHandle *oorder_row, *neworder_row, *customer_row;
+    VHandle *orderline_rows[NewOrderStruct::kNewOrderMaxItems];
     VHandle *stock_rows[NewOrderStruct::kNewOrderMaxItems];
   };
   // issue promise
@@ -261,18 +265,17 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
         }
 
         // delivery - delete neworder
-        ctx.txn->Delete(ctx.txn->InsertKeyToVHandle(ctx.neworder_ikey));
+        ctx.txn->Delete(ctx.neworder_row);
         // delivery - update oorder
-        auto oorder_row = ctx.txn->InsertKeyToVHandle(ctx.oorder_ikey);
         oorder_value.o_carrier_id = __rdtsc() % 10 + 1; // random between 1 and 10
-        ctx.txn->Write(oorder_row, oorder_value);
-        ClientBase::OnUpdateRow(oorder_row);
+        ctx.txn->Write(ctx.oorder_row, oorder_value);
+        ClientBase::OnUpdateRow(ctx.oorder_row);
         // delivery - update orderline
         int sum = 0;
         for (int i = 0; i < ctx.in.detail.nr_items; ++i) {
-          auto orderline_row = ctx.txn->InsertKeyToVHandle(ctx.orderline_ikeys[i]);
+          auto orderline_row = ctx.orderline_rows[i];
           sum += ol_values[i].ol_amount;
-          ol_values[i].ol_delivery_d = 234567; /* ts */
+          ol_values[i].ol_delivery_d = 234567; // ts
           ctx.txn->Write(orderline_row, ol_values[i]);
           ClientBase::OnUpdateRow(orderline_row);
         }
@@ -289,9 +292,9 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
         auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
         probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
       };
-  Context ctx {input, txn, oorder_ikey, neworder_ikey, customer_row};
-  memcpy(ctx.orderline_ikeys, orderline_ikeys, sizeof(BaseInsertKey) * input.kNewOrderMaxItems);
-  memcpy(ctx.stock_rows, &stock_rows[0], sizeof(VHandle*) * input.detail.nr_items);
+  Context ctx {input, txn, insert_rows[0], insert_rows[1], customer_row};
+  memcpy(ctx.orderline_rows, insert_rows + 2, sizeof(VHandle*) * nr_items);
+  memcpy(ctx.stock_rows, stock_rows, sizeof(VHandle*) * nr_items);
   int core_id = -1;
   if (g_tpcc_config.IsWarehousePinnable())
     core_id = g_tpcc_config.WarehouseToCoreId(input.warehouse_id);

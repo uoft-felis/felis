@@ -126,7 +126,7 @@ class PriorityTxnService {
 
  private:
   uint64_t SIDLowerBound();
-  uint64_t GetSID(PriorityTxn* txn);
+  uint64_t GetSID(PriorityTxn *txn, VHandle **handles, int size);
   uint64_t GetNextSIDSlot(uint64_t sequence);
 
  public:
@@ -156,11 +156,8 @@ class PriorityTxn {
  friend class PriorityTxnService;
  private:
   uint64_t sid;
-  bool initialized; // meaning the registered VHandles would be valid
-  std::vector<VHandle*> update_handles;
-  std::vector<BaseInsertKey*> insert_keys;
-  std::vector<VHandle*> insert_handles;
   bool (*callback)(PriorityTxn *);
+  bool initialized; // meaning the registered VHandles would be valid
 
  public:
   int backoff_distance;
@@ -168,14 +165,14 @@ class PriorityTxn {
   uint64_t epoch; // pre-generate. which epoch is this txn in
   uint64_t delay; // pre-generate. tsc delay w.r.t. the start of execution, in tsc
   uint64_t measure_tsc;
-  PriorityTxn(bool (*func)(PriorityTxn *)): sid(-1), initialized(false), piece_count(0),
-                                            update_handles(), callback(func) {}
+  uint64_t min_sid; // input, this txn cannot serialize before min_sid
+  PriorityTxn(bool (*func)(PriorityTxn *)): sid(-1), initialized(false),
+                                            piece_count(0), callback(func) {}
   PriorityTxn& operator=(const PriorityTxn& rhs) {
     if (&rhs == this)
       return *this;
 
     // assign only happens when the rhs is never Run(), so set init value
-    this->update_handles.clear();
     this->piece_count.store(0);
     this->min_sid = 0;
     this->backoff_distance = PriorityTxnService::g_backoff_distance;
@@ -192,7 +189,6 @@ class PriorityTxn {
   PriorityTxn() : PriorityTxn(nullptr) {}
   void SetCallback(bool (*func)(PriorityTxn *)) { this->callback = func; }
 
-  uint64_t min_sid; // input, this txn cannot serialize before min_sid
   bool Run() {
     return this->callback(this);
   }
@@ -216,26 +212,18 @@ class PriorityTxn {
       std::abort();
     handle = SearchExistingRow<Table>(key);
     abort_if(!handle, "Registring Update: found nullptr");
-    this->update_handles.push_back(handle);
     return true;
   }
 
   template <typename Table>
   bool InitRegisterInsert(typename Table::Key key, BaseInsertKey*& ptr) {
     ptr = new felis::InsertKey<Table>(key);
-    this->insert_keys.push_back(ptr);
     return true;
   }
 
-  VHandle* InsertKeyToVHandle(BaseInsertKey* key) {
-    auto it = std::find(insert_keys.begin(), insert_keys.end(), key);
-    abort_if(it == insert_keys.end(), "InsertKey {:p} not found", (void*)key);
-    return insert_handles[it - insert_keys.begin()];
-  }
+  bool Init(VHandle **update_handles, int usize, BaseInsertKey **insert_ikeys, int isize, VHandle **insert_handles);
 
-  bool Init();
-
-  void Rollback(int update_cnt, int insert_cnt);
+  void Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles, int insert_cnt);
 
   template <typename T>
   T Read(VHandle* handle) {

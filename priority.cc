@@ -234,7 +234,7 @@ void PriorityTxnService::PrintStats() {
 }
 
 // find a serial id for the calling priority txn
-uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
+uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int size)
 {
   uint64_t prog = this->GetMaxProgress(), new_seq;
   int seq = prog >> 8 & 0xFFFFFF;
@@ -259,11 +259,11 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn* txn)
       min = last;
 
     if (g_sid_read_bit) {
-      for (auto handle : txn->update_handles)
-        min = handle->SIDBackwardSearch(min);
+      for (int i = 0; i < size; ++i)
+        min = handles[i]->SIDBackwardSearch(min);
     } else {
-      for (auto handle : txn->update_handles)
-        min = handle->SIDForwardSearch(min);
+      for (int i = 0; i < size; ++i)
+        min = handles[i]->SIDForwardSearch(min);
     }
     if (min >> 32 < prog >> 32) // min is from last epoch
       new_seq = 1;
@@ -329,47 +329,47 @@ void PriorityTxnService::ClearBitMap(void)
 
 // do the ad hoc initialization
 // including 1) acquire SID  2) apply changes  3) validate  4) success/rollback
-bool PriorityTxn::Init()
+bool PriorityTxn::Init(VHandle **update_handles, int usize, BaseInsertKey **insert_ikeys, int isize, VHandle **insert_handles)
 {
   abort_if(this->initialized, "Init() cannot be called after previous Init() succeeded");
 
   // acquire row lock in order (here addr order) to prevent deadlock
-  std::sort(update_handles.begin(), update_handles.end());
+  std::sort(update_handles, update_handles + usize);
 
   // 1) acquire SID
-  sid = util::Instance<PriorityTxnService>().GetSID(this);
+  sid = util::Instance<PriorityTxnService>().GetSID(this, update_handles, usize);
   // trace(TRACE_PRIORITY "sid:         {}", format_sid(sid));
 
   // 2) apply changes, 3) validate, 4) rollback
   int update_cnt = 0, insert_cnt = 0; // count for rollback
   // updates
-  for (int i = 0; i < update_handles.size(); ++i) {
+  for (int i = 0; i < usize; ++i) {
     // pre-checking
     if (PriorityTxnService::g_conflict_read_bit && CheckUpdateConflict(update_handles[i])) {
-      Rollback(update_cnt, insert_cnt);
+      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
       return false;
     }
     // apply changes
     if (!update_handles[i]->AppendNewPriorityVersion(sid)) {
-      Rollback(update_cnt, insert_cnt);
+      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
       return false;
     }
     update_cnt++;
     if (CheckUpdateConflict(update_handles[i])) {
-      Rollback(update_cnt, insert_cnt);
+      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
       return false;
     }
   }
   // inserts
-  for (int i = 0; i < insert_keys.size(); ++i) {
+  for (int i = 0; i < isize; ++i) {
     // apply changes
     VHandle *handle = nullptr;
-    if ((handle = insert_keys[i]->Insert(sid)) == nullptr) {
-      Rollback(update_cnt, insert_cnt);
+    if ((handle = insert_ikeys[i]->Insert(sid)) == nullptr) {
+      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
       return false;
     }
     insert_cnt++;
-    insert_handles.push_back(handle);
+    insert_handles[i] = handle;
     handle->AppendNewPriorityVersion(sid);
     // batched version array will have 0 version, priority version linked list will have 1 version
   }
@@ -390,7 +390,7 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 }
 
 
-void PriorityTxn::Rollback(int update_cnt, int insert_cnt) {
+void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles,int insert_cnt) {
   if (PriorityTxnService::g_distance_exponential_backoff
    && PriorityTxnService::g_backoff_distance < 0) {
     // exponential backoff, -4 -> -2 -> -1 -> 0 -> 1 -> 2 -> ...
