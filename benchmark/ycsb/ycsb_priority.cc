@@ -54,7 +54,7 @@ bool MWTxn_Run(PriorityTxn *txn)
   // generate txn input
   MWTxnInput input = dynamic_cast<ycsb::Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<MWTxnInput>();
-  std::vector<Ycsb::Key> keys(input.nr);
+  Ycsb::Key keys[input.nr];
   for (int i = 0; i < input.nr; ++i) {
     keys[i] = Ycsb::Key::New(input.keys[i]);
   }
@@ -62,14 +62,14 @@ bool MWTxn_Run(PriorityTxn *txn)
   start_tsc = __rdtsc();
 
   // register update
-  std::vector<VHandle*> rows(input.nr);
+  VHandle* rows[input.nr];
   for (int i = 0; i < input.nr; ++i) {
-    abort_if(!txn->InitRegisterUpdate<ycsb::Ycsb>(keys[i], rows[i]), "init register failed!");
+    txn->InitRegisterUpdate<ycsb::Ycsb>(keys[i], rows[i]);
   }
   // init
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;
-  while (!txn->Init()) {
+  while (!txn->Init(rows, input.nr, nullptr, 0, nullptr)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
   }
