@@ -428,6 +428,7 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
       if (is_insert){
         lock.Unlock(&qnode);
       }
+      // felis::probes::NumReadWriteDramPmem{0, 1}();
       return dram_version->val;
     }
     else{
@@ -435,6 +436,7 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
         lock.Lock(&qnode);
       }
       if (!dram_version || !(dram_version->val)){
+        // felis::probes::NumReadWriteDramPmem{0, 2}();
         DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
         int curAffinity = mem::ParallelPool::CurrentAffinity();
         temp_dram_version->this_coreid = curAffinity;
@@ -484,6 +486,8 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
     // printf("ReadWithVersion: reading from version array FAILED!\n");
     return nullptr;
   }
+
+  // felis::probes::NumReadWriteDramPmem{0, 0}();
 
   sync().WaitForData(addr, sid, versions_ptr(versions)[pos], (void *)vhandle);
 

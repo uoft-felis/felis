@@ -225,6 +225,8 @@ class Txn : public BaseTxn {
 
       //shirley: if usePmem, try alloc from inline pmem and use o.EncodeToPtrOrDefault
       if (usePmem) {
+        // felis::probes::NumReadWriteDramPmem{1,2}();
+        // felis::probes::NumReadWriteDramPmem{1,1}();
         index_info->Prefetch_vhandle();
         auto val_sz = sizeof(VarStr) + o.EncodeSize();
 
@@ -271,6 +273,7 @@ class Txn : public BaseTxn {
         return result;
       }
       else {
+        // felis::probes::NumReadWriteDramPmem{1,0}();
         bool result = WriteVarStr(o.Encode(usePmem));
         // shirley zen: comparing Zen, also write varstr to pmem
         // auto test_varstr = o.Encode(true);
@@ -283,8 +286,9 @@ class Txn : public BaseTxn {
     //   // shirley: removed. not used. should always use Write.
     // }
 
-    //shirley: this should be used for writing initial version after row insert.
+    //shirley: this should be used for writing initial version after row insert. Not used for database setup.
     template <typename T> bool WriteInitialInline(const T &o) {
+      // felis::probes::NumReadWriteDramPmem{1,2}();
       //shirley: probe size of version value
       // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
