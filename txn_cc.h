@@ -275,8 +275,12 @@ class Txn : public BaseTxn {
       else {
         // felis::probes::NumReadWriteDramPmem{1,0}();
         bool result = WriteVarStr(o.Encode(usePmem));
-        // shirley zen: comparing Zen, also write varstr to pmem
+        // shirley zen: comparing Zen, also write varstr to pmem and flush varstr
         // auto test_varstr = o.Encode(true);
+        // int test_length = sizeof(VarStr) + o.EncodeSize();
+        // for (int i = 0; i < test_length; i += 64){
+        //   _mm_clwb((char *)test_varstr + i);
+        // }
         return result;
       }
     }
