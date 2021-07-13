@@ -272,6 +272,8 @@ void RMWTxn::Run()
           }
         });
   }
+  // shirley zen: add sfence after txn run
+  // _mm_sfence();
 }
 
 void YcsbLoader::Run()
@@ -301,7 +303,9 @@ void YcsbLoader::Run()
       dbv.v.resize_junk(999);
       auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeView(buf));
       // TODO: slice mapping table stuff?
-      felis::InitVersion(handle, dbv.Encode());
+      // shirley: initial database should be allocated from inline pmem.
+      auto p = handle->vhandle_ptr()->AllocFromInline(dbv.EncodeSize());
+      felis::InitVersion(handle, dbv.EncodeToPtrOrDefault(p));
     }
   }
   util::Cpu info;
