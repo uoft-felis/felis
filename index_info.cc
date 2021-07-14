@@ -305,6 +305,7 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         dram_version->val = nullptr; // (VarStr *)0x12345678;
         mem::GetDataRegion().Free(dramval, init_val->get_region_id(), varstr_sz);
         dram_version->ep_num = current_epoch_nr;
+        // felis::probes::NumReadWriteDramPmem{0,1,1}();
       }
       else{
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
@@ -324,6 +325,7 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         temp_dram_version->ep_num = current_epoch_nr;
         dram_version = temp_dram_version;
         util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
+        // felis::probes::NumReadWriteDramPmem{0,2,1}();
       }
       
       size_set(versions, 1);
@@ -428,7 +430,10 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
       if (is_insert){
         lock.Unlock(&qnode);
       }
-      // felis::probes::NumReadWriteDramPmem{0, 1}();
+      // int probe_phase = 2;
+      // if (is_insert) 
+      //   probe_phase = 0;
+      // felis::probes::NumReadWriteDramPmem{0, 1, probe_phase}();
       return dram_version->val;
     }
     else{
@@ -436,7 +441,10 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
         lock.Lock(&qnode);
       }
       if (!dram_version || !(dram_version->val)){
-        // felis::probes::NumReadWriteDramPmem{0, 2}();
+        // int probe_phase = 2;
+        // if (is_insert)
+        //   probe_phase = 0;
+        // felis::probes::NumReadWriteDramPmem{0, 2, probe_phase}();
         DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
         int curAffinity = mem::ParallelPool::CurrentAffinity();
         temp_dram_version->this_coreid = curAffinity;
@@ -486,8 +494,10 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
     // printf("ReadWithVersion: reading from version array FAILED!\n");
     return nullptr;
   }
-
-  // felis::probes::NumReadWriteDramPmem{0, 0}();
+  // int probe_phase = 2;
+  // if (is_insert)
+  //   probe_phase = 0;
+  // felis::probes::NumReadWriteDramPmem{0, 0, probe_phase}();
 
   sync().WaitForData(addr, sid, versions_ptr(versions)[pos], (void *)vhandle);
 

@@ -30,7 +30,7 @@ struct GarbageBlockDram : public util::GenericListNode<GarbageBlockDram> {
 static_assert(sizeof(GarbageBlockDram) == GarbageBlockDram::kBlockSize, "Block doesn't match block size?");
 
 struct GarbageBlockSlabDram {
-  static constexpr size_t kPreallocPerCore = 192_K;
+  static constexpr size_t kPreallocPerCore = 64_K;
   static constexpr size_t kNrQueue = 200;
   util::MCSSpinLock lock;
   int core_id;

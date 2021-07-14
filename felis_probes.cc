@@ -293,35 +293,35 @@ template <> void OnProbe(felis::probes::NumUnwrittenDramCache p) {
 
 static std::mutex num_rwdp_m;
 // number of bytes allocated for varstr
-static long long num_rd_trans_total = 0;
-static long long num_rd_drcache_total = 0;
-static long long num_rd_pmem_total = 0;
-static long long num_wr_trans_total = 0;
-static long long num_wr_drcache_total = 0;
-static long long num_wr_pmem_total = 0;
+static long long num_rd_trans_total[3] = {0,0,0};
+static long long num_rd_drcache_total[3] = {0,0,0};
+static long long num_rd_pmem_total[3] = {0,0,0};
+static long long num_wr_trans_total[3] = {0,0,0};
+static long long num_wr_drcache_total[3] = {0,0,0};
+static long long num_wr_pmem_total[3] = {0,0,0};
 template <> void OnProbe(felis::probes::NumReadWriteDramPmem p) {
   std::lock_guard _(num_rwdp_m); // released automatically when lockguard
                                  // variable is destroyed
   if (p.access_type == 0){
     if (p.mem_type == 0){
-      num_rd_trans_total++;
+      num_rd_trans_total[p.phase_type]++;
     }
     else if (p.mem_type == 1){
-      num_rd_drcache_total++;
+      num_rd_drcache_total[p.phase_type]++;
     }
     else if (p.mem_type == 2){
-      num_rd_pmem_total++;
+      num_rd_pmem_total[p.phase_type]++;
     }
   }
   else if (p.access_type == 1){
     if (p.mem_type == 0){
-      num_wr_trans_total++;
+      num_wr_trans_total[p.phase_type]++;
     }
     else if (p.mem_type == 1){
-      num_wr_drcache_total++;
+      num_wr_drcache_total[p.phase_type]++;
     }
     else if (p.mem_type == 2){
-      num_wr_pmem_total++;
+      num_wr_pmem_total[p.phase_type]++;
     }
   }
 }
@@ -341,16 +341,14 @@ ProbeMain::~ProbeMain()
   std::cout << "number of persistent varstr: " << total_persistent << std::endl;
   std::cout << std::endl;
 
-  int total_rd = num_rd_trans_total + num_rd_drcache_total + num_rd_pmem_total;
-  int total_wr = num_wr_trans_total + num_wr_drcache_total + num_wr_pmem_total;
   std::cout << "NUMBER OF READS:" << std::endl;
-  std::cout << "transient: " << num_rd_trans_total << " (" << 100*num_rd_trans_total/(double)total_rd << "%)"
-            << ", dram cache: " << num_rd_drcache_total << " (" << 100*num_rd_drcache_total/(double)total_rd << "%)"
-            << ", pmem: " << num_rd_pmem_total << " (" << 100*num_rd_pmem_total/(double)total_rd << "%)" << std::endl;
-  std::cout << "NUMBER OF WRITES" << std::endl;
-  std::cout << "transient: " << num_wr_trans_total << " (" << 100*num_wr_trans_total/(double)total_wr << "%)"
-            << ", dram cache: " << num_wr_drcache_total << " (" << 100*num_wr_drcache_total/(double)total_wr << "%)"
-            << ", pmem: " << num_wr_pmem_total << " (" << 100*num_wr_pmem_total/(double)total_wr << "%)" << std::endl;
+  std::cout << "insert: " << num_rd_trans_total[0] << " " << num_rd_drcache_total[0] << " " << num_rd_pmem_total[0] << std::endl;
+  std::cout << "append: " << num_rd_trans_total[1] << " " << num_rd_drcache_total[1] << " " << num_rd_pmem_total[1] << std::endl;
+  std::cout << "execute: " << num_rd_trans_total[2] << " " << num_rd_drcache_total[2] << " " << num_rd_pmem_total[2] << std::endl;
+  std::cout << "NUMBER OF WRITES:" << std::endl;
+  std::cout << "insert: " << num_wr_trans_total[0] << " " << num_wr_drcache_total[0] << " " << num_wr_pmem_total[0] << std::endl;
+  std::cout << "append: " << num_wr_trans_total[1] << " " << num_wr_drcache_total[1] << " " << num_wr_pmem_total[1] << std::endl;
+  std::cout << "execute: " << num_wr_trans_total[2] << " " << num_wr_drcache_total[2] << " " << num_wr_pmem_total[2] << std::endl;
   std::cout << std::endl;
 
   std::cout << "Total Bytes VarStr::New use_pmem=true: " << total_varstr_new_pmem_bytes << std::endl;

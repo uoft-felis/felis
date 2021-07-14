@@ -157,6 +157,7 @@ struct NumUnwrittenDramCache {
 struct NumReadWriteDramPmem {
   int access_type; // 0: read, 1: write
   int mem_type; // 0: transient, 1: dram cache, 2: pmem
+  int phase_type; // 0: insert, 1: append, 2: execute
   void operator()() const;
 };
 
