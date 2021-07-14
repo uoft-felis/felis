@@ -29,6 +29,7 @@ enum MemAllocType {
   EntityPool,
   VhandlePool,
   EntryPool,
+  InsertKeyPool,
   RegionPool,
   Coroutine,
   NumMemTypes,
@@ -45,6 +46,7 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:row entity",
   "^pool:vhandle",
   "^pool:extra version entry",
+  "^pool:priority insert key",
   "^pool:region",
   "coroutine",
 };

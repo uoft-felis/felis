@@ -26,6 +26,8 @@ bool PriorityTxnService::g_fastest_core = false;
 
 unsigned long long PriorityTxnService::g_tsc = 0;
 
+mem::ParallelSlabPool BaseInsertKey::pool;
+
 PriorityTxnService::PriorityTxnService()
 {
   if (Options::kTxnQueueLength)
@@ -39,10 +41,10 @@ PriorityTxnService::PriorityTxnService()
       std::abort();
     }
     // _exec_time: time of execution phase when batched epoch size=100k. out of experience
-    const int _exec_time = 20;
+    const double _exec_time = 24.8;
     int percentage = Options::kPercentagePriorityTxn.ToInt();
     abort_if(percentage < 0, "priority transaction percentage cannot be smaller than 0");
-    int exec_time = _exec_time + int(float(_exec_time) * ((float(percentage) / 100.0)) * 16);
+    int exec_time = int(_exec_time + double(percentage) * 1.1);
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
     g_interval_priority_txn = (percentage == 0) ? 0 : (exec_time * 1000000 / g_nr_priority_txn); // ms to ns
   } else {
@@ -122,15 +124,20 @@ PriorityTxnService::PriorityTxnService()
   this->epoch_nr = 0;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
-      exec_progress[i] = new uint64_t(0);
+      // mem from heap may not be NUMA aware, so get them from the pool
+      int numa_node = i / mem::kNrCorePerNode;
+      auto buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(uint64_t), numa_node);
+      exec_progress[i] = new (buf) uint64_t(0);
       if (g_sid_bitmap) {
-        seq_bitmap[i] = new Bitmap(EpochClient::g_txn_per_epoch);
+        auto buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(Bitmap), numa_node);
+        seq_bitmap[i] = new (buf) Bitmap(EpochClient::g_txn_per_epoch);
         // since g_strip_priority = #core (see above, lazy once), bitmap size = # of txn per epoch
       } else {
         seq_bitmap[i] = nullptr;
       }
       if (g_sid_local_inc) {
-        local_last_sid[i] = new uint64_t(0);
+        auto buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(uint64_t), numa_node);
+        local_last_sid[i] = new (buf) uint64_t(0);
       } else {
         local_last_sid[i] = nullptr;
       }

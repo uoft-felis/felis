@@ -16,6 +16,7 @@
 #include "vhandle_sync.h"
 #include "contention_manager.h"
 #include "pwv_graph.h"
+#include "priority.h"
 
 #include "util/os.h"
 
@@ -120,6 +121,7 @@ class AllocatorModule : public Module<CoreModule> {
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     tasks.emplace_back(VHandle::InitPool);
     tasks.emplace_back(ExtraVHandle::Entry::InitPool);
+    tasks.emplace_back(BaseInsertKey::InitPool);
     tasks.emplace_back(RowEntity::InitPool);
     tasks.emplace_back(GC::InitPool);
     tasks.emplace_back([]() { BaseTxn::InitBrk(EpochClient::g_max_epoch - 1); });

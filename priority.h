@@ -135,14 +135,35 @@ class PriorityTxnService {
 };
 
 struct BaseInsertKey {
-  BaseInsertKey() { }
+  BaseInsertKey() {
+    this_coreid = mem::ParallelPool::CurrentAffinity();
+  }
   virtual VHandle* Insert(uint64_t sid) = 0;
+  int this_coreid;
+
+  static constexpr size_t kSize = 64;
+  static mem::ParallelSlabPool pool;
+
+  static void InitPool() {
+    pool = mem::ParallelSlabPool(mem::InsertKeyPool, kSize, 4);
+    pool.Register();
+  }
+  static void Quiescence() { pool.Quiescence(); }
+
+  static void *operator new(size_t nr_bytes) {
+    return pool.Alloc();
+  }
+
+  static void operator delete(void *ptr) {
+    BaseInsertKey *key = (BaseInsertKey *) ptr;
+    pool.Free(ptr, key->this_coreid);
+  }
 };
 
 template <typename Table>
 struct InsertKey : public BaseInsertKey {
   typename Table::Key key;
-  InsertKey(typename Table::Key _key) : key(_key) { }
+  InsertKey(typename Table::Key _key) : BaseInsertKey(), key(_key) { }
 
   virtual VHandle* Insert(uint64_t sid) final override{
     int table = static_cast<int>(Table::kTable);
