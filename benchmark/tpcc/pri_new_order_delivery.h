@@ -20,18 +20,22 @@ struct PriNewOrderDeliveryState {
   VHandle *oorder; // insert
   VHandle *neworder; // insert
   struct OtherInsertCompletion : public TxnStateCompletion<PriNewOrderDeliveryState> {
+    OOrder::Value args;
     void operator()(int id, VHandle *row) {
+      handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;
+        handle(row).WriteTryInline(args);
       } else if (id == 1) {
         state->neworder = row;
+        handle(row).WriteTryInline(NewOrder::Value());
       }
-      handle(row).AppendNewVersion();
     }
   };
   NodeBitmap other_inserts_nodes;
 
   VHandle *stocks[15]; // update
+  InvokeHandle<PriNewOrderDeliveryState, unsigned int, bool, int> stock_futures[15];
   struct StocksLookupCompletion : public TxnStateCompletion<PriNewOrderDeliveryState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       debug(DBG_WORKLOAD "AppendNewVersion {} sid {}", (void *) rows[0], handle.serial_id());
@@ -49,6 +53,19 @@ struct PriNewOrderDeliveryState {
     }
   };
   NodeBitmap customer_nodes; //  actually unused
+};
+
+class PriNewOrderDeliveryTxn : public Txn<PriNewOrderDeliveryState>, public NewOrderStruct {
+  Client *client;
+ public:
+  PriNewOrderDeliveryTxn(Client *client, uint64_t serial_id)
+      : Txn<PriNewOrderDeliveryState>(serial_id),
+        NewOrderStruct(client->GenerateTransactionInput<NewOrderStruct>()),
+        client(client)
+  {}
+  void Run() override final;
+  void Prepare() override final;
+  void PrepareInsert() override final;
 };
 
 }

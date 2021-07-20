@@ -17,6 +17,7 @@
 #include "stock_level.h"
 #include "order_status.h"
 #include "pri_stock.h"
+#include "pri_new_order_delivery.h"
 
 using util::MixIn;
 using util::Instance;
@@ -47,9 +48,9 @@ template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::PriStock> {
   using Type = tpcc::PriStockTxn;
 };
 
-// template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::PriNewOrderDelivery> {
-//   using Type = tpcc::PriNewOrderDeliveryTxn;
-// };
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::PriNewOrderDelivery> {
+  using Type = tpcc::PriNewOrderDeliveryTxn;
+};
 
 }
 
