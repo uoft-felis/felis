@@ -87,27 +87,26 @@ void PriStockTxn::Run()
             },
             params.quantities[i],
             i);
-
-        auto aff = std::numeric_limits<uint64_t>::max();
-
-        if (g_tpcc_config.IsWarehousePinnable())
-          aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
-
-        root->AttachRoutine(
-            MakeContext(bitmap, params), node,
-            [](const auto &ctx) {
-              auto &[state, index_handle, bitmap, params] = ctx;
-              for (int i = 0; i < PriStockStruct::kStockMaxItems; i++) {
-                if ((bitmap & (1 << i)) == 0) continue;
-
-                state->stock_futures[i].Invoke(
-                    state, index_handle,
-                    params.quantities[i],
-                    i);
-              }
-            },
-            aff);
       }
+      auto aff = std::numeric_limits<uint64_t>::max();
+
+      if (g_tpcc_config.IsWarehousePinnable())
+        aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+
+      root->AttachRoutine(
+          MakeContext(bitmap, params), node,
+          [](const auto &ctx) {
+            auto &[state, index_handle, bitmap, params] = ctx;
+            for (int i = 0; i < PriStockStruct::kStockMaxItems; i++) {
+              if ((bitmap & (1 << i)) == 0) continue;
+
+              state->stock_futures[i].Invoke(
+                  state, index_handle,
+                  params.quantities[i],
+                  i);
+            }
+          },
+          aff);
     }
   }
 }
