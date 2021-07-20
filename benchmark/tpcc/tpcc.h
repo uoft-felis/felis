@@ -405,7 +405,7 @@ enum class TxnType : int {
   Delivery,
   OrderStatus,
   StockLevel,
-  // PriStock,
+  PriStock,
   // PriNewOrderDelivery,
 
   AllTxn,

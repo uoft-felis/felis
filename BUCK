@@ -11,6 +11,7 @@ tpcc_headers = [
     'benchmark/tpcc/order_status.h',
     'benchmark/tpcc/stock_level.h',
     'benchmark/tpcc/tpcc_priority.h',
+    'benchmark/tpcc/pri_stock.h',
 ]
 
 tpcc_srcs = [
@@ -22,6 +23,7 @@ tpcc_srcs = [
     'benchmark/tpcc/order_status.cc',
     'benchmark/tpcc/stock_level.cc',
     'benchmark/tpcc/tpcc_priority.cc',
+    'benchmark/tpcc/pri_stock.cc',
 ]
 
 ycsb_headers = [

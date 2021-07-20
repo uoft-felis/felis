@@ -22,59 +22,34 @@ PriStockStruct ClientBase::GenerateTransactionInput<PriStockStruct>()
   return in;
 }
 
-class PriStockTxn : public Txn<PriStockState>, public PriStockStruct {
-  Client *client;
- public:
-  PriStockTxn(Client *client, uint64_t serial_id)
-      : Txn<PriStockState>(serial_id),
-        PriStockStruct(client->GenerateTransactionInput<PriStockStruct>()),
-        client(client)
-  {}
-  void Run() override final;
-  void Prepare() override final {
-    if (!Client::g_enable_granola)
-      PrepareImpl();
-  }
-  void PrepareInsert() override final {
-    if (!Client::g_enable_granola)
-      PrepareInsertImpl();
-  }
-
-  void PrepareImpl();
-  void PrepareInsertImpl();
-};
-
-void PriStockTxn::PrepareInsertImpl()
+PriStockTxn::PriStockTxn(Client *client, uint64_t serial_id)
+    : Txn<PriStockState>(serial_id),
+      PriStockStruct(client->GenerateTransactionInput<PriStockStruct>()),
+      client(client)
 {}
 
-
-void PriStockTxn::PrepareImpl()
+void PriStockTxn::Prepare()
 {
   Stock::Key stock_keys[kStockMaxItems];
+  INIT_ROUTINE_BRK(8192);
+
   for (int i = 0; i < nr_items; i++) {
     stock_keys[i] =
         Stock::Key::New(warehouse_id, detail.item_id[i]);
   }
 
-  INIT_ROUTINE_BRK(8192);
-
   state->stocks_nodes =
       TxnIndexLookup<TpccSliceRouter, PriStockState::StocksLookupCompletion, void>(
           nullptr,
           KeyParam<Stock>(stock_keys, nr_items));
+
+  if (g_tpcc_config.IsWarehousePinnable()) {
+    root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+  }
 }
 
 void PriStockTxn::Run()
 {
-  if (Client::g_enable_granola) {
-    // Search the index. AppendNewVersion() is automatically Nop when
-    // g_enable_granola is on.
-    PrepareInsertImpl();
-    PrepareImpl();
-  }
-
-  int nr_nodes = util::Instance<NodeConfiguration>().nr_nodes();
-
   struct {
     unsigned int quantities[PriStockStruct::kStockMaxItems];
     int warehouse;
@@ -88,69 +63,53 @@ void PriStockTxn::Run()
   for (auto &p: state->stocks_nodes) {
     auto [node, bitmap] = p;
 
-    // Granola needs partitioning, that's why we need to split this into
-    // multiple pieces even if this piece could totally be executed on the same
-    // node.
-    std::array<int, PriStockStruct::kStockMaxItems> warehouse_filters;
-    int nr_warehouse_filters = 0;
-    warehouse_filters.fill(0);
-
-    if (!Client::g_enable_granola) {
-      warehouse_filters[nr_warehouse_filters++] = -1; // Don't filter
-    } else {
+    auto &conf = util::Instance<NodeConfiguration>();
+    if (node == conf.node_id()) {
       for (int i = 0; i < PriStockStruct::kStockMaxItems; i++) {
         if ((bitmap & (1 << i)) == 0) continue;
 
-        auto supp_warehouse = warehouse_id;
-        if (std::find(warehouse_filters.begin(), warehouse_filters.begin() + nr_warehouse_filters,
-                      supp_warehouse) == warehouse_filters.begin() + nr_warehouse_filters) {
-          warehouse_filters[nr_warehouse_filters++] = supp_warehouse;
-        }
-      }
-    }
+        state->stock_futures[i] = UpdateForKey(
+            node, state->stocks[i],
+            [](const auto &ctx, VHandle *row) {
+              auto &[state, index_handle, quantity, i] = ctx;
+              debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
+                    index_handle.serial_id(), i, (void *) row);
 
-    for (int f = 0; f < nr_warehouse_filters; f++) {
-      auto filter = warehouse_filters[f];
-      auto aff = std::numeric_limits<uint64_t>::max();
-
-      if (filter > 0) aff = filter - 1;
-
-      root->Then(
-          MakeContext(bitmap, params, filter), node,
-          [](const auto &ctx, auto args) -> Optional<VoidValue> {
-            auto &[state, index_handle, bitmap, params, filter] = ctx;
-            for (int i = 0; i < PriStockStruct::kStockMaxItems; i++) {
-              if ((bitmap & (1 << i)) == 0) continue;
-              if (filter > 0 && params.warehouse != filter) continue;
-
-              TxnVHandle vhandle = index_handle(state->stocks[i]);
+              TxnRow vhandle = index_handle(row);
               auto stock = vhandle.Read<Stock::Value>();
-              stock.s_quantity += params.quantities[i];
+              stock.s_quantity += quantity;
 
               vhandle.Write(stock);
-              ClientBase::OnUpdateRow(state->stocks[i]);
-            }
-            return nullopt;
-          },
-          aff);
+              ClientBase::OnUpdateRow(row);
+              debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
+                    index_handle.serial_id(), i,
+                    (void *) row);
+            },
+            params.quantities[i],
+            i);
+
+        auto aff = std::numeric_limits<uint64_t>::max();
+
+        if (g_tpcc_config.IsWarehousePinnable())
+          aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+
+        root->AttachRoutine(
+            MakeContext(bitmap, params), node,
+            [](const auto &ctx) {
+              auto &[state, index_handle, bitmap, params] = ctx;
+              for (int i = 0; i < PriStockStruct::kStockMaxItems; i++) {
+                if ((bitmap & (1 << i)) == 0) continue;
+
+                state->stock_futures[i].Invoke(
+                    state, index_handle,
+                    params.quantities[i],
+                    i);
+              }
+            },
+            aff);
+      }
     }
   }
-
-  if (Client::g_enable_granola)
-    root_promise()->AssignAffinity(warehouse_id - 1);
-}
-
-}
-
-namespace util {
-
-using namespace felis;
-using namespace tpcc;
-
-template <>
-BaseTxn *Factory<BaseTxn, static_cast<int>(TxnType::PriStock), Client *, uint64_t>::Construct(tpcc::Client * client, uint64_t serial_id)
-{
-  return new tpcc::PriStockTxn(client, serial_id);
 }
 
 }
