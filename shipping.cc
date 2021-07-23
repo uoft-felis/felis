@@ -314,7 +314,7 @@ void RowShipmentReceiver::Run()
                 handle->AppendNewVersion(sid, epoch_nr);
                 handle->WriteWithVersion(sid, v, epoch_nr);
               } else {
-                InitVersion(handle, v);
+                InitVersion(handle,-1,-1,-1,-1,-1, v);
               }
 
               RowEntity *entity = new felis::RowEntity(rel_id, k, handle->vhandle_ptr(), slice_id);

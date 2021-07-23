@@ -170,7 +170,7 @@ class TableManager {
   std::array<Table *, kMaxNrRelations> tables;
 };
 
-void InitVersion(felis::IndexInfo *, VarStr *);
+void InitVersion(felis::IndexInfo *, int key_0, int key_1, int key_2, int key_3, int table_id, VarStr *);
 
 }
 

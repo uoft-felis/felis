@@ -36,7 +36,7 @@ class BaseVHandle {
   //Corey: Inline_Version_Array(32B) = Sid1(8B)|Ptr1(8B)|Sid2(8B)|Ptr2(8B)
   //Corey: Set Inline offsets - Doesn't take up memory
   // static constexpr size_t VerArrayInfoSize = 32; // shirley: move to index_info
-  static constexpr size_t VhandleInfoSize = 80;
+  static constexpr size_t VhandleInfoSize = 88;
   // static constexpr size_t vhandleMetadataSize = 64;
   // static constexpr size_t ineTwoVersionArraySid1Size = 8;
   // static constexpr size_t inlineTwoVersionArrayPtr1Size = 8;
@@ -87,6 +87,11 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class HashtableIndex;
 
   // shirley: declaring sid1/sid2/ptr1/ptr2 as actual variables of vhandle class
+  int table_id = -1;
+  int key_0 = -1;
+  int key_1 = -1;
+  int key_2 = -1;
+  int key_3 = -1;
   uint64_t sid1 = 0;
   uint64_t sid2 = 0;
   uint8_t *ptr1 = nullptr;
@@ -237,6 +242,18 @@ public:
 
   // static_assert(sizeof(VerArrayInfo) <= VerArrayInfoSize,
   //               "VerArrayInfo is larger than VerArrayInfoSize bytes!\n");
+
+  void set_table_keys(int key0, int key1, int key2, int key3, int tableid) {
+    table_id = tableid;
+    key_0 = key0;
+    key_1 = key1;
+    key_2 = key2;
+    key_3 = key3;
+  }
+
+  int get_table_id() {
+    return table_id;
+  }
 
   enum SidType {
     SidType1,
@@ -637,7 +654,7 @@ public:
 //shirley: modify based on design (make sure vhandle info doesn't interfere with miniheap)
 // shirley note: max value size is ~83. aligned to 8 then 88. 2*88 = 176. 256-176 = 80 (vhandle should be <= 80)
 static_assert(sizeof(SortedArrayVHandle) <= BaseVHandle::VhandleInfoSize,
-              "SortedArrayVHandle is larger than a cache line");
+              "SortedArrayVHandle is too large!");
 // static_assert(sizeof(SortedArrayVHandle) <= 64, "SortedArrayVHandle is larger than a cache line");
 
 #ifdef LL_REPLAY

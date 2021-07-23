@@ -20,6 +20,11 @@ struct NewOrderStruct {
   uint ts_now;
 
   struct OrderDetail {
+    // shirley: add these fields so we can set the keys on insert completion
+    int warehouse_id;
+    int district_id;
+    int customer_id;
+    int oorder_id;
     uint nr_items;
     uint item_id[kNewOrderMaxItems];
     uint supplier_warehouse_id[kNewOrderMaxItems];
@@ -42,6 +47,12 @@ struct NewOrderState {
   NodeBitmap items_nodes;
   */
 
+  // shirley: add these fields so we can set the keys on insert completion
+  int warehouse_id = -1;
+  int district_id = -1;
+  int customer_id = -1;
+  int oorder_id = -1;
+
   IndexInfo *orderlines[15]; // insert
   struct OrderLinesInsertCompletion : public TxnStateCompletion<NewOrderState> {
     Tuple<NewOrderStruct::OrderDetail> args;
@@ -52,6 +63,20 @@ struct NewOrderState {
 
       auto &[detail] = args;
       auto amount = detail.unit_price[id] * detail.order_quantities[id];
+
+      // shirley: setting keys in vhandle
+      // shirley: id can be 0-14. the ID used in keys should be 1-15 so need to add 1.
+      if (id == 0){
+        state->warehouse_id = detail.warehouse_id;
+        state->district_id = detail.district_id;
+        state->customer_id = detail.customer_id;
+        state->oorder_id = detail.oorder_id;
+      }
+      row->vhandle_ptr()->set_table_keys(detail.warehouse_id,
+                                         detail.district_id, 
+                                         detail.oorder_id,
+                                         id + 1,
+                                         (int)tpcc::TableType::OrderLine);
 
       // shirley: use WriteInitialInline bc writing initial version after row insert
       handle(row).WriteInitialInline(
@@ -73,14 +98,32 @@ struct NewOrderState {
       // handle(row).AppendNewVersion();
       if (id == 0) {
         state->oorder = row;
+        // shirley: setting keys in vhandle
+        row->vhandle_ptr()->set_table_keys(state->warehouse_id,
+                                           state->district_id, 
+                                           state->oorder_id,
+                                           -1,
+                                           (int)tpcc::TableType::OOrder);
         // shirley: use WriteInitialInline bc writing initial version after row insert
         handle(row).WriteInitialInline(args);
       } else if (id == 1) {
         state->neworder = row;
+        // shirley: setting keys in vhandle
+        row->vhandle_ptr()->set_table_keys(state->warehouse_id,
+                                           state->district_id, 
+                                           state->oorder_id,
+                                           state->customer_id,
+                                           (int)tpcc::TableType::NewOrder);
         // shirley: use WriteInitialInline bc writing initial version after row insert
         handle(row).WriteInitialInline(NewOrder::Value());
       } else if (id == 2) {
         state->cididx = row;
+        // shirley: setting keys in vhandle
+        row->vhandle_ptr()->set_table_keys(state->warehouse_id,
+                                           state->district_id, 
+                                           state->customer_id,
+                                           state->oorder_id,
+                                           (int)tpcc::TableType::OOrderCIdIdx);
         // shirley: use WriteInitialInline bc writing initial version after row insert
         handle(row).WriteInitialInline(OOrderCIdIdx::Value());
       }

@@ -305,7 +305,7 @@ void YcsbLoader::Run()
       // TODO: slice mapping table stuff?
       // shirley: initial database should be allocated from inline pmem.
       auto p = handle->vhandle_ptr()->AllocFromInline(dbv.EncodeSize());
-      felis::InitVersion(handle, dbv.EncodeToPtrOrDefault(p));
+      felis::InitVersion(handle, i, -1, -1, -1, (int)ycsb::TableType::Ycsb, dbv.EncodeToPtrOrDefault(p));
     }
   }
   util::Cpu info;

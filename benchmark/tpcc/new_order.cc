@@ -56,6 +56,12 @@ void NewOrderTxn::PrepareInsert()
   auto nr_items = detail.nr_items;
   bool all_local = true;
 
+  // shirley: set detail info so we can set keys on insert completion
+  detail.warehouse_id = warehouse_id;
+  detail.district_id = district_id;
+  detail.customer_id = customer_id;
+  detail.oorder_id = oorder_id;
+
   for (int i = 0; i < nr_items; i++) {
     orderline_keys[i] = OrderLine::Key::New(warehouse_id, district_id, oorder_id, i + 1);
     if (detail.supplier_warehouse_id[i] != warehouse_id)

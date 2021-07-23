@@ -8,13 +8,16 @@ namespace felis {
 std::map<std::string, Checkpoint *> Checkpoint::impl;
 
 //shirley: InitVersion should write to sid1, ptr1, similar to a row insert. 
-void InitVersion(felis::IndexInfo *handle, VarStr *obj = (VarStr *) kPendingValue)
+void InitVersion(felis::IndexInfo *handle, int key_0, int key_1, int key_2, int key_3, int table_id, VarStr *obj = (VarStr *) kPendingValue)
 {
   VHandle *p_vhandle = handle->vhandle_ptr();
   // handle-> sid1 = 0; //bc initial version of database, sid is 0.
   p_vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType1, 0);
   // handle -> ptr1 = obj; // shirley: don't need to check pendingValue. tpcc always creates initial value 
   p_vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)obj);
+
+  // shirley: setting keys in vhandle
+  p_vhandle->set_table_keys(key_0, key_1, key_2, key_3, table_id);
 
   // // shirley: also init dram cache
   auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
