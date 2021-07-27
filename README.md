@@ -70,6 +70,9 @@ Start the database on each node
 Once the controller is initialized, on each node you can run:
 
 ```
+for controller:
+java -Dvertx.cacheDirBase=/tmp/$USER/ -jar out/FelisController/assembly/dest/out.jar config_single.json
+
 buck-out/gen/db#release -c <controller_ip>:<rpc_port> -n host1 -w tpcc -Xcpu16 -Xmem16G
 buck-out/gen/db#release -c 127.0.0.1:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
 buck-out/gen/db#release -c 142.150.234.169:3148 -n host1 -w tpcc -Xcpu16 -Xmem16G

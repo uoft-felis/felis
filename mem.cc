@@ -268,6 +268,7 @@ namespace mem {
 
   static SlabMemory *g_slabmem;
   static SlabMemory *g_slabpmem;
+  uint8_t *pmem_addr_fixed = nullptr; // (uint8_t *)0x7e0000000000;
 
   void InitSlab(size_t memsz)
   {
@@ -299,7 +300,7 @@ namespace mem {
 
             //shirley: also init pmem
             auto &m_pmem = g_slabpmem[n];
-            m_pmem.p = (uint8_t *)AllocPersistentMemory(mem::GenericMemory, memsz, n);
+            m_pmem.p = (uint8_t *)AllocPersistentMemory(mem::GenericMemory, memsz, n, pmem_addr_fixed);
             nr_metaslabs = ((memsz - 1) / SlabPool::kLargeSlabPageSize + 1);
             m_pmem.data_offset = util::Align(nr_metaslabs * sizeof(MetaSlab), SlabPool::kLargeSlabPageSize);
             m_pmem.data_len = memsz;
@@ -316,6 +317,17 @@ namespace mem {
 
     for (auto &t: tasks)
       t.join();
+  }
+
+  void TestSlabMmapAddress() {
+    // shirley check: print address of mmap
+    auto nr_numa_nodes = ParallelAllocationPolicy::g_nr_cores / kNrCorePerNode;
+    printf("SHIRLEY: TEST, PRINTING ADDRESS OF MMAP FOR G_SLABPMEM\n");
+    for (int n = 0 ; n < nr_numa_nodes; n++) {
+      printf("%d: %p\n", n, g_slabpmem[n].p);
+    }
+    printf("\n");
+    return;
   }
 
   static SlabMemory *FindSlabMemory(void *ptr, int default_numa_node)
@@ -906,7 +918,7 @@ namespace mem {
     return p;
   }
 
-  void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, bool on_demand)
+  void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, void *addr, bool on_demand)
   {
     //file name
     char pmem_file_name[50];
@@ -914,7 +926,7 @@ namespace mem {
     // sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
     sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
 
-    void *p = util::OSMemory::g_default.PmemAlloc(pmem_file_name, length, numa_node, on_demand);
+    void *p = util::OSMemory::g_default.PmemAlloc(pmem_file_name, length, numa_node, addr, on_demand);
 
     if (p == nullptr) {
       printf("Pmem Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());

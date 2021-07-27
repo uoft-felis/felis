@@ -153,6 +153,9 @@ class AllocatorModule : public Module<CoreModule> {
     mem::PrintMemStats();
 
     logger->info("Memory allocated: {}MB in total", mem::TotalMemoryAllocated() >> 20);
+
+    // // shirley check: print address of mmap
+    // mem::TestSlabMmapAddress();
   }
 };
 

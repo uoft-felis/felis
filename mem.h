@@ -166,6 +166,7 @@ void InitTotalNumberOfCores(int nr_cores);
 // for the partitioned skewed workload, where one core allocate all the memory.
 
 void InitSlab(size_t mem);
+void TestSlabMmapAddress();
 
 // SlabPool can take care of chunks <= 512_K or chunks <= 16_M. For chunks larger
 // than 512_K, SlabPool will ask for memory from the large metaslabs. These are
@@ -524,7 +525,7 @@ void *AllocMemory(mem::MemAllocType alloc_type, size_t length,
                   int numa_node = -1, bool on_demand = false);
 
 void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length,
-                  int numa_node = -1, bool on_demand = false);
+                  int numa_node = -1, void *addr = nullptr, bool on_demand = false);
 long TotalMemoryAllocated();
 
 }

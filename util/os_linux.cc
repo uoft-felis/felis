@@ -75,7 +75,7 @@ void *OSMemory::Alloc(size_t length, int numa_node, bool on_demand)
   return mem;
 }
 
-void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_demand)
+void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, void *addr, bool on_demand)
 {
   int flags = MAP_SHARED;//MAP_PRIVATE; //don't use map_private for files
   int prot = PROT_READ | PROT_WRITE;
@@ -94,8 +94,15 @@ void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, bool on_
   }
   ftruncate(pmem_fd, length);
 
+  // shirley: check returned address matches hint
+  uint8_t *hint_addr = (uint8_t *)addr;
   //mmap will return page-aligned address when using nullptr.
-  void *mem = mmap(nullptr, length, prot, flags, pmem_fd, 0);
+  void *mem = mmap(addr, length, prot, flags, pmem_fd, 0);
+  if ((hint_addr) && (mem != hint_addr)) {
+    printf("PmemAlloc: mismatch between hint_addr = %p and mem = %p\n", hint_addr, mem);
+    std::abort();
+  }
+
   // can close file after mmap
   close(pmem_fd);
   if (mem == MAP_FAILED){
