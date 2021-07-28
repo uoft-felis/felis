@@ -416,6 +416,15 @@ void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **i
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
   for (int i = 0; i < insert_cnt; ++i)
     insert_handles[i]->WriteWithVersion(sid, nullptr, sid >> 32);
+  // this->min_sid = this->sid; // do not retry with this sid
+  // if (PriorityTxnService::g_sid_bitmap && backoff_distance >= 0) {
+  //   // since this txn aborted, reset the SID bit back to false
+  //   auto core = go::Scheduler::CurrentThreadPoolId() - 1;
+  //   auto seq = (this->sid >> 8) & 0xFFFFFF;
+  //   auto idx = util::Instance<PriorityTxnService>().seq2idx(seq);
+  //   auto &bitmap = util::Instance<PriorityTxnService>().seq_bitmap[core];
+  //   bitmap->set(idx, false);
+  // }
 }
 
 } // namespace felis
