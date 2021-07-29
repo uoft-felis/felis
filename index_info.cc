@@ -304,7 +304,7 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         // shirley debug.
         dram_version->val = nullptr; // (VarStr *)0x12345678;
         mem::GetDataRegion().Free(dramval, init_val->get_region_id(), varstr_sz);
-        dram_version->ep_num = current_epoch_nr;
+        dram_version->ep_num = current_epoch_nr << 32;
         // felis::probes::NumReadWriteDramPmem{0,1,1}();
       }
       else{
@@ -322,7 +322,7 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         temp_dram_version->this_coreid = mem::ParallelPool::CurrentAffinity();
         // shirley debug.
         temp_dram_version->val = nullptr; // (VarStr *)0x87654321;
-        temp_dram_version->ep_num = current_epoch_nr;
+        temp_dram_version->ep_num = current_epoch_nr << 32;
         dram_version = temp_dram_version;
         util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
         // felis::probes::NumReadWriteDramPmem{0,2,1}();
@@ -426,7 +426,7 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
       lock.Lock(&qnode);
     }
     if (dram_version && dram_version->val){
-      dram_version->ep_num = current_epoch_nr;
+      dram_version->ep_num = sid; // current_epoch_nr;
       if (is_insert){
         lock.Unlock(&qnode);
       }
@@ -448,7 +448,7 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
         DramVersion *temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
         int curAffinity = mem::ParallelPool::CurrentAffinity();
         temp_dram_version->this_coreid = curAffinity;
-        temp_dram_version->ep_num = current_epoch_nr;
+        temp_dram_version->ep_num = sid; // current_epoch_nr;
         // printf("ReadWithVersion try read from inline\n");
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
         // shirley: don't need to compare sid with sid2 bc sid2 should definitely be smaller.

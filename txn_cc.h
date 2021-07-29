@@ -237,7 +237,7 @@ class Txn : public BaseTxn {
         // shirley: update dram cache
         // shirley: do this before accessing vhandle, and prefetch vhandle
         index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
-        index_info->dram_version->ep_num = util::Instance<EpochManager>().current_epoch_nr();
+        index_info->dram_version->ep_num = sid; // util::Instance<EpochManager>().current_epoch_nr();
 
         // shirley: assume by now, prefetching vhandle has completed
         VHandle *vhandle = index_info->vhandle_ptr();
@@ -310,7 +310,7 @@ class Txn : public BaseTxn {
       // int curAffinity = mem::ParallelPool::CurrentAffinity();
       // ((VarStr*)(temp_dram_version->val))->set_region_id(curAffinity);
       // uint64_t curr_ep_nr = util::Instance<EpochManager>().current_epoch_nr();
-      // temp_dram_version->ep_num = curr_ep_nr;// util::Instance<EpochManager>().current_epoch_nr();
+      // temp_dram_version->ep_num = sid; // curr_ep_nr;// util::Instance<EpochManager>().current_epoch_nr();
       // temp_dram_version->this_coreid = curAffinity; 
       // index_info->dram_version = temp_dram_version;
       // util::Instance<GC_Dram>().AddRow(index_info, curr_ep_nr);

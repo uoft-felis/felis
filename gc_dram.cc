@@ -269,10 +269,10 @@ size_t GC_Dram::Collect(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) 
   // shirley todo: detect prev_X and current_X epoch, skip if already cleaned based on memory pressure
 
   if (!(handle->dram_version)) return 0;
-  if (handle->dram_version->ep_num > (cur_epoch_nr - g_gc_every_epoch + 1)) {
+  if ( (handle->dram_version->ep_num >> 32) > (cur_epoch_nr - g_gc_every_epoch + 1)) {
     // shirley: this row has been accessed more recently.
     // GC_Dram::AddRow(handle, cur_epoch_nr);
-    GC_Dram::AddRow(handle, handle->dram_version->ep_num);
+    GC_Dram::AddRow(handle, (handle->dram_version->ep_num >> 32) );
     return 0;
   }
   // shirley: free dram cache

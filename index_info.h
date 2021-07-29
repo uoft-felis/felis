@@ -43,7 +43,7 @@ public:
 };
 
 struct DramVersion {
-  uint64_t ep_num = 0;
+  uint64_t ep_num = 0; // shirley note: this is actually the sid. Top 32 bits are ep#. Lower 32 bits are sid.
   VarStr *val = nullptr; // shirley: a VarStr ptr
   uint8_t this_coreid;
 };
