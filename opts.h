@@ -109,6 +109,8 @@ struct Options {
   static inline const auto kConflictReadBit = Option("ConflictReadBit");
   static inline const auto kSIDReadBit = Option("SIDReadBit");
   static inline const auto kSIDForwardReadBit = Option("SIDForwardReadBit");
+  static inline const auto kRowRTS = Option("RowRTS");
+  static inline const auto kConflictRowRTS = Option("ConflictRowRTS");
 
   static inline const auto kBackoffDist = Option("BackoffDist");
   static inline const auto kNoExpBackoff = Option("NoExpBackoff");

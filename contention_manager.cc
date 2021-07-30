@@ -6,6 +6,7 @@
 #include "node_config.h"
 #include "opts.h"
 #include "epoch.h"
+#include "priority.h"
 
 namespace felis {
 
@@ -115,7 +116,8 @@ void VersionBufferHandle::Append(VHandle *handle, uint64_t sid, uint64_t epoch_n
     handle->lock.Acquire(&qnode);
 
     handle->AppendNewVersionNoLock(sid, epoch_nr, is_ondemand_split);
-    if (is_ondemand_split) handle->nr_ondsplt++;
+    if (!NodeConfiguration::g_priority_txn || !PriorityTxnService::g_row_rts)
+      if (is_ondemand_split) handle->nr_ondsplt++;
 
     handle->IncreaseSize(buf->buf_cnt, epoch_nr);
     auto end = handle->size - buf->buf_cnt;
@@ -154,7 +156,8 @@ void VersionBufferHandle::FlushIntoNoLock(VHandle *handle, uint64_t epoch_nr, un
     // printf("absorb %d %d %lu %p\n", end, i, buf->versions[i], handle);
     end = handle->AbsorbNewVersionNoLock(end, i);
   }
-  handle->nr_ondsplt += buf->ondsplt_cnt;
+  if (!NodeConfiguration::g_priority_txn || !PriorityTxnService::g_row_rts)
+    handle->nr_ondsplt += buf->ondsplt_cnt;
   buf->buf_cnt = 0;
   buf->ondsplt_cnt = 0;
   prealloc.bitmap()[pos / 64] &= ~(1ULL << (pos % 64));
@@ -303,6 +306,7 @@ void ContentionManager::Reset()
         if (!Options::kOnDemandSplitting) continue;
 
         if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
+        abort_if(PriorityTxnService::g_row_rts, "nr_ondsplt is read when RowRTS is on");
         sum += row->nr_ondsplt;
         nr_splitted++;
       }
@@ -336,6 +340,7 @@ void ContentionManager::Reset()
         auto row = p->backrefs[i];
         if (row->size - row->nr_updated() <= EpochClient::g_splitting_threshold) continue;
 
+        abort_if(PriorityTxnService::g_row_rts, "nr_ondsplt is read when RowRTS is on");
         row->cont_affinity = NodeConfiguration::g_nr_threads * (s + row->nr_ondsplt / 2) / sum;
         s += row->nr_ondsplt;
 

@@ -108,6 +108,8 @@ class PriorityTxnService {
   static bool g_conflict_read_bit;    // use read bit info to detect conflict
   static bool g_sid_read_bit;         // use read bit info to acquire SID
   static bool g_sid_forward_read_bit; // use read bit info for SID, direction forward in time
+  static bool g_row_rts;              // MVTO style read timestamp, per row
+  static bool g_conflict_row_rts;     // use row rts to detect conflict
 
   static int g_backoff_distance; // how many distance we are going to backoff, could be + or -
   static bool g_distance_exponential_backoff; /// only works if g_backoff_distance is -

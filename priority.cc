@@ -19,6 +19,8 @@ bool PriorityTxnService::g_read_bit = false;
 bool PriorityTxnService::g_conflict_read_bit = false;
 bool PriorityTxnService::g_sid_read_bit = false;
 bool PriorityTxnService::g_sid_forward_read_bit = false;
+bool PriorityTxnService::g_row_rts = false;
+bool PriorityTxnService::g_conflict_row_rts = false;
 
 int PriorityTxnService::g_backoff_distance = -100;
 bool PriorityTxnService::g_distance_exponential_backoff = true;
@@ -106,6 +108,18 @@ PriorityTxnService::PriorityTxnService()
   }
   abort_if(g_sid_read_bit + g_sid_forward_read_bit > 1,
            "plz only choose one between SIDReadBit and SIDForwardReadBit");
+
+  if (Options::kRowRTS) {
+    abort_if(Options::kOnDemandSplitting, "cannot turn on OnDemandSplitting with RowRTS");
+    // we borrowed the nr_ondsplt field, so cannot turn that on
+    g_row_rts = true;
+    if (Options::kConflictRowRTS)
+      g_conflict_row_rts = true;
+  } else {
+    abort_if(Options::kConflictRowRTS, "-XkConflictRowRTS requires -XRowRTS");
+  }
+  abort_if(g_read_bit + g_row_rts > 1,
+           "plz only choose one between ReadBit and RowRTS");
 
   int logical_dist = -1;
   if (Options::kBackoffDist) {
@@ -243,10 +257,33 @@ void PriorityTxnService::PrintStats() {
 // find a serial id for the calling priority txn
 uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int size)
 {
-  uint64_t prog = this->GetMaxProgress(), new_seq;
+  uint64_t prog = this->GetMaxProgress();
   int seq = prog >> 8 & 0xFFFFFF;
   int &backoff_dist = txn->backoff_distance;
 
+  if (g_row_rts) {
+    uint64_t max_rts = 1;
+    uint64_t min_sid = txn->min_sid >> 8;
+    max_rts = (min_sid > max_rts) ? min_sid : max_rts;
+    for (int i = 0; i < size; ++i) {
+      auto rts = handles[i]->GetRowRTS();
+      max_rts = (rts > max_rts) ? rts : max_rts;
+    }
+    uint64_t rts_seq;
+    if (max_rts >> 24 < prog >> 32) {
+      // rts is at previous epoch
+      rts_seq = 1;
+    } else {
+      abort_if (max_rts >> 24 > prog >> 32, "max_rts at next epoch? rts epoch {}, cur epoch {}",
+                max_rts >> 24, prog >> 32);
+      rts_seq = max_rts & 0xFFFFFF;
+    }
+    if (rts_seq > seq)
+      rts_seq = seq; // do not plan it beyond cur prog
+    return GetNextSIDSlot(rts_seq);
+  }
+
+  uint64_t new_seq;
   if (seq + backoff_dist < 1)
     new_seq = 1;
   else
@@ -393,6 +430,11 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 
   if (PriorityTxnService::g_conflict_read_bit)
     return handle->CheckReadBit(this->sid);
+  if (PriorityTxnService::g_conflict_row_rts) {
+    auto rts = handle->GetRowRTS();
+    auto wts = this->serial_id() >> 8;
+    return wts <= rts;
+  }
   return true; // progress passed & no read bit to look precisely, deem it as conflict happened
 }
 

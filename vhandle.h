@@ -166,6 +166,7 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class VersionBufferHandle;
   friend class ContentionManager;
   friend class HashtableIndex;
+  friend class LinkedListExtraVHandle;
 
   util::MCSSpinLock lock;
   uint8_t alloc_by_regionid;
@@ -178,7 +179,7 @@ class SortedArrayVHandle : public BaseVHandle {
   unsigned int cur_start;
 
   std::atomic_int latest_version; // the latest written version's offset in *versions
-  int nr_ondsplt;
+  std::atomic_uint nr_ondsplt;
   // versions: ptr to the version array.
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
@@ -207,6 +208,7 @@ class SortedArrayVHandle : public BaseVHandle {
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);
+  uint32_t GetRowRTS();
   uint64_t SIDBackwardSearch(uint64_t min);
   uint64_t SIDForwardSearch(uint64_t min);
   bool WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr);
