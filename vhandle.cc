@@ -381,7 +381,7 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
     return extra_result;
 
   if (!addr)
-    return true;
+    return false; // no previous version exists, no one could have read it, our prepare is good
 
   if (*addr == kPendingValue)
     return false; // if it's not written, it couldn't be read
@@ -819,7 +819,7 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
   abort_if(!PriorityTxnService::g_read_bit, "ExtraVHandle CheckReadBit() is called when read bit is off");
   is_in = false;
   Entry *p = head;
-  while (p && p->version >= sid)
+  while (p && ((p->version >= sid) || (p->version < sid && p->object == kIgnoreValue)))
     p = p->next;
 
   if (!p)
