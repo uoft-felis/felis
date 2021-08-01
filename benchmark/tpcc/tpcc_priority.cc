@@ -34,6 +34,9 @@ StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>()
 {
   StockTxnInput in;
   in.warehouse_id = go::Scheduler::CurrentThreadPoolId(); // hack, pin warehouse to core
+  // require # of warehouse == # of cores
+  if (nr_warehouses() == 1)
+    in.warehouse_id = 1;
   in.nr_items = RandomNumber(1, StockTxnInput::kStockMaxItems);
 
   for (int i = 0; i < in.nr_items; i++) {
@@ -150,6 +153,8 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   NewOrderStruct input = dynamic_cast<Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<NewOrderStruct>();
   input.warehouse_id = go::Scheduler::CurrentThreadPoolId(); // hack, pin warehouse to core
+  if (g_tpcc_config.nr_warehouses == 1)
+    input.warehouse_id = 1;
   auto nr_items = input.detail.nr_items;
   Stock::Key stock_keys[nr_items];
   for (int i = 0; i < nr_items; ++i) {
