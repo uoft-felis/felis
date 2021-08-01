@@ -307,6 +307,18 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
 
+  // MVTO: mark row read timestamp
+  if (PriorityTxnService::g_row_rts) {
+    uint64_t new_rts_64 = sid >> 8;
+    abort_if(new_rts_64 > 0xFFFFFFFF, "too many epochs ({}) for RowRTS", sid >> 32);
+    unsigned int new_rts = new_rts_64;
+    unsigned int old = this->nr_ondsplt.load();
+    while (new_rts > old) {
+      if (this->nr_ondsplt.compare_exchange_strong(old, new_rts))
+        break;
+    }
+  }
+
   // check extra array. If the version in the extra array is closer to the sid than the
   // version in this original version array, read from that instead.
   uint64_t ver = (addr == nullptr) ? 0 : versions[pos];
@@ -329,18 +341,6 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
     *addr = varstr_ptr | kReadBitMask;
   }
   varstr_ptr = varstr_ptr & ~kReadBitMask;
-
-  // MVTO: mark row read timestamp
-  if (PriorityTxnService::g_row_rts) {
-    uint64_t new_rts_64 = sid >> 8;
-    abort_if(new_rts_64 > 0xFFFFFFFF, "too many epochs ({}) for RowRTS", sid >> 32);
-    unsigned int new_rts = new_rts_64;
-    unsigned int old = this->nr_ondsplt.load();
-    while (new_rts > old) {
-      if (this->nr_ondsplt.compare_exchange_strong(old, new_rts))
-        break;
-    }
-  }
 
   return (VarStr *) varstr_ptr;
 }
@@ -391,7 +391,7 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
 uint32_t SortedArrayVHandle::GetRowRTS()
 {
   abort_if(!PriorityTxnService::g_row_rts, "GetRowRTS() is called when Row RTS is off");
-  return nr_ondsplt;
+  return nr_ondsplt.load(std::memory_order_seq_cst);
 }
 
 /** @brief Find a SID that, starting from this SID, all of the versions of this
@@ -797,19 +797,6 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
   }
   varstr_ptr = varstr_ptr & ~kReadBitMask;
 
-  // MVTO: mark row read timestamp
-  if (PriorityTxnService::g_row_rts) {
-    uint64_t new_rts_64 = sid >> 8;
-    abort_if(new_rts_64 > 0xFFFFFFFF, "too many epochs ({}) for RowRTS", sid >> 32);
-    unsigned int new_rts = new_rts_64;
-    unsigned int old = handle->nr_ondsplt.load();
-    // logger->info("{:x} {:x} {:x} {:x}", sid, new_rts_64, new_rts, old);
-    while (new_rts > old) {
-      if (handle->nr_ondsplt.compare_exchange_strong(old, new_rts))
-        break;
-    }
-  }
-
   return (VarStr *) varstr_ptr;
 }
 
@@ -833,8 +820,6 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
   auto varstr_ptr = p->object;
   if (varstr_ptr == kPendingValue)
     return false; // if it's not written, it couldn't be read
-  if (varstr_ptr == kIgnoreValue)
-    return handle->CheckReadBit(ver_extra);
   return varstr_ptr & kReadBitMask;
 }
 

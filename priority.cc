@@ -21,6 +21,7 @@ bool PriorityTxnService::g_sid_read_bit = false;
 bool PriorityTxnService::g_sid_forward_read_bit = false;
 bool PriorityTxnService::g_row_rts = false;
 bool PriorityTxnService::g_conflict_row_rts = false;
+bool PriorityTxnService::g_sid_row_rts = false;
 
 int PriorityTxnService::g_backoff_distance = -100;
 bool PriorityTxnService::g_distance_exponential_backoff = true;
@@ -106,8 +107,6 @@ PriorityTxnService::PriorityTxnService()
     abort_if(Options::kSIDReadBit, "-XSIDReadBit requires -XReadBit");
     abort_if(Options::kSIDForwardReadBit, "-XSIDForwardReadBit requires -XReadBit");
   }
-  abort_if(g_sid_read_bit + g_sid_forward_read_bit > 1,
-           "plz only choose one between SIDReadBit and SIDForwardReadBit");
 
   if (Options::kRowRTS) {
     abort_if(Options::kOnDemandSplitting, "cannot turn on OnDemandSplitting with RowRTS");
@@ -115,11 +114,16 @@ PriorityTxnService::PriorityTxnService()
     g_row_rts = true;
     if (Options::kConflictRowRTS)
       g_conflict_row_rts = true;
+    if (Options::kSIDRowRTS)
+      g_sid_row_rts = true;
   } else {
-    abort_if(Options::kConflictRowRTS, "-XkConflictRowRTS requires -XRowRTS");
+    abort_if(Options::kConflictRowRTS, "-XConflictRowRTS requires -XRowRTS");
+    abort_if(Options::kSIDRowRTS, "-XSIDRowRTS requires -XRowRTS");
   }
-  abort_if(g_read_bit + g_row_rts > 1,
-           "plz only choose one between ReadBit and RowRTS");
+  abort_if(g_conflict_read_bit + g_conflict_row_rts > 1,
+           "plz only choose one between ConflictReadBit and ConflictRowRTS");
+  abort_if(g_sid_read_bit + g_sid_forward_read_bit + g_sid_row_rts > 1,
+           "plz only choose one between SIDReadBit, SIDForwardReadBit & SIDRowRTS");
 
   int logical_dist = -1;
   if (Options::kBackoffDist) {
@@ -261,7 +265,13 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
   int seq = prog >> 8 & 0xFFFFFF;
   int &backoff_dist = txn->backoff_distance;
 
-  if (g_row_rts) {
+  uint64_t new_seq;
+  if (seq + backoff_dist < 1)
+    new_seq = 1;
+  else
+    new_seq = seq + backoff_dist;
+
+  if (g_sid_row_rts) {
     uint64_t max_rts = 1;
     uint64_t min_sid = txn->min_sid >> 8;
     max_rts = (min_sid > max_rts) ? min_sid : max_rts;
@@ -278,16 +288,9 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
                 max_rts >> 24, prog >> 32);
       rts_seq = max_rts & 0xFFFFFF;
     }
-    if (rts_seq > seq)
-      rts_seq = seq; // do not plan it beyond cur prog
-    return GetNextSIDSlot(rts_seq);
+    new_seq = (rts_seq > new_seq) ? rts_seq : new_seq; // do not plan before backoff dist
+    return GetNextSIDSlot(new_seq);
   }
-
-  uint64_t new_seq;
-  if (seq + backoff_dist < 1)
-    new_seq = 1;
-  else
-    new_seq = seq + backoff_dist;
 
   if (g_sid_read_bit | g_sid_forward_read_bit) {
     uint64_t min = (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
@@ -313,6 +316,8 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       new_seq = 1;
     else
       new_seq = min >> 8 & 0xFFFFFF;
+    if (new_seq > seq)
+      new_seq = seq; // do not plan it beyond cur prog
   }
   return GetNextSIDSlot(new_seq);
 }
@@ -440,18 +445,28 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 
 
 void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles,int insert_cnt) {
-  if (PriorityTxnService::g_distance_exponential_backoff
-   && PriorityTxnService::g_backoff_distance < 0) {
-    // exponential backoff, -4 -> -2 -> -1 -> 0 -> 1 -> 2 -> ...
-    if (backoff_distance < 0) {
-      backoff_distance /= 2;
-    } else if (backoff_distance == 0) {
-      backoff_distance = 1;
+  if (PriorityTxnService::g_distance_exponential_backoff) {
+      if (PriorityTxnService::g_backoff_distance < 0) {
+      // -5 -> -2 -> -1 -> 0 -> 1 -> 2 -> 4 -> 5 -> 5 -> ...
+      if (backoff_distance < 0) {
+        backoff_distance /= 2;
+      } else if (backoff_distance == 0) {
+        backoff_distance = 1;
+      } else {
+        backoff_distance *= 2;
+        int ori_dist = abs(PriorityTxnService::g_backoff_distance);
+        if (backoff_distance > ori_dist)
+          backoff_distance = ori_dist;
+      }
     } else {
-      backoff_distance *= 2;
-      int ori_dist = abs(PriorityTxnService::g_backoff_distance);
-      if (backoff_distance > ori_dist)
-        backoff_distance = ori_dist;
+      // 0 -> 1 -> 2 -> 4 -> ... -> INT_MAX
+      if (backoff_distance == 0) {
+        backoff_distance = 1;
+      } else if (backoff_distance < INT_MAX / 2) {
+        backoff_distance *= 2;
+      } else {
+        backoff_distance = INT_MAX;
+      }
     }
   }
   for (int i = 0; i < update_cnt; ++i)
