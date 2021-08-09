@@ -26,6 +26,9 @@ class VHandleSyncService {
   virtual long GetWaitCountStat(int core) = 0;
   // virtual void Notify(uint64_t bitmap) = 0;
   virtual bool IsPendingVal(uintptr_t val) = 0;
+  static bool IsIgnoreVal(uintptr_t val) {
+    return (val & ~kReadBitMask) == kIgnoreValue;
+  }
   virtual void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) = 0;
   virtual void OfferData(volatile uintptr_t *addr, uintptr_t obj) = 0;
 };

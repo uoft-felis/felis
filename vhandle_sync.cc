@@ -99,7 +99,7 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
 void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
 {
   auto oldval = *addr;
-  auto newval = obj;
+  auto newval = obj | (oldval & kReadBitMask); // read bit
 
   // installing newval
   while (true) {
@@ -115,6 +115,7 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
     uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
     if (val == oldval) break;
     oldval = val;
+    newval = newval | (oldval & kReadBitMask); // read bit
   }
 
   // need to notify according to the bitmaps, which is oldval

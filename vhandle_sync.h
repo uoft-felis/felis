@@ -28,7 +28,7 @@ class SpinnerSlot : public VHandleSyncService {
   bool Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uintptr_t *ptr);
   void Notify(uint64_t bitmap);
   bool IsPendingVal(uintptr_t val) final override {
-    return (val >> 32) == (kPendingValue >> 32);
+    return ((val & ~kReadBitMask) >> 32) == (kPendingValue >> 32);
   }
   void WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) final override;
   void OfferData(volatile uintptr_t *addr, uintptr_t obj) final override;

@@ -333,15 +333,21 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
     return nullptr;
   }
 
+  // mark read bit
+  uintptr_t oldval = *addr;
+  if (PriorityTxnService::g_read_bit && !(oldval & kReadBitMask)) {
+    uintptr_t newval = oldval | kReadBitMask;
+    while (!(oldval & kReadBitMask)) {
+      uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
+      if (val == oldval) break;
+      oldval = val;
+      newval = oldval | kReadBitMask;
+    }
+  }
+
   sync().WaitForData(addr, sid, versions[pos], (void *) this);
 
-  // mark read bit
-  uintptr_t varstr_ptr = *addr;
-  if (PriorityTxnService::g_read_bit && !(varstr_ptr & kReadBitMask)) {
-    *addr = varstr_ptr | kReadBitMask;
-  }
-  varstr_ptr = varstr_ptr & ~kReadBitMask;
-
+  uintptr_t varstr_ptr = *addr & ~kReadBitMask;
   return (VarStr *) varstr_ptr;
 }
 
@@ -705,7 +711,7 @@ VarStr *ArrayExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArr
     lock.Unlock(&qnode);
     util::Impl<VHandleSyncService>().WaitForData(addr, sid, ver_extra, (void*) this);
     auto varstr_ptr = *addr;
-    if (varstr_ptr == kIgnoreValue)
+    if (VHandleSyncService::IsIgnoreVal(varstr_ptr))
       return handle->ReadWithVersion(ver_extra);
     else if (varstr_ptr == kRetryValue) {
       // trace(TRACE_PRIORITY "RETRY ACTUALLY HAPPENED! sid {} pos {} ver {} old versions {:p}", sid, pos, ver_extra, (void *)versions);
@@ -775,7 +781,7 @@ bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
 VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
 {
   Entry *p = head;
-  while (p && ((p->version >= sid) || (p->version < sid && p->object == kIgnoreValue)))
+  while (p && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
     p = p->next;
 
   if (!p)
@@ -786,16 +792,23 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
   if (ver_extra < ver)
     return nullptr;
   volatile uintptr_t *addr = &p->object;
-  util::Impl<VHandleSyncService>().WaitForData(addr, sid, ver_extra, (void *) this);
-  auto varstr_ptr = *addr;
-  if (varstr_ptr == kIgnoreValue)
-    return handle->ReadWithVersion(ver_extra);
 
   // mark read bit
-  if (PriorityTxnService::g_read_bit && !(varstr_ptr & kReadBitMask)) {
-    *addr = varstr_ptr | kReadBitMask;
+  uintptr_t oldval = *addr;
+  if (PriorityTxnService::g_read_bit && !(oldval & kReadBitMask)) {
+    uintptr_t newval = oldval | kReadBitMask;
+    while (!(oldval & kReadBitMask)) {
+      uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
+      if (val == oldval) break;
+      oldval = val;
+      newval = oldval | kReadBitMask;
+    }
   }
-  varstr_ptr = varstr_ptr & ~kReadBitMask;
+
+  util::Impl<VHandleSyncService>().WaitForData(addr, sid, ver_extra, (void *) this);
+  auto varstr_ptr = *addr & ~kReadBitMask;
+  if (VHandleSyncService::IsIgnoreVal(varstr_ptr))
+    return handle->ReadWithVersion(ver_extra);
 
   return (VarStr *) varstr_ptr;
 }
@@ -806,7 +819,7 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
   abort_if(!PriorityTxnService::g_read_bit, "ExtraVHandle CheckReadBit() is called when read bit is off");
   is_in = false;
   Entry *p = head;
-  while (p && ((p->version >= sid) || (p->version < sid && p->object == kIgnoreValue)))
+  while (p && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
     p = p->next;
 
   if (!p)
@@ -899,11 +912,11 @@ void LinkedListExtraVHandle::GarbageCollect()
   // GC all but one version: largest version with actual value (not ignore)
   Entry *cur = this->head.load();
   while (cur) {
-    if (cur->object != kIgnoreValue) {
+    if (!VHandleSyncService::IsIgnoreVal(cur->object)) {
       // found the version to keep, start GC
       Entry *front = head, *behind = cur->next;
       while (front && front != cur) {
-        if (front->object != kIgnoreValue) {
+        if (!VHandleSyncService::IsIgnoreVal(front->object)) {
           VarStr *o = (VarStr *) front->object;
           o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
           delete o;
@@ -913,7 +926,7 @@ void LinkedListExtraVHandle::GarbageCollect()
         front = temp;
       }
       while (behind) {
-        if (behind->object != kIgnoreValue) {
+        if (!VHandleSyncService::IsIgnoreVal(behind->object)) {
           VarStr *o = (VarStr *) behind->object;
           o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
           delete o;

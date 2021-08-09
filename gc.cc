@@ -297,7 +297,7 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   }
 
   for (auto j = 0; j < i; j++) {
-    if (objects[j] == kIgnoreValue) continue;
+    if (VHandleSyncService::IsIgnoreVal(objects[j])) continue;
     auto p = (VarStr *) objects[j];
     p = (VarStr *) ((uintptr_t)p & ~kReadBitMask);
     auto next = (VarStr *) objects[j + 1];
