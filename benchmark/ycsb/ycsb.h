@@ -36,6 +36,7 @@ class Client : public felis::EpochClient {
   RandRng rand;
 
   friend class RMWTxn;
+  friend class MWTxn;
   static char zero_data[100];
  public:
   static double g_theta;
