@@ -91,6 +91,7 @@ struct Average {
     return *this;
   }
   double getAvg() { return (cnt == 0) ? 0 : (1.0l * sum / cnt); }
+  long getCnt() { return cnt; }
 };
 
 static inline std::ostream &operator<<(std::ostream &out, const Average &avg)

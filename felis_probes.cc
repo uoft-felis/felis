@@ -399,6 +399,10 @@ ProbeMain::~ProbeMain()
       result.insert({kPriTxnMeasureTypeLabel[i], arr[i]->getAvg()});
     }
     result.insert({"7init_fail_cnt", std::to_string(global.init_fail_cnt.sum)});
+    result.insert({"8total_50tile", global.total_latency_hist.CalculateMedian()});
+    result.insert({"9total_90tile", global.total_latency_hist.CalculatePercentile(0.9)});
+    result.insert({"10total_99tile", global.total_latency_hist.CalculatePercentile(0.99)});
+    result.insert({"11txn_cnt", (int)global.total_latency_avg.getCnt()});
 
     auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
     time_t tm;
