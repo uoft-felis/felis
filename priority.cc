@@ -22,6 +22,7 @@ bool PriorityTxnService::g_sid_forward_read_bit = false;
 bool PriorityTxnService::g_row_rts = false;
 bool PriorityTxnService::g_conflict_row_rts = false;
 bool PriorityTxnService::g_sid_row_rts = false;
+bool PriorityTxnService::g_last_version_patch = false;
 
 int PriorityTxnService::g_backoff_distance = -100;
 bool PriorityTxnService::g_distance_exponential_backoff = true;
@@ -100,12 +101,19 @@ PriorityTxnService::PriorityTxnService()
       g_conflict_read_bit = true;
     if (Options::kSIDReadBit)
       g_sid_read_bit = true;
-    if (Options::kSIDForwardReadBit)
+    if (Options::kSIDForwardReadBit) {
       g_sid_forward_read_bit = true;
+      if (Options::kLastVersionPatch) {
+        g_last_version_patch = true;
+      } else {
+        abort_if(Options::kLastVersionPatch, "-XLastVersionPatch requires -XSIDForwardReadBit")
+      }
+    }
   } else {
     abort_if(Options::kConflictReadBit, "-XConflictReadBit requires -XReadBit");
     abort_if(Options::kSIDReadBit, "-XSIDReadBit requires -XReadBit");
     abort_if(Options::kSIDForwardReadBit, "-XSIDForwardReadBit requires -XReadBit");
+    abort_if(Options::kLastVersionPatch, "-XLastVersionPatch requires -XReadBit")
   }
 
   if (Options::kRowRTS) {
@@ -119,6 +127,7 @@ PriorityTxnService::PriorityTxnService()
   } else {
     abort_if(Options::kConflictRowRTS, "-XConflictRowRTS requires -XRowRTS");
     abort_if(Options::kSIDRowRTS, "-XSIDRowRTS requires -XRowRTS");
+    abort_if(Options::kLastVersionPatch, "-XLastVersionPatch requires -XRowRTS")
   }
   abort_if(g_conflict_read_bit + g_conflict_row_rts > 1,
            "plz only choose one between ConflictReadBit and ConflictRowRTS");

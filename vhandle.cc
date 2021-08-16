@@ -391,6 +391,12 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
 
   if (*addr == kPendingValue)
     return false; // if it's not written, it couldn't be read
+  if (PriorityTxnService::g_last_version_patch && pos == this->size - 1 && (*addr & kReadBitMask)) {
+    // last version is read
+    uint64_t rts = ((uint64_t)(this->GetRowRTS()) << 8) + 1;
+    auto wts = sid;
+    return wts <= rts;
+  }
   return *addr & kReadBitMask;
 }
 
@@ -472,7 +478,15 @@ uint64_t SortedArrayVHandle::SIDForwardSearch(uint64_t min)
   if (handle) extra = handle->FindFirstUnreadVersion(min);
 
   if (original == 0 && extra == 0)
+  {
+    if (PriorityTxnService::g_last_version_patch) {
+      uint64_t rts = (this->nr_ondsplt.load() + 1) << 8;
+      if (rts < min)
+        return min;
+      return rts;
+    }
     return util::Instance<PriorityTxnService>().GetMaxProgress();
+  }
   if (original == 0) return extra;
   if (extra == 0) return original;
   return (original < extra) ? original : extra;
@@ -833,6 +847,12 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
   auto varstr_ptr = p->object;
   if (varstr_ptr == kPendingValue)
     return false; // if it's not written, it couldn't be read
+  if (PriorityTxnService::g_last_version_patch && p == head && (varstr_ptr & kReadBitMask)) {
+    // last version is read
+    uint64_t rts = ((uint64_t)(handle->GetRowRTS()) << 8) + 1;
+    auto wts = sid;
+    return wts <= rts;
+  }
   return varstr_ptr & kReadBitMask;
 }
 

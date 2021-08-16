@@ -111,6 +111,7 @@ class PriorityTxnService {
   static bool g_row_rts;              // MVTO style read timestamp, per row
   static bool g_conflict_row_rts;     // use row rts to detect conflict
   static bool g_sid_row_rts;          // use row rts to acquire SID
+  static bool g_last_version_patch;   // patch read bit with row rts
 
   static int g_backoff_distance; // how many distance we are going to backoff, could be + or -
   static bool g_distance_exponential_backoff; /// only works if g_backoff_distance is -
