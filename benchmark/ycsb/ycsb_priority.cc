@@ -48,7 +48,7 @@ bool MWTxn_Run(PriorityTxn *txn)
 {
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t init_q = start_tsc - (txn->delay + PriorityTxnService::g_tsc);
+  uint64_t init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc)) / 2200;
   INIT_ROUTINE_BRK(4096);
 
   // generate txn input
