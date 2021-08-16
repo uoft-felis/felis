@@ -117,6 +117,8 @@ struct Options {
   static inline const auto kBackoffDist = Option("BackoffDist");
   static inline const auto kNoExpBackoff = Option("NoExpBackoff");
   static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
+  static inline const auto kNoPriorityPreempt = Option("NoPriorityPreempt");
+  static inline const auto kNoTpccPin = Option("NoTpccPin");
 
   static inline const auto kPriorityBatchMode = Option("PriorityBatchMode");
 

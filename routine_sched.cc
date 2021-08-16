@@ -687,7 +687,9 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   ws.state = routine_state;
 
   PriorityTxn* tmp = nullptr;
-  if (NodeConfiguration::g_priority_txn && this->Peek(core_id, tmp, true)) {
+  if (NodeConfiguration::g_priority_txn &&
+      PriorityTxnService::g_priority_preemption &&
+      this->Peek(core_id, tmp, true)) {
     abort_if(tmp != nullptr, "dry run didn't come out dry");
     q.waiting.len++;
     return true;

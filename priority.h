@@ -116,6 +116,8 @@ class PriorityTxnService {
   static int g_backoff_distance; // how many distance we are going to backoff, could be + or -
   static bool g_distance_exponential_backoff; /// only works if g_backoff_distance is -
   static bool g_fastest_core;
+  static bool g_priority_preemption;
+  static bool g_tpcc_pin;
 
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);

@@ -27,6 +27,8 @@ bool PriorityTxnService::g_last_version_patch = false;
 int PriorityTxnService::g_backoff_distance = -100;
 bool PriorityTxnService::g_distance_exponential_backoff = true;
 bool PriorityTxnService::g_fastest_core = false;
+bool PriorityTxnService::g_priority_preemption = true;
+bool PriorityTxnService::g_tpcc_pin = true;
 
 unsigned long long PriorityTxnService::g_tsc = 0;
 
@@ -145,6 +147,11 @@ PriorityTxnService::PriorityTxnService()
     g_fastest_core = true;
   logger->info("[Pri-init] Strip: Batched {} + Priority {}, BackoffDist: logical {}, physical {}",
                g_strip_batched, g_strip_priority, logical_dist, g_backoff_distance);
+
+  if (Options::kNoPriorityPreempt)
+    g_priority_preemption = false;
+  if (Options::kNoTpccPin)
+    g_tpcc_pin = false;
 
   this->core = 0;
   this->global_last_sid = 0;
