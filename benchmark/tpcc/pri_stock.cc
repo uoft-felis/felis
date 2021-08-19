@@ -38,6 +38,13 @@ void PriStockTxn::Prepare()
         Stock::Key::New(warehouse_id, detail.item_id[i]);
   }
 
+  if (VHandleSyncService::g_lock_elision) { // partition
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      txn_indexop_affinity = warehouse_id - 1;
+    } else {
+      txn_indexop_affinity = 0; // single warehouse, stock is at partition 0
+    }
+  }
   state->stocks_nodes =
       TxnIndexLookup<TpccSliceRouter, PriStockState::StocksLookupCompletion, void>(
           nullptr,
@@ -53,9 +60,11 @@ void PriStockTxn::Run()
   struct {
     unsigned int quantities[PriStockStruct::kStockMaxItems];
     int warehouse;
+    int nr;
   } params;
 
   params.warehouse = warehouse_id;
+  params.nr = nr_items;
   for (auto i = 0; i < nr_items; i++) {
     params.quantities[i] = detail.stock_quantities[i];
   }
@@ -64,6 +73,32 @@ void PriStockTxn::Run()
     auto [node, bitmap] = p;
 
     auto &conf = util::Instance<NodeConfiguration>();
+    if (node != conf.node_id())
+      continue;
+
+    auto aff = std::numeric_limits<uint64_t>::max();
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+    } else if (VHandleSyncService::g_lock_elision) {
+      // partition, single warehouse
+      aff = 0; // stock is at partition 0
+    }
+
+    root->AttachRoutine(
+        MakeContext(params), node,
+        [](const auto &ctx) {
+          auto &[state, index_handle, params] = ctx;
+          INIT_ROUTINE_BRK(4096);
+          for (int i = 0; i < params.nr; ++i) {
+              TxnRow vhandle = index_handle(state->stocks[i]);
+              auto stock = vhandle.Read<Stock::Value>();
+              stock.s_quantity += params.quantities[i];
+              index_handle(state->stocks[i]).Write(stock);
+              ClientBase::OnUpdateRow(state->stocks[i]);
+          }
+        }, aff);
+
+    /*
     if (node == conf.node_id()) {
       for (int i = 0; i < PriStockStruct::kStockMaxItems; i++) {
         if ((bitmap & (1 << i)) == 0) continue;
@@ -108,6 +143,7 @@ void PriStockTxn::Run()
           },
           aff);
     }
+    */
   }
 }
 

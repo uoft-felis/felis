@@ -26,52 +26,137 @@ void PriNewOrderDeliveryTxn::PrepareInsert()
 
   auto handle = index_handle();
 
+  int sum = 0;
   for (int i = 0; i < nr_items; i++) {
     auto item = mgr.Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeView(buf));
     auto item_value = handle(item).Read<Item::Value>();
     detail.unit_price[i] = item_value.i_price;
+    sum += item_value.i_price * detail.order_quantities[i];
   }
+  this->delivery_sum = sum;
 
   auto o_carrier_id = __rdtsc() % 10 + 1; // delivery; random between 1 and 10
-  auto args = OOrder::Value::New(customer_id, o_carrier_id, nr_items,
+  auto args0 = Tuple<OrderDetail>(detail);
+  auto args1 = OOrder::Value::New(customer_id, o_carrier_id, nr_items,
                                   all_local, ts_now);
 
-  state->orderlines_nodes =
-      TxnIndexInsert<TpccSliceRouter, PriNewOrderDeliveryState::OrderLinesInsertCompletion, void>(
-          nullptr,
-          KeyParam<OrderLine>(orderline_keys, nr_items));
+  if (g_tpcc_config.IsWarehousePinnable() || !VHandleSyncService::g_lock_elision) {
+    if (VHandleSyncService::g_lock_elision) {
+      txn_indexop_affinity = std::numeric_limits<uint32_t>::max(); // magic to flatten out indexops
+    }
 
-  state->other_inserts_nodes =
-      TxnIndexInsert<TpccSliceRouter, PriNewOrderDeliveryState::OtherInsertCompletion, OOrder::Value>(
-          &args,
-          KeyParam<OOrder>(oorder_key),
-          KeyParam<NewOrder>(neworder_key));
+    state->orderlines_nodes =
+        TxnIndexInsert<TpccSliceRouter, PriNewOrderDeliveryState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
+            &args0,
+            KeyParam<OrderLine>(orderline_keys, nr_items));
+
+    state->other_inserts_nodes =
+        TxnIndexInsert<TpccSliceRouter, PriNewOrderDeliveryState::OtherInsertCompletion, OOrder::Value>(
+            &args1,
+            KeyParam<OOrder>(oorder_key),
+            KeyParam<NewOrder>(neworder_key));
+
+  } else {
+    ASSERT_PWV_CONT;
+
+    txn_indexop_affinity = kIndexOpFlatten;
+    state->orderlines_nodes =
+        TxnIndexInsert<TpccSliceRouter, PriNewOrderDeliveryState::OrderLinesInsertCompletion, Tuple<OrderDetail>>(
+            &args0,
+            KeyParam<OrderLine>(orderline_keys, nr_items));
+
+    state->other_inserts_nodes =
+        TxnIndexInsert<TpccSliceRouter, PriNewOrderDeliveryState::OtherInsertCompletion, OOrder::Value>(
+            &args1,
+            KeyParam<OOrder>(oorder_key),
+            PlaceholderParam());
+
+    state->other_inserts_nodes +=
+        TxnIndexInsert<TpccSliceRouter, PriNewOrderDeliveryState::OtherInsertCompletion, void>(
+            nullptr,
+            PlaceholderParam(),
+            KeyParam<NewOrder>(neworder_key));
+
+  }
 }
 
 void PriNewOrderDeliveryTxn::Prepare()
 {
   Stock::Key stock_keys[kNewOrderMaxItems];
-
-  auto nr_items = detail.nr_items;
-  for (int i = 0; i < nr_items; i++) {
-    stock_keys[i] =
-        Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
-  }
-  auto customer_key = Customer::Key::New(warehouse_id, district_id, customer_id);
-
   INIT_ROUTINE_BRK(8192);
 
-  state->stocks_nodes =
-      TxnIndexLookup<TpccSliceRouter, PriNewOrderDeliveryState::StocksLookupCompletion, void>(
-          nullptr,
-          KeyParam<Stock>(stock_keys, nr_items));
+
+  if (!VHandleSyncService::g_lock_elision) {
+    auto nr_items = detail.nr_items;
+    for (int i = 0; i < nr_items; i++) {
+      stock_keys[i] =
+          Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
+    }
+    state->stocks_nodes =
+        TxnIndexLookup<TpccSliceRouter, PriNewOrderDeliveryState::StocksLookupCompletion, void>(
+            nullptr,
+            KeyParam<Stock>(stock_keys, nr_items));
+
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+    }
+  } else {
+    unsigned int w = 0;
+    int istart = 0, iend = 0;
+    uint32_t picked = 0;
+    int nr_unique_warehouses = 0;
+
+    state->stocks_nodes = NodeBitmap();
+
+    while (true) {
+      uint32_t old_bitmap = picked;
+      for (int i = 0; i < detail.nr_items; i++) {
+        if ((picked & (1 << i)) == 0) {
+          if (w == 0) w = detail.supplier_warehouse_id[i];
+          else if (w != detail.supplier_warehouse_id[i]) continue;
+
+          stock_keys[iend++] =
+              Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
+          picked |= (1 << i);
+        }
+      }
+      if (istart == iend) break;
+
+      if (!g_tpcc_config.IsWarehousePinnable()) {
+        ASSERT_PWV_CONT;
+        // In this situation, w - 1 means the Stock(0) partition anyway.
+      }
+
+      txn_indexop_affinity = w - 1;
+      nr_unique_warehouses++;
+
+      auto args = Tuple<int>(picked ^ old_bitmap);
+      TxnIndexLookup<TpccSliceRouter, PriNewOrderDeliveryState::StocksLookupCompletion, Tuple<int>>(
+          &args,
+          KeyParam<Stock>(stock_keys + istart, iend - istart));
+
+      w = 0;
+      istart = iend;
+    }
+    abort_if(iend != detail.nr_items, "Bug in NewOrder Prepare() Bohm partitioning");
+    state->stocks_nodes.MergeOrAdd(1, (1 << detail.nr_items) - 1);
+  }
+
+  auto customer_key = Customer::Key::New(warehouse_id, district_id, customer_id);
+  if (VHandleSyncService::g_lock_elision) { // partition
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      txn_indexop_affinity = warehouse_id - 1;
+    } else {
+      txn_indexop_affinity = g_tpcc_config.PWVDistrictToCoreId(district_id, 20);
+    }
+  }
   state->customer_nodes =
       TxnIndexLookup<TpccSliceRouter, PriNewOrderDeliveryState::CustomerLookupCompletion, void>(
           nullptr,
           KeyParam<Customer>(customer_key));
-
-  if (g_tpcc_config.IsWarehousePinnable())
+  if (g_tpcc_config.IsWarehousePinnable()) {
     root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
+  }
 }
 
 void PriNewOrderDeliveryTxn::Run()
@@ -95,8 +180,11 @@ void PriNewOrderDeliveryTxn::Run()
 
   for (auto &p: state->stocks_nodes) {
     auto [node, bitmap] = p;
-    auto &conf = util::Instance<NodeConfiguration>();
-    if (node == conf.node_id()) {
+
+    if (!Options::kEnablePartition) {
+      auto &conf = util::Instance<NodeConfiguration>();
+      if (node != conf.node_id())
+        continue;
       for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
         if ((bitmap & (1 << i)) == 0) continue;
 
@@ -109,8 +197,6 @@ void PriNewOrderDeliveryTxn::Run()
 
               TxnRow vhandle = index_handle(row);
               auto stock = vhandle.Read<Stock::Value>();
-
-              probes::TpccNewOrder{2, 1}();
 
               if (stock.s_quantity - quantity < 10) {
                 stock.s_quantity += 91;
@@ -131,6 +217,7 @@ void PriNewOrderDeliveryTxn::Run()
       }
 
       auto aff = std::numeric_limits<uint64_t>::max();
+
       if (g_tpcc_config.IsWarehousePinnable())
         aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
 
@@ -154,50 +241,88 @@ void PriNewOrderDeliveryTxn::Run()
             row.Read<Warehouse::Value>();
           },
           aff);
-    }
+    } else { // kEnablePartition
+      std::array<int, NewOrderStruct::kNewOrderMaxItems> unique_warehouses;
+      int nr_unique_warehouses = 0;
+      unique_warehouses.fill(0);
+
+      for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+        if ((bitmap & (1 << i)) == 0) continue;
+
+        auto supp_warehouse = detail.supplier_warehouse_id[i];
+        if (std::find(unique_warehouses.begin(), unique_warehouses.begin() + nr_unique_warehouses,
+                      supp_warehouse) == unique_warehouses.begin() + nr_unique_warehouses) {
+          unique_warehouses[nr_unique_warehouses++] = supp_warehouse;
+        }
+      }
+      for (int f = 0; f < nr_unique_warehouses; f++) {
+        auto w = unique_warehouses[f];
+        auto aff = std::numeric_limits<uint64_t>::max();
+
+        aff = w - 1;
+
+        root->AttachRoutine(
+            MakeContext(bitmap, params, w), node,
+            [](const auto &ctx) {
+              auto &[state, index_handle, bitmap, params, w] = ctx;
+
+              for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
+                if ((bitmap & (1 << i)) == 0) continue;
+                if (w > 0 && params.supplier_warehouses[i] != w) continue;
+
+                debug(DBG_WORKLOAD "Txn {} updating its {} row {}",
+                      index_handle.serial_id(), i, (void *) state->stocks[i]);
+
+                TxnRow vhandle = index_handle(state->stocks[i]);
+                auto stock = vhandle.Read<Stock::Value>();
+
+                if (stock.s_quantity - params.quantities[i] < 10) {
+                  stock.s_quantity += 91;
+                }
+                stock.s_quantity -= params.quantities[i];
+                stock.s_ytd += params.quantities[i];
+                stock.s_remote_cnt += (params.supplier_warehouses[i] != params.warehouse);
+
+                vhandle.Write(stock);
+                ClientBase::OnUpdateRow(state->stocks[i]);
+                debug(DBG_WORKLOAD "Txn {} updated its {} row {}",
+                      index_handle.serial_id(), i,
+                      (void *)state->stocks[i]);
+              }
+            },
+            aff);
+      }
+    } // kEnablePartition
   }
 
-  for (auto &p: state->orderlines_nodes) {
+  // update customer
+  for (auto &p: state->customer_nodes) {
     auto [node, bitmap] = p;
+
     auto &conf = util::Instance<NodeConfiguration>();
-    if (node == conf.node_id()) {
-      auto aff = std::numeric_limits<uint64_t>::max();
-      if (g_tpcc_config.IsWarehousePinnable())
-        aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+    if (node != conf.node_id())
+      continue;
 
-      root->AttachRoutine(
-          MakeContext(bitmap, detail), node,
-          [](const auto &ctx) {
-            auto &[state, index_handle, bitmap, detail] = ctx;
-            int sum = 0;
-
-            INIT_ROUTINE_BRK(4096);
-
-            for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
-              if ((bitmap & (1 << i)) == 0) continue;
-
-              auto item = ClientBase::tables().Get<Item>().Search(Item::Key::New(detail.item_id[i]).EncodeViewRoutine());
-              auto item_value = index_handle(item).template Read<Item::Value>();
-              auto amount = item_value.i_price * detail.order_quantities[i];
-
-              auto handle = index_handle(state->orderlines[i]);
-              auto orderline = OrderLine::Value::New(detail.item_id[i], 0, amount,
-                                                    detail.supplier_warehouse_id[i],
-                                                    detail.order_quantities[i]);
-              sum += orderline.ol_amount;
-              orderline.ol_delivery_d = 234567;
-              handle.Write(orderline);
-              ClientBase::OnUpdateRow(state->orderlines[i]);
-            }
-
-            // well, orderline and customer should be in the same warehouse,
-            // so I just use the same node. may not work for random sharding or stuff
-            auto customer = index_handle(state->customer).template Read<Customer::Value>();
-            customer.c_balance = sum;
-            index_handle(state->customer).Write(customer);
-            ClientBase::OnUpdateRow(state->customer);
-          });
+    auto aff = std::numeric_limits<uint64_t>::max();
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      aff = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+    } else if (VHandleSyncService::g_lock_elision) {
+      // partition, single warehouse
+      aff = g_tpcc_config.PWVDistrictToCoreId(district_id, 20);
     }
+
+    root->AttachRoutine(
+        MakeContext(this->delivery_sum), node,
+        [](const auto &ctx) {
+          auto &[state, index_handle, sum] = ctx;
+          INIT_ROUTINE_BRK(4096);
+          auto customer = index_handle(state->customer).template Read<Customer::Value>();
+          customer.c_balance += sum;
+          customer.c_delivery_cnt++;
+          index_handle(state->customer).Write(customer);
+          ClientBase::OnUpdateRow(state->customer);
+
+        }, aff);
   }
 }
 
