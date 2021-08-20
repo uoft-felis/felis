@@ -15,4 +15,4 @@
 	url = git@fs.csl.utoronto.ca:masstree.git
 [submodule "gopp"]
 	path = gopp
-	url = git@fs.csl.utoronto.ca:gopp.git
+	url = git@github.com:uoft-felis/gopp.git
