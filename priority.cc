@@ -153,6 +153,10 @@ PriorityTxnService::PriorityTxnService()
   if (Options::kBackoffDist) {
     logical_dist = Options::kBackoffDist.ToInt(); // independent of priority txn slot ratio
     g_backoff_distance = logical_dist * (g_strip_batched + g_strip_priority);
+    if (Options::kRowRTS) {
+      logger->info("Neglecting Global Backoff Distance for RowRTS");
+      g_backoff_distance = INT_MAX;
+    }
   }
   if (Options::kNoExpBackoff)
     g_distance_exponential_backoff = false;
@@ -348,7 +352,12 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     if (new_seq > seq)
       new_seq = seq; // do not plan it beyond cur prog
   }
-  return GetNextSIDSlot(new_seq);
+  auto res = GetNextSIDSlot(new_seq);
+  if (PriorityTxnService::g_row_rts && backoff_dist == INT_MIN) {
+    txn->backoff_distance = (res >> 8 & 0xFFFFFF) - (this->GetMaxProgress() >> 8 & 0xFFFFFF);
+    txn->backoff_distance_max = abs(txn->backoff_distance);
+  }
+  return res;
 }
 
 uint64_t PriorityTxnService::GetNextSIDSlot(uint64_t sequence)
@@ -475,7 +484,7 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
 
 void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles,int insert_cnt) {
   if (PriorityTxnService::g_distance_exponential_backoff) {
-      if (PriorityTxnService::g_backoff_distance < 0) {
+    if (PriorityTxnService::g_backoff_distance < 0 || PriorityTxnService::g_row_rts) {
       // -5 -> -2 -> -1 -> 0 -> 1 -> 2 -> 4 -> 5 -> 5 -> ...
       if (backoff_distance < 0) {
         backoff_distance /= 2;
@@ -483,9 +492,8 @@ void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **i
         backoff_distance = 1;
       } else {
         backoff_distance *= 2;
-        int ori_dist = abs(PriorityTxnService::g_backoff_distance);
-        if (backoff_distance > ori_dist)
-          backoff_distance = ori_dist;
+        if (backoff_distance > this->backoff_distance_max)
+          backoff_distance = this->backoff_distance_max;
       }
     } else {
       // 0 -> 1 -> 2 -> 4 -> ... -> INT_MAX

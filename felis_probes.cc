@@ -64,11 +64,11 @@ static struct ProbeMain {
 
   agg::Agg<agg::Average> dist_global_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_global_max;
-  agg::Agg<agg::Histogram<1024, -5500, 60>> dist_global_hist;
+  agg::Agg<agg::Histogram<1024, -10000, 20>> dist_global_hist;
 
   agg::Agg<agg::Average> dist_local_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_local_max;
-  agg::Agg<agg::Histogram<1024, -5500, 60>> dist_local_hist;
+  agg::Agg<agg::Histogram<1024, -10000, 20>> dist_local_hist;
   ~ProbeMain();
 } global;
 

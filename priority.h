@@ -114,7 +114,7 @@ class PriorityTxnService {
   static bool g_last_version_patch;   // patch read bit with row rts
 
   static int g_backoff_distance; // how many distance we are going to backoff, could be + or -
-  static bool g_distance_exponential_backoff; /// only works if g_backoff_distance is -
+  static bool g_distance_exponential_backoff;
   static bool g_fastest_core;
   static bool g_priority_preemption;
   static bool g_tpcc_pin;
@@ -187,6 +187,7 @@ class PriorityTxn {
   bool initialized; // meaning the registered VHandles would be valid
 
  public:
+  int backoff_distance_max;
   int backoff_distance;
   std::atomic_int piece_count;
   uint64_t epoch; // pre-generate. which epoch is this txn in
@@ -202,7 +203,12 @@ class PriorityTxn {
     // assign only happens when the rhs is never Run(), so set init value
     this->piece_count.store(0);
     this->min_sid = 0;
-    this->backoff_distance = PriorityTxnService::g_backoff_distance;
+    if (PriorityTxnService::g_row_rts) {
+      this->backoff_distance = INT_MIN;
+    } else {
+      this->backoff_distance = PriorityTxnService::g_backoff_distance;
+      this->backoff_distance_max = abs(PriorityTxnService::g_backoff_distance);
+    }
 
     this->sid = rhs.sid;
     this->initialized = rhs.initialized;
