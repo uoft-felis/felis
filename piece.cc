@@ -211,19 +211,33 @@ void BasePieceCollection::ExecutionRoutine::Run()
         return true;
       });
 
+  auto should_pop_pri = PromiseRoutineDispatchService::GenericDispatchPeekListener(
+      [&next_r, &give_up, sched]
+      (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
+        if (state != nullptr) {
+          if (state->is_detached()) {
+            trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
+            state->Init();
+            sched->WakeUp(state);
+          } else {
+            trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
+          }
+          give_up = true;
+          return false;
+        }
+        give_up = false;
+        if (!PriorityTxnService::isPriorityTxn(r->sched_key))
+          return false;
+        next_r = r;
+        return true;
+      });
 
   unsigned long cnt = 0x01F;
-  bool hasTxn, hasPiece;
   PriorityTxn *txn;
 
+loop:
   do {
-    while ((hasTxn = svc.Peek(core_id, txn)) | (hasPiece = svc.Peek(core_id, should_pop))) {
-      if (hasTxn && !hasPiece) {
-        txn->Run();
-        svc.Complete(core_id);
-        continue;
-      }
-
+    if (svc.Peek(core_id, should_pop_pri)) {
       // Periodic flush
       cnt++;
       if ((cnt & 0x01F) == 0) {
@@ -233,11 +247,6 @@ void BasePieceCollection::ExecutionRoutine::Run()
       auto rt = next_r;
       if (rt->sched_key != 0)
         debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
-
-      if (hasTxn) {
-        txn->Run();
-        svc.Complete(core_id);
-      }
 
       if (NodeConfiguration::g_priority_txn) {
         util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
@@ -249,6 +258,37 @@ void BasePieceCollection::ExecutionRoutine::Run()
       if (rt->sched_key != 0)
         felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
+      goto loop;
+    }
+
+    if (svc.Peek(core_id, txn)) {
+      txn->Run();
+      svc.Complete(core_id);
+      goto loop;
+    }
+
+    if (svc.Peek(core_id, should_pop)) {
+      // Periodic flush
+      cnt++;
+      if ((cnt & 0x01F) == 0) {
+        transport.PeriodicIO(core_id);
+      }
+
+      auto rt = next_r;
+      if (rt->sched_key != 0)
+        debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+
+      if (NodeConfiguration::g_priority_txn) {
+        util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
+      }
+
+      auto tsc = __rdtsc();
+      rt->callback(rt);
+      auto diff = (__rdtsc() - tsc) / 2200;
+      if (rt->sched_key != 0)
+        felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
+      svc.Complete(core_id);
+      goto loop;
     }
   } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 

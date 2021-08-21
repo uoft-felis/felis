@@ -127,7 +127,7 @@ class PromiseRoutineDispatchService {
     }
   };
 
-  virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines) = 0;
+  virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines, bool from_pri = false) = 0;
   virtual void Add(int core_id, PriorityTxn *t) = 0;
   virtual void AddBubble() = 0;
   virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) = 0;

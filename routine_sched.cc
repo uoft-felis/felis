@@ -400,7 +400,7 @@ void EpochExecutionDispatchService::Reset()
 
 
 void EpochExecutionDispatchService::Add(int core_id, PieceRoutine **routines,
-                                        size_t nr_routines)
+                                        size_t nr_routines, bool from_pri)
 {
   auto &lock = queues[core_id]->lock;
   lock.Lock();
@@ -442,6 +442,9 @@ again:
     pq.end.fetch_add(pdelta, std::memory_order_release);
   lock.Unlock();
   // util::Impl<VHandleSyncService>().Notify(1 << core_id);
+
+  if (from_pri)
+    ProcessPending(queues[core_id]->pq);
 }
 
 void EpochExecutionDispatchService::Add(int core_id, PriorityTxn *txn)

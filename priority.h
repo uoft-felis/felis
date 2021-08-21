@@ -303,7 +303,7 @@ class PriorityTxn {
 
     // put PromiseRoutineWithInput into PQ
     EpochClient::g_workload_client->completion_object()->Increment(1);
-    util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &routine, 1);
+    util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &routine, 1, true);
   }
 
   // if doing OCC, check write set and commit and stuff
