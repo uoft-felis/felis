@@ -137,7 +137,8 @@ struct PieceTime {
 };
 
 struct Distance {
-  int64_t dist;
+  int64_t dist_global;
+  int64_t dist_local;
   uint64_t sid;
   void operator()() const;
 };

@@ -122,10 +122,13 @@ bool MWTxn_Run(PriorityTxn *txn)
   }
 
   // record acquired SID's difference from current max progress
-  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
+  uint64_t global_prog = util::Instance<PriorityTxnService>().GetMaxProgress() >> 8;
+  auto cur_core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  uint64_t local_prog = util::Instance<PriorityTxnService>().GetProgress(cur_core_id) >> 8;
   uint64_t seq = txn->serial_id() >> 8;
-  int64_t diff_to_max_progress = seq - max_prog;
-  probes::Distance{diff_to_max_progress, txn->serial_id()}();
+  int64_t diff_global = seq - global_prog;
+  int64_t diff_local = seq - local_prog;
+  probes::Distance{diff_global / 33, diff_local / 33, txn->serial_id()}();
 
   return txn->Commit();
 }

@@ -31,28 +31,28 @@ static struct ProbeMain {
 
   agg::Agg<agg::Average> init_queue_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max;
-  agg::Agg<agg::Histogram<1024, 0, 20>> init_queue_hist;
+  agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist;
 
   agg::Agg<agg::Average> init_fail_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_max;
-  agg::Agg<agg::Histogram<512, 0, 2>> init_fail_hist;
+  agg::Agg<agg::Histogram<512, 0, 1>> init_fail_hist;
 
   agg::Agg<agg::Sum> init_fail_cnt;
   agg::Agg<agg::Average> init_fail_cnt_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_cnt_max;
-  agg::Agg<agg::Histogram<128, 0, 8>> init_fail_cnt_hist;
+  agg::Agg<agg::Histogram<128, 0, 1>> init_fail_cnt_hist;
 
   agg::Agg<agg::Average> init_succ_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_succ_max;
-  agg::Agg<agg::Histogram<128, 0, 2>> init_succ_hist;
+  agg::Agg<agg::Histogram<512, 0, 1>> init_succ_hist;
 
   agg::Agg<agg::Average> exec_queue_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_queue_max;
-  agg::Agg<agg::Histogram<512, 0, 3>> exec_queue_hist;
+  agg::Agg<agg::Histogram<1024, 0, 2>> exec_queue_hist;
 
   agg::Agg<agg::Average> exec_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_max;
-  agg::Agg<agg::Histogram<128, 0, 2>> exec_hist;
+  agg::Agg<agg::Histogram<512, 0, 2>> exec_hist;
 
   agg::Agg<agg::Average> total_latency_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max;
@@ -62,9 +62,13 @@ static struct ProbeMain {
   agg::Agg<agg::Max<std::tuple<uint64_t, uintptr_t, int>>> piece_max;
   agg::Agg<agg::Histogram<512, 0, 1>> piece_hist;
 
-  agg::Agg<agg::Average> dist_avg;
-  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_max;
-  agg::Agg<agg::Histogram<512, -10000, 40>> dist_hist;
+  agg::Agg<agg::Average> dist_global_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_global_max;
+  agg::Agg<agg::Histogram<1024, -5500, 60>> dist_global_hist;
+
+  agg::Agg<agg::Average> dist_local_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_local_max;
+  agg::Agg<agg::Histogram<1024, -5500, 60>> dist_local_hist;
   ~ProbeMain();
 } global;
 
@@ -108,9 +112,12 @@ thread_local struct ProbePerCore {
   AGG(piece_avg);
   AGG(piece_max);
   AGG(piece_hist);
-  AGG(dist_avg);
-  AGG(dist_max);
-  AGG(dist_hist);
+  AGG(dist_global_avg);
+  AGG(dist_global_max);
+  AGG(dist_global_hist);
+  AGG(dist_local_avg);
+  AGG(dist_local_max);
+  AGG(dist_local_hist);
 } statcnt;
 
 // Default for all probes
@@ -277,9 +284,12 @@ template <> void OnProbe(felis::probes::PieceTime p)
 template <> void OnProbe(felis::probes::Distance p)
 {
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-  statcnt.dist_avg << p.dist;
-  statcnt.dist_hist << p.dist;
-  statcnt.dist_max.addData(p.dist, std::make_tuple(p.sid, core_id));
+  statcnt.dist_global_avg << p.dist_global;
+  statcnt.dist_global_hist << p.dist_global;
+  statcnt.dist_global_max.addData(p.dist_global, std::make_tuple(p.sid, core_id));
+  statcnt.dist_local_avg << p.dist_local;
+  statcnt.dist_local_hist << p.dist_local;
+  statcnt.dist_local_max.addData(p.dist_local, std::make_tuple(p.sid, core_id));
 }
 
 enum PriTxnMeasureType : int{
@@ -353,40 +363,62 @@ ProbeMain::~ProbeMain()
   if (!felis::NodeConfiguration::g_priority_txn)
     return;
 
-  std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
-            << "(max: " << global.init_queue_max() << ")" << std::endl;
-  std::cout << global.init_queue_hist();
+  if (global.init_queue_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
+              << "(max: " << global.init_queue_max() << ")" << std::endl;
+    std::cout << global.init_queue_hist();
+  }
 
-  std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
-            << "(max: " << global.init_fail_max() << ")" << std::endl;
-  // std::cout << global.init_fail_hist();
+  if (global.init_fail_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
+              << "(max: " << global.init_fail_max() << ")" << std::endl;
+    std::cout << global.init_fail_hist();
+  }
 
-  std::cout << "[Pri-stat] failed txn cnt: " << global.init_fail_cnt()
-            << " (avg: " << global.init_fail_cnt_avg() << " times,"
-            << " max: " << global.init_fail_cnt_max() << ")" << std::endl;
-  // std::cout << global.init_fail_cnt_hist();
+  if (global.init_fail_cnt_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] failed txn cnt: " << global.init_fail_cnt()
+              << " (avg: " << global.init_fail_cnt_avg() << " times,"
+              << " max: " << global.init_fail_cnt_max() << ")" << std::endl;
+    std::cout << global.init_fail_cnt_hist();
+  }
 
-  std::cout << "[Pri-stat] init_succ " << global.init_succ_avg() << " us "
-            << "(max: " << global.init_succ_max() << ")" << std::endl;
-  // std::cout << global.init_succ_hist();
+  if (global.init_succ_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] init_succ " << global.init_succ_avg() << " us "
+              << "(max: " << global.init_succ_max() << ")" << std::endl;
+    std::cout << global.init_succ_hist();
+  }
 
-  std::cout << "[Pri-stat] exec_queue " << global.exec_queue_avg() << " us "
-            << "(max: " << global.exec_queue_max() << ")" << std::endl;
-  // std::cout << global.exec_queue_hist();
+  if (global.exec_queue_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] exec_queue " << global.exec_queue_avg() << " us "
+              << "(max: " << global.exec_queue_max() << ")" << std::endl;
+    std::cout << global.exec_queue_hist();
+  }
 
-  std::cout << "[Pri-stat] exec " << global.exec_avg() << " us "
-            << "(max: " << global.exec_max() << ")" << std::endl;
-  // std::cout << global.exec_hist();
+  if (global.exec_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] exec " << global.exec_avg() << " us "
+              << "(max: " << global.exec_max() << ")" << std::endl;
+    std::cout << global.exec_hist();
+  }
 
-  std::cout << "[Pri-stat] total_latency " << global.total_latency_avg() << " us "
-            << "(max: " << global.total_latency_max() << ")" << std::endl;
-  std::cout << global.total_latency_hist();
+  if (global.total_latency_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] total_latency " << global.total_latency_avg() << " us "
+              << "(max: " << global.total_latency_max() << ")" << std::endl;
+    std::cout << global.total_latency_hist();
+  }
 
-  std::cout << "[Pri-stat] dist " << global.dist_avg() << " sids "
-            << "(max: " << global.dist_max() << ")" << std::endl;
-  // std::cout << global.dist_hist();
+  if (global.dist_global_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] global dist " << global.dist_global_avg() << " sids "
+              << "(max: " << global.dist_global_max() << ")" << std::endl;
+    std::cout << global.dist_global_hist();
+  }
 
-  if (felis::NodeConfiguration::g_priority_txn && felis::Options::kOutputDir) {
+  if (global.dist_local_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] local dist " << global.dist_local_avg() << " sids "
+              << "(max: " << global.dist_local_max() << ")" << std::endl;
+    std::cout << global.dist_local_hist();
+  }
+
+  if (global.total_latency_avg().getCnt() != 0 && felis::Options::kOutputDir) {
     json11::Json::object result;
     const int size = PriTxnMeasureType::NumPriTxnMeasureType;
     agg::Agg<agg::Average> *arr[size] = {
