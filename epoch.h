@@ -150,6 +150,7 @@ class EpochClient {
   uint64_t GenerateSerialId(uint64_t epoch_nr, uint64_t sequence);
   void GenerateBenchmarks();
   void Start();
+  const PerfLog& GetPerf() { return perf; }
 
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }

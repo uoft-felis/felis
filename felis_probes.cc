@@ -10,6 +10,7 @@
 
 #include "vhandle.h" // Let's hope this won't slow down the build.
 #include "gc.h"
+#include "epoch.h"
 
 static struct ProbeMain {
   agg::Agg<agg::LogHistogram<16>> wait_cnt;
@@ -302,15 +303,6 @@ enum PriTxnMeasureType : int{
   NumPriTxnMeasureType,
 };
 
-const std::string kPriTxnMeasureTypeLabel[] = {
-  "1init_queue",
-  "2init_fail",
-  "3init_succ",
-  "4exec_queue",
-  "5exec",
-  "6total_latency",
-};
-
 ProbeMain::~ProbeMain()
 {
 #if 0
@@ -356,7 +348,7 @@ ProbeMain::~ProbeMain()
             << std::endl;
   std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
 #endif
-  std::cout << "[Pri-stat] (batched and priority) piece " << global.piece_avg() << " us "
+  std::cout << "[Pri-stat] batch piece " << global.piece_avg() << " us "
             << "(max: " << global.piece_max() << ")" << std::endl;
   std::cout << global.piece_hist();
 
@@ -421,20 +413,69 @@ ProbeMain::~ProbeMain()
   if (global.total_latency_avg().getCnt() != 0 && felis::Options::kOutputDir) {
     json11::Json::object result;
     const int size = PriTxnMeasureType::NumPriTxnMeasureType;
-    agg::Agg<agg::Average> *arr[size] = {
-      &global.init_queue_avg, &global.init_fail_avg, &global.init_succ_avg,
-      &global.exec_queue_avg, &global.exec_avg,
-      &global.total_latency_avg,
+    agg::Agg<agg::Average> *arr[size + 1] = {
+      &global.init_queue_avg, &global.init_fail_avg,
+      &global.init_succ_avg, &global.exec_queue_avg,
+      &global.exec_avg, &global.total_latency_avg,
+      &global.dist_local_avg,
     };
 
-    for (int i = 0; i < size; ++i) {
-      result.insert({kPriTxnMeasureTypeLabel[i], arr[i]->getAvg()});
+    // X_1 is average, where X in [1,7]
+    for (int i = 0; i < 7; ++i) {
+      std::string label = std::to_string(i+1) + "_1";
+      result.insert({label, arr[i]->getAvg()});
     }
-    result.insert({"7init_fail_cnt", std::to_string(global.init_fail_cnt.sum)});
-    result.insert({"8total_50tile", global.total_latency_hist.CalculateMedian()});
-    result.insert({"9total_90tile", global.total_latency_hist.CalculatePercentile(0.9)});
-    result.insert({"10total_99tile", global.total_latency_hist.CalculatePercentile(0.99)});
-    result.insert({"11txn_cnt", (int)global.total_latency_avg.getCnt()});
+    // X_2, X_3, X_4, X_5 are 50%, 90%, 99%, 99.9% numbers, where X in [1,6]
+    for (int i = 0; i < 7; ++i) {
+      for (int j = 2; j <= 5; ++j) {
+        std::string label = std::to_string(i+1) + "_" + std::to_string(j);
+        double pctile;
+        switch (j) {
+          case 2: pctile = 0.5;   break;
+          case 3: pctile = 0.9;   break;
+          case 4: pctile = 0.99;  break;
+          case 5: pctile = 0.999; break;
+        }
+        switch (i) {
+          case 0:
+            result.insert({label, global.init_queue_hist.CalculatePercentile(pctile)});
+            break;
+          case 1:
+            result.insert({label, global.init_fail_hist.CalculatePercentile(pctile)});
+            break;
+          case 2:
+            result.insert({label, global.init_succ_hist.CalculatePercentile(pctile)});
+            break;
+          case 3:
+            result.insert({label, global.exec_queue_hist.CalculatePercentile(pctile)});
+            break;
+          case 4:
+            result.insert({label, global.exec_hist.CalculatePercentile(pctile)});
+            break;
+          case 5:
+            result.insert({label, global.total_latency_hist.CalculatePercentile(pctile)});
+            break;
+          case 6:
+            result.insert({label, global.dist_local_hist.CalculatePercentile(pctile)});
+            break;
+        }
+      }
+    }
+
+    // 8_1 abort rate, unit %
+    long cnt = global.total_latency_avg.getCnt();
+    double abort_rate = 100.0 * global.init_fail_cnt.sum / cnt;
+    result.insert({"8_1", abort_rate});
+    // 8_2 txn count
+    result.insert({"8_2", static_cast<int>(cnt)});
+    // 9_1 batch throughput, 9_2 priority throughput, 9_3 total throughput
+    auto dur = felis::EpochClient::g_workload_client->GetPerf().duration_ms();
+    int batch_tpt = 4900000000 / dur;
+    long pri_tpt = batch_tpt * cnt / 4900000; // 49 epochs, 100k txn/epoch
+    int total_tpt = batch_tpt + pri_tpt;
+    result.insert({"9_1", batch_tpt});
+    result.insert({"9_2", static_cast<int>(pri_tpt)});
+    result.insert({"9_3", total_tpt});
 
     auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
     time_t tm;
@@ -442,12 +483,12 @@ ProbeMain::~ProbeMain()
     time(&tm);
     strftime(now, 80, "-%F-%X", localtime(&tm));
     std::ofstream result_output(
-        felis::Options::kOutputDir.Get() + "/pri_latency.json");
+        felis::Options::kOutputDir.Get() + "/pri" + now + ".json");
     result_output << json11::Json(result).dump() << std::endl;
 
-    std::ofstream latency_dist_output(
-        felis::Options::kOutputDir.Get() + "/latency_dist.log");
-    latency_dist_output << global.total_latency_hist();
+    // std::ofstream latency_dist_output(
+    //     felis::Options::kOutputDir.Get() + "/latency_dist.log");
+    // latency_dist_output << global.total_latency_hist();
   }
 
 }

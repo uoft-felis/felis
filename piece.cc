@@ -255,7 +255,7 @@ loop:
       auto tsc = __rdtsc();
       rt->callback(rt);
       auto diff = (__rdtsc() - tsc) / 2200;
-      if (rt->sched_key != 0)
+      if (rt->sched_key != 0 && !PriorityTxnService::isPriorityTxn(rt->sched_key))
         felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
       goto loop;
@@ -285,7 +285,7 @@ loop:
       auto tsc = __rdtsc();
       rt->callback(rt);
       auto diff = (__rdtsc() - tsc) / 2200;
-      if (rt->sched_key != 0)
+      if (rt->sched_key != 0 && !PriorityTxnService::isPriorityTxn(rt->sched_key))
         felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
       goto loop;
