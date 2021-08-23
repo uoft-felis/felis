@@ -3,6 +3,10 @@
 #ifndef YCSB_TABLE_DECL_H
 #define YCSB_TABLE_DECL_H
 
+#ifndef OFFSET
+#define OFFSET 1000
+#endif
+
 #include "sqltypes.h"
 
 namespace sql {

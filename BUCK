@@ -32,6 +32,26 @@ ycsb_srcs = [
     'benchmark/ycsb/ycsb_workload.cc',
 ]
 
+smallbank_headers = [
+    'benchmark/smallbank/table_decl.h',
+    'benchmark/smallbank/smallbank.h',
+    'benchmark/smallbank/balance.h',
+    'benchmark/smallbank/deposit_checking.h',
+    'benchmark/smallbank/transact_saving.h',
+    'benchmark/smallbank/amalgamate.h',
+    'benchmark/smallbank/write_check.h',
+]
+
+smallbank_srcs = [
+    'benchmark/smallbank/smallbank.cc',
+    'benchmark/smallbank/smallbank_workload.cc',
+    'benchmark/smallbank/balance.cc',
+    'benchmark/smallbank/deposit_checking.cc',
+    'benchmark/smallbank/transact_saving.cc',
+    'benchmark/smallbank/amalgamate.cc',
+    'benchmark/smallbank/write_check.cc',
+]
+
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'routine_sched.h', 'gc.h', 'gc_dram.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'pmem_mgr.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'piece.h', 'piece_cc.h',
@@ -81,13 +101,21 @@ cxx_library(
     link_whole=True,
 )
 
+cxx_library(
+    name='smallbank',
+    srcs=smallbank_srcs,
+    compiler_flags=includes,
+    headers=db_headers + smallbank_headers,
+    link_whole=True,
+)
+
 cxx_binary(
     name='db',
     srcs=['main.cc', 'module.cc'] + db_srcs,
     headers=db_headers,
     compiler_flags=includes,
     linker_flags=libs,
-    deps=[':tpcc', ':ycsb'],
+    deps=[':tpcc', ':smallbank', ':ycsb'],
 )
 
 cxx_test(

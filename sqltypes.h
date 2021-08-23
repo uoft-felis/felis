@@ -426,11 +426,14 @@ class GapField {
 };
 
 // First Gap
+#ifndef OFFSET
+#define OFFSET 0
+#endif
 template <template <typename> class FieldSerializer>
-class Field<FieldSerializer, __COUNTER__> : public GapField<FieldSerializer> {};
+class Field<FieldSerializer, __COUNTER__ + OFFSET> : public GapField<FieldSerializer> {};
 
 #define FIELD(field_type, field_name)                                   \
-  template <> struct FieldValue<__COUNTER__> { \
+  template <> struct FieldValue<__COUNTER__ + OFFSET> { \
     field_type field_name; typedef field_type Type;                     \
     Type *ptr() { return &field_name;}                                  \
     const Type *ptr() const { return &field_name;}                      \
@@ -442,7 +445,7 @@ class Field<FieldSerializer, __COUNTER__> : public GapField<FieldSerializer> {};
   };                                                                    \
 
 #define DBOBJ(name, serializer)                                         \
-  using name = sql::Schemas<sql::Field<serializer, __COUNTER__ - 1>>;   \
+  using name = sql::Schemas<sql::Field<serializer, __COUNTER__ + OFFSET - 1>>;   \
   template <template <typename> class FieldSerializer>                  \
   class Field<FieldSerializer, name::kOffset + 1> : public GapField<FieldSerializer> {}; \
 

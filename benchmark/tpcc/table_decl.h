@@ -3,6 +3,10 @@
 #ifndef TPCC_TABLE_DECL_H
 #define TPCC_TABLE_DECL_H
 
+#ifndef OFFSET
+#define OFFSET 0
+#endif
+
 #include "sqltypes.h"
 
 namespace sql {
