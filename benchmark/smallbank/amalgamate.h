@@ -15,7 +15,6 @@ struct AmalgamateStruct {
 
 struct AmalgamateState {
   IndexInfo *saving_1;
-  IndexInfo *saving_2;
   IndexInfo *checking_1;
   IndexInfo *checking_2;
 
@@ -23,15 +22,13 @@ struct AmalgamateState {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       if (id == 0){
         state->saving_1 = rows[0];
+        handle(rows[0]).AppendNewVersion();
       }
       else if (id == 1) {
-        state->saving_2 = rows[0];
+        state->checking_1 = rows[0];
         handle(rows[0]).AppendNewVersion();
       }
       else if (id == 2) {
-        state->checking_1 = rows[0];
-      }
-      else if (id == 3) {
         state->checking_2 = rows[0];
         handle(rows[0]).AppendNewVersion();
       }

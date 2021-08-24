@@ -34,13 +34,11 @@ void AmalgamateTxn::Prepare() {
   uint64_t cid_2 = account_ptr_2->ReadWithVersion(1)->template ToType<Account::Value>().CustomerID;
 
   auto saving_key_1 = Saving::Key::New(cid_1);
-  auto saving_key_2 = Saving::Key::New(cid_2);
   auto checking_key_1 = Checking::Key::New(cid_1);
   auto checking_key_2 = Checking::Key::New(cid_2);
   TxnIndexLookup<DummySliceRouter, AmalgamateState::Completion, void>(
       nullptr, 
       KeyParam<Saving>(saving_key_1),
-      KeyParam<Saving>(saving_key_2),
       KeyParam<Checking>(checking_key_1),
       KeyParam<Checking>(checking_key_2));
 }
@@ -53,17 +51,18 @@ void AmalgamateTxn::Run() {
     [](const auto &ctx) {
       auto &[state, index_handle] = ctx;
       TxnRow vhandle_sv_1 = index_handle(state->saving_1);
-      TxnRow vhandle_sv_2 = index_handle(state->saving_2);
       TxnRow vhandle_ck_1 = index_handle(state->checking_1);
       TxnRow vhandle_ck_2 = index_handle(state->checking_2);
       auto sv_1 = vhandle_sv_1.Read<Saving::Value>();
-      auto sv_2 = vhandle_sv_2.Read<Saving::Value>();
       auto ck_1 = vhandle_ck_1.Read<Checking::Value>();
       auto ck_2 = vhandle_ck_2.Read<Checking::Value>();
-      sv_2.BalanceSv += sv_1.BalanceSv;
+      ck_2.BalanceCk += sv_1.BalanceSv;
       ck_2.BalanceCk += ck_1.BalanceCk;
-      vhandle_sv_2.Write(sv_2);
+      sv_1.BalanceSv = 0;
+      ck_1.BalanceCk = 0;
       vhandle_ck_2.Write(ck_2);
+      vhandle_sv_1.Write(sv_1);
+      vhandle_ck_1.Write(ck_1);
     },
     aff
   );
