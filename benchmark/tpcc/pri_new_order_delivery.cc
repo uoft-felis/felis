@@ -82,9 +82,13 @@ void PriNewOrderDeliveryTxn::PrepareInsert()
 
 void PriNewOrderDeliveryTxn::Prepare()
 {
+  state->issue_tsc = __rdtsc();
+  state->sid = this->serial_id();
+  state->piece_exec_cnt.store(0);
+  state->piece_issue_cnt.store(0);
+
   Stock::Key stock_keys[kNewOrderMaxItems];
   INIT_ROUTINE_BRK(8192);
-
 
   if (!VHandleSyncService::g_lock_elision) {
     auto nr_items = detail.nr_items;
@@ -261,10 +265,14 @@ void PriNewOrderDeliveryTxn::Run()
 
         aff = w - 1;
 
+        state->piece_issue_cnt++;
         root->AttachRoutine(
             MakeContext(bitmap, params, w), node,
             [](const auto &ctx) {
               auto &[state, index_handle, bitmap, params, w] = ctx;
+              auto piece_exec_cnt = state->piece_exec_cnt.fetch_add(1);
+              if (piece_exec_cnt == 0)
+                state->exec_tsc = __rdtsc();
 
               for (int i = 0; i < NewOrderStruct::kNewOrderMaxItems; i++) {
                 if ((bitmap & (1 << i)) == 0) continue;
@@ -289,6 +297,13 @@ void PriNewOrderDeliveryTxn::Run()
                       index_handle.serial_id(), i,
                       (void *)state->stocks[i]);
               }
+
+              if (piece_exec_cnt == state->piece_issue_cnt.load() - 1) {
+                auto tsc = __rdtsc();
+                auto exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
+                auto total = exec + state->issue_tsc;
+                probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
+              }
             },
             aff);
       }
@@ -311,10 +326,15 @@ void PriNewOrderDeliveryTxn::Run()
       aff = g_tpcc_config.PWVDistrictToCoreId(district_id, 20);
     }
 
+    state->piece_issue_cnt++;
     root->AttachRoutine(
         MakeContext(this->delivery_sum), node,
         [](const auto &ctx) {
           auto &[state, index_handle, sum] = ctx;
+          auto piece_exec_cnt = state->piece_exec_cnt.fetch_add(1);
+          if (piece_exec_cnt == 0)
+            state->exec_tsc = __rdtsc();
+
           INIT_ROUTINE_BRK(4096);
           auto customer = index_handle(state->customer).template Read<Customer::Value>();
           customer.c_balance += sum;
@@ -322,8 +342,17 @@ void PriNewOrderDeliveryTxn::Run()
           index_handle(state->customer).Write(customer);
           ClientBase::OnUpdateRow(state->customer);
 
+          if (piece_exec_cnt == state->piece_issue_cnt.load() - 1) {
+            auto tsc = __rdtsc();
+            auto exec = tsc - state->exec_tsc;
+            auto total = exec + state->issue_tsc;
+            probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
+          }
         }, aff);
   }
+  auto tsc = __rdtsc();
+  state->issue_tsc = tsc - state->issue_tsc;
+  probes::PriInitTime{state->issue_tsc / 2200, 0, 0, state->sid}();
 }
 
 } // namespace tpcc

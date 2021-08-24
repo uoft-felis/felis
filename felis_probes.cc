@@ -352,9 +352,6 @@ ProbeMain::~ProbeMain()
             << "(max: " << global.piece_max() << ")" << std::endl;
   std::cout << global.piece_hist();
 
-  if (!felis::NodeConfiguration::g_priority_txn)
-    return;
-
   if (global.init_queue_avg().getCnt() != 0) {
     std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
               << "(max: " << global.init_queue_max() << ")" << std::endl;

@@ -75,6 +75,11 @@ struct PriNewOrderDeliveryState {
     }
   };
   NodeBitmap customer_nodes; //  actually unused
+  uint64_t issue_tsc;
+  uint64_t exec_tsc;
+  uint64_t sid;
+  std::atomic_int piece_exec_cnt;
+  std::atomic_int piece_issue_cnt;
 };
 
 class PriNewOrderDeliveryTxn : public Txn<PriNewOrderDeliveryState>, public NewOrderStruct {

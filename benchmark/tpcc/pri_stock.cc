@@ -30,6 +30,7 @@ PriStockTxn::PriStockTxn(Client *client, uint64_t serial_id)
 
 void PriStockTxn::Prepare()
 {
+  state->issue_tsc = __rdtsc();
   Stock::Key stock_keys[kStockMaxItems];
   INIT_ROUTINE_BRK(8192);
 
@@ -84,9 +85,11 @@ void PriStockTxn::Run()
       aff = 0; // stock is at partition 0
     }
 
+    state->sid = this->serial_id();
     root->AttachRoutine(
         MakeContext(params), node,
         [](const auto &ctx) {
+          auto exec_tsc = __rdtsc();
           auto &[state, index_handle, params] = ctx;
           INIT_ROUTINE_BRK(4096);
           for (int i = 0; i < params.nr; ++i) {
@@ -96,6 +99,10 @@ void PriStockTxn::Run()
               index_handle(state->stocks[i]).Write(stock);
               ClientBase::OnUpdateRow(state->stocks[i]);
           }
+          auto tsc = __rdtsc();
+          auto exec = tsc - exec_tsc;
+          auto total = exec + state->issue_tsc;
+          probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
         }, aff);
 
     /*
@@ -145,6 +152,9 @@ void PriStockTxn::Run()
     }
     */
   }
+  auto tsc = __rdtsc();
+  state->issue_tsc = tsc - state->issue_tsc;
+  probes::PriInitTime{state->issue_tsc / 2200, 0, 0, state->sid}();
 }
 
 }

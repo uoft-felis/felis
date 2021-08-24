@@ -3,6 +3,7 @@
 #include "txn_cc.h"
 #include "pwv_graph.h"
 #include "util/os.h"
+#include "util/random.h"
 
 namespace ycsb {
 
@@ -290,6 +291,11 @@ struct MWState {
       handle(rows[0]).AppendNewVersion(0);
     }
   };
+  uint64_t init_tsc;
+  uint64_t exec_tsc;
+  uint64_t sid;
+  std::atomic_int piece_exec_cnt;
+  std::atomic_int piece_init_cnt;
 };
 
 template <>
@@ -356,6 +362,8 @@ void MWTxn::Prepare()
         nullptr,
         KeyParam<Ycsb>(dbk, kMWTotal));
   } else {
+    state->piece_init_cnt = 0;
+    state->sid = this->serial_id();
     static constexpr auto LookupIndex = [](auto k, int i, auto state, auto handle) {
       auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
       Ycsb::Key dbk;
@@ -364,27 +372,24 @@ void MWTxn::Prepare()
       state->rows[i] = rel.Search(dbk.EncodeView(buf));
       handle(state->rows[i]).AppendNewVersion();
     };
-    if (Client::g_enable_pwv) {
-      RunOnPartition(
-          [this](auto part, auto root, const auto &t) {
-            auto [_1, i, _2, _3, _part] = t;
-            util::Instance<PWVGraphManager>()[part]->ReserveEdge(serial_id());
-          });
-    }
     RunOnPartition(
         [this](auto part, auto root, const auto &t) {
           root->AttachRoutine(
               t, 1, // Always on the local node.
               [](auto &ctx) {
                 auto [k, i, state, handle, part] = ctx;
+                auto cnt = state->piece_init_cnt.fetch_add(1);
+                if (cnt == 0)
+                  state->init_tsc = __rdtsc();
                 LookupIndex(k, i, state, handle);
 
-                if (Client::g_enable_pwv)
-                  util::Instance<PWVGraphManager>()[part]->AddResource(
-                      handle.serial_id(), PWVGraph::VHandleToResource(state->rows[i]));
+                if (cnt == 1) {
+                  auto tsc = __rdtsc();
+                  state->init_tsc = (tsc > state->init_tsc) ? tsc - state->init_tsc : 0;
+                  probes::PriInitTime{state->init_tsc / 2200, 0, 0, state->sid}();
+                }
               },
               part); // Partitioning affinity.
-
         });
 
   }
@@ -429,6 +434,36 @@ void MWTxn::Run()
           }
         },
         aff);
+
+  } else if (Client::g_enable_granola) {
+    state->piece_exec_cnt = 0;
+    RunOnPartition(
+        [this](auto part, auto root, const auto &t) {
+          root->AttachRoutine(
+              t, 1,
+              [](auto &ctx) {
+                auto &[k, i, state, handle, _part] = ctx;
+                auto cnt = state->piece_exec_cnt.fetch_add(1);
+                if (cnt == 0)
+                  state->exec_tsc = __rdtsc();
+
+                TxnRow vhandle = handle(state->rows[i]);
+                auto dbv = vhandle.Read<Ycsb::Value>();
+
+                static thread_local volatile char buffer[100];
+                std::copy(dbv.v.data(), dbv.v.data() + 100, buffer);
+                dbv.v.resize_junk(90);
+                vhandle.Write(dbv);
+
+                if (cnt == 1) {
+                  auto tsc = __rdtsc();
+                  auto exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
+                  auto total = exec + state->init_tsc;
+                  probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
+                }
+              },
+              part);
+        });
 
   }
 }
@@ -500,7 +535,8 @@ Client::Client() noexcept
 BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
   auto x_pct = NodeConfiguration::g_priority_batch_mode_pct;
-  int rd = __rdtsc() % (100 + x_pct);
+  util::FastRandom r(__rdtsc());
+  int rd = r.next_u32() % (100 + x_pct);
   if (x_pct && rd >= 100) {
     return new MWTxn(this, serial_id);
   }

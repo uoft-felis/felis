@@ -32,6 +32,8 @@ struct PriStockState {
     }
   };
   NodeBitmap stocks_nodes;
+  uint64_t issue_tsc;
+  uint64_t sid;
 };
 
 class PriStockTxn : public Txn<PriStockState>, public PriStockStruct {
