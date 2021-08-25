@@ -114,8 +114,12 @@ struct Options {
   static inline const auto kSIDRowRTS = Option("SIDRowRTS");
   static inline const auto kLastVersionPatch = Option("LastVersionPatch");
 
-  static inline const auto kBackoffDist = Option("BackoffDist");
-  static inline const auto kNoExpBackoff = Option("NoExpBackoff");
+  static inline const auto kDist = Option("Dist");
+  static inline const auto kNoProgressBackoff = Option("NoProgressBackoff");
+  static inline const auto kExpDistriBackoff = Option("ExpDistriBackoff");
+  static inline const auto kLockInsert = Option("LockInsert");
+  static inline const auto kSIDRowWTS = Option("SIDRowWTS");
+
   static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
   static inline const auto kNoPriorityPreempt = Option("NoPriorityPreempt");
   static inline const auto kNoTpccPin = Option("NoTpccPin");

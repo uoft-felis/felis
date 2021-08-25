@@ -1,6 +1,9 @@
+#include <math.h>
+
 #include "priority.h"
 #include "opts.h"
 #include "routine_sched.h"
+#include "util/random.h"
 
 namespace felis {
 
@@ -24,8 +27,11 @@ bool PriorityTxnService::g_conflict_row_rts = false;
 bool PriorityTxnService::g_sid_row_rts = false;
 bool PriorityTxnService::g_last_version_patch = false;
 
-int PriorityTxnService::g_backoff_distance = -100;
-bool PriorityTxnService::g_distance_exponential_backoff = true;
+int PriorityTxnService::g_dist = -100;
+bool PriorityTxnService::g_progress_backoff = true;
+bool PriorityTxnService::g_exp_distri_backoff = false;
+bool PriorityTxnService::g_lockless_append = true;
+bool PriorityTxnService::g_sid_row_wts = false;
 bool PriorityTxnService::g_fastest_core = false;
 bool PriorityTxnService::g_priority_preemption = true;
 bool PriorityTxnService::g_tpcc_pin = true;
@@ -149,21 +155,34 @@ PriorityTxnService::PriorityTxnService()
   abort_if(g_sid_read_bit + g_sid_forward_read_bit + g_sid_row_rts > 1,
            "plz only choose one between SIDReadBit, SIDForwardReadBit & SIDRowRTS");
 
-  int logical_dist = -1;
-  if (Options::kBackoffDist) {
-    logical_dist = Options::kBackoffDist.ToInt(); // independent of priority txn slot ratio
-    g_backoff_distance = logical_dist * (g_strip_batched + g_strip_priority);
+  int logical_dist = INT_MAX;
+  if (Options::kDist) {
+    logical_dist = Options::kDist.ToInt(); // independent of priority txn slot ratio
+    g_dist = logical_dist * (g_strip_batched + g_strip_priority);
     if (Options::kRowRTS) {
       logger->info("Neglecting Global Backoff Distance for RowRTS");
-      g_backoff_distance = INT_MAX;
+      g_dist = INT_MAX;
     }
   }
-  if (Options::kNoExpBackoff)
-    g_distance_exponential_backoff = false;
+  if (Options::kNoProgressBackoff)
+    g_progress_backoff = false;
+  if (Options::kExpDistriBackoff) {
+    abort_if(!g_row_rts, "-XExpDistriBackoff only works with RowRTS");
+    g_progress_backoff = false;
+    g_exp_distri_backoff = true;
+    g_lockless_append = false;
+  }
+  if (Options::kLockInsert)
+    g_lockless_append = false;
+  if (Options::kSIDRowWTS)
+    g_sid_row_wts = true;
+  logger->info("[Pri-init] ProgressBackoff {}, ExpDistriBackoff {}, LockInsert {}, SIDRowWTS {}",
+               g_progress_backoff, g_exp_distri_backoff, !g_lockless_append, g_sid_row_wts);
+
   if (Options::kFastestCore)
     g_fastest_core = true;
-  logger->info("[Pri-init] Strip: Batched {} + Priority {}, BackoffDist: logical {}, physical {}",
-               g_strip_batched, g_strip_priority, logical_dist, g_backoff_distance);
+  logger->info("[Pri-init] Strip: Batched {} + Priority {}, Dist: logical {}, physical {}",
+               g_strip_batched, g_strip_priority, logical_dist, g_dist);
 
   if (Options::kNoPriorityPreempt)
     g_priority_preemption = false;
@@ -287,22 +306,62 @@ bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
 void PriorityTxnService::PrintStats() {
   if (!NodeConfiguration::g_priority_txn)
     return;
-  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns  physical BackOffDist: {}",
-               g_nr_priority_txn, g_interval_priority_txn, g_backoff_distance);
+  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns  physical Dist: {}",
+               g_nr_priority_txn, g_interval_priority_txn, g_dist);
+  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, LockInsert {}, SIDRowWTS {}",
+               g_progress_backoff, g_exp_distri_backoff, !g_lockless_append, g_sid_row_wts);
+
 }
 
 // find a serial id for the calling priority txn
 uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int size)
 {
+  if (g_sid_row_rts && g_exp_distri_backoff) {
+    uint64_t max_rts = 1;
+    for (int i = 0; i < size; ++i) {
+      auto rts = handles[i]->GetRowRTS();
+      max_rts = (rts > max_rts) ? rts : max_rts;
+    }
+    uint64_t rts_seq;
+    auto prog = this->GetProgress(go::Scheduler::CurrentThreadPoolId() - 1);
+    if (max_rts >> 24 < prog >> 32) {
+      // rts is at previous epoch
+      rts_seq = 1;
+    } else {
+      abort_if(max_rts >> 24 > prog >> 32, "max_rts at next epoch? rts epoch {}, cur epoch {}",
+               max_rts >> 24, prog >> 32);
+      rts_seq = max_rts & 0xFFFFFF;
+    }
+
+    if (g_sid_row_wts) {
+      uint64_t max_wts = 1, wts_seq;
+      for (int i = 0; i < size; ++i) {
+        auto wts = handles[i]->last_priority_version();
+        max_wts = (wts > max_wts) ? wts : max_wts;
+      }
+      if (max_wts >> 32 < prog >> 32) {
+        wts_seq = 1;
+      } else {
+        abort_if(max_wts >> 32 > prog >> 32, "max_wts at next epoch? wts epoch {}, cur epoch {}",
+                max_wts >> 32, prog >> 32);
+        wts_seq = max_wts >> 8 & 0xFFFFFF;
+      }
+      if (wts_seq > rts_seq) rts_seq = wts_seq;
+    }
+
+    rts_seq += txn->distance;
+    return GetNextSIDSlot(rts_seq);
+  }
+
   uint64_t prog = this->GetMaxProgress();
   int seq = prog >> 8 & 0xFFFFFF;
-  int &backoff_dist = txn->backoff_distance;
+  int &dist = txn->distance;
 
   uint64_t new_seq;
-  if (seq + backoff_dist < 1)
+  if (seq + dist < 1)
     new_seq = 1;
   else
-    new_seq = seq + backoff_dist;
+    new_seq = seq + dist;
 
   if (g_sid_row_rts) {
     uint64_t max_rts = 1;
@@ -321,6 +380,23 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
                 max_rts >> 24, prog >> 32);
       rts_seq = max_rts & 0xFFFFFF;
     }
+
+    if (g_sid_row_wts) {
+      uint64_t max_wts = 1, wts_seq;
+      for (int i = 0; i < size; ++i) {
+        auto wts = handles[i]->last_priority_version();
+        max_wts = (wts > max_wts) ? wts : max_wts;
+      }
+      if (max_wts >> 32 < prog >> 32) {
+        wts_seq = 1;
+      } else {
+        abort_if(max_wts >> 32 > prog >> 32, "max_wts at next epoch? wts epoch {}, cur epoch {}",
+                max_wts >> 32, prog >> 32);
+        wts_seq = max_wts >> 8 & 0xFFFFFF;
+      }
+      if (wts_seq > rts_seq) rts_seq = wts_seq;
+    }
+
     new_seq = (rts_seq > new_seq) ? rts_seq : new_seq; // do not plan before backoff dist
     return GetNextSIDSlot(new_seq);
   }
@@ -353,9 +429,9 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       new_seq = seq; // do not plan it beyond cur prog
   }
   auto res = GetNextSIDSlot(new_seq);
-  if (PriorityTxnService::g_row_rts && backoff_dist == INT_MIN) {
-    txn->backoff_distance = (res >> 8 & 0xFFFFFF) - (this->GetMaxProgress() >> 8 & 0xFFFFFF);
-    txn->backoff_distance_max = abs(txn->backoff_distance);
+  if (PriorityTxnService::g_row_rts && dist == INT_MIN) {
+    txn->distance = (res >> 8 & 0xFFFFFF) - (this->GetMaxProgress() >> 8 & 0xFFFFFF);
+    txn->distance_max = abs(txn->distance);
   }
   return res;
 }
@@ -420,7 +496,7 @@ bool PriorityTxn::Init(VHandle **update_handles, int usize, BaseInsertKey **inse
 {
   abort_if(this->initialized, "Init() cannot be called after previous Init() succeeded");
 
-  // acquire row lock in order (here addr order) to prevent deadlock
+  // AppendNewPriorityVersion in order (here addr order) to prevent deadlock
   std::sort(update_handles, update_handles + usize);
 
   // 1) acquire SID
@@ -481,28 +557,38 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
   return true; // progress passed & no read bit to look precisely, deem it as conflict happened
 }
 
+double ran_expo(double lambda){
+    static util::FastRandom r(__rdtsc());
+    double u = r.next_uniform(); // [0,1)
+    return -log(1 - u) / lambda;
+}
 
 void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles,int insert_cnt) {
-  if (PriorityTxnService::g_distance_exponential_backoff) {
-    if (PriorityTxnService::g_backoff_distance < 0 || PriorityTxnService::g_row_rts) {
+  if (PriorityTxnService::g_exp_distri_backoff) {
+    // exponential distribution backoff
+    int average_transaction_latency = 2000;
+    distance = ran_expo(1.0/average_transaction_latency);
+  }
+  else if (PriorityTxnService::g_progress_backoff) {
+    if (PriorityTxnService::g_dist < 0 || PriorityTxnService::g_row_rts) {
       // -5 -> -2 -> -1 -> 0 -> 1 -> 2 -> 4 -> 5 -> 5 -> ...
-      if (backoff_distance < 0) {
-        backoff_distance /= 2;
-      } else if (backoff_distance == 0) {
-        backoff_distance = 1;
+      if (distance < 0) {
+        distance /= 2;
+      } else if (distance == 0) {
+        distance = 1;
       } else {
-        backoff_distance *= 2;
-        if (backoff_distance > this->backoff_distance_max)
-          backoff_distance = this->backoff_distance_max;
+        distance *= 2;
+        if (distance > this->distance_max)
+          distance = this->distance_max;
       }
     } else {
       // 0 -> 1 -> 2 -> 4 -> ... -> INT_MAX
-      if (backoff_distance == 0) {
-        backoff_distance = 1;
-      } else if (backoff_distance < INT_MAX / 2) {
-        backoff_distance *= 2;
+      if (distance == 0) {
+        distance = 1;
+      } else if (distance < INT_MAX / 2) {
+        distance *= 2;
       } else {
-        backoff_distance = INT_MAX;
+        distance = INT_MAX;
       }
     }
   }
@@ -511,7 +597,7 @@ void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **i
   for (int i = 0; i < insert_cnt; ++i)
     insert_handles[i]->WriteWithVersion(sid, nullptr, sid >> 32);
   // this->min_sid = this->sid; // do not retry with this sid
-  // if (PriorityTxnService::g_sid_bitmap && backoff_distance >= 0) {
+  // if (PriorityTxnService::g_sid_bitmap && distance >= 0) {
   //   // since this txn aborted, reset the SID bit back to false
   //   auto core = go::Scheduler::CurrentThreadPoolId() - 1;
   //   auto seq = (this->sid >> 8) & 0xFFFFFF;
