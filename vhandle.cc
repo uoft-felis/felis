@@ -820,7 +820,7 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
     lock.Acquire(&qnode);
 
   Entry *p = head;
-  while (p && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
+  while (p && (p->version > ver) && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
     p = p->next;
 
   if (!IsLockLess()) lock.Release(&qnode);
