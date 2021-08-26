@@ -170,7 +170,6 @@ PriorityTxnService::PriorityTxnService()
     abort_if(!g_row_rts, "-XExpDistriBackoff only works with RowRTS");
     g_progress_backoff = false;
     g_exp_distri_backoff = true;
-    g_lockless_append = false;
   }
   if (Options::kLockInsert)
     g_lockless_append = false;
