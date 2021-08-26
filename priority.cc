@@ -312,129 +312,141 @@ void PriorityTxnService::PrintStats() {
 
 }
 
+uint64_t seq2sid(uint64_t sequence)
+{
+  auto epoch = util::Instance<EpochManager>().current_epoch_nr();
+  auto node_id = util::Instance<NodeConfiguration>().node_id();
+  return (epoch << 32) | (sequence << 8) | node_id;
+}
+
+uint64_t sid2seq(uint64_t sid) { return sid >> 8 & 0xFFFFFF; }
+uint64_t sid2epo(uint64_t sid) { return sid >> 32; }
+
 // find a serial id for the calling priority txn
 uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int size)
 {
-  if (g_sid_row_rts && g_exp_distri_backoff) {
-    uint64_t max_rts = 1;
-    for (int i = 0; i < size; ++i) {
-      auto rts = handles[i]->GetRowRTS();
-      max_rts = (rts > max_rts) ? rts : max_rts;
-    }
-    uint64_t rts_seq;
-    auto prog = this->GetProgress(go::Scheduler::CurrentThreadPoolId() - 1);
-    if (max_rts >> 24 < prog >> 32) {
-      // rts is at previous epoch
-      rts_seq = 1;
-    } else {
-      abort_if(max_rts >> 24 > prog >> 32, "max_rts at next epoch? rts epoch {}, cur epoch {}",
-               max_rts >> 24, prog >> 32);
-      rts_seq = max_rts & 0xFFFFFF;
-    }
-
-    if (g_sid_row_wts) {
-      uint64_t max_wts = 1, wts_seq;
-      for (int i = 0; i < size; ++i) {
-        auto wts = handles[i]->last_priority_version();
-        max_wts = (wts > max_wts) ? wts : max_wts;
-      }
-      if (max_wts >> 32 < prog >> 32) {
-        wts_seq = 1;
-      } else {
-        abort_if(max_wts >> 32 > prog >> 32, "max_wts at next epoch? wts epoch {}, cur epoch {}",
-                max_wts >> 32, prog >> 32);
-        wts_seq = max_wts >> 8 & 0xFFFFFF;
-      }
-      if (wts_seq > rts_seq) rts_seq = wts_seq;
-    }
-
-    rts_seq += txn->distance;
-    return GetNextSIDSlot(rts_seq);
-  }
-
-  uint64_t prog = this->GetMaxProgress();
-  int seq = prog >> 8 & 0xFFFFFF;
-  int &dist = txn->distance;
-
-  uint64_t new_seq;
-  if (seq + dist < 1)
-    new_seq = 1;
-  else
-    new_seq = seq + dist;
-
+  auto cur_epoch = util::Instance<EpochManager>().current_epoch_nr();
   if (g_sid_row_rts) {
+    // get maximum rts from rows
     uint64_t max_rts = 1;
-    uint64_t min_sid = txn->min_sid >> 8;
-    max_rts = (min_sid > max_rts) ? min_sid : max_rts;
     for (int i = 0; i < size; ++i) {
       auto rts = handles[i]->GetRowRTS();
       max_rts = (rts > max_rts) ? rts : max_rts;
     }
-    uint64_t rts_seq;
-    if (max_rts >> 24 < prog >> 32) {
-      // rts is at previous epoch
-      rts_seq = 1;
+    uint64_t max_rts_epoch = max_rts >> 24;
+    uint64_t max_rts_seq;
+    if (max_rts_epoch < cur_epoch) {
+      max_rts_seq = 1;
     } else {
-      abort_if (max_rts >> 24 > prog >> 32, "max_rts at next epoch? rts epoch {}, cur epoch {}",
-                max_rts >> 24, prog >> 32);
-      rts_seq = max_rts & 0xFFFFFF;
+      abort_if (max_rts_epoch > cur_epoch, "max_rts in epoch {}?", max_rts_epoch);
+      max_rts_seq = max_rts & 0xFFFFFF;
     }
 
+    // get maximum wts to enlarge max_rts_seq
     if (g_sid_row_wts) {
-      uint64_t max_wts = 1, wts_seq;
+      uint64_t max_wts = 1;
       for (int i = 0; i < size; ++i) {
         auto wts = handles[i]->last_priority_version();
         max_wts = (wts > max_wts) ? wts : max_wts;
       }
-      if (max_wts >> 32 < prog >> 32) {
-        wts_seq = 1;
+      uint64_t max_wts_epoch = sid2epo(max_wts);
+      uint64_t max_wts_seq;
+      if (max_wts_epoch < cur_epoch) {
+        max_wts_seq = 1;
       } else {
-        abort_if(max_wts >> 32 > prog >> 32, "max_wts at next epoch? wts epoch {}, cur epoch {}",
-                max_wts >> 32, prog >> 32);
-        wts_seq = max_wts >> 8 & 0xFFFFFF;
+        abort_if(max_wts_epoch > cur_epoch, "max_wts in epoch {}?", max_wts_epoch);
+        max_wts_seq = sid2seq(max_wts);
       }
-      if (wts_seq > rts_seq) rts_seq = wts_seq;
+      if (max_wts_seq > max_rts_seq) max_rts_seq = max_wts_seq;
     }
 
-    new_seq = (rts_seq > new_seq) ? rts_seq : new_seq; // do not plan before backoff dist
-    return GetNextSIDSlot(new_seq);
+    uint64_t min_seq = max_rts_seq;
+    // backoff by txn->distance
+    // g_progress_backoff and g_exp_distri_backoff do this differently
+    int &dist = txn->distance;
+    if (g_progress_backoff) {
+      // dist is backward limit, based on max progress
+      uint64_t limit_seq;
+      if (dist == INT_MIN) {
+        limit_seq = 1;
+      } else {
+        int max_prog_seq = sid2seq(this->GetMaxProgress());
+        if (max_prog_seq + dist < 1)
+          limit_seq = 1;
+        else
+          limit_seq = max_prog_seq + dist;
+      }
+      min_seq = (min_seq > limit_seq) ? min_seq : limit_seq;
+    } else if (g_exp_distri_backoff) {
+      // dist is forward backoff
+      min_seq = min_seq + dist;
+    } else {
+      min_seq = min_seq;
+    }
+
+    // backoff by txn->min_sid
+    if (!g_exp_distri_backoff) {
+      // SID cannot be smaller than txn->min_sid from last abort
+      uint64_t last_time_seq = sid2seq(txn->min_sid);
+      if (min_seq < last_time_seq)
+        min_seq = last_time_seq;
+      min_seq = (min_seq > last_time_seq) ? min_seq : last_time_seq;
+    }
+
+    // find available SID after min_seq
+    uint64_t available_seq = GetNextSIDSlot(min_seq);
+    // record
+    if (g_progress_backoff && dist == INT_MIN) {
+      int max_prog_seq = sid2seq(this->GetMaxProgress());
+      txn->distance = available_seq - max_prog_seq;
+      txn->distance_max = abs(txn->distance);
+    }
+    return seq2sid(available_seq);
   }
+
+  abort_if(g_exp_distri_backoff, "exp. distri. currently only works with row rts");
+  int max_prog_seq = sid2seq(this->GetMaxProgress());
+
+  uint64_t min_seq;
+  if (max_prog_seq + txn->distance < 1)
+    min_seq = 1;
+  else
+    min_seq = max_prog_seq + txn->distance;
 
   if (g_sid_read_bit | g_sid_forward_read_bit) {
-    uint64_t min = (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
-    if (txn->min_sid > min)
-      min = txn->min_sid;
+    // limit search by txn->min_sid
+    uint64_t min_sid = seq2sid(min_seq);
+    if (txn->min_sid > min_sid)
+      min_sid = txn->min_sid;
 
+    // enlarge min_sid by looking at last sid given out
     uint64_t last = 0;
     if (g_sid_global_inc)
       last = this->global_last_sid;
     if (g_sid_local_inc)
       last = *local_last_sid[go::Scheduler::CurrentThreadPoolId() - 1];
-    if (last > min)
-      min = last;
+    if (last > min_sid)
+      min_sid = last;
 
+    // enlarge min_sid by read tracking
     if (g_sid_read_bit) {
       for (int i = 0; i < size; ++i)
-        min = handles[i]->SIDBackwardSearch(min);
+        min_sid = handles[i]->SIDBackwardSearch(min_sid);
     } else {
       for (int i = 0; i < size; ++i)
-        min = handles[i]->SIDForwardSearch(min);
+        min_sid = handles[i]->SIDForwardSearch(min_sid);
     }
-    if (min >> 32 < prog >> 32) // min is from last epoch
-      new_seq = 1;
+    if (sid2epo(min_sid) < cur_epoch) // min_sid is from last epoch
+      min_seq = 1;
     else
-      new_seq = min >> 8 & 0xFFFFFF;
-    if (new_seq > seq)
-      new_seq = seq; // do not plan it beyond cur prog
+      min_seq = sid2seq(min_sid);
   }
-  auto res = GetNextSIDSlot(new_seq);
-  if (PriorityTxnService::g_row_rts && dist == INT_MIN) {
-    txn->distance = (res >> 8 & 0xFFFFFF) - (this->GetMaxProgress() >> 8 & 0xFFFFFF);
-    txn->distance_max = abs(txn->distance);
-  }
-  return res;
+  uint64_t available_seq = GetNextSIDSlot(min_seq);
+
+  return seq2sid(available_seq);
 }
 
+// return next slot sequence number
 uint64_t PriorityTxnService::GetNextSIDSlot(uint64_t sequence)
 {
   uint64_t prog = this->GetMaxProgress();
@@ -444,36 +456,36 @@ uint64_t PriorityTxnService::GetNextSIDSlot(uint64_t sequence)
     lock.Lock();
     uint64_t next_slot = (sequence/k + 1) * k;
     // maximum slot ratio it can utilize is priority:batched = 1:1
-    uint64_t sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+    uint64_t sid = seq2sid(next_slot);
     if (this->global_last_sid >= sid) {
-      next_slot = (this->global_last_sid >> 8 & 0xFFFFFF) + k;
-      sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+      next_slot = sid2seq(this->global_last_sid) + k;
+      sid = seq2sid(next_slot);
     }
     this->global_last_sid = sid;
     lock.Unlock();
-    return sid;
+    return next_slot;
   }
 
   if (g_sid_local_inc) {
     // based on g_strip_priorty = # of cores
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1; // 0~31
     uint64_t next_slot = sequence/k * k + g_strip_batched + core_id + 1;
-    uint64_t sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+    uint64_t sid = seq2sid(next_slot);
     auto &last = *local_last_sid[core_id];
     if (last >= sid) {
-      next_slot = (last >> 8 & 0xFFFFFF) + k;
-      sid = (prog & 0xFFFFFFFF000000FF) | (next_slot << 8);
+      next_slot = sid2seq(last) + k;
+      sid = seq2sid(next_slot);
     }
     last = sid;
-    return sid;
+    return next_slot;
   }
 
   // use per-core bitmap to find an unused SID
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   int idx = seq2idx(sequence);
   int available_idx = seq_bitmap[core_id]->set_first_unset_idx(idx);
-  uint64_t new_seq = idx2seq(available_idx, core_id);
-  return (prog & 0xFFFFFFFF000000FF) | (new_seq << 8);
+  uint64_t min_seq = idx2seq(available_idx, core_id);
+  return min_seq;
 }
 
 void PriorityTxnService::ClearBitMap(void)
