@@ -86,9 +86,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     } pending; // Pending inserts into the heap and the hashtable
 
     struct {
-      // Ring-buffer.
-      WaitState states[kOutOfOrderWindow];
-      uint32_t off;
+      // stack for preempted execution routines
+      WaitState states[kOutOfOrderWindow + 1];
       uint32_t len;
     } waiting;
 

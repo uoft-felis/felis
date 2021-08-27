@@ -354,7 +354,7 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     queue->pq.pending.start = 0;
     queue->pq.pending.end = 0;
 
-    queue->pq.waiting.off = queue->pq.waiting.len = 0;
+    queue->pq.waiting.len = 0;
 
     for (size_t t = 0; t < kHashTableSize; t++) {
       queue->pq.ht[t].Initialize();
@@ -556,13 +556,13 @@ retry:
   if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end, &q.pending.start, &q.pending.end))
     goto retry;
 
-  auto &ws = q.waiting.states[q.waiting.off];
+  // check whether to run the waiting coroutine
   if (q.waiting.len > 0
       && (q.waiting.len == kOutOfOrderWindow
-          || q.sched_pol->ShouldPickWaiting(q.waiting.states[q.waiting.off]))) {
-    // TODO: is this right?
+          || q.sched_pol->ShouldPickWaiting(q.waiting.states[q.waiting.len - 1]))) {
+    auto &ws = q.waiting.states[q.waiting.len - 1];
+    // q.waiting should be a stack so we don't get priority inversion
     if (should_pop(nullptr, ws.state)) {
-      q.waiting.off = (q.waiting.off + 1) % kOutOfOrderWindow;
       q.waiting.len--;
       state.current_sched_key = ws.sched_key;
       state.ts++;
@@ -684,7 +684,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
 
   abort_if(q.waiting.len == kOutOfOrderWindow, "out-of-order scheduling window is full");
 
-  auto &ws = q.waiting.states[(q.waiting.off + q.waiting.len) % kOutOfOrderWindow];
+  auto &ws = q.waiting.states[q.waiting.len];
   ws.preempt_ts = state.ts;
   ws.sched_key = state.current_sched_key;
   ws.state = routine_state;
