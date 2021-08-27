@@ -386,7 +386,8 @@ void MWTxn::Prepare()
                 if (cnt == 1) {
                   auto tsc = __rdtsc();
                   state->init_tsc = (tsc > state->init_tsc) ? tsc - state->init_tsc : 0;
-                  probes::PriInitTime{state->init_tsc / 2200, 0, 0, state->sid}();
+                  if (state->init_tsc / 2200 < 100000)
+                    probes::PriInitTime{state->init_tsc / 2200, 0, 0, state->sid}();
                 }
               },
               part); // Partitioning affinity.
@@ -459,7 +460,8 @@ void MWTxn::Run()
                   auto tsc = __rdtsc();
                   auto exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
                   auto total = exec + state->init_tsc;
-                  probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
+                  if (exec / 2200 < 100000)
+                    probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
                 }
               },
               part);
