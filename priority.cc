@@ -28,6 +28,7 @@ bool PriorityTxnService::g_sid_row_rts = false;
 bool PriorityTxnService::g_last_version_patch = false;
 
 int PriorityTxnService::g_dist = -100;
+int PriorityTxnService::g_exp_lambda = 2000;
 bool PriorityTxnService::g_progress_backoff = true;
 bool PriorityTxnService::g_exp_distri_backoff = false;
 bool PriorityTxnService::g_lockless_append = true;
@@ -170,6 +171,9 @@ PriorityTxnService::PriorityTxnService()
     abort_if(!g_row_rts, "-XExpDistriBackoff only works with RowRTS");
     g_progress_backoff = false;
     g_exp_distri_backoff = true;
+    if (Options::kExpLambda)
+      g_exp_lambda = Options::kExpLambda.ToInt();
+    logger->info("[Pri-init] ExpLambda {}", g_exp_lambda);
   }
   if (Options::kLockInsert)
     g_lockless_append = false;
@@ -574,7 +578,7 @@ double ran_expo(double lambda){
 void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles,int insert_cnt) {
   if (PriorityTxnService::g_exp_distri_backoff) {
     // exponential distribution backoff
-    int average_transaction_latency = 2000;
+    int average_transaction_latency = PriorityTxnService::g_exp_lambda;
     distance = ran_expo(1.0/average_transaction_latency);
   }
   else if (PriorityTxnService::g_progress_backoff) {

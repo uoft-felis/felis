@@ -25,7 +25,7 @@ class PriorityTxnService {
     std::vector<bool> bitset;
     size_t size;
    public:
-    static const int extra_strip = 1000;
+    static const int extra_strip = 3000;
     Bitmap() = delete;
     Bitmap(const Bitmap& rhs) = delete;
     Bitmap(size_t _size) {
@@ -114,6 +114,7 @@ class PriorityTxnService {
   static bool g_last_version_patch;   // patch read bit with row rts
 
   static int g_dist; // how many distance we are going to backoff, could be + or -
+  static int g_exp_lambda;
   static bool g_progress_backoff;
   static bool g_exp_distri_backoff;
   static bool g_lockless_append;

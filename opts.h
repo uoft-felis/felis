@@ -115,6 +115,7 @@ struct Options {
   static inline const auto kLastVersionPatch = Option("LastVersionPatch");
 
   static inline const auto kDist = Option("Dist");
+  static inline const auto kExpLambda = Option("ExpLambda");
   static inline const auto kNoProgressBackoff = Option("NoProgressBackoff");
   static inline const auto kExpDistriBackoff = Option("ExpDistriBackoff");
   static inline const auto kLockInsert = Option("LockInsert");
