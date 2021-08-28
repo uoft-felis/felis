@@ -380,8 +380,6 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     } else if (g_exp_distri_backoff) {
       // dist is forward backoff
       min_seq = min_seq + dist;
-    } else {
-      min_seq = min_seq;
     }
 
     // backoff by txn->min_sid
@@ -442,7 +440,6 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       min_seq = sid2seq(min_sid);
   }
   uint64_t available_seq = GetNextSIDSlot(min_seq);
-
   return seq2sid(available_seq);
 }
 

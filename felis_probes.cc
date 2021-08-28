@@ -57,7 +57,7 @@ static struct ProbeMain {
 
   agg::Agg<agg::Average> total_latency_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max;
-  agg::Agg<agg::Histogram<2048, 0, 2>> total_latency_hist;
+  agg::Agg<agg::Histogram<4096, 0, 4>> total_latency_hist;
 
   agg::Agg<agg::Average> piece_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, uintptr_t, int>>> piece_max;
