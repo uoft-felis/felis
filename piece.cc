@@ -194,8 +194,12 @@ void BasePieceCollection::ExecutionRoutine::Run()
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
       [&next_r, &give_up, sched]
       (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
+        // If state != nullptr, meaning we have some other coroutine to run from, therefore you are
+        // the temp routine for smaller pieces, you should give up, we should not pop another piece
+        // for you to run
         if (state != nullptr) {
           if (state->is_detached()) {
+            // reattach it
             trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
             state->Init();
             sched->WakeUp(state);
@@ -205,6 +209,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
           give_up = true;
           return false;
         }
+        // state is nullptr, meaning there is a new piece to run
         give_up = false;
         next_r = r;
         // next_state = state;
@@ -295,6 +300,8 @@ loop:
   trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {} give up {}", core_id, give_up);
 }
 
+// gets called in vhandle_sync, when coroutine is spinning on the version.
+// return whether the caller should exit from the spinning
 bool BasePieceCollection::ExecutionRoutine::Preempt()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
@@ -310,6 +317,7 @@ bool BasePieceCollection::ExecutionRoutine::Preempt()
     sched->RunNext(go::Scheduler::SleepState);
 
     spawn = true;
+    // if the coroutine waiting queue should pop from the stack, return true
     auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
         [this, &spawn]
         (PieceRoutine *, BasePieceCollection::ExecutionRoutine *state) -> bool {
@@ -318,6 +326,8 @@ bool BasePieceCollection::ExecutionRoutine::Preempt()
           if (state != nullptr) {
             trace(TRACE_EXEC_ROUTINE "Unfinished encoutered, no spawn.");
             if (state->is_detached()) {
+              // ExecutionRoutines are linked together.
+              // if a ExecutionRoutine is detached from the scheduler queue, we need to reattach it
               state->Init();
               sched->WakeUp(state);
             }
@@ -330,6 +340,8 @@ bool BasePieceCollection::ExecutionRoutine::Preempt()
 
     trace(TRACE_EXEC_ROUTINE "Just got up!");
     if (!svc.Peek(core_id, should_pop))
+      // I guess this is after preemption, and this coroutine still has nothing
+      // to run? (because there exists some smaller priority pieces?)
       goto sleep;
 
     set_busy_poll(false);

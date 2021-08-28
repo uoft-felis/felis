@@ -42,6 +42,7 @@ void ConservativePriorityScheduler::IngestPending(PriorityQueueHashEntry *hent, 
 {
   if (hent->values.empty()) {
     q[len++] = {hent->key, hent};
+    // HeapEntry contains HashEntry
     std::push_heap(q, q + len, Greater);
   }
   value->InsertAfter(hent->values.prev);
@@ -50,9 +51,11 @@ void ConservativePriorityScheduler::IngestPending(PriorityQueueHashEntry *hent, 
 bool ConservativePriorityScheduler::ShouldPickWaiting(const WaitState &ws)
 {
   if (len == 0)
+    // if nothing in PQ, run the waitstate coroutine
     return true;
   if (q[0].key > ws.sched_key)
     return true;
+    // if waitstate coroutine has higher priority, run coroutine
   return false;
 }
 
@@ -64,9 +67,12 @@ PriorityQueueValue *ConservativePriorityScheduler::Pick()
 void ConservativePriorityScheduler::Consume(PriorityQueueValue *node)
 {
   node->Remove();
+  // remove the piece from HashEntry
   auto top = q[0];
   if (top.ent->values.empty()) {
+    // if the top HashEntry is empty
     std::pop_heap(q, q + len, Greater);
+    // pop the top HashEntry from the heap
     q[len - 1].ent = nullptr;
     len--;
     top.ent->Remove(); // from the hashtable
@@ -473,28 +479,39 @@ EpochExecutionDispatchService::AddToPriorityQueue(
 {
   bool smaller = false;
   auto node = (PriorityQueueValue *) q.brk.Alloc(64);
+  // PQ Value is the piece
   node->Initialize();
   node->routine = rt;
   node->state = state;
   auto key = rt->sched_key;
 
+  // HashHeader stores all the HashEntry with the same key>>8.
+  // HashEntry stores all the piece with the same SID.
   auto &hl = q.ht[Hash(key) % kHashTableSize];
   auto *ent = hl.next;
   while (ent != &hl) {
+    // looped linked list, till the end
     if (ent->object()->key == key) {
+      // found this txn's HashEntry
       goto found;
     }
     ent = ent->next;
   }
 
+  // first piece of this txn, create HashEntry
   ent = (PriorityQueueHashEntry *) q.brk.Alloc(64);
   ent->Initialize();
+  // Initialize() is prev = next = this
   ent->object()->key = key;
   ent->object()->values.Initialize();
+  // the linked list for all the pieces of this txn
   ent->InsertAfter(hl.prev);
+  // insert this HashEntry after the tail of the HashHeader
 
 found:
+  // insert HashEntry into Heap, and insert the piece into the HashEntry
   q.sched_pol->IngestPending(ent->object(), node);
+  // heap array inside scheduling policy
 }
 
 void
@@ -513,6 +530,17 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
   }
 }
 
+// Peek the ZeroQueue and PQ to see if we have anything for this routine to run.
+// if current ExecutionRoutine has more thing to run, return true
+// if not (for instance you're temporarily spawned, or the q is empty), return false
+
+// should_pop: callback function, use `BasePieceCollection::ExecutionRoutine *state`
+// to determine should we pop another PieceRoutine from the queue (for current to execute).
+//   para1: PieceRoutine, Peek() should pass the next routine to run
+//   para2: ExecutionRoutine*, the state along with the previous PromiseRoutine
+
+// the executionRoutines are stored in pq.waiting.states (WaitState, WaitState.state is ExecutionRoutine*)
+// pq.state stores the state of the core (kSleeping, kRunning, kDeciding)
 bool
 EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_pop)
 {
@@ -541,12 +569,15 @@ retry:
     }
     return false;
   }
+  // ZeroQueue has no piece to run
+
 
   // Setting state.running without poking around the data structure is very
   // important for performance. This let other thread create the co-routines
   // without spinning for State::kDeciding for a long time.
   if (q.sched_pol->empty() && q.waiting.len == 0
       && q.pending.end.load() == q.pending.start.load()) {
+      // PQ has no piece, no coroutine waiting, pending has no piece
     state.running = State::kSleeping;
   } else {
     state.running = State::kRunning;
@@ -555,6 +586,7 @@ retry:
   ProcessPending(q);
   if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end, &q.pending.start, &q.pending.end))
     goto retry;
+    // Caracal ConservativePriorityScheduler does not retry
 
   // check whether to run the waiting coroutine
   if (q.waiting.len > 0
@@ -571,10 +603,13 @@ retry:
     return false;
   }
 
+  // if PQ not empty
   if (!q.sched_pol->empty()) {
     auto node = q.sched_pol->Pick();
+    // PQValue*
     auto &rt = node->routine;
 
+    // even should_pop(rt, nullptr) works, PQ has no pending pieces
     if (should_pop(rt, node->object()->state)) {
       q.sched_pol->Consume(node);
       state.current_sched_key = rt->sched_key;
@@ -668,6 +703,10 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
+// return: whether you should spawn a new coroutine.
+//  if pieces with smaller priority exists in the PQ, then put the
+//   ExecutionRoutine into the pq->waiting, and return true;
+//  if not, return false.
 bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state)
 {
   auto &lock = queues[core_id]->lock;
@@ -688,6 +727,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   ws.preempt_ts = state.ts;
   ws.sched_key = state.current_sched_key;
   ws.state = routine_state;
+  // store everything first
 
   PriorityTxn* tmp = nullptr;
   if (NodeConfiguration::g_priority_txn &&
@@ -695,6 +735,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
       this->Peek(core_id, tmp, true)) {
     abort_if(tmp != nullptr, "dry run didn't come out dry");
     q.waiting.len++;
+    // enqueue this coroutine
     return true;
   }
 
