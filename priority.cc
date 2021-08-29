@@ -160,7 +160,7 @@ PriorityTxnService::PriorityTxnService()
   if (Options::kDist) {
     logical_dist = Options::kDist.ToInt(); // independent of priority txn slot ratio
     g_dist = logical_dist * (g_strip_batched + g_strip_priority);
-    if (Options::kRowRTS) {
+    if (Options::kSIDRowRTS) {
       logger->info("Neglecting Global Backoff Distance for RowRTS");
       g_dist = INT_MAX;
     }
