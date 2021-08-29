@@ -18,6 +18,7 @@ struct PieceRoutine {
   uint32_t capture_len;
   uint8_t level;
   uint8_t node_id;
+  bool is_priority; // is it a piece from priority transaction
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 

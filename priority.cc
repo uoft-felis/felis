@@ -17,6 +17,7 @@ size_t PriorityTxnService::g_strip_priority = 1;
 bool PriorityTxnService::g_sid_global_inc = false;
 bool PriorityTxnService::g_sid_local_inc = false;
 bool PriorityTxnService::g_sid_bitmap = false;
+bool PriorityTxnService::g_tictoc_mode = false;
 
 bool PriorityTxnService::g_read_bit = false;
 bool PriorityTxnService::g_conflict_read_bit = false;
@@ -85,37 +86,44 @@ PriorityTxnService::PriorityTxnService()
   logger->info("[Pri-init] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns",
                g_nr_priority_txn, g_interval_priority_txn);
 
-  if (Options::kSlotPercentage) {
-    if (Options::kStripBatched || Options::kStripPriority) {
-      logger->critical("When SlotPercentage is specified, "
-                       "please do not specify StripBatched or StripPriority");
-      std::abort();
-    }
-    size_t slot_percentage = Options::kSlotPercentage.ToInt();
-    abort_if(slot_percentage <= 0, "slot percentage <= 0, is {}", slot_percentage);
-    int k = 100 / slot_percentage;
-    abort_if(100 % slot_percentage != 0,
-             "Please give a PriTxn % that can divide 100 with no remainder");
-    g_strip_batched = k;
-    g_strip_priority = 1;
+  if (Options::kTicTocMode) {
+    // does not leave slots
+    g_tictoc_mode = true;
+    abort_if(Options::kSlotPercentage, "TicToc Mode does not need -XSlotPercentage");
+    abort_if(Options::kStripPriority, "TicToc Mode does not need -XStripPriority");
+    g_strip_batched = 1;
+    g_strip_priority = 0;
   } else {
-    // for instance, if kStripBatched = 1, kStripPriority = 2
-    // then txn 1 is batched txn, txn 2&3 are priority txn slots, ...
-    // (txn sequence number starts at 1)
-    if (Options::kStripBatched)
-      g_strip_batched = Options::kStripBatched.ToInt();
-    if (Options::kStripPriority)
-      g_strip_priority = Options::kStripPriority.ToInt();
-  }
+    // leave slots, calculate slot strip width
+    if (Options::kSlotPercentage) {
+      abort_if(Options::kStripBatched, "either SlotPercentage or StripBatched+StripPriority");
+      abort_if(Options::kStripPriority, "either SlotPercentage or StripBatched+StripPriority");
+      size_t slot_percentage = Options::kSlotPercentage.ToInt();
+      abort_if(slot_percentage <= 0, "slot percentage <= 0, is {}", slot_percentage);
+      int k = 100 / slot_percentage;
+      abort_if(100 % slot_percentage != 0,
+              "Please give a PriTxn % that can divide 100 with no remainder");
+      g_strip_batched = k;
+      g_strip_priority = 1;
+    } else {
+      // for instance, if kStripBatched = 1, kStripPriority = 2
+      // then txn 1 is batched txn, txn 2&3 are priority txn slots, ...
+      // (txn sequence number starts at 1)
+      if (Options::kStripBatched)
+        g_strip_batched = Options::kStripBatched.ToInt();
+      if (Options::kStripPriority)
+        g_strip_priority = Options::kStripPriority.ToInt();
+    }
 
-  if (Options::kSIDGlobalInc) g_sid_global_inc = true;
-  if (Options::kSIDLocalInc) g_sid_local_inc = true;
-  if (Options::kSIDBitmap) g_sid_bitmap = true;
-  int count = g_sid_global_inc + g_sid_local_inc + g_sid_bitmap;
-  abort_if(count != 1, "Please specify one (and only one) way for SID reuse detection");
-  if (g_sid_bitmap || g_sid_local_inc)
-    abort_if(NodeConfiguration::g_nr_threads != g_strip_priority,
-            "plz make priority strip = # cores"); // allow me to be lazy once
+    if (Options::kSIDGlobalInc) g_sid_global_inc = true;
+    if (Options::kSIDLocalInc) g_sid_local_inc = true;
+    if (Options::kSIDBitmap) g_sid_bitmap = true;
+    int count = g_sid_global_inc + g_sid_local_inc + g_sid_bitmap;
+    abort_if(count != 1, "Please specify one (and only one) way for SID reuse detection");
+    if (g_sid_bitmap || g_sid_local_inc)
+      abort_if(NodeConfiguration::g_nr_threads != g_strip_priority,
+              "plz make priority strip = # cores"); // allow me to be lazy once
+  }
 
   if (Options::kReadBit) {
     g_read_bit = true;
@@ -297,6 +305,8 @@ bool PriorityTxnService::MaxProgressPassed(uint64_t sid)
 bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
   if (!NodeConfiguration::g_priority_txn)
     return false;
+  abort_if(PriorityTxnService::g_tictoc_mode,
+           "TicToc Mode cannot call PriorityTxnService::isPriorityTxn to distinguish");
   if (sid == 0)
     return false;
   uint64_t seq = sid >> 8 & 0xFFFFFF;
@@ -395,6 +405,9 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       min_seq = (min_seq > last_time_seq) ? min_seq : last_time_seq;
     }
 
+    if (PriorityTxnService::g_tictoc_mode) {
+      return GetNextSID_TicToc(min_seq, txn, handles, size);
+    }
     // find available SID after min_seq
     uint64_t available_seq = GetNextSIDSlot(min_seq);
     // record
@@ -443,8 +456,29 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     else
       min_seq = sid2seq(min_sid);
   }
+  if (PriorityTxnService::g_tictoc_mode) {
+    return GetNextSID_TicToc(min_seq, txn, handles, size);
+  }
   uint64_t available_seq = GetNextSIDSlot(min_seq);
   return seq2sid(available_seq);
+}
+
+uint64_t PriorityTxnService::GetNextSID_TicToc(uint64_t sequence, PriorityTxn *txn, VHandle **handles, int size)
+{
+  sequence++;
+  while (1) {
+    bool success = true;
+    for (int i = 0; i < size; ++i) {
+      if (handles[i]->IsExistingVersion(seq2sid(sequence))) {
+        success = false;
+        break;
+      }
+    }
+    if (success)
+      return seq2sid(sequence);
+    else
+      sequence++;
+  }
 }
 
 // return next slot sequence number

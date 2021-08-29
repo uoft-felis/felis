@@ -26,6 +26,7 @@ PieceRoutine *PieceRoutine::CreateFromCapture(size_t capture_len)
   r->sched_key = 0;
   r->level = 0;
   r->affinity = std::numeric_limits<uint64_t>::max();
+  r->is_priority = false;
 
   r->callback = nullptr;
   r->next = nullptr;
@@ -38,6 +39,7 @@ PieceRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
 {
   auto r = (PieceRoutine *) BasePieceCollection::Alloc(sizeof(PieceRoutine));
   auto result_len = r->DecodeNode(p, packet_len);
+  r->is_priority = false;
   abort_if(result_len != packet_len,
            "DecodeNode() consumes {} but passed in {} bytes",
            result_len, packet_len);
@@ -231,7 +233,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
           return false;
         }
         give_up = false;
-        if (!PriorityTxnService::isPriorityTxn(r->sched_key))
+        if (!r->is_priority) // is not a piece from priority txn
           return false;
         next_r = r;
         return true;
@@ -260,7 +262,7 @@ loop:
       auto tsc = __rdtsc();
       rt->callback(rt);
       auto diff = (__rdtsc() - tsc) / 2200;
-      if (rt->sched_key != 0 && !PriorityTxnService::isPriorityTxn(rt->sched_key))
+      if (rt->sched_key != 0 && !rt->is_priority)
         felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
       goto loop;
@@ -290,7 +292,7 @@ loop:
       auto tsc = __rdtsc();
       rt->callback(rt);
       auto diff = (__rdtsc() - tsc) / 2200;
-      if (rt->sched_key != 0 && !PriorityTxnService::isPriorityTxn(rt->sched_key))
+      if (rt->sched_key != 0 && !rt->is_priority)
         felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
       goto loop;

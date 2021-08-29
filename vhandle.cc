@@ -400,6 +400,20 @@ bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
   return *addr & kReadBitMask;
 }
 
+bool SortedArrayVHandle::IsExistingVersion(uint64_t sid)
+{
+  uint64_t *p = versions;
+  uint64_t *end = versions + size;
+  p = std::lower_bound(versions, end, sid);
+  if (p == versions)
+    return false;
+  if (p < end && *p == sid) return true;
+  auto handle = extra_vhandle.load();
+  if (handle)
+    return handle->IsExistingVersion(sid);
+  return false;
+}
+
 uint32_t SortedArrayVHandle::GetRowRTS()
 {
   abort_if(!PriorityTxnService::g_row_rts, "GetRowRTS() is called when Row RTS is off");
@@ -520,8 +534,8 @@ uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
-  if (PriorityTxnService::isPriorityTxn(sid)) {
-    // go to extra array to find version
+  if (!PriorityTxnService::g_tictoc_mode && PriorityTxnService::isPriorityTxn(sid)) {
+    // go to extra vhandle to find version
     auto extra = extra_vhandle.load();
     if (extra && (extra->WriteWithVersion(sid, obj)))
       return true;
@@ -534,8 +548,22 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   int pos = latest_version.load();
   uint64_t *it = versions + pos + 1;
   if (*it != sid) {
-    it = std::lower_bound(versions + cur_start, versions + size, sid);
-    if (unlikely(it == versions + size || *it != sid)) {
+    if (!PriorityTxnService::g_tictoc_mode) {
+      it = std::lower_bound(versions + cur_start, versions + size, sid);
+    } else {
+      it = std::lower_bound(versions, versions + size, sid);
+      // tictoc's write to the linked list might have sid < cur_start (latest written version)
+      // therefore we cannot use this optimization when searching version array
+    }
+    if (it == versions + size || *it != sid) {
+      if (PriorityTxnService::g_tictoc_mode) {
+        // tictoc mode need to look at both array and extra linked list. array first
+        auto extra = extra_vhandle.load();
+        if (extra && (extra->WriteWithVersion(sid, obj)))
+          return true;
+        logger->critical("priority write failed, sid {}, extra {}", sid, (void*)extra);
+      }
+
       // sid is greater than all the versions, or the located lower_bound isn't sid version
       logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
                        sid, it - versions, size);
@@ -790,6 +818,11 @@ bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
     Entry *cur = &dummy;
     while (cur && cur->next && cur->next->version > sid)
       cur = cur->next;
+    if (cur->next && cur->next->version == sid) {
+      delete n;
+      lock.Unlock(&qnode);
+      return false;
+    }
     n->next = cur->next;
     cur->next = n;
     head = dummy.next;
@@ -884,6 +917,23 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
     return wts <= rts;
   }
   return varstr_ptr & kReadBitMask;
+}
+
+bool LinkedListExtraVHandle::IsExistingVersion(uint64_t sid)
+{
+  util::MCSSpinLock::QNode qnode;
+  if (!IsLockLess())
+    lock.Acquire(&qnode);
+
+  Entry *p = head;
+  while (p && p->version > sid)
+    p = p->next;
+  if (!IsLockLess()) lock.Release(&qnode);
+
+  if (!p || p->version != sid) {
+    return false;
+  }
+  return true;
 }
 
 /** @brief Find the lower bound of the last consecutive unread versions.

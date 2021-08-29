@@ -104,6 +104,7 @@ struct Options {
   static inline const auto kSIDGlobalInc = Option("SIDGlobalInc");
   static inline const auto kSIDLocalInc = Option("SIDLocalInc");
   static inline const auto kSIDBitmap = Option("SIDBitmap");
+  static inline const auto kTicTocMode = Option("TicTocMode");
 
   static inline const auto kReadBit = Option("ReadBit");
   static inline const auto kConflictReadBit = Option("ConflictReadBit");

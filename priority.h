@@ -103,6 +103,7 @@ class PriorityTxnService {
   static bool g_sid_global_inc;
   static bool g_sid_local_inc;
   static bool g_sid_bitmap;
+  static bool g_tictoc_mode;
 
   static bool g_read_bit;             // mark read bit
   static bool g_conflict_read_bit;    // use read bit info to detect conflict
@@ -137,6 +138,7 @@ class PriorityTxnService {
  private:
   uint64_t SIDLowerBound();
   uint64_t GetSID(PriorityTxn *txn, VHandle **handles, int size);
+  uint64_t GetNextSID_TicToc(uint64_t sequence, PriorityTxn *txn, VHandle **handles, int size);
   uint64_t GetNextSIDSlot(uint64_t sequence);
 
  public:
@@ -312,6 +314,7 @@ class PriorityTxn {
     routine->callback = static_func;
     routine->sched_key = this->serial_id();
     routine->affinity = core_id;
+    routine->is_priority = true;
     serializer::EncodeTo(routine->capture_data, &capture);
 
     // put PromiseRoutineWithInput into PQ
