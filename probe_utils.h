@@ -191,6 +191,78 @@ struct Histogram {
   }
 };
 
+#define N_SPECIAL 91
+struct SpecialHistogram {
+  long hist[N_SPECIAL];
+  SpecialHistogram() {
+    memset(hist, 0, sizeof(long) * N_SPECIAL);
+  }
+  const double buckets[N_SPECIAL] = {
+    0,
+    1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9,9.5,
+    10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85,90,95,
+    100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,
+    1000,1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500,7000,7500,8000,8500,9000,9500,
+    10000,15000,20000,25000,30000,35000,40000,45000,50000,55000,60000,65000,70000,75000,80000,85000,90000,95000
+  };
+  int val2idx(double value) {
+    if (value < 1)
+      return 0;
+    int exp = floor(log10(value));
+    int start = pow(10, exp);
+    double step = pow(10, exp) / 2;
+    // printf("%lf %d %lf ", value, start, step);
+    return exp * 18 + (value - start) / step + 1;
+  }
+  SpecialHistogram &operator<<(double value) {
+    long idx = val2idx(value);
+    if (idx >= 0 && idx < N_SPECIAL) hist[idx]++;
+    else if (idx >= N_SPECIAL) hist[N_SPECIAL-1]++; // larger than max is put in last bucket
+    return *this;
+  }
+  SpecialHistogram &operator<<(const SpecialHistogram &rhs) {
+    for (int i = 0; i < N_SPECIAL; i++) hist[i] += rhs.hist[i];
+    return *this;
+  }
+  double CalculatePercentile(double scale) const {
+    size_t total_nr = Count();
+    long medium_idx = total_nr * scale;
+    for (int i = 0; i < N_SPECIAL; i++) {
+      medium_idx -= hist[i];
+      if (medium_idx < 0)
+        return buckets[i];
+    }
+    return 0;
+  }
+  double CalculateMedian() { return CalculatePercentile(0.5); }
+  size_t Count() const  {
+    size_t total_nr = 0;
+    for (int i = 0; i < N_SPECIAL; i++)
+      total_nr += hist[i];
+    return total_nr;
+  }
+};
+
+std::ostream &operator<<(std::ostream &out, const SpecialHistogram& h)
+{
+
+  // percentile calc
+  const int pct_size = 4;
+  double percentages[pct_size] = {50, 90, 99, 99.9};
+
+  // for (int i = 0; i < N_SPECIAL; ++i) {
+  //   out << i << " " << h.hist[i] << std::endl;
+  // }
+
+  for (int i = 0; i < pct_size; ++i)
+      out << std::setw(6) << percentages[i] << " percentile:  "
+          << h.CalculatePercentile(percentages[i] / 100)
+          // << ", " << lvls[i] * Bucket + Offset + Bucket << "), "
+          // << "bucket " << lvls[i] + 1 << "/" << N << ",   "
+          << std::endl;
+  return out;
+}
+
 template <int N, int Offset, int Bucket>
 std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& h)
 {
