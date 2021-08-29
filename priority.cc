@@ -74,6 +74,7 @@ PriorityTxnService::PriorityTxnService()
     logger->info("[Pri-init] estimated exec phase time {} ms", exec_time);
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
     g_interval_priority_txn = (percentage == 0) ? 0 : (exec_time * 1000000 / g_nr_priority_txn); // ms to ns
+    g_nr_priority_txn *= 1.3; // make sure the actual pct we get is true
   } else {
     if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn) {
       logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn "

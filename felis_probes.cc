@@ -422,7 +422,7 @@ ProbeMain::~ProbeMain()
       std::string label = std::to_string(i+1) + "_1";
       result.insert({label, arr[i]->getAvg()});
     }
-    // X_2, X_3, X_4, X_5 are 50%, 90%, 99%, 99.9% numbers, where X in [1,6]
+    // X_2, X_3, X_4, X_5 are 50%, 90%, 99%, 99.9% numbers, where X in [1,7]
     for (int i = 0; i < 7; ++i) {
       for (int j = 2; j <= 5; ++j) {
         std::string label = std::to_string(i+1) + "_" + std::to_string(j);
@@ -475,6 +475,10 @@ ProbeMain::~ProbeMain()
     result.insert({"9_1", static_cast<int>(batch_tpt)});
     result.insert({"9_2", static_cast<int>(pri_tpt)});
     result.insert({"9_3", total_tpt});
+    // 9_4 actual priority txn percentage, unit %
+    double pct = 100.0 * cnt / total_nr_txns;
+    result.insert({"9_4", pct});
+    std::cout << "[Pri-stat] actual priority percentage " << pct << std::endl;
 
     auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
     time_t tm;
