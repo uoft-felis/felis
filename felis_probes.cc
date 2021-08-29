@@ -468,11 +468,11 @@ ProbeMain::~ProbeMain()
     // 9_1 batch throughput, 9_2 priority throughput, 9_3 total throughput
     auto &client = felis::EpochClient::g_workload_client;
     auto dur = client->GetPerf().duration_ms();
-    int total_nr_txns = (client->g_max_epoch - 1) * client->NumberOfTxns();
-    int batch_tpt = total_nr_txns * 1000 / dur; // duration is in ms
+    long total_nr_txns = (client->g_max_epoch - 1) * client->NumberOfTxns();
+    long batch_tpt = total_nr_txns * 1000 / dur; // duration is in ms
     long pri_tpt = batch_tpt * cnt / total_nr_txns;
     int total_tpt = batch_tpt + pri_tpt;
-    result.insert({"9_1", batch_tpt});
+    result.insert({"9_1", static_cast<int>(batch_tpt)});
     result.insert({"9_2", static_cast<int>(pri_tpt)});
     result.insert({"9_3", total_tpt});
 
