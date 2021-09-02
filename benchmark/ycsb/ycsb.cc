@@ -457,10 +457,10 @@ void MWTxn::Run()
                 vhandle.Write(dbv);
 
                 if (cnt == 1) {
-                  auto tsc = __rdtsc();
-                  auto exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
-                  auto total = exec + state->init_tsc;
-                  if (exec / 2200 < 100000)
+                  uint64_t tsc = __rdtsc();
+                  uint64_t exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
+                  uint64_t total = exec + state->init_tsc;
+                  if (total / 2200 < 100000)
                     probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
                 }
               },

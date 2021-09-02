@@ -99,10 +99,11 @@ void PriStockTxn::Run()
               index_handle(state->stocks[i]).Write(stock);
               ClientBase::OnUpdateRow(state->stocks[i]);
           }
-          auto tsc = __rdtsc();
-          auto exec = tsc - exec_tsc;
-          auto total = exec + state->issue_tsc;
-          probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
+          uint64_t tsc = __rdtsc();
+          uint64_t exec = (tsc > exec_tsc) ? tsc - exec_tsc : 0;
+          uint64_t total = exec + state->issue_tsc;
+          if (total / 2200 < 500000)
+            probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
         }, aff);
 
     /*

@@ -299,10 +299,11 @@ void PriNewOrderDeliveryTxn::Run()
               }
 
               if (piece_exec_cnt == state->piece_issue_cnt.load() - 1) {
-                auto tsc = __rdtsc();
-                auto exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
-                auto total = exec + state->issue_tsc;
-                probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
+                uint64_t tsc = __rdtsc();
+                uint64_t exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
+                uint64_t total = exec + state->issue_tsc;
+                if (total / 2200 < 500000)
+                  probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
               }
             },
             aff);
