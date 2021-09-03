@@ -11,8 +11,8 @@ You need to clone two repositories under the `workspace/` directory:
 ```
 mkdir ~/workspace/
 cd ~/workspace/
-git clone --recursive git@github.com:uoft-felis/felis.git
-git clone git@github.com:uoft-felis/felis-controller.git
+git clone --recursive https://github.com:uoft-felis/felis.git
+git clone https://github.com:uoft-felis/felis-controller.git
 ```
 
 Felis is the code name for our paper, Caracal. The felis repository has many submodules, so please make sure they are also initialized. Our experiment scripts look for binaries under the `workspace/` directory.
@@ -58,7 +58,8 @@ My `config.json.local` looks like the following
   "nodes": [
     {
       "name": "host1",
-      "worker": {"host": "127.0.0.1", "port": 11091}
+      "worker": {"host": "127.0.0.1", "port": 11091},
+      "index_shipper": {"host": "127.0.0.1", "port": 53411}
     }
   ],
   "tpcc": {
@@ -112,22 +113,26 @@ The last distributed transaction experiment is not fully automated yet. So we ne
     {
       "name": "host1",
       "ssh_hostname": "c169",
-      "worker": {"host": "142.150.234.169", "port": 1091}
+      "worker": {"host": "142.150.234.169", "port": 1091},
+      "index_shipper": {"host": "142.150.234.169", "port": 43411}
     },
     {
       "name": "host2",
       "ssh_hostname": "c154",
-      "worker": {"host": "142.150.234.154", "port": 1091}
+      "worker": {"host": "142.150.234.154", "port": 1091},
+      "index_shipper": {"host": "142.150.234.154", "port": 43411}
     },
     {
       "name": "host3",
       "ssh_hostname": "c165",
-      "worker": {"host": "142.150.234.165", "port": 1091}
+      "worker": {"host": "142.150.234.165", "port": 1091},
+      "index_shipper": {"host": "142.150.234.165", "port": 43411}
     },
     {
       "name": "host4",
       "ssh_hostname": "c172",
-      "worker": {"host": "142.150.234.172", "port": 1091}
+      "worker": {"host": "142.150.234.172", "port": 1091},
+      "index_shipper": {"host": "142.150.234.172", "port": 43411}
     }
   ],
   "tpcc": {
