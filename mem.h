@@ -29,6 +29,9 @@ enum MemAllocType {
   ContentionManagerPool,
   EntityPool,
   VhandlePool,
+  VhandleFreelistPool,
+  ExternalPmemPool,
+  ExternalPmemFreelistPool,
   IndexInfoPool,
   RegionPool,
   Coroutine,
@@ -47,6 +50,9 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:contention manager",
   "^pool:row entity",
   "^pool:vhandle",
+  "^pool:vhandle_freelist",
+  "^pool:external_pmem",
+  "^pool:external_pmem_freelist",
   "^pool:index info",
   "^pool:region",
   "coroutine",
@@ -614,7 +620,8 @@ class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
  public:
   ParallelBrkWFree() : ParallelAllocator() {}
   // change parameters for this function
-  ParallelBrkWFree(MemAllocType alloc_type, void *fixed_mmap_addr, size_t brk_pool_size,
+  ParallelBrkWFree(MemAllocType alloc_type, MemAllocType freelist_alloc_type,
+                   void *fixed_mmap_addr, size_t brk_pool_size,
                    size_t block_size, bool use_pmem = false,
                    bool use_pmem_freelist = false, bool is_recovery = false);
   ~ParallelBrkWFree();

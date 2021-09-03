@@ -911,6 +911,7 @@ namespace mem {
   }
 
   ParallelBrkWFree::ParallelBrkWFree(MemAllocType alloc_type,
+                                     MemAllocType freelist_alloc_type,
                                      void *fixed_mmap_addr,
                                      size_t brk_pool_size, size_t block_size,
                                      bool use_pmem, bool use_pmem_freelist,

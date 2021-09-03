@@ -97,7 +97,7 @@ void BaseVHandle::InitPool()
   // shirley: changed to parallel brk w free pool. also don't register
   void *fixed_mmap_addr = nullptr;
   inline_pool =
-      mem::ParallelBrkWFree(mem::VhandlePool, fixed_mmap_addr,
+      mem::ParallelBrkWFree(mem::VhandlePool, mem::VhandleFreelistPool, fixed_mmap_addr,
                             VHandlePoolSize, kInlinedSize, true, true, false);
   // inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
   pool.Register();
