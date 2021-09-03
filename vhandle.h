@@ -62,7 +62,8 @@ class BaseVHandle {
 
   // Cicada uses inline data to reduce cache misses. These inline rows are much
   // larger: 4-cache linekInlinedSizes.
-  static mem::ParallelSlabPool inline_pool;
+  static mem::ParallelBrkWFree inline_pool; // shirley: changed to brk w free pool
+  // static mem::ParallelSlabPool inline_pool;
   static void InitPool();
 
   // Corey: Pool is not needed
@@ -162,7 +163,8 @@ public:
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
     //shirley TODO: we should only use inlined pool bc all vhandles are inlined
     // if (phandle->is_inlined())
-      inline_pool.Free(ptr, phandle->this_coreid);
+      inline_pool.Free(ptr, phandle->this_coreid, true); // shirley: set exception to true
+      // inline_pool.Free(ptr, phandle->this_coreid, false); // shirley: set exception to true
     // else
     //   pool.Free(ptr, phandle->this_coreid);
   }

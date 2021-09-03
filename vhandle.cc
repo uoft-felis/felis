@@ -69,7 +69,8 @@ SortedArrayVHandle *SortedArrayVHandle::New()
 // allocates new vhandle without going through these functions.
 SortedArrayVHandle *SortedArrayVHandle::NewInline()
 {
-  auto r = new (inline_pool.Alloc()) SortedArrayVHandle();
+  auto r = new (inline_pool.Alloc(true)) SortedArrayVHandle(); // shirley: set exception to true for inline_pool.Alloc
+  // auto r = new (inline_pool.Alloc(false)) SortedArrayVHandle();
   //shirley TODO: we don't use inline_used variable in our design. we have our own flags/bitmaps
   //r->inline_used = 0;
 
@@ -82,17 +83,25 @@ SortedArrayVHandle *SortedArrayVHandle::NewInline()
 
 //shirley TODO: we can comment out the pool bc all vhandles should be inlined
 mem::ParallelSlabPool BaseVHandle::pool;
-mem::ParallelSlabPool BaseVHandle::inline_pool;
+mem::ParallelBrkWFree BaseVHandle::inline_pool;
+// mem::ParallelSlabPool BaseVHandle::inline_pool;
 
 void BaseVHandle::InitPool()
 {
-  //shirley TODO: pool should be removed, only need inline_pool
-  //shirley pmem: when on pmem machine, set to true. when on our machines, set to false
-  //shirley test: set to false to test everything in dram
+  // shirley todo: use ParallelBrkWFree pool, let each core have 2G? 2147483648
+  size_t VHandlePoolSize = ((size_t)1024)*1024*1024*2; // 1 GB for now
+  // shirley TODO: pool should be removed, only need inline_pool
+  // shirley pmem: when on pmem machine, set to true. when on our machines, set to false
+  // shirley test: set to false to test everything in dram
   pool = mem::ParallelSlabPool(mem::VhandlePool, kSize, 4, false);
-  inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
+  // shirley: changed to parallel brk w free pool. also don't register
+  void *fixed_mmap_addr = nullptr;
+  inline_pool =
+      mem::ParallelBrkWFree(mem::VhandlePool, fixed_mmap_addr,
+                            VHandlePoolSize, kInlinedSize, true, true, false);
+  // inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
   pool.Register();
-  inline_pool.Register();
+  // inline_pool.Register();
 }
 
 }

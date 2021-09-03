@@ -282,8 +282,12 @@ class ParallelAllocator : public ParallelAllocationPolicy {
   void Register() {
     for (auto i = 0; i < g_nr_cores; i++) pools[i]->Register();
   }
-  void *Alloc() {
+  void *Alloc(bool exception = false) {
     auto cur = CurrentAffinity();
+    // shirley hack: for ParallelBrkWFree we have our own freelist & lock, don't need this csld_free_lists.
+    if (exception) {
+      return pools[cur]->Alloc();
+    }
     auto csld = csld_free_lists[cur];
     auto &dice = csld->dice;
     if (csld->bitmap != 0) {
@@ -322,7 +326,12 @@ class ParallelAllocator : public ParallelAllocationPolicy {
     return pools[cur]->Alloc(sz);
   }
 
-  void Free(void *ptr, int alloc_core) {
+  void Free(void *ptr, int alloc_core, bool exception = false) {
+    // shirley hack: for ParallelBrkWFree we can free from any core bc we have our own freelist & lock.
+    if (exception) {
+      pools[alloc_core]->Free(ptr);
+      return;
+    }
     auto cur = CurrentAffinity();
     if (alloc_core < 0 || alloc_core >= kMaxNrPools) {
       fprintf(stderr, "alloc_core error, is %d. (shirley: maybe region_id was wrong for dram cache values)\n", alloc_core);
@@ -518,6 +527,109 @@ class ParallelBrk : public ParallelAllocator<Brk> {
 #define INIT_ROUTINE_BRK(sz) go::RoutineScopedData _______(NewStackBrk(sz));
 
 void *AllocFromRoutine(size_t sz);
+
+class BrkWFree;
+class ParallelBrkWFree;
+class BrkWFree {
+  // size_t offset; // shirley: move this to pmem file (in front of data?)
+  // size_t limit; // shirley: move this to pmem file (in front of data?)
+  size_t block_size; // shirley: cache this. shirley: move this to pmem file (in front of data?)
+  util::SpinLock lock_freelist;
+  uint8_t *data; // shirley todo: this should be calculated based on core id and fixe mmap address
+  uint64_t *freelist; // shirley todo: this should be calculated based on core id and fixe mmap address 
+  // shirley: add limit and offset of freelist to pmem file (in front of freelist)
+  size_t offset_freelist; // shirley: cache this so we can quickly check if freelist is not empty
+  // size_t limit_freelist;
+  // bool thread_safe; // shirley: removed. Always use unsafe bc will call through ParallelBrkWFree.
+  
+  bool use_pmem; // data in pmem or dram
+  bool use_pmem_freelist; // freelist in pmem or dram
+  static constexpr size_t metadata_size = 24; // 12 bytes metadata in front of data. offset, limit, block_size.
+  static constexpr size_t metadata_size_freelist = 16; // 8 bytes metadata in front of freelist. offset, limit.
+
+  size_t *get_offset() const { return (size_t*) data; }
+  size_t *get_limit() { return (size_t*) (data + 8); }
+  size_t *get_block_size() { return (size_t*) (data + 16); }
+  uint8_t *get_data() const { return data + metadata_size; }
+  size_t *get_offset_freelist() { return (size_t *) freelist; }
+  size_t *get_limit_freelist() { return (size_t *)((uint8_t*)freelist + 8); }
+  uint64_t *get_freelist() {
+    return (uint64_t*) ((uint8_t *)freelist + metadata_size_freelist);
+  }
+
+public:
+  BrkWFree() : data(nullptr), freelist(nullptr), use_pmem(false), use_pmem_freelist(false) {}
+  BrkWFree(void *d, void *f, size_t limit, size_t limit_freelist,
+           size_t block_size, bool use_pmem = false,
+           bool use_pmem_freelist = false, bool is_recovery = false)
+      : data((uint8_t *)d), freelist((uint64_t *)f), use_pmem(use_pmem),
+        use_pmem_freelist(use_pmem_freelist), block_size(block_size) {
+    // shirley todo: initialize the inlined metadata.
+    // shirley todo: handle if is recovery
+    *get_offset() = (size_t)0;
+    *get_limit() = limit;
+    *get_block_size() = block_size;
+    *get_offset_freelist() = (size_t)0;
+    *get_limit_freelist() = limit_freelist;
+    offset_freelist = (size_t)0;
+  }
+  ~BrkWFree() {}
+
+  BrkWFree(BrkWFree &&rhs) {
+    data = rhs.data;
+    freelist = rhs.freelist;
+    use_pmem = rhs.use_pmem;
+    use_pmem_freelist = rhs.use_pmem_freelist;
+
+    rhs.data = nullptr;
+    rhs.freelist = nullptr;
+  }
+
+  BrkWFree &operator =(BrkWFree &&rhs) {
+    if (this != &rhs) {
+      this->~BrkWFree();
+      new (this) BrkWFree(std::move(rhs));
+    }
+    return *this;
+  }
+
+  bool Check(size_t s) { 
+    return (*get_offset() + s <= *get_limit());
+    // return offset + s <= limit;
+  }
+  void Reset() 
+  { 
+    *get_offset() = 0;
+    *get_offset_freelist() = 0;
+  }
+
+  void *Alloc();
+  void Free(void *ptr);
+  uint8_t *ptr() const { return get_data(); }
+  size_t current_size() const { return *get_offset(); }
+};
+
+class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
+
+ public:
+  ParallelBrkWFree() : ParallelAllocator() {}
+  // change parameters for this function
+  ParallelBrkWFree(MemAllocType alloc_type, void *fixed_mmap_addr, size_t brk_pool_size,
+                   size_t block_size, bool use_pmem = false,
+                   bool use_pmem_freelist = false, bool is_recovery = false);
+  ~ParallelBrkWFree();
+  ParallelBrkWFree(ParallelBrkWFree &&rhs) : ParallelAllocator(std::move(rhs)) {}
+
+  void Reset();
+  ParallelBrkWFree &operator=(ParallelBrkWFree &&rhs) {
+    if (&rhs != this) {
+      this->~ParallelBrkWFree();
+      new (this) ParallelBrkWFree(std::move(rhs));
+    }
+    return *this;
+  }
+};
+
 
 PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();

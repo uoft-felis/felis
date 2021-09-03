@@ -855,6 +855,127 @@ namespace mem {
     return BrkFromRoutine()->Alloc(sz);
   }
 
+  void *BrkWFree::Alloc() {
+    if (offset_freelist){
+      // printf("BrkWFree::Alloc reached offset_freelist!\n");
+      // std::abort();
+      // shirley: can allocate from freelist instead.
+      auto _ = util::Guard(lock_freelist);
+      void *ptr = get_freelist() + offset_freelist - 1;
+      offset_freelist--;
+      (*get_offset_freelist())--;
+      if (use_pmem_freelist){
+        // shirley pmem shirley test
+        // _mm_clwb(freelist);
+      }
+      return ptr;
+    }
+    // shirley: else, allocate from brk
+    size_t off = *get_offset();
+    size_t lmt = *get_limit();
+    size_t blk_sz = block_size;
+
+    *get_offset() = off + blk_sz;
+
+    if (__builtin_expect(off + blk_sz > lmt, 0)) {
+      fprintf(stderr, "BrkWFree of limit %lu is not large enough!\n", lmt);
+      std::abort();
+    }
+    uint8_t *p = get_data() + off;
+    return p;
+  }
+
+  void BrkWFree::Free(void *ptr) {
+    // shirley todo: add to freelist
+    auto _ = util::Guard(lock_freelist);
+    size_t off = *get_offset_freelist();
+    uint64_t *flist = get_freelist();
+    *(flist + off) = (uint64_t)ptr;
+    offset_freelist++;
+    (*get_offset_freelist())++;
+    // shirley pmem shirley test
+    if (use_pmem_freelist){
+      // _mm_clwb(freelist);
+      if (off > 5) {
+        // shirley pmem shirley test
+        // _mm_clwb(flist + off);
+      }
+    }
+    
+    if (!use_pmem_freelist && use_pmem) {
+      // reset the values (just the first cache line)
+      std::memset(ptr, 0, 64);
+      // shirley pmem shirley test
+      // _mm_clwb(ptr);
+    }
+  }
+
+  ParallelBrkWFree::ParallelBrkWFree(MemAllocType alloc_type,
+                                     void *fixed_mmap_addr,
+                                     size_t brk_pool_size, size_t block_size,
+                                     bool use_pmem, bool use_pmem_freelist,
+                                     bool is_recovery) {
+    uint8_t *mem = nullptr;
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      auto numa_node = i / kNrCorePerNode;
+      auto numa_offset = i % kNrCorePerNode;
+      if (numa_offset == 0) {
+        // note: we'll always keep the info in dram, only pool memory in pmem if required
+        mem = (uint8_t *)AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
+      }
+
+      auto p = mem + numa_offset * kHeaderSize;
+      uint8_t *p_buf;
+      uint8_t *p_buf_freelist;
+      size_t freelist_size = 4096; // brk_pool_size / block_size;
+      // shirley todo: if is recovery, don't alloc, just mmap file to fixed address
+      if (use_pmem) {
+        // void *hint_addr = (uint8_t*)fixed_mmap_addr + (i * brk_pool_size);
+        void *hint_addr = nullptr;
+        p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, -1, hint_addr);
+      }
+      else {
+        p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
+      }
+      if (use_pmem_freelist) {
+        // void *hint_addr_freelist =
+        //     (uint8_t *)fixed_mmap_addr +
+        //     (ParallelAllocationPolicy::g_nr_cores * brk_pool_size) +
+        //     (i * freelist_size * 8);
+        void *hint_addr_freelist = nullptr;
+        p_buf_freelist = (uint8_t *)AllocPersistentMemory(alloc_type, freelist_size, -1, hint_addr_freelist);
+      }
+      else {
+        p_buf_freelist = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
+      }
+      pools[i] = new (p) BrkWFree(p_buf, p_buf_freelist, brk_pool_size, freelist_size, block_size, use_pmem, use_pmem_freelist, is_recovery);
+      
+      p += sizeof(BrkWFree);
+      free_lists[i] = (uintptr_t *) p;
+
+      p += kMaxNrPools * sizeof(uintptr_t);
+      free_tails[i] = (uintptr_t *) p;
+
+      p += kMaxNrPools * sizeof(uintptr_t);
+      csld_free_lists[i] = new (p) ConsolidateFreeList();
+
+      std::fill(free_lists[i], free_lists[i] + kMaxNrPools, 0);
+      std::fill(free_tails[i], free_tails[i] + kMaxNrPools, 0);
+    }
+  }
+
+  void ParallelBrkWFree::Reset()
+  {
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      pools[i]->Reset();
+    }
+  }
+
+  ParallelBrkWFree::~ParallelBrkWFree()
+  {
+    // TODO
+  }
+
   std::string MemTypeToString(MemAllocType alloc_type) {
     return kMemAllocTypeLabel[alloc_type];
   }
