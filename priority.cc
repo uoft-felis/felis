@@ -74,7 +74,7 @@ PriorityTxnService::PriorityTxnService()
     logger->info("[Pri-init] estimated exec phase time {} ms", exec_time);
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
     g_interval_priority_txn = (percentage == 0) ? 0 : (exec_time * 1000000 / g_nr_priority_txn); // ms to ns
-    g_nr_priority_txn *= 1.3; // make sure the actual pct we get is true
+    g_nr_priority_txn *= 1.5; // make sure the actual pct we get is true
   } else {
     if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn) {
       logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn "
@@ -375,7 +375,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       if (max_wts_seq > max_rts_seq) max_rts_seq = max_wts_seq;
     }
 
-    uint64_t min_seq = max_rts_seq;
+    uint64_t min_seq = max_rts_seq + 1; // txn will use [min_seq, +inf)
     // backoff by txn->distance
     // g_progress_backoff and g_exp_distri_backoff do this differently
     int &dist = txn->distance;
@@ -399,11 +399,11 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
 
     // backoff by txn->min_sid
     if (!g_exp_distri_backoff) {
-      // SID cannot be smaller than txn->min_sid from last abort
+      // SID cannot be in previous/same strip as txn->min_sid from last abort
       uint64_t last_time_seq = sid2seq(txn->min_sid);
-      if (min_seq < last_time_seq)
-        min_seq = last_time_seq;
-      min_seq = (min_seq > last_time_seq) ? min_seq : last_time_seq;
+      int k = g_strip_batched + g_strip_priority;
+      if ((min_seq - 1) / k <= (last_time_seq - 1) / k)
+        min_seq = last_time_seq + k;
     }
 
     if (PriorityTxnService::g_tictoc_mode) {
@@ -414,7 +414,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     // record
     if (g_progress_backoff && dist == INT_MIN) {
       int max_prog_seq = sid2seq(this->GetMaxProgress());
-      txn->distance = available_seq - max_prog_seq;
+      txn->distance = (int)available_seq - max_prog_seq;
       txn->distance_max = abs(txn->distance);
     }
     return seq2sid(available_seq);
@@ -555,7 +555,7 @@ bool PriorityTxn::Init(VHandle **update_handles, int usize, BaseInsertKey **inse
   // updates
   for (int i = 0; i < usize; ++i) {
     // pre-checking
-    if (PriorityTxnService::g_conflict_read_bit && CheckUpdateConflict(update_handles[i])) {
+    if (CheckUpdateConflict(update_handles[i])) {
       Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
       return false;
     }
@@ -643,15 +643,15 @@ void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **i
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
   for (int i = 0; i < insert_cnt; ++i)
     insert_handles[i]->WriteWithVersion(sid, nullptr, sid >> 32);
-  // this->min_sid = this->sid; // do not retry with this sid
-  // if (PriorityTxnService::g_sid_bitmap && distance >= 0) {
-  //   // since this txn aborted, reset the SID bit back to false
-  //   auto core = go::Scheduler::CurrentThreadPoolId() - 1;
-  //   auto seq = (this->sid >> 8) & 0xFFFFFF;
-  //   auto idx = util::Instance<PriorityTxnService>().seq2idx(seq);
-  //   auto &bitmap = util::Instance<PriorityTxnService>().seq_bitmap[core];
-  //   bitmap->set(idx, false);
-  // }
+  this->min_sid = this->sid; // do not retry with this sid
+  if (PriorityTxnService::g_sid_bitmap && distance >= 0) {
+    // since this txn aborted, reset the SID bit back to false
+    auto core = go::Scheduler::CurrentThreadPoolId() - 1;
+    auto seq = (this->sid >> 8) & 0xFFFFFF;
+    auto idx = util::Instance<PriorityTxnService>().seq2idx(seq);
+    auto &bitmap = util::Instance<PriorityTxnService>().seq_bitmap[core];
+    bitmap->set(idx, false);
+  }
 }
 
 } // namespace felis
