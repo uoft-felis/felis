@@ -129,7 +129,7 @@ class LinkedListExtraVHandle {
   LinkedListExtraVHandle(LinkedListExtraVHandle &&rhs) = delete;
 
   util::MCSSpinLock lock;
-  static bool IsLockLess(void); // is lockless or not
+  static bool RequiresLock(void);
   bool AppendNewPriorityVersion(uint64_t sid);
   VarStr *ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle);
   bool CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in);
@@ -141,23 +141,23 @@ class LinkedListExtraVHandle {
 
   uint64_t first_version() {
     util::MCSSpinLock::QNode qnode;
-    if (!IsLockLess()) lock.Lock(&qnode);
+    if (RequiresLock()) lock.Lock(&qnode);
     Entry *p = head.load();
     if (!p) {
-      if (!IsLockLess()) lock.Unlock(&qnode);
+      if (RequiresLock()) lock.Unlock(&qnode);
       return ~0; // uint_64 max
     }
     while (p->next != nullptr)
       p = p->next;
-    if (!IsLockLess()) lock.Unlock(&qnode);
+    if (RequiresLock()) lock.Unlock(&qnode);
     return p->version;
   }
 
   uint64_t last_version() {
     util::MCSSpinLock::QNode qnode;
-    if (!IsLockLess()) lock.Lock(&qnode);
+    if (RequiresLock()) lock.Lock(&qnode);
     Entry *p = head.load();
-    if (!IsLockLess()) lock.Unlock(&qnode);
+    if (RequiresLock()) lock.Unlock(&qnode);
     if (!p) return 0;
     return p->version;
   }

@@ -802,14 +802,14 @@ LinkedListExtraVHandle::LinkedListExtraVHandle()
 {
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
 }
-bool LinkedListExtraVHandle::IsLockLess(void) {
-  return PriorityTxnService::g_lockless_append;
+bool LinkedListExtraVHandle::RequiresLock(void) {
+  return PriorityTxnService::g_lock_insert || PriorityTxnService::g_hybrid_insert;
 }
 
 bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
 {
-  if (!IsLockLess()) {
-    Entry *n = new Entry(sid, kPendingValue, mem::ParallelPool::CurrentAffinity());
+  Entry *n = new Entry(sid, kPendingValue, mem::ParallelPool::CurrentAffinity());
+  if (PriorityTxnService::g_lock_insert) {
     util::MCSSpinLock::QNode qnode;
     lock.Lock(&qnode);
     Entry dummy(LONG_MAX, kPendingValue, 0);
@@ -831,10 +831,34 @@ bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
     return true;
   }
 
-  Entry *old, *n = new Entry(sid, kPendingValue, mem::ParallelPool::CurrentAffinity());
+  Entry *old;
   do {
     old = head.load();
     if (old && old->version >= sid) {
+      if (PriorityTxnService::g_hybrid_insert) {
+        // logger->info("sid {} on {:p} failed, goto lock", sid, (void*)this);
+        util::MCSSpinLock::QNode qnode;
+        lock.Lock(&qnode);
+        // after this, only lockless append could happen.
+        // say cur head is 10, want to insert 8, a new txn appended 12 locklessly
+        // it's still fine to use head 10 to find location for 8 and insert
+
+        Entry *cur = old; // will not replace head because sid < head.sid
+        while (cur && cur->next && cur->next->version > sid)
+          cur = cur->next;
+        if (cur->next && cur->next->version == sid) {
+          // for TicToc, reuse SID
+          delete n;
+          lock.Unlock(&qnode);
+          return false;
+        }
+        n->next = cur->next;
+        cur->next = n;
+        // logger->info("lock append sid {} on {:p}", sid, (void*)this);
+
+        lock.Unlock(&qnode);
+        return true;
+      }
       delete n;
       return false;
     }
@@ -849,14 +873,14 @@ bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
 VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
 {
   util::MCSSpinLock::QNode qnode;
-  if (!IsLockLess())
+  if (RequiresLock())
     lock.Acquire(&qnode);
 
   Entry *p = head;
   while (p && (p->version > ver) && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
     p = p->next;
 
-  if (!IsLockLess()) lock.Release(&qnode);
+  if (RequiresLock()) lock.Release(&qnode);
   if (!p)
     return nullptr;
 
@@ -891,14 +915,14 @@ VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, Sort
 bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in) {
   abort_if(!PriorityTxnService::g_read_bit, "ExtraVHandle CheckReadBit() is called when read bit is off");
   util::MCSSpinLock::QNode qnode;
-  if (!IsLockLess())
+  if (RequiresLock())
     lock.Acquire(&qnode);
   is_in = false;
   Entry *p = head;
   while (p && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
     p = p->next;
 
-  if (!IsLockLess()) lock.Release(&qnode);
+  if (RequiresLock()) lock.Release(&qnode);
   if (!p)
     return false;
 
@@ -922,13 +946,13 @@ bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArra
 bool LinkedListExtraVHandle::IsExistingVersion(uint64_t sid)
 {
   util::MCSSpinLock::QNode qnode;
-  if (!IsLockLess())
+  if (RequiresLock())
     lock.Acquire(&qnode);
 
   Entry *p = head;
   while (p && p->version > sid)
     p = p->next;
-  if (!IsLockLess()) lock.Release(&qnode);
+  if (RequiresLock()) lock.Release(&qnode);
 
   if (!p || p->version != sid) {
     return false;
@@ -961,7 +985,7 @@ uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
 uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
 {
   util::MCSSpinLock::QNode qnode;
-  if (!IsLockLess())
+  if (RequiresLock())
     lock.Acquire(&qnode);
   Entry dummy(0, 0, 0);
   dummy.next = head;
@@ -978,10 +1002,10 @@ uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
 
   if (cur->next && cur->next->version < min && !(cur->next->object & kReadBitMask))
   {
-    if (!IsLockLess()) lock.Release(&qnode);
+    if (RequiresLock()) lock.Release(&qnode);
     return min; // special case: if the version before min is unread, we can use min
   }
-  if (!IsLockLess()) lock.Release(&qnode);
+  if (RequiresLock()) lock.Release(&qnode);
   if (last_unread == ~0)
     return 0;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
@@ -994,7 +1018,7 @@ uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
 bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
 {
   util::MCSSpinLock::QNode qnode;
-  if (!IsLockLess())
+  if (RequiresLock())
     lock.Acquire(&qnode);
 
   Entry *p = head;
@@ -1010,11 +1034,11 @@ bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
       p = p->next;
     }
     logger->critical("Extra Linked list: {}nullptr", ss.str());
-    if (!IsLockLess()) lock.Release(&qnode);
+    if (RequiresLock()) lock.Release(&qnode);
     return false;
   }
 
-  if (!IsLockLess()) lock.Release(&qnode);
+  if (RequiresLock()) lock.Release(&qnode);
   volatile uintptr_t *addr = &p->object;
   util::Impl<VHandleSyncService>().OfferData(addr, (uintptr_t) obj);
   return true;

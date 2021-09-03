@@ -118,7 +118,8 @@ class PriorityTxnService {
   static int g_exp_lambda;
   static bool g_progress_backoff;
   static bool g_exp_distri_backoff;
-  static bool g_lockless_append;
+  static bool g_lock_insert;
+  static bool g_hybrid_insert;
   static bool g_sid_row_wts;
   static bool g_fastest_core;
   static bool g_priority_preemption;

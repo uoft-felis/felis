@@ -120,6 +120,7 @@ struct Options {
   static inline const auto kNoProgressBackoff = Option("NoProgressBackoff");
   static inline const auto kExpDistriBackoff = Option("ExpDistriBackoff");
   static inline const auto kLockInsert = Option("LockInsert");
+  static inline const auto kHybridInsert = Option("HybridInsert");
   static inline const auto kSIDRowWTS = Option("SIDRowWTS");
 
   static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core

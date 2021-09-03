@@ -32,7 +32,8 @@ int PriorityTxnService::g_dist = -100;
 int PriorityTxnService::g_exp_lambda = 2000;
 bool PriorityTxnService::g_progress_backoff = true;
 bool PriorityTxnService::g_exp_distri_backoff = false;
-bool PriorityTxnService::g_lockless_append = true;
+bool PriorityTxnService::g_lock_insert = false;
+bool PriorityTxnService::g_hybrid_insert = false;
 bool PriorityTxnService::g_sid_row_wts = false;
 bool PriorityTxnService::g_fastest_core = false;
 bool PriorityTxnService::g_priority_preemption = true;
@@ -185,11 +186,15 @@ PriorityTxnService::PriorityTxnService()
     logger->info("[Pri-init] ExpLambda {}", g_exp_lambda);
   }
   if (Options::kLockInsert)
-    g_lockless_append = false;
+    g_lock_insert = true;
+  if (Options::kHybridInsert) {
+    g_hybrid_insert = true;
+  }
+
   if (Options::kSIDRowWTS)
     g_sid_row_wts = true;
-  logger->info("[Pri-init] ProgressBackoff {}, ExpDistriBackoff {}, LockInsert {}, SIDRowWTS {}",
-               g_progress_backoff, g_exp_distri_backoff, !g_lockless_append, g_sid_row_wts);
+  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
+               g_progress_backoff, g_exp_distri_backoff, g_lock_insert, g_hybrid_insert, g_sid_row_wts);
 
   if (Options::kFastestCore)
     g_fastest_core = true;
@@ -322,8 +327,8 @@ void PriorityTxnService::PrintStats() {
     return;
   logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns  physical Dist: {}",
                g_nr_priority_txn, g_interval_priority_txn, g_dist);
-  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, LockInsert {}, SIDRowWTS {}",
-               g_progress_backoff, g_exp_distri_backoff, !g_lockless_append, g_sid_row_wts);
+  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
+               g_progress_backoff, g_exp_distri_backoff, g_lock_insert, g_hybrid_insert, g_sid_row_wts);
 
 }
 
