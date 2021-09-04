@@ -8,6 +8,8 @@
 #include <array>
 #include <sys/mman.h>
 
+#include <immintrin.h>
+
 #include "json11/json11.hpp"
 #include "util/arch.h"
 #include "util/locks.h"
