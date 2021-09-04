@@ -32,6 +32,8 @@ int PriorityTxnService::g_dist = -100;
 int PriorityTxnService::g_exp_lambda = 2000;
 bool PriorityTxnService::g_progress_backoff = true;
 bool PriorityTxnService::g_exp_distri_backoff = false;
+bool PriorityTxnService::g_exp_backoff = false;
+bool PriorityTxnService::g_rate_backoff = false;
 bool PriorityTxnService::g_lock_insert = false;
 bool PriorityTxnService::g_hybrid_insert = false;
 bool PriorityTxnService::g_return_bit = false;
@@ -187,6 +189,14 @@ PriorityTxnService::PriorityTxnService()
       g_exp_lambda = Options::kExpLambda.ToInt();
     logger->info("[Pri-init] ExpLambda {}", g_exp_lambda);
   }
+  if (Options::kExpBackoff) {
+    g_progress_backoff = false;
+    g_exp_backoff = true;
+  }
+  if (Options::kRateBackoff) {
+    g_progress_backoff = false;
+    g_rate_backoff = true;
+  }
   if (Options::kLockInsert)
     g_lock_insert = true;
   if (Options::kHybridInsert) {
@@ -195,8 +205,10 @@ PriorityTxnService::PriorityTxnService()
 
   if (Options::kSIDRowWTS)
     g_sid_row_wts = true;
-  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
-               g_progress_backoff, g_exp_distri_backoff, g_lock_insert, g_hybrid_insert, g_sid_row_wts);
+  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, ExpBackoff {}, RateBackoff {}",
+               g_progress_backoff, g_exp_distri_backoff, g_exp_backoff, g_rate_backoff);
+  logger->info("[Pri-stat] Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
+               g_lock_insert, g_hybrid_insert, g_sid_row_wts);
 
   if (Options::kFastestCore)
     g_fastest_core = true;
@@ -329,8 +341,10 @@ void PriorityTxnService::PrintStats() {
     return;
   logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns  physical Dist: {}",
                g_nr_priority_txn, g_interval_priority_txn, g_dist);
-  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
-               g_progress_backoff, g_exp_distri_backoff, g_lock_insert, g_hybrid_insert, g_sid_row_wts);
+  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, ExpBackoff {}, RateBackoff {}",
+               g_progress_backoff, g_exp_distri_backoff, g_exp_backoff, g_rate_backoff);
+  logger->info("[Pri-stat] Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
+               g_lock_insert, g_hybrid_insert, g_sid_row_wts);
 
 }
 
@@ -381,6 +395,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       }
       if (max_wts_seq > max_rts_seq) max_rts_seq = max_wts_seq;
     }
+    txn->last_max_rts_seq = max_rts_seq;
 
     uint64_t min_seq = max_rts_seq + 1; // the smallest seq to use, i.e. [min_seq, +inf)
     // backoff by txn->distance
@@ -399,7 +414,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
           limit_seq = max_prog_seq + dist;
       }
       min_seq = (min_seq > limit_seq) ? min_seq : limit_seq;
-    } else if (g_exp_distri_backoff) {
+    } else if (g_exp_distri_backoff || g_exp_backoff || g_rate_backoff) {
       // dist is forward backoff
       min_seq = min_seq + dist;
     }
@@ -567,17 +582,17 @@ bool PriorityTxn::Init(VHandle **update_handles, int usize, BaseInsertKey **inse
   for (int i = 0; i < usize; ++i) {
     // pre-checking
     if (CheckUpdateConflict(update_handles[i])) {
-      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
+      Rollback(update_handles, update_cnt, usize, insert_handles, insert_cnt);
       return false;
     }
     // apply changes
     if (!update_handles[i]->AppendNewPriorityVersion(sid)) {
-      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
+      Rollback(update_handles, update_cnt, usize, insert_handles, insert_cnt);
       return false;
     }
     update_cnt++;
     if (CheckUpdateConflict(update_handles[i])) {
-      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
+      Rollback(update_handles, update_cnt, usize, insert_handles, insert_cnt);
       return false;
     }
   }
@@ -586,7 +601,7 @@ bool PriorityTxn::Init(VHandle **update_handles, int usize, BaseInsertKey **inse
     // apply changes
     VHandle *handle = nullptr;
     if ((handle = insert_ikeys[i]->Insert(sid)) == nullptr) {
-      Rollback(update_handles, update_cnt, insert_handles, insert_cnt);
+      Rollback(update_handles, update_cnt, usize, insert_handles, insert_cnt);
       return false;
     }
     insert_cnt++;
@@ -621,7 +636,7 @@ double ran_expo(double lambda){
     return -log(1 - u) / lambda;
 }
 
-void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles,int insert_cnt) {
+void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, int usize, VHandle **insert_handles, int insert_cnt) {
   if (PriorityTxnService::g_exp_distri_backoff) {
     // exponential distribution backoff
     int average_transaction_latency = PriorityTxnService::g_exp_lambda;
@@ -650,6 +665,57 @@ void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **i
       }
     }
   }
+  else if (PriorityTxnService::g_exp_backoff) {
+    // 0 -> 1 -> 2 -> 4 -> ... -> INT_MAX
+    if (distance == 0) {
+      distance = 1;
+    } else if (distance < INT_MAX / 2) {
+      distance *= 2;
+    } else {
+      distance = INT_MAX;
+    }
+  }
+  else if (PriorityTxnService::g_rate_backoff) {
+    // get maximum rts from rows
+    auto cur_epoch = util::Instance<EpochManager>().current_epoch_nr();
+    uint64_t max_rts = 1;
+    for (int i = 0; i < usize; ++i) {
+      auto rts = update_handles[i]->GetRowRTS();
+      max_rts = (rts > max_rts) ? rts : max_rts;
+    }
+    uint64_t max_rts_epoch = max_rts >> 24;
+    uint64_t max_rts_seq;
+    if (max_rts_epoch < cur_epoch) {
+      max_rts_seq = 1;
+    } else {
+      abort_if (max_rts_epoch > cur_epoch, "max_rts in epoch {}?", max_rts_epoch);
+      max_rts_seq = max_rts & 0xFFFFFF;
+    }
+
+    // get maximum wts to enlarge max_rts_seq
+    if (PriorityTxnService::g_sid_row_wts) {
+      uint64_t max_wts = 1;
+      for (int i = 0; i < usize; ++i) {
+        auto wts = update_handles[i]->last_priority_version();
+        max_wts = (wts > max_wts) ? wts : max_wts;
+      }
+      uint64_t max_wts_epoch = sid2epo(max_wts);
+      uint64_t max_wts_seq;
+      if (max_wts_epoch < cur_epoch) {
+        max_wts_seq = 1;
+      } else {
+        abort_if(max_wts_epoch > cur_epoch, "max_wts in epoch {}?", max_wts_epoch);
+        max_wts_seq = sid2seq(max_wts);
+      }
+      if (max_wts_seq > max_rts_seq) max_rts_seq = max_wts_seq;
+    }
+
+    auto &last_max_seq = this->last_max_rts_seq;
+    abort_if(max_rts_seq < last_max_seq, "rate <= 0, {} <= {}", max_rts_seq, last_max_seq);
+    uint64_t rate = max_rts_seq - last_max_seq;
+    distance = distance / 2 + rate / 2;
+  }
+
   for (int i = 0; i < update_cnt; ++i)
     update_handles[i]->WriteWithVersion(sid, (VarStr*)kIgnoreValue, sid >> 32);
   for (int i = 0; i < insert_cnt; ++i)

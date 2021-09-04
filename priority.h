@@ -118,6 +118,8 @@ class PriorityTxnService {
   static int g_exp_lambda;
   static bool g_progress_backoff;
   static bool g_exp_distri_backoff;
+  static bool g_exp_backoff;
+  static bool g_rate_backoff;
   static bool g_lock_insert;
   static bool g_hybrid_insert;
   static bool g_return_bit;
@@ -197,6 +199,7 @@ class PriorityTxn {
  public:
   int distance_max;
   int distance;
+  unsigned int last_max_rts_seq;
   std::atomic_int piece_count;
   uint64_t epoch; // pre-generate. which epoch is this txn in
   uint64_t delay; // pre-generate. tsc delay w.r.t. the start of execution, in tsc
@@ -214,7 +217,8 @@ class PriorityTxn {
     if (PriorityTxnService::g_row_rts) {
       if (PriorityTxnService::g_progress_backoff)
         this->distance = INT_MIN;
-      else if (PriorityTxnService::g_exp_distri_backoff)
+      else if (PriorityTxnService::g_exp_distri_backoff || PriorityTxnService::g_exp_backoff ||
+               PriorityTxnService::g_rate_backoff)
         this->distance = 0;
     } else {
       this->distance = PriorityTxnService::g_dist;
@@ -267,7 +271,7 @@ class PriorityTxn {
 
   bool Init(VHandle **update_handles, int usize, BaseInsertKey **insert_ikeys, int isize, VHandle **insert_handles);
 
-  void Rollback(VHandle **update_handles, int update_cnt, VHandle **insert_handles, int insert_cnt);
+  void Rollback(VHandle **update_handles, int update_cnt, int usize, VHandle **insert_handles, int insert_cnt);
 
   template <typename T>
   T Read(VHandle* handle) {
