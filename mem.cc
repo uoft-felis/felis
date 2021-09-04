@@ -863,7 +863,7 @@ namespace mem {
       auto _ = util::Guard(lock_freelist);
       void *ptr = get_freelist() + offset_freelist - 1;
       offset_freelist--;
-      (*get_offset_freelist())--;
+      // (*get_offset_freelist())--;
       if (use_pmem_freelist){
         // shirley pmem shirley test
         // _mm_clwb(freelist);
@@ -871,11 +871,12 @@ namespace mem {
       return ptr;
     }
     // shirley: else, allocate from brk
-    size_t off = *get_offset();
-    size_t lmt = *get_limit();
+    size_t off = offset; // *get_offset();
+    size_t lmt = limit; // *get_limit();
     size_t blk_sz = block_size;
 
-    *get_offset() = off + blk_sz;
+    offset = off + blk_sz;
+    // *get_offset() = off + blk_sz;
 
     if (__builtin_expect(off + blk_sz > lmt, 0)) {
       fprintf(stderr, "BrkWFree of limit %lu is not large enough!\n", lmt);
@@ -888,11 +889,11 @@ namespace mem {
   void BrkWFree::Free(void *ptr) {
     // shirley todo: add to freelist
     auto _ = util::Guard(lock_freelist);
-    size_t off = *get_offset_freelist();
+    size_t off = offset_freelist; // *get_offset_freelist();
     uint64_t *flist = get_freelist();
     *(flist + off) = (uint64_t)ptr;
     offset_freelist++;
-    (*get_offset_freelist())++;
+    // (*get_offset_freelist())++;
     // shirley pmem shirley test
     if (use_pmem_freelist){
       // _mm_clwb(freelist);

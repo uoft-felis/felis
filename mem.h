@@ -537,28 +537,42 @@ void *AllocFromRoutine(size_t sz);
 class BrkWFree;
 class ParallelBrkWFree;
 class BrkWFree {
-  // size_t offset; // shirley: move this to pmem file (in front of data?)
-  // size_t limit; // shirley: move this to pmem file (in front of data?)
-  size_t block_size; // shirley: cache this. shirley: move this to pmem file (in front of data?)
   util::SpinLock lock_freelist;
-  uint8_t *data; // shirley todo: this should be calculated based on core id and fixe mmap address
-  uint64_t *freelist; // shirley todo: this should be calculated based on core id and fixe mmap address 
+  uint8_t *data; // shirley: this should be calculated based on core id and fixe mmap address
+  size_t offset; // shirley: cache this. move this to pmem file (in front of data)
+  size_t limit; // shirley: cache this. move this to pmem file (in front of data)
+  size_t block_size; // shirley: cache this. shirley: move this to pmem file (in front of data)
+  
+  uint64_t *freelist; // shirley: this should be calculated based on core id and fixe mmap address 
   // shirley: add limit and offset of freelist to pmem file (in front of freelist)
-  size_t offset_freelist; // shirley: cache this so we can quickly check if freelist is not empty
-  // size_t limit_freelist;
-  // bool thread_safe; // shirley: removed. Always use unsafe bc will call through ParallelBrkWFree.
+  size_t offset_freelist; // shirley: cache this. move this to pmem file (in front of freelist)
+  size_t limit_freelist; // shirley: cache this. move this to pmem file (in front of freelist)
   
   bool use_pmem; // data in pmem or dram
   bool use_pmem_freelist; // freelist in pmem or dram
-  static constexpr size_t metadata_size = 24; // 12 bytes metadata in front of data. offset, limit, block_size.
-  static constexpr size_t metadata_size_freelist = 16; // 8 bytes metadata in front of freelist. offset, limit.
+  static constexpr size_t metadata_size = 32; // 12 bytes metadata in front of data. offset 1 & 2, limit, block_size.
+  static constexpr size_t metadata_size_freelist = 24; // 8 bytes metadata in front of freelist. offset 1 & 2, limit.
 
-  size_t *get_offset() const { return (size_t*) data; }
-  size_t *get_limit() { return (size_t*) (data + 8); }
-  size_t *get_block_size() { return (size_t*) (data + 16); }
+  size_t *get_offset(bool first_slot = true) const {
+    if (first_slot) {
+      return (size_t *)data;
+    }
+    else {
+      return (size_t *)(data + 8);
+    }
+  }
+  size_t *get_limit() { return (size_t*) (data + 16); }
+  size_t *get_block_size() { return (size_t*) (data + 24); }
   uint8_t *get_data() const { return data + metadata_size; }
-  size_t *get_offset_freelist() { return (size_t *) freelist; }
-  size_t *get_limit_freelist() { return (size_t *)((uint8_t*)freelist + 8); }
+  size_t *get_offset_freelist(bool first_slot = true) {
+    if (first_slot) {
+      return (size_t *)freelist;
+    }
+    else {
+      return (size_t *)((uint8_t *)freelist + 8);
+    }
+  }
+  size_t *get_limit_freelist() { return (size_t *)((uint8_t*)freelist + 16); }
   uint64_t *get_freelist() {
     return (uint64_t*) ((uint8_t *)freelist + metadata_size_freelist);
   }
@@ -569,15 +583,18 @@ public:
            size_t block_size, bool use_pmem = false,
            bool use_pmem_freelist = false, bool is_recovery = false)
       : data((uint8_t *)d), freelist((uint64_t *)f), use_pmem(use_pmem),
-        use_pmem_freelist(use_pmem_freelist), block_size(block_size) {
-    // shirley todo: initialize the inlined metadata.
-    // shirley todo: handle if is recovery
+        use_pmem_freelist(use_pmem_freelist), offset(0), limit(limit),
+        block_size(block_size), limit_freelist(limit_freelist),
+        offset_freelist(0) {
+    // shirley: initialize the inlined metadata.
+    // shirley: handle case if is recovery
     *get_offset() = (size_t)0;
+    *get_offset(false) = (size_t)0;
     *get_limit() = limit;
     *get_block_size() = block_size;
     *get_offset_freelist() = (size_t)0;
+    *get_offset_freelist(false) = (size_t)0;
     *get_limit_freelist() = limit_freelist;
-    offset_freelist = (size_t)0;
   }
   ~BrkWFree() {}
 
@@ -600,19 +617,37 @@ public:
   }
 
   bool Check(size_t s) { 
-    return (*get_offset() + s <= *get_limit());
-    // return offset + s <= limit;
+    // return (*get_offset() + s <= *get_limit());
+    return offset + s <= limit;
   }
   void Reset() 
-  { 
-    *get_offset() = 0;
-    *get_offset_freelist() = 0;
+  {
+    offset = 0;
+    offset_freelist = 0;
+    // *get_offset() = 0;
+    // *get_offset_freelist() = 0;
+  }
+
+  void persistOffsets(bool first_slot = true) {
+    if (use_pmem) {
+      *get_offset(first_slot) = offset;
+      // shirley pmem shirley test
+      // _mm_clwb(data);
+    }
+    if (use_pmem_freelist) {
+      *get_offset_freelist(first_slot) = offset_freelist;
+      // shirley pmem shirley test
+      // _mm_clwb(freelist);
+    }
   }
 
   void *Alloc();
   void Free(void *ptr);
   uint8_t *ptr() const { return get_data(); }
-  size_t current_size() const { return *get_offset(); }
+  size_t current_size() const {
+    return offset;
+    // return *get_offset();
+  }
 };
 
 class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
@@ -628,6 +663,14 @@ class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
   ParallelBrkWFree(ParallelBrkWFree &&rhs) : ParallelAllocator(std::move(rhs)) {}
 
   void Reset();
+
+  // shirley: flush the offsets from cache to pmem file
+  void persistOffsets(bool first_slot = true) {
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      pools[i]->persistOffsets(first_slot);
+    }
+  }
+
   ParallelBrkWFree &operator=(ParallelBrkWFree &&rhs) {
     if (&rhs != this) {
       this->~ParallelBrkWFree();

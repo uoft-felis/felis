@@ -104,4 +104,8 @@ void BaseVHandle::InitPool()
   // inline_pool.Register();
 }
 
+void BaseVHandle::PersistPoolOffsets(bool first_slot) {
+  inline_pool.persistOffsets(first_slot);
+}
+
 }

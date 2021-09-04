@@ -409,6 +409,12 @@ void EpochClient::OnInsertComplete()
 {
   // Shirley: clear transient pool here (only 1 thread)
   mem::GetTransientPool().Reset();
+
+  auto &mgr = util::Instance<EpochManager>();
+  auto epoch_nr = mgr.current_epoch_nr();
+  // shirley: flush the pool offsets. !(epoch_nr % 2) because vhandles are created during insert.
+  VHandle::PersistPoolOffsets(!(epoch_nr % 2));
+  // shirley todo: need to think about how to flush offsets for external pmem values (bc this is end of insert)
   // Shirley: major GC print stats
   // // GC must have been completed
   auto &gc = util::Instance<GC>();

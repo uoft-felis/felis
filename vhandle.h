@@ -65,6 +65,7 @@ class BaseVHandle {
   static mem::ParallelBrkWFree inline_pool; // shirley: changed to brk w free pool
   // static mem::ParallelSlabPool inline_pool;
   static void InitPool();
+  static void PersistPoolOffsets(bool first_slot = true);
 
   // Corey: Pool is not needed
   static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
