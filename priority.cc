@@ -34,6 +34,7 @@ bool PriorityTxnService::g_progress_backoff = true;
 bool PriorityTxnService::g_exp_distri_backoff = false;
 bool PriorityTxnService::g_lock_insert = false;
 bool PriorityTxnService::g_hybrid_insert = false;
+bool PriorityTxnService::g_return_bit = false;
 bool PriorityTxnService::g_sid_row_wts = false;
 bool PriorityTxnService::g_fastest_core = false;
 bool PriorityTxnService::g_priority_preemption = true;
@@ -125,6 +126,7 @@ PriorityTxnService::PriorityTxnService()
     if (g_sid_bitmap || g_sid_local_inc)
       abort_if(NodeConfiguration::g_nr_threads != g_strip_priority,
               "plz make priority strip = # cores"); // allow me to be lazy once
+    if (Options::kReturnBit) g_return_bit = true;
   }
 
   if (Options::kReadBit) {
@@ -651,7 +653,7 @@ void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, VHandle **i
   for (int i = 0; i < insert_cnt; ++i)
     insert_handles[i]->WriteWithVersion(sid, nullptr, sid >> 32);
   this->min_sid = this->sid; // do not retry with this sid
-  if (PriorityTxnService::g_sid_bitmap && distance >= 0) {
+  if (PriorityTxnService::g_sid_bitmap && PriorityTxnService::g_return_bit) {
     // since this txn aborted, reset the SID bit back to false
     auto core = go::Scheduler::CurrentThreadPoolId() - 1;
     auto seq = (this->sid >> 8) & 0xFFFFFF;
