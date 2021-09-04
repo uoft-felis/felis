@@ -418,7 +418,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     if (PriorityTxnService::g_tictoc_mode) {
       return GetNextSID_TicToc(min_seq, txn, handles, size);
     }
-    // find available SID after min_seq
+    // find available SID in [min_seq, +inf)
     uint64_t available_seq = GetNextSIDSlot(min_seq);
     // record
     if (g_progress_backoff && dist == INT_MIN) {
@@ -528,6 +528,8 @@ uint64_t PriorityTxnService::GetNextSIDSlot(uint64_t sequence)
   // use per-core bitmap to find an unused SID
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   int idx = seq2idx(sequence);
+  if (idx2seq(idx, core_id) <= sequence)
+    ++idx; // in case sequence is a priority txn which core_id > this_core_id
   int available_idx = seq_bitmap[core_id]->set_first_unset_idx(idx);
   uint64_t min_seq = idx2seq(available_idx, core_id);
   return min_seq;
