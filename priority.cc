@@ -380,7 +380,7 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       if (max_wts_seq > max_rts_seq) max_rts_seq = max_wts_seq;
     }
 
-    uint64_t min_seq = max_rts_seq + 1; // txn will use [min_seq, +inf)
+    uint64_t min_seq = max_rts_seq + 1; // the smallest seq to use, i.e. [min_seq, +inf)
     // backoff by txn->distance
     // g_progress_backoff and g_exp_distri_backoff do this differently
     int &dist = txn->distance;
@@ -406,9 +406,11 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     if (!g_exp_distri_backoff) {
       // SID cannot be in previous/same strip as txn->min_sid from last abort
       uint64_t last_time_seq = sid2seq(txn->min_sid);
+      if (last_time_seq == 0) last_time_seq = 1;
       int k = g_strip_batched + g_strip_priority;
-      if ((min_seq - 1) / k <= (last_time_seq - 1) / k)
+      if ((min_seq - 1) / k <= (last_time_seq - 1) / k) {
         min_seq = last_time_seq + k;
+      }
     }
 
     if (PriorityTxnService::g_tictoc_mode) {

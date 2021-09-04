@@ -40,7 +40,7 @@ class PriorityTxnService {
       abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx={}, size={}", idx, size);
       bitset[idx] = value;
     }
-    // find first element after idx that is false, set it to true
+    // find first element in [idx, +inf) that is false, and set it to true
     int set_first_unset_idx(int idx) {
       abort_if(idx < 0 || idx >= size, "bitmap access out of bound, idx={}, size={}", idx, size);
       for (int i = idx; i < size; ++i) {
@@ -200,7 +200,7 @@ class PriorityTxn {
   uint64_t epoch; // pre-generate. which epoch is this txn in
   uint64_t delay; // pre-generate. tsc delay w.r.t. the start of execution, in tsc
   uint64_t measure_tsc;
-  uint64_t min_sid; // input, this txn cannot serialize before min_sid
+  uint64_t min_sid; // input, this txn can only serialize after min_sid, i.e. (min_sid, +inf)
   PriorityTxn(bool (*func)(PriorityTxn *)): sid(-1), initialized(false),
                                             piece_count(0), callback(func) {}
   PriorityTxn& operator=(const PriorityTxn& rhs) {
