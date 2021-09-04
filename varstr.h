@@ -90,7 +90,8 @@ class VarStr final {
       // probes::VarStrNewPmem{NewSize(length)}();
       //shirley: use persistent pool 
       // ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
-      ins = (VarStr *)mem::GetPersistentPool().Alloc(NewSize(length));
+      ins = (VarStr *)mem::GetExternalPmemPool().Alloc(true);
+      // ins = (VarStr *)mem::GetPersistentPool().Alloc(NewSize(length));
     }
     //VarStr *ins = (VarStr *) mem::GetDataRegion().Alloc(NewSize(length));
     
@@ -111,7 +112,8 @@ class VarStr final {
 
     //shirley: I forgot to change to persistent pool before?? Assuming always free persistent pool, don't free transient
     //mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
-    mem::GetPersistentPool().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
+    mem::GetExternalPmemPool().Free(ptr, ins->region_id, true);
+    // mem::GetPersistentPool().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);
   }
 
   static VarStr *FromPtr(void *ptr, uint16_t length) {

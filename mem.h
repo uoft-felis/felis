@@ -597,6 +597,9 @@ public:
     *get_offset_freelist() = (size_t)0;
     *get_offset_freelist(false) = (size_t)0;
     *get_limit_freelist() = limit_freelist;
+    // shirley pmem shirley test : flush initial metadata
+    // _mm_clwb(data);
+    // _mm_clwb(freelist);
   }
   ~BrkWFree() {}
 
@@ -682,6 +685,9 @@ class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
   }
 };
 
+ParallelBrkWFree &GetExternalPmemPool();
+void InitExternalPmemPool();
+void PersistExternalPmemPoolOffsets(bool first_slot = true);
 
 PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();

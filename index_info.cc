@@ -296,7 +296,7 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
 
       // shirley: try getting initial version from dram cache
       if (dram_version && dram_version->val){
-        auto varstr_sz = sizeof(VarStr) + dram_version->val->length();
+        size_t varstr_sz = sizeof(VarStr) + dram_version->val->length();
         VarStr *init_val = (VarStr *)mem::GetTransientPool().Alloc(varstr_sz);
         std::memcpy(init_val, dram_version->val, varstr_sz);
         versions_ptr(versions)[initial_cap] = (uint64_t)init_val;

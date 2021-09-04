@@ -252,7 +252,8 @@ class Txn : public BaseTxn {
         // alloc inline val and copy data
         VarStr *val = (VarStr *) (vhandle->AllocFromInline(val_sz, felis::SortedArrayVHandle::SidType2));
         if (!val){
-          val = (VarStr *) (mem::GetPersistentPool().Alloc(val_sz));
+          val = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
+          // val = (VarStr *) (mem::GetPersistentPool().Alloc(val_sz));
         }
         std::memcpy(val, val_dram, val_sz);
 

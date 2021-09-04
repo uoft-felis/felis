@@ -89,7 +89,7 @@ mem::ParallelBrkWFree BaseVHandle::inline_pool;
 void BaseVHandle::InitPool()
 {
   // shirley todo: use ParallelBrkWFree pool, let each core have 2G? 2147483648
-  size_t VHandlePoolSize = ((size_t)1024)*1024*1024*2; // 1 GB for now
+  size_t VHandlePoolSize = ((size_t)1024)*1024*1024*2; // 2 GB for now
   // shirley TODO: pool should be removed, only need inline_pool
   // shirley pmem: when on pmem machine, set to true. when on our machines, set to false
   // shirley test: set to false to test everything in dram

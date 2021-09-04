@@ -764,6 +764,22 @@ namespace mem {
     g_transient_pool = ParallelBrk(t_mem, true);
   }
 
+  static ParallelBrkWFree g_external_pmem_pool;
+  static size_t kExternalPmemPoolSize = 1024*1024*1024; // 1 GB
+  static size_t kExternalPmemValuesSize = 1024; // 1 KB
+  ParallelBrkWFree &GetExternalPmemPool() { return g_external_pmem_pool; }
+
+  void InitExternalPmemPool() {
+    void *fixed_mmap_addr = nullptr;
+    g_external_pmem_pool = mem::ParallelBrkWFree(
+        mem::ExternalPmemPool, mem::ExternalPmemFreelistPool, fixed_mmap_addr,
+        kExternalPmemPoolSize, kExternalPmemValuesSize, true, true, false);
+  }
+
+  void PersistExternalPmemPoolOffsets(bool first_slot) {
+    g_external_pmem_pool.persistOffsets(first_slot);
+  }
+
   void *Brk::Alloc(size_t s) {
     s = util::Align(s, 16);
     size_t off = 0;
@@ -861,7 +877,7 @@ namespace mem {
       // std::abort();
       // shirley: can allocate from freelist instead.
       auto _ = util::Guard(lock_freelist);
-      void *ptr = get_freelist() + offset_freelist - 1;
+      void *ptr = (uint64_t *) *(get_freelist() + offset_freelist - 1);
       offset_freelist--;
       // (*get_offset_freelist())--;
       if (use_pmem_freelist){
