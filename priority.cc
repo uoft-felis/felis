@@ -441,7 +441,10 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
       txn->distance = (int)available_seq - max_prog_seq;
       txn->distance_max = abs(txn->distance);
     }
-    return seq2sid(available_seq);
+    auto result = seq2sid(available_seq);
+    abort_if(result <= txn->min_sid, "this time sid ({}) <= last abort's sid ({})",
+             format_sid(result), format_sid(txn->min_sid));
+    return result;
   }
 
   abort_if(g_exp_distri_backoff, "exp. distri. currently only works with row rts");
