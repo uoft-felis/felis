@@ -520,6 +520,17 @@ void EpochClient::OnExecuteComplete()
   VHandle::PersistPoolOffsets(!(cur_epoch_nr % 2));
   mem::PersistExternalPmemPoolOffsets(!(cur_epoch_nr % 2));
 
+  // shirley pmem shirley test
+  // _mm_sfence();
+
+  // shirley: here persist largest sid of this epoch
+  uint64_t largest_sid = (cur_epoch_nr << 32) | (NumberOfTxns() << 8) | (conf.nr_nodes() & 0x00FF);
+  mem::GetPmemPersistInfo()->largest_sid = largest_sid;
+  mem::FlushPmemPersistInfo();
+
+  // shirley pmem shirley test
+  // _mm_sfence();
+
   if (cur_epoch_nr + 1 < g_max_epoch) {
     InitializeEpoch();
   } else {

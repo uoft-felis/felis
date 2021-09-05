@@ -130,6 +130,7 @@ class AllocatorModule : public Module<CoreModule> {
     //shirley test: don't set to true to put everything in dram
     // tasks.emplace_back([]() { mem::GetPersistentPool().InitPools(true); });
     tasks.emplace_back([]() { mem::InitExternalPmemPool(); });
+    tasks.emplace_back([]() { mem::InitPmemPersistInfo(); });
     tasks.emplace_back(VHandle::InitPool);
     // shirley todo: add IndexInfo::InitPool
     tasks.emplace_back(IndexInfo::InitPool);

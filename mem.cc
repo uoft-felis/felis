@@ -782,6 +782,21 @@ namespace mem {
     g_external_pmem_pool.persistOffsets(first_slot);
   }
 
+  static PmemPersistInfo *g_pmem_info;
+  PmemPersistInfo *GetPmemPersistInfo() { return g_pmem_info; }
+  void InitPmemPersistInfo() {
+    void *fixed_mmap_addr = nullptr;
+    g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, 64, -1, fixed_mmap_addr, false);
+    memset(g_pmem_info, 0, 64);
+    // shirley pmem shirley test
+    FlushPmemPersistInfo();
+  }
+
+  void FlushPmemPersistInfo() {
+    // shirley pmem shirley test
+    // _mm_clwb(g_pmem_info);
+  }
+
   void *Brk::Alloc(size_t s) {
     s = util::Align(s, 16);
     size_t off = 0;

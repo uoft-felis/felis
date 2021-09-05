@@ -39,6 +39,7 @@ enum MemAllocType {
   Coroutine,
   TransientPool,
   PersistentPool,
+  PmemInfo,
   NumMemTypes,
 };
 
@@ -60,6 +61,7 @@ const std::string kMemAllocTypeLabel[] = {
   "coroutine",
   "^pool:transient mem",
   "^pool:persistent mem",
+  "pmem_persist_info",
 };
 
 struct PoolStatistics {
@@ -688,6 +690,16 @@ class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
 ParallelBrkWFree &GetExternalPmemPool();
 void InitExternalPmemPool();
 void PersistExternalPmemPoolOffsets(bool first_slot = true);
+
+struct PmemPersistInfo {
+  uint64_t largest_sid;
+};
+
+PmemPersistInfo *GetPmemPersistInfo();
+void InitPmemPersistInfo();
+void FlushPmemPersistInfo();
+
+static_assert(sizeof(PmemPersistInfo) <= 64, "PmemPersistInfo is greater than 64 bytes!\n");
 
 PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();
