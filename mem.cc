@@ -13,6 +13,8 @@
 #include "gopp/gopp.h"
 #include "literals.h"
 
+#include "opts.h"
+
 namespace mem {
 
   static std::atomic_llong g_mem_tracker[NumMemTypes];
@@ -773,7 +775,7 @@ namespace mem {
     void *fixed_mmap_addr = nullptr;
     g_external_pmem_pool = mem::ParallelBrkWFree(
         mem::ExternalPmemPool, mem::ExternalPmemFreelistPool, fixed_mmap_addr,
-        kExternalPmemPoolSize, kExternalPmemValuesSize, true, true, false);
+        kExternalPmemPoolSize, kExternalPmemValuesSize, true, true,  felis::Options::kRecovery);
   }
 
   void PersistExternalPmemPoolOffsets(bool first_slot) {

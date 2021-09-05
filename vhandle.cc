@@ -98,7 +98,7 @@ void BaseVHandle::InitPool()
   void *fixed_mmap_addr = nullptr;
   inline_pool =
       mem::ParallelBrkWFree(mem::VhandlePool, mem::VhandleFreelistPool, fixed_mmap_addr,
-                            VHandlePoolSize, kInlinedSize, true, true, false);
+                            VHandlePoolSize, kInlinedSize, true, true, Options::kRecovery);
   // inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
   pool.Register();
   // inline_pool.Register();
