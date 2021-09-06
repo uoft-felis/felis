@@ -965,23 +965,21 @@ namespace mem {
       size_t freelist_size = 4096; // brk_pool_size / block_size;
       // shirley todo: if is recovery, don't alloc, just mmap file to fixed address
       if (use_pmem) {
-        // void *hint_addr = (uint8_t*)fixed_mmap_addr + (i * brk_pool_size);
-        void *hint_addr = nullptr;
+        void *hint_addr = fixed_mmap_addr ? ((uint8_t*)fixed_mmap_addr + (i * brk_pool_size)) : nullptr;
         p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, -1, hint_addr);
       }
       else {
         p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
       }
       if (use_pmem_freelist) {
-        // void *hint_addr_freelist =
-        //     (uint8_t *)fixed_mmap_addr +
-        //     (ParallelAllocationPolicy::g_nr_cores * brk_pool_size) +
-        //     (i * freelist_size * 8);
-        void *hint_addr_freelist = nullptr;
-        p_buf_freelist = (uint8_t *)AllocPersistentMemory(alloc_type, freelist_size, -1, hint_addr_freelist);
+        void *hint_addr_freelist = (fixed_mmap_addr) ? 
+            ((uint8_t *)fixed_mmap_addr +
+            (ParallelAllocationPolicy::g_nr_cores * brk_pool_size) +
+            (i * freelist_size * 8) + 1024*1024*1024) : nullptr; // shirley: add 1G to leave some space in between for mmap
+        p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size, -1, hint_addr_freelist);
       }
       else {
-        p_buf_freelist = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
+        p_buf_freelist = (uint8_t *)AllocMemory(freelist_alloc_type, brk_pool_size);
       }
       pools[i] = new (p) BrkWFree(p_buf, p_buf_freelist, brk_pool_size, freelist_size, block_size, use_pmem, use_pmem_freelist, is_recovery);
       
