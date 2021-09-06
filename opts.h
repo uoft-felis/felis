@@ -117,7 +117,7 @@ struct Options {
 
   static inline const auto kDist = Option("Dist");
   static inline const auto kExpLambda = Option("ExpLambda");
-  static inline const auto kNoProgressBackoff = Option("NoProgressBackoff");
+  static inline const auto kProgressBackoff = Option("ProgressBackoff");
   static inline const auto kExpDistriBackoff = Option("ExpDistriBackoff");
   static inline const auto kExpBackoff = Option("ExpBackoff");
   static inline const auto kRateBackoff = Option("RateBackoff");

@@ -30,14 +30,16 @@ bool PriorityTxnService::g_last_version_patch = false;
 
 int PriorityTxnService::g_dist = -100;
 int PriorityTxnService::g_exp_lambda = 2000;
-bool PriorityTxnService::g_progress_backoff = true;
+bool PriorityTxnService::g_progress_backoff = false;
 bool PriorityTxnService::g_exp_distri_backoff = false;
 bool PriorityTxnService::g_exp_backoff = false;
 bool PriorityTxnService::g_rate_backoff = false;
+
 bool PriorityTxnService::g_lock_insert = false;
 bool PriorityTxnService::g_hybrid_insert = false;
 bool PriorityTxnService::g_return_bit = false;
 bool PriorityTxnService::g_sid_row_wts = false;
+
 bool PriorityTxnService::g_fastest_core = false;
 bool PriorityTxnService::g_priority_preemption = true;
 bool PriorityTxnService::g_tpcc_pin = true;
@@ -88,8 +90,6 @@ PriorityTxnService::PriorityTxnService()
     g_nr_priority_txn = Options::kNrPriorityTxn.ToInt();
     g_interval_priority_txn = Options::kIntervalPriorityTxn.ToInt();
   }
-  logger->info("[Pri-init] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns",
-               g_nr_priority_txn, g_interval_priority_txn);
 
   if (Options::kTicTocMode) {
     // does not leave slots
@@ -170,55 +170,45 @@ PriorityTxnService::PriorityTxnService()
   abort_if(g_sid_read_bit + g_sid_forward_read_bit + g_sid_row_rts > 1,
            "plz only choose one between SIDReadBit, SIDForwardReadBit & SIDRowRTS");
 
-  int logical_dist = INT_MAX;
-  if (Options::kDist) {
-    logical_dist = Options::kDist.ToInt(); // independent of priority txn slot ratio
-    g_dist = logical_dist * (g_strip_batched + g_strip_priority);
-    if (Options::kSIDRowRTS) {
-      logger->info("Neglecting Global Backoff Distance for RowRTS");
-      g_dist = INT_MAX;
+  if (Options::kProgressBackoff) {
+    g_progress_backoff = true;
+    int logical_dist = INT_MAX;
+    if (Options::kDist) {
+      logical_dist = Options::kDist.ToInt(); // independent of priority txn slot ratio
+      g_dist = logical_dist * (g_strip_batched + g_strip_priority);
+      if (Options::kSIDRowRTS) {
+        logger->info("Neglecting Global Backoff Distance for RowRTS");
+        g_dist = INT_MAX;
+      }
     }
   }
-  if (Options::kNoProgressBackoff)
-    g_progress_backoff = false;
   if (Options::kExpDistriBackoff) {
     abort_if(!g_row_rts, "-XExpDistriBackoff only works with RowRTS");
-    g_progress_backoff = false;
     g_exp_distri_backoff = true;
     if (Options::kExpLambda)
       g_exp_lambda = Options::kExpLambda.ToInt();
-    logger->info("[Pri-init] ExpLambda {}", g_exp_lambda);
   }
-  if (Options::kExpBackoff) {
-    g_progress_backoff = false;
+  if (Options::kExpBackoff)
     g_exp_backoff = true;
-  }
-  if (Options::kRateBackoff) {
-    g_progress_backoff = false;
+  if (Options::kRateBackoff)
     g_rate_backoff = true;
-  }
+  abort_if(g_progress_backoff + g_exp_distri_backoff + g_exp_backoff + g_rate_backoff > 1,
+           "plz only choose one in ProgressBackoff, ExpDistriBackoff, ExpBackoff & RateBackoff")
+
   if (Options::kLockInsert)
     g_lock_insert = true;
-  if (Options::kHybridInsert) {
+  if (Options::kHybridInsert)
     g_hybrid_insert = true;
-  }
-
   if (Options::kSIDRowWTS)
     g_sid_row_wts = true;
-  logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, ExpBackoff {}, RateBackoff {}",
-               g_progress_backoff, g_exp_distri_backoff, g_exp_backoff, g_rate_backoff);
-  logger->info("[Pri-stat] Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
-               g_lock_insert, g_hybrid_insert, g_sid_row_wts);
 
   if (Options::kFastestCore)
     g_fastest_core = true;
-  logger->info("[Pri-init] Strip: Batched {} + Priority {}, Dist: logical {}, physical {}",
-               g_strip_batched, g_strip_priority, logical_dist, g_dist);
-
   if (Options::kNoPriorityPreempt)
     g_priority_preemption = false;
   if (Options::kNoTpccPin)
     g_tpcc_pin = false;
+  PrintStats();
 
   this->core = 0;
   this->global_last_sid = 0;
@@ -339,13 +329,24 @@ bool PriorityTxnService::isPriorityTxn(uint64_t sid) {
 void PriorityTxnService::PrintStats() {
   if (!NodeConfiguration::g_priority_txn)
     return;
-  logger->info("[Pri-Stat] NrPriorityTxn: {}  IntervalPriorityTxn: {} ns  physical Dist: {}",
-               g_nr_priority_txn, g_interval_priority_txn, g_dist);
+  logger->info("[Pri-Stat] NrPriorityTxn: {}, IntervalPriorityTxn: {} ns",
+               g_nr_priority_txn, g_interval_priority_txn);
+  logger->info("[Pri-init] Strip: Batched {} + Priority {}",
+               g_strip_batched, g_strip_priority);
+  logger->info("[Pri-stat] SIDRowWTS {}", g_sid_row_wts);
+  logger->info("[Pri-stat] Lock Insert {}, Hybrid Insert {}",
+              g_lock_insert, g_hybrid_insert);
+
   logger->info("[Pri-stat] ProgressBackoff {}, ExpDistriBackoff {}, ExpBackoff {}, RateBackoff {}",
                g_progress_backoff, g_exp_distri_backoff, g_exp_backoff, g_rate_backoff);
-  logger->info("[Pri-stat] Lock Insert {}, Hybrid Insert {}, SIDRowWTS {}",
-               g_lock_insert, g_hybrid_insert, g_sid_row_wts);
+  if (g_progress_backoff) {
+    logger->info("[Pri-init] Dist: logical {}, physical {}", Options::kDist.ToInt(), g_dist);
+  } else if (g_exp_distri_backoff) {
+    logger->info("[Pri-init] ExpLambda {}", g_exp_lambda);
+  }
 
+  logger->info("[Pri-init] FastestCore {}, PriorityPreempt {}, TpccPin {}",
+               g_fastest_core, g_priority_preemption, g_tpcc_pin);
 }
 
 uint64_t seq2sid(uint64_t sequence)
