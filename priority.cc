@@ -402,6 +402,11 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     // backoff by txn->distance
     // g_progress_backoff and g_exp_distri_backoff do this differently
     int &dist = txn->distance;
+    if (g_exp_backoff) {
+      static util::FastRandom r(__rdtsc());
+      double u = r.next_uniform(); // [0,1)
+      dist = dist * u;
+    }
     if (g_progress_backoff) {
       // dist is backward limit, based on max progress
       uint64_t limit_seq;
