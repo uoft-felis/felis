@@ -146,15 +146,28 @@ void LocalDispatcherImpl::SubmitOnCore(PieceRoutine **routines, unsigned int sta
 }
 
 
-LocalTransport::LocalTransport() : lb(new LocalDispatcherImpl(0)) {}
+LocalTransport::LocalTransport() : lb(new LocalDispatcherImpl(0)), pending_routines(false) {}
 LocalTransport::~LocalTransport() { delete lb; }
 
 void LocalTransport::TransportPromiseRoutine(PieceRoutine *routine)
 {
   lb->QueueRoutine(routine);
+  pending_routines = true;
 }
 
-void LocalTransport::Flush() { lb->Flush(); }
+void LocalTransport::Flush()
+{
+  lb->Flush();
+
+  // If there are more than one machine, then there must be network based
+  // transport available.  Suppose there is no local piece and lb->Flush() does
+  // nothing, then we must spawn ExecutionRoutines to poll the network.
+  if (!pending_routines && util::Instance<NodeConfiguration>().nr_nodes() > 1)
+    lb->DoFlush();
+
+  pending_routines = false;
+}
+
 bool LocalTransport::TryFlushForCore(int core_id)
 {
   auto [success, ___] = lb->TryFlushForThread(core_id + 1);
