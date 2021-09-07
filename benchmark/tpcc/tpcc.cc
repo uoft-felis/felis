@@ -445,6 +445,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
     for (uint64_t i = 0; i < data_offset; i += data_block_size) {
       VHandle *vhdl_row = (VHandle *)(data + i);
       int table_id = vhdl_row->table_id;
+      if (table_id == 0) continue; // shirley: this row was deleted and reseted during freelist
       int key0 = vhdl_row->key_0;
       int key1 = vhdl_row->key_1;
       int key2 = vhdl_row->key_2;
