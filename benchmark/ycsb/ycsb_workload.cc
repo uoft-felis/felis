@@ -31,6 +31,21 @@ class YcsbModule : public Module<WorkloadModule> {
     go::GetSchedulerFromPool(1)->WakeUp(loader);
     loader->Wait();
 
+    if (felis::Options::kRecovery) {
+      std::atomic_int count_down(NodeConfiguration::g_nr_threads);
+      for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+        auto sched_recovery = go::GetSchedulerFromPool(i + 1);
+        auto loader_recovery = new ycsb::YcsbLoaderRecovery(&count_down);
+        sched_recovery->WakeUp(loader_recovery);
+      }
+      int load_elapse = 0;
+      while (count_down.load() > 0) {
+        sleep(1);
+        load_elapse++;
+      }
+      logger->info("recovery loader done {} seconds", load_elapse);
+    }
+
     EpochClient::g_workload_client = new ycsb::Client();
   }
 };

@@ -278,6 +278,10 @@ void RMWTxn::Run()
 
 void YcsbLoader::Run()
 {
+  // shirley: don't load init database if is recovery
+  if (felis::Options::kRecovery) {
+    return;
+  }
   auto &mgr = util::Instance<felis::TableManager>();
   mgr.Create<Ycsb>();
 
@@ -329,6 +333,46 @@ void YcsbLoader::Run()
     std::swap(g_permutation_map[j], g_permutation_map[i]);
   }
 #endif
+}
+
+void YcsbLoaderRecovery::DoLoadRecovery() {
+  // shirley: recover vhandles if is recovery
+  if (felis::Options::kRecovery) {
+    void *large_buf = alloca(1024);
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
+    uint8_t *data = vhandles_brk->get_data();
+    uint64_t *freelist = vhandles_brk->get_freelist();
+    size_t data_offset = vhandles_brk->get_cached_offset();
+    size_t freelist_offset = vhandles_brk->get_cached_offset_freelist();
+    size_t data_block_size = vhandles_brk->get_cached_block_size();
+    bool data_use_pmem = vhandles_brk->get_cached_use_pmem();
+    bool freelist_use_pmem = vhandles_brk->get_cached_use_pmem_freelist();
+
+    // reset deleted vhandles
+    if (freelist_use_pmem) {
+      for (int i = 0; i < freelist_offset; i++) {
+        std::memset((uint8_t *)(freelist[i]), 0, 64);
+        // shirley pmem shirey test
+        // _mm_clwb((uint64_t *)(freelist[i]));
+      }
+    }
+
+    // now read vhandles and rebuild index
+    for (uint64_t i = 0; i < data_offset; i += data_block_size) {
+      VHandle *vhdl_row = (VHandle *)(data + i);
+      int table_id = vhdl_row->table_id;
+      if (table_id == 0) continue; // shirley: this row was deleted and reseted during freelist
+      int key0 = vhdl_row->key_0;
+      Ycsb::Key dbk;
+      dbk.k = key0;
+      auto handle =
+          util::Instance<felis::TableManager>()
+              .Get<ycsb::Ycsb>()
+              .RecoverySearchOrCreate(dbk.EncodeView(large_buf), vhdl_row);
+    }
+  }
+  return;
 }
 
 size_t Client::g_table_size = 10000000;

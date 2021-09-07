@@ -60,6 +60,17 @@ class YcsbLoader : public go::Routine {
   void Wait() { while (!done) sleep(1); }
 };
 
+class YcsbLoaderRecovery : public go::Routine {
+  std::atomic_int *count_down;
+ public:
+  YcsbLoaderRecovery(std::atomic_int *count_down) : count_down(count_down) {}
+  void DoLoadRecovery();
+  void Run() {
+    DoLoadRecovery();
+    count_down->fetch_sub(1);
+  }
+};
+
 }
 
 namespace felis {
