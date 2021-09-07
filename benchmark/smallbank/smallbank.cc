@@ -79,14 +79,15 @@ uint64_t ClientBase::PickAccount() {
 
 void SmallBankLoader::Run()
 {
+  auto &mgr = util::Instance<felis::TableManager>();
+  mgr.Create<Checking, Saving, Account>();
+  // mgr.Create<Account>();
+
   // shirley: don't load init database if is recovery
   if (felis::Options::kRecovery) {
     done = true;
     return;
   }
-  auto &mgr = util::Instance<felis::TableManager>();
-  mgr.Create<Checking, Saving, Account>();
-  // mgr.Create<Account>();
 
   void *buf = alloca(512);
   void *buf_sv = alloca(512);

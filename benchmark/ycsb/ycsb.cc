@@ -278,13 +278,14 @@ void RMWTxn::Run()
 
 void YcsbLoader::Run()
 {
+  auto &mgr = util::Instance<felis::TableManager>();
+  mgr.Create<Ycsb>();
+
   // shirley: don't load init database if is recovery
   if (felis::Options::kRecovery) {
     done = true;
     return;
   }
-  auto &mgr = util::Instance<felis::TableManager>();
-  mgr.Create<Ycsb>();
 
   void *buf = alloca(512);
 
