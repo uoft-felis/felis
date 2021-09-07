@@ -786,10 +786,16 @@ namespace mem {
   PmemPersistInfo *GetPmemPersistInfo() { return g_pmem_info; }
   void InitPmemPersistInfo() {
     void *fixed_mmap_addr = nullptr;
-    g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, 64, 0, -1, fixed_mmap_addr, false);
-    memset(g_pmem_info, 0, 64);
-    // shirley pmem shirley test
-    FlushPmemPersistInfo();
+    if (felis::Options::kRecovery) {
+      MapPersistentMemory(MemAllocType::PmemInfo, 0, 64, fixed_mmap_addr);
+      g_pmem_info = (PmemPersistInfo *) fixed_mmap_addr;
+    }
+    else {
+      g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, 64, 0, -1, fixed_mmap_addr, false);
+      memset(g_pmem_info, 0, 64);
+      // shirley pmem shirley test
+      FlushPmemPersistInfo();
+    }
   }
 
   void FlushPmemPersistInfo() {

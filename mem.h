@@ -538,6 +538,16 @@ class ParallelBrk : public ParallelAllocator<Brk> {
 
 void *AllocFromRoutine(size_t sz);
 
+struct PmemPersistInfo {
+  uint64_t largest_sid;
+};
+
+PmemPersistInfo *GetPmemPersistInfo();
+void InitPmemPersistInfo();
+void FlushPmemPersistInfo();
+
+static_assert(sizeof(PmemPersistInfo) <= 64, "PmemPersistInfo is greater than 64 bytes!\n");
+
 class BrkWFree;
 class ParallelBrkWFree;
 class BrkWFree {
@@ -593,8 +603,11 @@ public:
     // shirley: initialize the inlined metadata.
     // shirley: handle case if is recovery
     if (is_recovery) {
-      offset = *get_offset();
-      offset_freelist = *get_offset_freelist();
+      uint64_t largest_sid = mem::GetPmemPersistInfo()->largest_sid;
+      uint64_t last_epoch_nr = largest_sid >> 32;
+      bool first_slot = !(last_epoch_nr % 2);
+      offset = *get_offset(first_slot);
+      offset_freelist = *get_offset_freelist(first_slot);
     }
     else {
       *get_offset() = (size_t)0;
@@ -696,16 +709,6 @@ class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
 ParallelBrkWFree &GetExternalPmemPool();
 void InitExternalPmemPool();
 void PersistExternalPmemPoolOffsets(bool first_slot = true);
-
-struct PmemPersistInfo {
-  uint64_t largest_sid;
-};
-
-PmemPersistInfo *GetPmemPersistInfo();
-void InitPmemPersistInfo();
-void FlushPmemPersistInfo();
-
-static_assert(sizeof(PmemPersistInfo) <= 64, "PmemPersistInfo is greater than 64 bytes!\n");
 
 PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();
