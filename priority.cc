@@ -45,51 +45,61 @@ bool PriorityTxnService::g_priority_preemption = true;
 bool PriorityTxnService::g_tpcc_pin = true;
 
 unsigned long long PriorityTxnService::g_tsc = 0;
+int PriorityTxnService::execute_piece_time = 0;
 
 mem::ParallelSlabPool BaseInsertKey::pool;
 
 PriorityTxnService::PriorityTxnService()
 {
-  if (Options::kTxnQueueLength)
-    g_queue_length = Options::kTxnQueueLength.ToLargeNumber();
-
+  double _exec_time, coefficient;
+  if (Options::kTpccWarehouses) {
+    auto wh_num = Options::kTpccWarehouses.ToInt();
+    if (wh_num == 32) { // TPCC 32 warehouses
+      _exec_time = 24.8;
+      coefficient = 1.1;
+    } else if (wh_num == 1) { // TPCC single warehouse
+      _exec_time = 76.5;
+      coefficient = 5.87;
+    }
+  } else { // YCSB read-only 8
+    _exec_time = 24.95;
+    coefficient = 0.3061;
+  }
+  // 3 ways: percentage / incoming rate / # of priTxn + interval
   if (Options::kPercentagePriorityTxn) {
-    // two ways: you either specify percentage, or specify both # of priTxn per epoch and interval
-    if (Options::kNrPriorityTxn || Options::kIntervalPriorityTxn) {
-      logger->critical("When PercentagePriorityTxn is specified, "
-                       "please do not specify NrPriorityTxn or IntervalPriorityTxn");
-      std::abort();
-    }
-    double _exec_time, coefficient;
-    if (Options::kTpccWarehouses) {
-      auto wh_num = Options::kTpccWarehouses.ToInt();
-      if (wh_num == 32) { // TPCC 32 warehouses
-        _exec_time = 24.8;
-        coefficient = 1.1;
-      } else if (wh_num == 1) { // TPCC single warehouse
-        _exec_time = 76.5;
-        coefficient = 5.87;
-      }
-    } else { // YCSB read-only 8
-      _exec_time = 24.95;
-      coefficient = 0.3061;
-    }
+    abort_if(Options::kIncomingRate, "Only one method for interval");
+
     int percentage = Options::kPercentagePriorityTxn.ToInt();
     abort_if(percentage < 0, "priority transaction percentage cannot be smaller than 0");
     double exec_time = coefficient * double(percentage) + _exec_time;
     logger->info("[Pri-init] estimated exec phase time {} ms", exec_time);
+
     g_nr_priority_txn = EpochClient::g_txn_per_epoch * percentage / 100;
     g_interval_priority_txn = (percentage == 0) ? 0 : (exec_time * 1000000 / g_nr_priority_txn); // ms to ns
     g_nr_priority_txn *= 1.5; // make sure the actual pct we get is true
+  } else if (Options::kIncomingRate) {
+    auto rate = Options::kIncomingRate.ToInt(); // unit Ktxn/s
+    g_interval_priority_txn = 1000000 / rate;   // unit ns
+
+    double est_pct = _exec_time / ((double)g_interval_priority_txn / 1000 - coefficient);
+    if (est_pct < 0) est_pct = 100; // denominator < 0
+    logger->info("[Pri-init] estimated pct {}", est_pct);
+    g_nr_priority_txn = (EpochClient::g_txn_per_epoch / 100) * est_pct;
+    g_nr_priority_txn *= 1.5;
   } else {
-    if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn) {
-      logger->critical("Please specify both NrPriorityTxn and IntervalPriorityTxn "
-                       "(or only specify PercentagePriorityTxn)");
-      std::abort();
-    }
+    abort_if (!Options::kNrPriorityTxn || !Options::kIntervalPriorityTxn,
+              "Please specify both NrPriorityTxn and IntervalPriorityTxn");
     g_nr_priority_txn = Options::kNrPriorityTxn.ToInt();
     g_interval_priority_txn = Options::kIntervalPriorityTxn.ToInt();
   }
+
+  int nr_epochs;
+  if (!Options::kNrEpoch)
+    nr_epochs = felis::EpochClient::g_workload_client->g_max_epoch - 1;
+  else
+    nr_epochs = Options::kNrEpoch.ToInt() - 1;
+
+  g_queue_length = g_nr_priority_txn * nr_epochs + 32;
 
   if (Options::kTicTocMode) {
     // does not leave slots

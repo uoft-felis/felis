@@ -456,6 +456,7 @@ void EpochClient::OnInitializeComplete()
 void EpochClient::OnExecuteComplete()
 {
   stats.execution_time_ms += callback.perf.duration_ms();
+  PriorityTxnService::execute_piece_time += (__rdtsc() - PriorityTxnService::g_tsc) / 2200000;
   fmt::memory_buffer buf;
   long ctt = 0;
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
@@ -515,6 +516,7 @@ void EpochClient::OnExecuteComplete()
     logger->info("Throughput {} txn/s", thr);
     logger->info("Insert / Initialize / Execute {} ms {} ms {} ms",
                  stats.insert_time_ms, stats.initialize_time_ms, stats.execution_time_ms);
+    logger->info("PriorityTxnService::execute_piece_time {}", PriorityTxnService::execute_piece_time);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
     PriorityTxnService::PrintStats();

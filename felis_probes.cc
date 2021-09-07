@@ -11,6 +11,7 @@
 #include "vhandle.h" // Let's hope this won't slow down the build.
 #include "gc.h"
 #include "epoch.h"
+#include "priority.h"
 
 static struct ProbeMain {
   agg::Agg<agg::LogHistogram<16>> wait_cnt;
@@ -471,14 +472,17 @@ ProbeMain::~ProbeMain()
     long total_nr_txns = (client->g_max_epoch - 1) * client->NumberOfTxns();
     long batch_tpt = total_nr_txns * 1000 / dur; // duration is in ms
     long pri_tpt = batch_tpt * cnt / total_nr_txns;
+    long pri_tpt_1 = cnt * 1000 / felis::PriorityTxnService::execute_piece_time;
     int total_tpt = batch_tpt + pri_tpt;
     result.insert({"9_1", static_cast<int>(batch_tpt)});
-    result.insert({"9_2", static_cast<int>(pri_tpt)});
+    result.insert({"9_2", static_cast<int>(pri_tpt_1)});
     result.insert({"9_3", total_tpt});
     // 9_4 actual priority txn percentage, unit %
     double pct = 100.0 * cnt / total_nr_txns;
     result.insert({"9_4", pct});
-    std::cout << "[Pri-stat] actual priority percentage " << pct << std::endl;
+    std::cout << "[Pri-stat] actual priority percentage " << pct
+              << ", priority throughput " << static_cast<int>(pri_tpt_1) << " txn/s"
+              << std::endl;
 
     auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
     time_t tm;

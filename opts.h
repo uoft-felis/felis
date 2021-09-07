@@ -92,11 +92,11 @@ struct Options {
 
 
   static inline const auto kPriorityTxn = Option("PriorityTxn");
-  static inline const auto kTxnQueueLength = Option("TxnQueueLength");
 
   static inline const auto kPercentagePriorityTxn = Option("PercentagePriorityTxn");
   static inline const auto kNrPriorityTxn = Option("NrPriorityTxn");
   static inline const auto kIntervalPriorityTxn = Option("IntervalPriorityTxn");
+  static inline const auto kIncomingRate = Option("IncomingRate");
 
   static inline const auto kSlotPercentage = Option("SlotPercentage");
   static inline const auto kStripBatched = Option("StripBatched");

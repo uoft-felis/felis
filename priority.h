@@ -148,6 +148,7 @@ class PriorityTxnService {
  public:
   static void PrintStats();
   static unsigned long long g_tsc;
+  static int execute_piece_time;
 };
 
 struct BaseInsertKey {
