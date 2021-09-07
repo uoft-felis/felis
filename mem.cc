@@ -984,7 +984,7 @@ namespace mem {
             (i * freelist_size * 8) + 1024*1024*1024) : nullptr; // shirley: add 1G to leave some space in between for mmap
         if (is_recovery) {
           MapPersistentMemory(freelist_alloc_type, i, freelist_size, hint_addr_freelist);
-          p_buf = (uint8_t *) hint_addr_freelist;
+          p_buf_freelist = (uint8_t *)hint_addr_freelist;
         }
         else {
           p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size, i, -1, hint_addr_freelist);
