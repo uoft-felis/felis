@@ -89,11 +89,6 @@ class SortedArrayVHandle : public BaseVHandle {
   friend class HashtableIndex;
 
   // shirley: declaring sid1/sid2/ptr1/ptr2 as actual variables of vhandle class
-  int table_id = -1;
-  int key_0 = -1;
-  int key_1 = -1;
-  int key_2 = -1;
-  int key_3 = -1;
   uint64_t sid1 = 0;
   uint64_t sid2 = 0;
   uint8_t *ptr1 = nullptr;
@@ -158,7 +153,11 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle();
 
 public:
-
+  int table_id = -1;
+  int key_0 = -1;
+  int key_1 = -1;
+  int key_2 = -1;
+  int key_3 = -1;
   static void operator delete(void *ptr) {
     // shirley: we currently don't ever delete vhandle
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
@@ -252,10 +251,6 @@ public:
     key_1 = key1;
     key_2 = key2;
     key_3 = key3;
-  }
-
-  int get_table_id() {
-    return table_id;
   }
 
   enum SidType {

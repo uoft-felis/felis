@@ -68,7 +68,7 @@ class IndexInfo : public BaseIndexInfo {
   //[0, capacity - 1] stores version number, [capacity, 2*capacity - 1] stores ptr to data
   uint64_t versions_ep = 0;
   uint64_t *versions;
-  IndexInfo();
+  IndexInfo(void *vhandle = nullptr);
 
 public:
   DramVersion* dram_version = nullptr;
@@ -92,7 +92,7 @@ public:
   }
 
   // Corey: New() not necessary in new design
-  static IndexInfo *New();
+  static IndexInfo *New(void *vhandle = nullptr);
 
   bool ShouldScanSkip(uint64_t sid);
   void AppendNewVersion(uint64_t sid, uint64_t epoch_nr,

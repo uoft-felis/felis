@@ -577,7 +577,6 @@ class BrkWFree {
   }
   size_t *get_limit() { return (size_t*) (data + 16); }
   size_t *get_block_size() { return (size_t*) (data + 24); }
-  uint8_t *get_data() const { return data + metadata_size; }
   size_t *get_offset_freelist(bool first_slot = true) {
     if (first_slot) {
       return (size_t *)freelist;
@@ -587,9 +586,7 @@ class BrkWFree {
     }
   }
   size_t *get_limit_freelist() { return (size_t *)((uint8_t*)freelist + 16); }
-  uint64_t *get_freelist() {
-    return (uint64_t*) ((uint8_t *)freelist + metadata_size_freelist);
-  }
+  
 
 public:
   BrkWFree() : data(nullptr), freelist(nullptr), use_pmem(false), use_pmem_freelist(false) {}
@@ -674,6 +671,18 @@ public:
     return offset;
     // return *get_offset();
   }
+
+  uint8_t *get_data() const { return data + metadata_size; }
+  uint64_t *get_freelist() {
+    return (uint64_t *)((uint8_t *)freelist + metadata_size_freelist);
+  }
+  size_t get_cached_offset() { return offset; }
+  size_t get_cached_limit() { return limit; }
+  size_t get_cached_block_size() { return block_size; }
+  size_t get_cached_offset_freelist() { return offset_freelist; }
+  size_t get_cached_limit_freelist() { return limit_freelist; }
+  size_t get_cached_use_pmem() { return use_pmem; }
+  size_t get_cached_use_pmem_freelist() { return use_pmem_freelist; }
 };
 
 class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {

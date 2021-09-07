@@ -419,6 +419,98 @@ namespace loaders {
 template <>
 void Loader<LoaderType::Warehouse>::DoLoad()
 {
+  // shirley: recover vhandles if is recovery
+  if (felis::Options::kRecovery) {
+    void *large_buf = alloca(1024);
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
+    uint8_t *data = vhandles_brk->get_data();
+    uint64_t *freelist = vhandles_brk->get_freelist();
+    size_t data_offset = vhandles_brk->get_cached_offset();
+    size_t freelist_offset = vhandles_brk->get_cached_offset_freelist();
+    size_t data_block_size = vhandles_brk->get_cached_block_size();
+    bool data_use_pmem = vhandles_brk->get_cached_use_pmem();
+    bool freelist_use_pmem = vhandles_brk->get_cached_use_pmem_freelist();
+
+    // reset deleted vhandles
+    if (freelist_use_pmem) {
+      for (int i = 0; i < freelist_offset; i++) {
+        std::memset((uint8_t *)(freelist[i]), 0, 64);
+        // shirley pmem shirey test
+        // _mm_clwb((uint64_t *)(freelist[i]));
+      }
+    }
+
+    // now read vhandles and rebuild index
+    for (uint64_t i = 0; i < data_offset; i += data_block_size) {
+      VHandle *vhdl_row = (VHandle *)(data + i);
+      int table_id = vhdl_row->table_id;
+      int key0 = vhdl_row->key_0;
+      int key1 = vhdl_row->key_1;
+      int key2 = vhdl_row->key_2;
+      int key3 = vhdl_row->key_3;
+      switch (table_id) {
+        case ((int)tpcc::TableType::Warehouse): {
+          auto k = tpcc::Warehouse::Key::New(key0);
+          auto handle = tables().Get<tpcc::Warehouse>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::Item: {
+          auto k = tpcc::Item::Key::New(key0);
+          auto handle = tables().Get<tpcc::Item>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::Stock: {
+          auto k = tpcc::Stock::Key::New(key0, key1);
+          auto handle = tables().Get<tpcc::Stock>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::District: {
+          auto k = tpcc::District::Key::New(key0, key1);
+          auto handle = tables().Get<tpcc::District>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::Customer: {
+          auto k = tpcc::Customer::Key::New(key0, key1, key2);
+          auto handle = tables().Get<tpcc::Customer>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::CustomerInfo: {
+          auto k = tpcc::CustomerInfo::Key::New(key0, key1, key2);
+          auto handle = tables().Get<tpcc::CustomerInfo>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::OOrder: {
+          auto k = tpcc::OOrder::Key::New(key0, key1, key2);
+          auto handle = tables().Get<tpcc::OOrder>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::OOrderCIdIdx: {
+          auto k = tpcc::OOrderCIdIdx::Key::New(key0, key1, key2, key3);
+          auto handle = tables().Get<tpcc::OOrderCIdIdx>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::NewOrder: {
+          auto k = tpcc::NewOrder::Key::New(key0, key1, key2, key3);
+          auto handle = tables().Get<tpcc::NewOrder>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        case (int)tpcc::TableType::OrderLine: {
+          auto k = tpcc::OrderLine::Key::New(key0, key1, key2, key3);
+          auto handle = tables().Get<tpcc::OrderLine>().RecoverySearchOrCreate(k.EncodeView(large_buf), vhdl_row);
+          break;
+        }
+        default: {
+          printf("tpcc recovery loader unknown table_id = %d\n", table_id);
+          std::abort();
+          break;
+        }
+      }
+    }
+
+    return;
+  }
+
   void *large_buf = alloca(1024);
   // logger->info("Warehouse Loader starts");
   for (uint i = 1; i <= g_tpcc_config.nr_warehouses; i++) {
@@ -470,6 +562,11 @@ void Loader<LoaderType::Warehouse>::DoLoad()
 template <>
 void Loader<LoaderType::Item>::DoLoad()
 {
+  // shirley: don't load / initialize tables if is recovery
+  if (felis::Options::kRecovery) {
+    return;
+  }
+
   // Item table is a read only table, we replicate this table on all nodes!
   int last_affinity = -1;
   void *large_buf = alloca(1024);
@@ -513,6 +610,11 @@ void Loader<LoaderType::Item>::DoLoad()
 template <>
 void Loader<LoaderType::Stock>::DoLoad()
 {
+  // shirley: don't load / initialize tables if is recovery
+  if (felis::Options::kRecovery) {
+    return;
+  }
+
   // Stock and StockData table
   void *large_buf = alloca(1024);
   std::string s_dist = RandomStr(24);
@@ -587,6 +689,11 @@ void Loader<LoaderType::Stock>::DoLoad()
 template <>
 void Loader<LoaderType::District>::DoLoad()
 {
+  // shirley: don't load / initialize tables if is recovery
+  if (felis::Options::kRecovery) {
+    return;
+  }
+
   void *large_buf = alloca(1024);
   // logger->info("District Loader starts");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
@@ -636,6 +743,11 @@ void Loader<LoaderType::District>::DoLoad()
 template <>
 void Loader<LoaderType::Customer>::DoLoad()
 {
+  // shirley: don't load / initialize tables if is recovery
+  if (felis::Options::kRecovery) {
+    return;
+  }
+
   void *large_buf = alloca(1024);
   // logger->info("Customer Loader starts");
   for (auto w = 1; w <= g_tpcc_config.nr_warehouses; w++) {
@@ -747,6 +859,11 @@ void Loader<LoaderType::Customer>::DoLoad()
 template <>
 void Loader<LoaderType::Order>::DoLoad()
 {
+  // shirley: don't load / initialize tables if is recovery
+  if (felis::Options::kRecovery) {
+    return;
+  }
+
   auto nr_all_districts = g_tpcc_config.nr_warehouses * g_tpcc_config.districts_per_warehouse;
   for (int i = 1; i <= util::Instance<NodeConfiguration>().nr_nodes(); i++) {
     g_last_no_start[i] = new std::atomic_ulong[nr_all_districts];

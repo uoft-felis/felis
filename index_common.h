@@ -116,6 +116,7 @@ class Table {
   virtual IndexInfo *SearchOrCreate(const VarStrView &k, bool *created) { return nullptr; }
   virtual IndexInfo *SearchOrCreate(const VarStrView &k) { return nullptr; }
   virtual IndexInfo *Search(const VarStrView &k) { return nullptr; }
+  virtual IndexInfo *RecoverySearchOrCreate(const VarStrView &k, void *vhandle) { return nullptr; }
   virtual Table::Iterator *IndexSearchIterator(const VarStrView &start) {
     return nullptr;
   }
@@ -129,7 +130,7 @@ class Table {
     return nullptr;
   }
 
-  IndexInfo *NewRow();
+  IndexInfo *NewRow(void *vhandle = nullptr);
   size_t row_size() const {
     if (is_enable_inline()) return VHandle::kInlinedSize;
     else return VHandle::kSize;

@@ -24,19 +24,25 @@ VHandleSyncService &BaseIndexInfo::sync() {
   return util::Impl<VHandleSyncService>();
 }
 
-IndexInfo::IndexInfo() {
+IndexInfo::IndexInfo(void *vhandle) {
 //   nr_ondsplt = 0;
 //   this_coreid = mem::ParallelPool::CurrentAffinity();
 //   cont_affinity = -1;
 
   // shirley: versions should be initialized to null
   versions = nullptr;
-  // shirley note: need to make sure we only allocate vhandle once (here or in index.cc)
-  vhandle = (VHandle *) VHandle::NewInline();
+  if (vhandle) {
+    // under recovery, dont allocate new vhandle.
+    this->vhandle = (VHandle *) vhandle;
+  }
+  else {
+    // shirley note: need to make sure we only allocate vhandle once (here or in index.cc)
+    this->vhandle = (VHandle *) VHandle::NewInline();
+  }
 
 #ifndef NDEBUG
   // we are in debug build
-  vhandle = (VHandle *)((int64_t)vhandle | 0x8000000000000000);
+  this->vhandle = (VHandle *)((int64_t)(this->vhandle) | 0x8000000000000000);
 #endif
 
   // shirley: old: alloc versions externally from data region or inline
@@ -610,8 +616,8 @@ bool IndexInfo::WriteExactVersion(unsigned int version_idx, VarStr *obj,
   return true;
 }
 
-IndexInfo *IndexInfo::New() {
-  return new (pool.Alloc()) IndexInfo();
+IndexInfo *IndexInfo::New(void *vhandle) {
+  return new (pool.Alloc()) IndexInfo(vhandle);
 }
 
 mem::ParallelSlabPool BaseIndexInfo::pool;

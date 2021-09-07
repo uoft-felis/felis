@@ -126,6 +126,10 @@ IndexInfo *MasstreeIndex::Search(const VarStrView &k)
   return result;
 }
 
+IndexInfo *MasstreeIndex::RecoverySearchOrCreate(const VarStrView &k, void *vhandle)
+{
+  return SearchOrCreateImpl(k, [=]() { return NewRow(vhandle); });
+}
 
 static thread_local threadinfo *TLSThreadInfo;
 

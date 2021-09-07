@@ -50,9 +50,9 @@ void InitVersion(felis::IndexInfo *handle, int key_0, int key_1, int key_2, int 
 
 // shirley: modify this to allocate new IndexInfo that contains ptr to new vhandle
 // shirley: new vhandle is allocated in IndexInfo constructor.
-IndexInfo *Table::NewRow()
+IndexInfo *Table::NewRow(void *vhandle)
 {
-  IndexInfo *index_info = IndexInfo::New();
+  IndexInfo *index_info = IndexInfo::New(vhandle);
   // if (enable_inline)
   //   return (VHandle *) VHandle::NewInline();
   // else
