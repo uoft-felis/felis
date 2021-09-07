@@ -81,6 +81,7 @@ void SmallBankLoader::Run()
 {
   // shirley: don't load init database if is recovery
   if (felis::Options::kRecovery) {
+    done = true;
     return;
   }
   auto &mgr = util::Instance<felis::TableManager>();
