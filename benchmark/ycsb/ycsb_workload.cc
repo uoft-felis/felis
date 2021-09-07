@@ -32,6 +32,7 @@ class YcsbModule : public Module<WorkloadModule> {
     loader->Wait();
 
     if (felis::Options::kRecovery) {
+      logger->info("Loading recovery data...");
       std::atomic_int count_down(NodeConfiguration::g_nr_threads);
       for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
         auto sched_recovery = go::GetSchedulerFromPool(i + 1);
