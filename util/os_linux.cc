@@ -115,6 +115,35 @@ void *OSMemory::PmemAlloc(char* filename, size_t length, int numa_node, void *ad
   return mem;
 }
 
+bool OSMemory::PmemMap(char *filename, size_t length, void *addr) {
+  if (!addr) {
+    printf("OSMemory::PmemMap address is null!\n");
+    std::abort();
+  }
+
+  int flags = MAP_SHARED; // MAP_PRIVATE; //don't use map_private for files
+  int prot = PROT_READ | PROT_WRITE;
+  length = AlignLength(length);
+
+  int pmem_fd = open(filename, O_RDWR);
+  // printf("pmem_fd = %d\n", pmem_fd);
+  if (pmem_fd < 0) {
+    printf("fd error: %s", strerror(errno));
+    std::abort();
+  }
+
+  void *mem = mmap(addr, length, prot, flags, pmem_fd, 0);
+  if (mem != addr) {
+    printf("PmemMap: mismatch between addr = %p and mem = %p\n", addr, mem);
+    std::abort();
+  }
+
+  // can close file after mmap
+  close(pmem_fd);
+
+  return true;
+}
+
 void OSMemory::Free(void *p, size_t length)
 {
   length = AlignLength(length);

@@ -30,6 +30,8 @@ class OSMemory {
 
   void *Alloc(size_t length, int numa_node = -1, bool on_demand = false);
   void *PmemAlloc(char* filename, size_t length, int numa_node = -1, void *addr = nullptr, bool on_demand = false);
+  bool PmemMap(char* filename, size_t length, void *addr = nullptr);
+
   void Free(void *p, size_t length);
 
   static void BindMemory(void *p, size_t length, int numa_node);

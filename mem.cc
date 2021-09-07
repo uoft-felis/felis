@@ -302,7 +302,7 @@ namespace mem {
 
             //shirley: also init pmem
             auto &m_pmem = g_slabpmem[n];
-            m_pmem.p = (uint8_t *)AllocPersistentMemory(mem::GenericMemory, memsz, n, pmem_addr_fixed);
+            m_pmem.p = (uint8_t *)AllocPersistentMemory(mem::GenericMemory, memsz, n, n, pmem_addr_fixed);
             nr_metaslabs = ((memsz - 1) / SlabPool::kLargeSlabPageSize + 1);
             m_pmem.data_offset = util::Align(nr_metaslabs * sizeof(MetaSlab), SlabPool::kLargeSlabPageSize);
             m_pmem.data_len = memsz;
@@ -786,7 +786,7 @@ namespace mem {
   PmemPersistInfo *GetPmemPersistInfo() { return g_pmem_info; }
   void InitPmemPersistInfo() {
     void *fixed_mmap_addr = nullptr;
-    g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, 64, -1, fixed_mmap_addr, false);
+    g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, 64, 0, -1, fixed_mmap_addr, false);
     memset(g_pmem_info, 0, 64);
     // shirley pmem shirley test
     FlushPmemPersistInfo();
@@ -829,7 +829,7 @@ namespace mem {
       auto p = mem + numa_offset * kHeaderSize;
       uint8_t *p_buf;
       if (use_pmem) {
-        p_buf = (uint8_t *)AllocPersistentMemory(PersistentPool, brk_pool_size);
+        p_buf = (uint8_t *)AllocPersistentMemory(PersistentPool, brk_pool_size, i);
       }
       else {
         p_buf = (uint8_t *)AllocMemory(TransientPool, brk_pool_size);
@@ -966,7 +966,13 @@ namespace mem {
       // shirley todo: if is recovery, don't alloc, just mmap file to fixed address
       if (use_pmem) {
         void *hint_addr = fixed_mmap_addr ? ((uint8_t*)fixed_mmap_addr + (i * brk_pool_size)) : nullptr;
-        p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, -1, hint_addr);
+        if (is_recovery) {
+          MapPersistentMemory(alloc_type, i, brk_pool_size, hint_addr);
+          p_buf = (uint8_t *) hint_addr;
+        }
+        else {
+          p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, i, -1, hint_addr);
+        }
       }
       else {
         p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
@@ -976,7 +982,13 @@ namespace mem {
             ((uint8_t *)fixed_mmap_addr +
             (ParallelAllocationPolicy::g_nr_cores * brk_pool_size) +
             (i * freelist_size * 8) + 1024*1024*1024) : nullptr; // shirley: add 1G to leave some space in between for mmap
-        p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size, -1, hint_addr_freelist);
+        if (is_recovery) {
+          MapPersistentMemory(freelist_alloc_type, i, freelist_size, hint_addr_freelist);
+          p_buf = (uint8_t *) hint_addr_freelist;
+        }
+        else {
+          p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size, i, -1, hint_addr_freelist);
+        }
       }
       else {
         p_buf_freelist = (uint8_t *)AllocMemory(freelist_alloc_type, brk_pool_size);
@@ -1072,13 +1084,16 @@ namespace mem {
     return p;
   }
 
-  void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, void *addr, bool on_demand)
+  void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length, int core_id, int numa_node, void *addr, bool on_demand)
   {
     //file name
     char pmem_file_name[50];
     //shirley pmem: when on pmem machine, use /mnt/pmem0. when on our machine, use ../temp_files
     // sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
-    sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
+    // sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
+
+    // sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
+    sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
 
     void *p = util::OSMemory::g_default.PmemAlloc(pmem_file_name, length, numa_node, addr, on_demand);
 
@@ -1089,6 +1104,19 @@ namespace mem {
     }
     g_mem_tracker[alloc_type].fetch_add(length);
     return p;
+  }
+
+  void MapPersistentMemory(mem::MemAllocType alloc_type, int core_id, size_t length, void *addr) {
+    // file name
+    char pmem_file_name[50];
+    // shirley pmem: when on pmem machine, use /mnt/pmem0. when on our machine, use ../temp_files
+    // sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
+    sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
+    bool success = util::OSMemory::g_default.PmemMap(pmem_file_name, length, addr);
+    if (!success) {
+      printf("MapPersistentMemory failed!\n");
+      std::abort();
+    }
   }
 
 #if 0

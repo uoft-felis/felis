@@ -592,16 +592,22 @@ public:
         offset_freelist(0) {
     // shirley: initialize the inlined metadata.
     // shirley: handle case if is recovery
-    *get_offset() = (size_t)0;
-    *get_offset(false) = (size_t)0;
-    *get_limit() = limit;
-    *get_block_size() = block_size;
-    *get_offset_freelist() = (size_t)0;
-    *get_offset_freelist(false) = (size_t)0;
-    *get_limit_freelist() = limit_freelist;
-    // shirley pmem shirley test : flush initial metadata
-    // _mm_clwb(data);
-    // _mm_clwb(freelist);
+    if (is_recovery) {
+      offset = *get_offset();
+      offset_freelist = *get_offset_freelist();
+    }
+    else {
+      *get_offset() = (size_t)0;
+      *get_offset(false) = (size_t)0;
+      *get_limit() = limit;
+      *get_block_size() = block_size;
+      *get_offset_freelist() = (size_t)0;
+      *get_offset_freelist(false) = (size_t)0;
+      *get_limit_freelist() = limit_freelist;
+      // shirley pmem shirley test : flush initial metadata
+      // _mm_clwb(data);
+      // _mm_clwb(freelist);
+    }
   }
   ~BrkWFree() {}
 
@@ -707,7 +713,10 @@ void *AllocMemory(mem::MemAllocType alloc_type, size_t length,
                   int numa_node = -1, bool on_demand = false);
 
 void *AllocPersistentMemory(mem::MemAllocType alloc_type, size_t length,
-                  int numa_node = -1, void *addr = nullptr, bool on_demand = false);
+                            int core_id = 0, int numa_node = -1,
+                            void *addr = nullptr, bool on_demand = false);
+
+void MapPersistentMemory(mem::MemAllocType alloc_type, int core_id, size_t length, void *addr = nullptr);
 long TotalMemoryAllocated();
 
 }
