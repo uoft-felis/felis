@@ -216,6 +216,7 @@ class EpochManager {
   Epoch *current_epoch() const { return epoch(cur_epoch_nr); }
 
   void DoAdvance(EpochClient *client);
+  void AdvanceTo(uint64_t epoch, EpochClient *client);
 };
 
 class EpochObject {

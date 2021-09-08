@@ -187,6 +187,11 @@ EpochTxnSet::~EpochTxnSet()
 void EpochClient::GenerateBenchmarks()
 {
   all_txns = new EpochTxnSet[g_max_epoch - 1];
+  // shirley: don't generate transactions if is recovery. instead, read from file.
+  if (felis::Options::kRecovery) {
+    // shirley todo: recover txns from log
+    return;
+  }
   for (auto i = 1; i < g_max_epoch; i++) {
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
@@ -377,6 +382,14 @@ void EpochClient::InitializeEpoch()
   mgr.DoAdvance(this);
   auto epoch_nr = mgr.current_epoch_nr();
 
+  // shirley: if recovery, advance to the crashed epoch.
+  if ((Options::kRecovery) && (epoch_nr == 1)) {
+    // read last committed epoch number from pmem info and AdvanceTo next epoch (the one that crashed).
+    uint64_t largest_sid = mem::GetPmemPersistInfo()->largest_sid;
+    epoch_nr = (largest_sid >> 32) + 1;
+    mgr.AdvanceTo(epoch_nr, this);
+  }
+
   util::Impl<PromiseAllocationService>().Reset();
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
@@ -531,7 +544,7 @@ void EpochClient::OnExecuteComplete()
   // shirley pmem shirley test
   // _mm_sfence();
 
-  if (cur_epoch_nr + 1 < g_max_epoch) {
+  if ((cur_epoch_nr + 1 < g_max_epoch) && (!Options::kRecovery)) {
     InitializeEpoch();
   } else {
     // End of the experiment.
@@ -684,6 +697,13 @@ void EpochManager::DoAdvance(EpochClient *client)
   cur_epoch.load()->~Epoch();
   cur_epoch = new (cur_epoch) Epoch(cur_epoch_nr, client, mem);
   logger->info("We are going into epoch {}", cur_epoch_nr);
+}
+
+void EpochManager::AdvanceTo(uint64_t epoch, EpochClient *client) {
+  cur_epoch_nr.store(epoch);
+  cur_epoch.load()->~Epoch();
+  cur_epoch = new (cur_epoch) Epoch(cur_epoch_nr, client, mem);
+  logger->info("We are forwarding to epoch {}", cur_epoch_nr);
 }
 
 EpochManager::EpochManager(EpochMemory *mem, Epoch *epoch)
