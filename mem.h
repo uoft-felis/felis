@@ -40,6 +40,7 @@ enum MemAllocType {
   TransientPool,
   PersistentPool,
   PmemInfo,
+  TxnInputLog,
   NumMemTypes,
 };
 
@@ -62,6 +63,7 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:transient mem",
   "^pool:persistent mem",
   "pmem_persist_info",
+  "txn_input_log",
 };
 
 struct PoolStatistics {
@@ -547,6 +549,9 @@ void InitPmemPersistInfo();
 void FlushPmemPersistInfo();
 
 static_assert(sizeof(PmemPersistInfo) <= 64, "PmemPersistInfo is greater than 64 bytes!\n");
+
+uint8_t **GetTxnInputLog();
+void InitTxnInputLog();
 
 class BrkWFree;
 class ParallelBrkWFree;

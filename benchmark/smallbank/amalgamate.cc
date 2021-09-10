@@ -18,6 +18,13 @@ AmalgamateTxn::AmalgamateTxn(Client *client, uint64_t serial_id)
       AmalgamateStruct(client->GenerateTransactionInput<AmalgamateStruct>()),
       client(client) {}
 
+AmalgamateTxn::AmalgamateTxn(Client *client, uint64_t serial_id, AmalgamateStruct *input)
+    : Txn<AmalgamateState>(serial_id),
+      client(client) 
+{
+  RecoverInputStruct(input);
+}
+
 void AmalgamateTxn::Prepare() {
   INIT_ROUTINE_BRK(8192);
   auto &mgr = util::Instance<TableManager>();

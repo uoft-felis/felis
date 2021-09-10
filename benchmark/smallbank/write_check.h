@@ -34,10 +34,15 @@ class WriteCheckTxn : public Txn<WriteCheckState>, public WriteCheckStruct {
 
 public:
   WriteCheckTxn(Client *client, uint64_t serial_id);
+  WriteCheckTxn(Client *client, uint64_t serial_id, WriteCheckStruct *input);
 
   void Prepare() override final;
   void Run() override final;
   void PrepareInsert() override final {}
+  void RecoverInputStruct(WriteCheckStruct *input) {
+    this->account_id = input->account_id;
+    this->check_v = input->check_v;
+  }
 };
 
 } // namespace smallbank

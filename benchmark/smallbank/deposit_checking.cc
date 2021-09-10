@@ -15,6 +15,13 @@ DepositCheckingTxn::DepositCheckingTxn(Client *client, uint64_t serial_id)
       DepositCheckingStruct(client->GenerateTransactionInput<DepositCheckingStruct>()),
       client(client) {}
 
+DepositCheckingTxn::DepositCheckingTxn(Client *client, uint64_t serial_id, DepositCheckingStruct *input)
+    : Txn<DepositCheckingState>(serial_id),
+      client(client) 
+{
+  RecoverInputStruct(input);
+}
+
 void DepositCheckingTxn::Prepare() {
   INIT_ROUTINE_BRK(8192);
   auto &mgr = util::Instance<TableManager>();

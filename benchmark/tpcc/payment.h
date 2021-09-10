@@ -50,11 +50,21 @@ struct PaymentState {
 class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
   Client *client;
  public:
-  PaymentTxn(Client *client, uint64_t serial_id);
+   PaymentTxn(Client *client, uint64_t serial_id);
+   PaymentTxn(Client *client, uint64_t serial_id, PaymentStruct *input);
 
-  void Prepare() override final;
-  void Run() override final;
-  void PrepareInsert() override final {}
+   void Prepare() override final;
+   void Run() override final;
+   void PrepareInsert() override final {}
+   void RecoverInputStruct(PaymentStruct *input) {
+     this->warehouse_id = input->warehouse_id;
+     this->district_id = input->district_id;
+     this->customer_warehouse_id = input->customer_warehouse_id;
+     this->customer_district_id = input->customer_district_id;
+     this->payment_amount = input->payment_amount;
+     this->ts = input->ts;
+     this->customer_id = input->customer_id;
+  }
 };
 
 }

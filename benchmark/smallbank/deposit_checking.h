@@ -28,10 +28,15 @@ class DepositCheckingTxn : public Txn<DepositCheckingState>, public DepositCheck
 
 public:
   DepositCheckingTxn(Client *client, uint64_t serial_id);
+  DepositCheckingTxn(Client *client, uint64_t serial_id, DepositCheckingStruct *input);
 
   void Prepare() override final;
   void Run() override final;
   void PrepareInsert() override final {}
+  void RecoverInputStruct(DepositCheckingStruct *input) {
+    this->account_id = input->account_id;
+    this->deposit_v = input->deposit_v;
+  }
 };
 
 } // namespace smallbank

@@ -41,10 +41,15 @@ class AmalgamateTxn : public Txn<AmalgamateState>, public AmalgamateStruct {
 
 public:
   AmalgamateTxn(Client *client, uint64_t serial_id);
+  AmalgamateTxn(Client *client, uint64_t serial_id, AmalgamateStruct *input);
 
   void Prepare() override final;
   void Run() override final;
   void PrepareInsert() override final {}
+  void RecoverInputStruct(AmalgamateStruct *input) {
+    this->account_id_1 = input->account_id_1;
+    this->account_id_2 = input->account_id_2;
+  }
 };
 
 } // namespace smallbank

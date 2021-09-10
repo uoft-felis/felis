@@ -21,6 +21,12 @@
 
 #include "felis_probes.h"
 
+#include "new_order.h"
+#include "payment.h"
+#include "delivery.h"
+#include "stock_level.h"
+#include "order_status.h"
+
 namespace tpcc {
 
 using felis::Console;
@@ -1012,7 +1018,7 @@ static constexpr int kTPCCTxnMix[] = {
   45, 43, 4, 4, 4
 };
 
-felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
+felis::BaseTxn *Client::CreateTxn(uint64_t serial_id, void *txntype_id, void *txn_struct_buffer)
 {
   int rd = r.next_u32() % 100;
   int txn_type_id = 0;
@@ -1023,7 +1029,108 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
     rd -= threshold;
     txn_type_id++;
   }
-  return TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
+  felis::BaseTxn *base_txn = TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
+
+  if (!felis::Options::kLogInput) {
+    return base_txn;
+  }
+
+  // shirley: also return txn type id and txn struct
+  *(int *)txntype_id = txn_type_id;
+  switch (txn_type_id) {
+    case (int)(tpcc::TxnType::NewOrder): {
+      NewOrderStruct txn_struct = *(NewOrderTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(NewOrderStruct));
+      break;
+    }
+    case (int)(tpcc::TxnType::Payment): {
+      PaymentStruct txn_struct = *(PaymentTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(PaymentStruct));
+      break;
+    }
+    case (int)(tpcc::TxnType::Delivery): {
+      DeliveryStruct txn_struct = *(DeliveryTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(DeliveryStruct));
+      break;
+    }
+    case (int)(tpcc::TxnType::OrderStatus): {
+      OrderStatusStruct txn_struct = *(OrderStatusTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(OrderStatusStruct));
+      break;
+    }
+    case (int)(tpcc::TxnType::StockLevel): {
+      StockLevelStruct txn_struct = *(StockLevelTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(StockLevelStruct));
+      break;
+    }
+    default: {
+      printf("tpcc CreateTxn unknown txn_type_id = %d\n", txn_type_id);
+      std::abort();
+    }
+  }
+  return base_txn;
+}
+
+felis::BaseTxn *Client::CreateTxnRecovery(uint64_t serial_id, int txntype_id, void *txn_struct_buffer) {
+  felis::BaseTxn *base_txn = nullptr;
+  switch (txntype_id) {
+    case (int)(tpcc::TxnType::NewOrder): {
+      base_txn = new tpcc::NewOrderTxn(this, serial_id, (NewOrderStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(tpcc::TxnType::Payment): {
+      base_txn = new tpcc::PaymentTxn(this, serial_id, (PaymentStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(tpcc::TxnType::Delivery): {
+      base_txn = new tpcc::DeliveryTxn(this, serial_id, (DeliveryStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(tpcc::TxnType::OrderStatus): {
+      base_txn = new tpcc::OrderStatusTxn(this, serial_id, (OrderStatusStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(tpcc::TxnType::StockLevel): {
+      base_txn = new tpcc::StockLevelTxn(this, serial_id, (StockLevelStruct *)txn_struct_buffer);
+      break;
+    }
+    default: {
+      printf("tpcc CreateTxnRecovery unknown txn_id = %d\n", txntype_id);
+      std::abort();
+    }
+  }
+  return base_txn;
+}
+
+size_t Client::TxnInputSize(int txn_id) {
+  size_t input_size;
+  switch (txn_id) {
+    case (int)(tpcc::TxnType::NewOrder): {
+      input_size = util::Align(sizeof(NewOrderStruct), 8);
+      break;
+    }
+    case (int)(tpcc::TxnType::Payment): {
+      input_size = util::Align(sizeof(PaymentStruct), 8);
+      break;
+    }
+    case (int)(tpcc::TxnType::Delivery): {
+      input_size = util::Align(sizeof(DeliveryStruct), 8);
+      break;
+    }
+    case (int)(tpcc::TxnType::OrderStatus): {
+      input_size = util::Align(sizeof(OrderStatusStruct), 8);
+      break;
+    }
+    case (int)(tpcc::TxnType::StockLevel): {
+      input_size = util::Align(sizeof(StockLevelStruct), 8);
+      break;
+    }
+    default: {
+      printf("tpcc TxnInputSize unknown txn_id = %d\n", txn_id);
+      std::abort();
+    }
+  }
+  return input_size;
 }
 
 using namespace felis;

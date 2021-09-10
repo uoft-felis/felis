@@ -14,6 +14,13 @@ BalanceTxn::BalanceTxn(Client *client, uint64_t serial_id)
       BalanceStruct(client->GenerateTransactionInput<BalanceStruct>()),
       client(client) {}
 
+BalanceTxn::BalanceTxn(Client *client, uint64_t serial_id, BalanceStruct *input)
+    : Txn<BalanceState>(serial_id),
+      client(client) 
+{
+  RecoverInputStruct(input);
+}
+
 void BalanceTxn::Prepare() {
   auto &mgr = util::Instance<TableManager>();
   void *buf = alloca(512);

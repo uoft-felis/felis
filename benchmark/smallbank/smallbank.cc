@@ -3,6 +3,12 @@
 #include "txn_cc.h"
 #include "util/os.h"
 
+#include "balance.h"
+#include "deposit_checking.h"
+#include "transact_saving.h"
+#include "amalgamate.h"
+#include "write_check.h"
+
 namespace smallbank {
 
 using felis::IndexInfo;
@@ -215,7 +221,7 @@ void SmallBankLoaderRecovery::DoLoadRecovery() {
 // 20, 20, 20, 20, 20
 static constexpr int kSmallBankTxnMix[] = {20, 20, 20, 20, 20};
 
-felis::BaseTxn *Client::CreateTxn(uint64_t serial_id) {
+felis::BaseTxn *Client::CreateTxn(uint64_t serial_id, void *txntype_id, void *txn_struct_buffer) {
   int rd = r.next_u32() % 100;
   int txn_type_id = 0;
   while (true) {
@@ -225,7 +231,108 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id) {
     rd -= threshold;
     txn_type_id++;
   }
-  return TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
+  felis::BaseTxn *base_txn = TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
+
+  if (!felis::Options::kLogInput) {
+    return base_txn;
+  }
+  
+  // shirley: also return txn type id and txn struct
+  *(int *)txntype_id = txn_type_id;
+  switch (txn_type_id) {
+    case (int)(smallbank::TxnType::Balance): {
+      BalanceStruct txn_struct = *(BalanceTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(BalanceStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::DepositChecking): {
+      DepositCheckingStruct txn_struct = *(DepositCheckingTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(DepositCheckingStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::TransactSaving): {
+      TransactSavingStruct txn_struct = *(TransactSavingTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(TransactSavingStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::Amalgamate): {
+      AmalgamateStruct txn_struct = *(AmalgamateTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(AmalgamateStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::WriteCheck): {
+      WriteCheckStruct txn_struct = *(WriteCheckTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(WriteCheckStruct));
+      break;
+    }
+    default: {
+      printf("smallbank CreateTxn unknown txn_type_id = %d\n", txn_type_id);
+      std::abort();
+    }
+  }
+  return base_txn;
+}
+
+felis::BaseTxn *Client::CreateTxnRecovery(uint64_t serial_id, int txntype_id, void *txn_struct_buffer) {
+  felis::BaseTxn *base_txn = nullptr;
+  switch (txntype_id) {
+    case (int)(smallbank::TxnType::Balance): {
+      base_txn = new smallbank::BalanceTxn(this, serial_id, (BalanceStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(smallbank::TxnType::DepositChecking): {
+      base_txn = new smallbank::DepositCheckingTxn(this, serial_id, (DepositCheckingStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(smallbank::TxnType::TransactSaving): {
+      base_txn = new smallbank::TransactSavingTxn(this, serial_id, (TransactSavingStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(smallbank::TxnType::Amalgamate): {
+      base_txn = new smallbank::AmalgamateTxn(this, serial_id, (AmalgamateStruct *)txn_struct_buffer);
+      break;
+    }
+    case (int)(smallbank::TxnType::WriteCheck): {
+      base_txn = new smallbank::WriteCheckTxn(this, serial_id, (WriteCheckStruct *)txn_struct_buffer);
+      break;
+    }
+    default: {
+      printf("smallbank CreateTxnRecovery unknown txn_id = %d\n", txntype_id);
+      std::abort();
+    }
+  }
+  return base_txn;
+}
+
+size_t Client::TxnInputSize(int txn_id) {
+  size_t input_size;
+  switch (txn_id) {
+    case (int)(smallbank::TxnType::Balance): {
+      input_size = util::Align(sizeof(BalanceStruct), 8);
+      break;
+    }
+    case (int)(smallbank::TxnType::DepositChecking): {
+      input_size = util::Align(sizeof(DepositCheckingStruct), 8);
+      break;
+    }
+    case (int)(smallbank::TxnType::TransactSaving): {
+      input_size = util::Align(sizeof(TransactSavingStruct), 8);
+      break;
+    }
+    case (int)(smallbank::TxnType::Amalgamate): {
+      input_size = util::Align(sizeof(AmalgamateStruct), 8);
+      break;
+    }
+    case (int)(smallbank::TxnType::WriteCheck): {
+      input_size = util::Align(sizeof(WriteCheckStruct), 8);
+      break;
+    }
+    default: {
+      printf("smallbank TxnInputSize unknown txn_id = %d\n", txn_id);
+      std::abort();
+    }
+  }
+  return input_size;
 }
 
 } // namespace smallbank

@@ -24,10 +24,16 @@ struct OrderStatusState {
 class OrderStatusTxn : public Txn<OrderStatusState>, public OrderStatusStruct {
   Client *client;
  public:
-  OrderStatusTxn(Client *client, uint64_t serial_id);
-  void Run() override final;
-  void PrepareInsert() override final {}
-  void Prepare() override final;
+   OrderStatusTxn(Client *client, uint64_t serial_id);
+   OrderStatusTxn(Client *client, uint64_t serial_id, OrderStatusStruct *input);
+   void Run() override final;
+   void PrepareInsert() override final {}
+   void Prepare() override final;
+   void RecoverInputStruct(OrderStatusStruct *input) {
+     this->warehouse_id = input->warehouse_id;
+     this->district_id = input->district_id;
+     this->customer_id = input->customer_id;
+  }
 };
 
 }

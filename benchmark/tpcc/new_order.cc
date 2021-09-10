@@ -43,6 +43,13 @@ NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id)
       client(client)
 {}
 
+NewOrderTxn::NewOrderTxn(Client *client, uint64_t serial_id, NewOrderStruct *input)
+    : Txn<NewOrderState>(serial_id),
+      client(client)
+{
+  RecoverInputStruct(input);
+}
+
 void NewOrderTxn::PrepareInsert()
 {
   auto &mgr = util::Instance<TableManager>();

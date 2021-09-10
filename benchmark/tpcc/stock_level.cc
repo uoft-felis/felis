@@ -21,6 +21,13 @@ StockLevelTxn::StockLevelTxn(Client *client, uint64_t serial_id)
       client(client)
 {}
 
+StockLevelTxn::StockLevelTxn(Client *client, uint64_t serial_id, StockLevelStruct *input)
+    : Txn<StockLevelState>(serial_id),
+      client(client)
+{
+  RecoverInputStruct(input);
+}
+
 void StockLevelTxn::PrepareInsert()
 {
   auto &mgr = util::Instance<TableManager>();

@@ -803,6 +803,31 @@ namespace mem {
     // _mm_clwb(g_pmem_info);
   }
 
+  static uint8_t **g_txn_input_log; // pointer to an array of input logs
+  static uint64_t txn_input_log_size = 32*1024*1024; // 32 MB
+  uint8_t **GetTxnInputLog() { return g_txn_input_log; }
+  void InitTxnInputLog() {
+    if (!felis::Options::kLogInput && !felis::Options::kRecovery) {
+      return;
+    }
+    void *fixed_mmap_addr = nullptr;
+    int num_cores = ParallelAllocationPolicy::g_nr_cores;
+    g_txn_input_log = (uint8_t **) malloc(num_cores * sizeof(void*));
+
+    if (felis::Options::kRecovery) {
+      for (int i = 0; i < num_cores; i++) {
+        void *fixaddr = ((uint8_t *)fixed_mmap_addr) + i * txn_input_log_size; // shirley: might need to add some offset
+        MapPersistentMemory(TxnInputLog, i, txn_input_log_size, fixaddr);
+        g_txn_input_log[i] = (uint8_t *)fixaddr;
+      }
+    }
+    else {
+      for (int i = 0; i < num_cores; i++) {
+        g_txn_input_log[i] = (uint8_t *) AllocPersistentMemory(TxnInputLog, txn_input_log_size, i, -1, nullptr, false);
+      }
+    }
+  }
+
   void *Brk::Alloc(size_t s) {
     s = util::Align(s, 16);
     size_t off = 0;

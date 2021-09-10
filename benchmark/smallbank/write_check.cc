@@ -15,6 +15,13 @@ WriteCheckTxn::WriteCheckTxn(Client *client, uint64_t serial_id)
       WriteCheckStruct(client->GenerateTransactionInput<WriteCheckStruct>()),
       client(client) {}
 
+WriteCheckTxn::WriteCheckTxn(Client *client, uint64_t serial_id, WriteCheckStruct *input)
+    : Txn<WriteCheckState>(serial_id),
+      client(client) 
+{
+  RecoverInputStruct(input);
+}
+
 void WriteCheckTxn::Prepare() {
   INIT_ROUTINE_BRK(8192);
   auto &mgr = util::Instance<TableManager>();

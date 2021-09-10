@@ -29,10 +29,16 @@ class StockLevelTxn : public felis::Txn<StockLevelState>, public StockLevelStruc
   Client *client;
  public:
   StockLevelTxn(Client *client, uint64_t serial_id);
+  StockLevelTxn(Client *client, uint64_t serial_id, StockLevelStruct *input);
 
   void PrepareInsert() override final;
   void Prepare() override final;
   void Run() override final;
+  void RecoverInputStruct(StockLevelStruct *input) {
+    this->warehouse_id = input->warehouse_id;
+    this->district_id = input->district_id;
+    this->threshold = input->threshold;
+  }
 };
 
 }

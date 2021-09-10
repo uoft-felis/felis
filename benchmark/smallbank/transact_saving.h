@@ -28,10 +28,15 @@ class TransactSavingTxn : public Txn<TransactSavingState>, public TransactSaving
 
 public:
   TransactSavingTxn(Client *client, uint64_t serial_id);
+  TransactSavingTxn(Client *client, uint64_t serial_id, TransactSavingStruct *input);
 
   void Prepare() override final;
   void Run() override final;
   void PrepareInsert() override final {}
+  void RecoverInputStruct(TransactSavingStruct *input) {
+    this->account_id = input->account_id;
+    this->transact_v = input->transact_v;
+  }
 };
 
 } // namespace smallbank

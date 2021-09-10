@@ -29,6 +29,13 @@ PaymentTxn::PaymentTxn(Client *client, uint64_t serial_id)
       client(client)
 {}
 
+PaymentTxn::PaymentTxn(Client *client, uint64_t serial_id, PaymentStruct *input)
+    : Txn<PaymentState>(serial_id),
+      client(client)
+{
+  RecoverInputStruct(input);
+}
+
 void PaymentTxn::Prepare()
 {
   INIT_ROUTINE_BRK(4096);

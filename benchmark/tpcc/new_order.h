@@ -160,11 +160,32 @@ struct NewOrderState {
 class NewOrderTxn : public Txn<NewOrderState>, public NewOrderStruct {
   Client *client;
  public:
-  NewOrderTxn(Client *client, uint64_t serial_id);
+   NewOrderTxn(Client *client, uint64_t serial_id);
+   NewOrderTxn(Client *client, uint64_t serial_id, NewOrderStruct *input);
 
-  void Run() override final;
-  void Prepare() override final;
-  void PrepareInsert() override final;
+   void Run() override final;
+   void Prepare() override final;
+   void PrepareInsert() override final;
+   void RecoverInputStruct(NewOrderStruct *input) {
+     this->warehouse_id = input->warehouse_id;
+     this->district_id = input->district_id;
+     this->customer_id = input->customer_id;
+     this->ts_now = input->ts_now;
+
+     this->detail.warehouse_id = input->detail.warehouse_id;
+     this->detail.district_id = input->detail.district_id;
+     this->detail.customer_id = input->detail.customer_id;
+     this->detail.oorder_id = input->detail.oorder_id;
+     this->detail.nr_items = input->detail.nr_items;
+
+     for (int i = 0; i < kNewOrderMaxItems; i++) {
+       this->detail.item_id[i] = input->detail.item_id[i];
+       this->detail.supplier_warehouse_id[i] =
+           input->detail.supplier_warehouse_id[i];
+       this->detail.order_quantities[i] = input->detail.order_quantities[i];
+       this->detail.unit_price[i] = input->detail.unit_price[i];
+     }
+  }
 };
 
 }

@@ -24,6 +24,13 @@ DeliveryTxn::DeliveryTxn(Client *client, uint64_t serial_id)
       client(client)
 {}
 
+DeliveryTxn::DeliveryTxn(Client *client, uint64_t serial_id, DeliveryStruct *input)
+    : Txn<DeliveryState>(serial_id),
+      client(client)
+{
+  RecoverInputStruct(input);
+}
+
 void DeliveryTxn::PrepareInsert()
 {
 }

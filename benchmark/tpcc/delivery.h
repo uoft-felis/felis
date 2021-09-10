@@ -73,10 +73,19 @@ class DeliveryTxn : public Txn<DeliveryState>, public DeliveryStruct {
   Client *client;
  public:
   DeliveryTxn(Client *client, uint64_t serial_id);
+  DeliveryTxn(Client *client, uint64_t serial_id, DeliveryStruct *input);
 
   void Run() override final;
   void Prepare() override final;
   void PrepareInsert() override final;
+  void RecoverInputStruct(DeliveryStruct *input) {
+    this->warehouse_id = input->warehouse_id;
+    this->o_carrier_id = input->o_carrier_id;
+    this->ts = input->ts;
+    for (int i = 0; i < 10; i++) {
+      this->oid[i] = input->oid[i];
+    }
+  }
 };
 
 }

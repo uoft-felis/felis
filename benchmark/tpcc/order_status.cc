@@ -18,6 +18,13 @@ OrderStatusTxn::OrderStatusTxn(Client *client, uint64_t serial_id)
       client(client)
 {}
 
+OrderStatusTxn::OrderStatusTxn(Client *client, uint64_t serial_id, OrderStatusStruct *input)
+    : Txn<OrderStatusState>(serial_id),
+      client(client)
+{
+  RecoverInputStruct(input);
+}
+
 static void LookupCustomerIndex(
     const OrderStatusTxn::State &state,
     int warehouse_id, int district_id, int customer_id)

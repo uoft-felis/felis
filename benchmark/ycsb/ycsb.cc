@@ -74,11 +74,18 @@ class RMWTxn : public Txn<RMWState>, public RMWStruct {
   Client *client;
  public:
   RMWTxn(Client *client, uint64_t serial_id);
+  RMWTxn(Client *client, uint64_t serial_id, RMWStruct *input);
   void Run() override final;
   void Prepare() override final;
   void PrepareInsert() override final {}
   static void WriteRow(TxnRow vhandle);
   static void ReadRow(TxnRow vhandle);
+
+  void RecoverInputStruct(RMWStruct *input) {
+    for (int i = 0; i < kTotal; i++) {
+      this->keys[i] = input->keys[i];
+    }
+  }
 
   template <typename Func>
   void RunOnPartition(Func f) {
@@ -95,6 +102,13 @@ RMWTxn::RMWTxn(Client *client, uint64_t serial_id)
       RMWStruct(client->GenerateTransactionInput<RMWStruct>()),
       client(client)
 {}
+
+RMWTxn::RMWTxn(Client *client, uint64_t serial_id, RMWStruct *input)
+    : Txn<RMWState>(serial_id),
+      client(client)
+{
+  RecoverInputStruct(input);
+}
 
 void RMWTxn::Prepare()
 {
@@ -388,9 +402,29 @@ Client::Client() noexcept
   rand.init(g_table_size, g_theta, 1238);
 }
 
-BaseTxn *Client::CreateTxn(uint64_t serial_id)
+BaseTxn *Client::CreateTxn(uint64_t serial_id, void *txntype_id, void *txn_struct_buffer)
 {
-  return new RMWTxn(this, serial_id);
+  felis::BaseTxn *base_txn = new RMWTxn(this, serial_id);
+
+  if (!felis::Options::kLogInput) {
+    return base_txn;
+  }
+
+  // shirley: also return txn type id and txn struct
+  *(int *)txntype_id = 0;
+  RMWStruct txn_struct = *(RMWTxn *)base_txn;
+  memcpy(txn_struct_buffer, &txn_struct, sizeof(RMWStruct));
+
+  return base_txn;
+}
+
+felis::BaseTxn *Client::CreateTxnRecovery(uint64_t serial_id, int txntype_id, void *txn_struct_buffer) {
+  felis::BaseTxn *base_txn = new ycsb::RMWTxn(this, serial_id, (RMWStruct *)txn_struct_buffer);;
+  return base_txn;
+}
+
+size_t Client::TxnInputSize(int txn_id) {
+  return util::Align(sizeof(RMWStruct), 8);
 }
 
 }
