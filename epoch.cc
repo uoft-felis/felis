@@ -190,10 +190,10 @@ void EpochClient::GenerateBenchmarks()
   uint8_t ** int_log_file = mem::GetTxnInputLog();
   uint64_t log_offset[64] = {0}; // shirley: for now leave space for at most 64 threads
   for (auto i = 1; i < g_max_epoch; i++) {
-    // shirley todo shirley temp: for now log each epoch and overwrite when logging next epoch.
-    for (int aaa = 0; aaa < 64; aaa ++) {
-      log_offset[aaa] = 0;
-    }
+    // // shirley todo shirley temp: for now log each epoch and overwrite when logging next epoch.
+    // for (int aaa = 0; aaa < 64; aaa ++) {
+    //   log_offset[aaa] = 0;
+    // }
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
       auto t = d.rem, pos = d.quot;
@@ -210,20 +210,20 @@ void EpochClient::GenerateBenchmarks()
       }
       else {
         uint8_t *log_txnid = nullptr;
-        if (felis::Options::kLogInput) {
-          log_txnid = ((uint8_t *)(int_log_file[t])) + log_offset[t];
-        }
+        // if (felis::Options::kLogInput) {
+        //   log_txnid = ((uint8_t *)(int_log_file[t])) + log_offset[t];
+        // }
         BaseTxn *generated_txn = CreateTxn(GenerateSerialId(i, j), log_txnid, log_txnid + 8);
-        if (felis::Options::kLogInput) {
-          int txnid = *((int*) log_txnid);
-          uint64_t old_offset = log_offset[t];
-          log_offset[t] += TxnInputSize(txnid) + 8;
-          // shirley note: >> 6 is / 64. I.e. we wrote into a new cacheline, flush previous cacheline.
-          if (old_offset >> 6 != log_offset[t] >> 6) {
-            // shirley pmem shirley test
-            // _mm_clwb(log_txnid); // shirley note: this is part of the old cache line
-          }
-        }
+        // if (felis::Options::kLogInput) {
+        //   int txnid = *((int*) log_txnid);
+        //   uint64_t old_offset = log_offset[t];
+        //   log_offset[t] += TxnInputSize(txnid) + 8;
+        //   // shirley note: >> 6 is / 64. I.e. we wrote into a new cacheline, flush previous cacheline.
+        //   if (old_offset >> 6 != log_offset[t] >> 6) {
+        //     // shirley pmem shirley test
+        //     // _mm_clwb(log_txnid); // shirley note: this is part of the old cache line
+        //   }
+        // }
         all_txns[i - 1].per_core_txns[t]->txns[pos] = generated_txn;
       }
     }
@@ -428,6 +428,33 @@ void EpochClient::InitializeEpoch()
   cont_lmgr.Reset();
 
   logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
+
+  // shirley: log the txn inputs for this new epoch
+  if (felis::Options::kLogInput) {
+    uint64_t log_offset[64] = {0}; // shirley: for now leave space for at most 64 threads
+    uint8_t ** int_log_file = mem::GetTxnInputLog();
+    for (uint64_t j = 1; j <= total_nr_txn; j++) {
+      auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
+      auto t = d.rem, pos = d.quot;
+      BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
+
+      BaseTxn *generated_txn = all_txns[epoch_nr - 1].per_core_txns[t]->txns[pos];
+      int txnid = generated_txn->txn_typeid;
+
+      uint8_t *log_txnid = ((uint8_t *)(int_log_file[t])) + log_offset[t];
+      *((int*) log_txnid) = txnid;
+      uint8_t *log_txnstruct = log_txnid + 8;
+      PersistTxnStruct(txnid, generated_txn, log_txnstruct);
+
+      uint64_t old_offset = log_offset[t];
+      log_offset[t] += TxnInputSize(txnid) + 8;
+      // shirley note: >> 6 is / 64. I.e. we wrote into a new cacheline, flush previous cacheline.
+      if (old_offset >> 6 != log_offset[t] >> 6) {
+        // shirley pmem shirley test
+        // _mm_clwb(log_txnid); // shirley note: this is part of the old cache line
+      }
+    }
+  }
 
   //SHIRLEY: major GC & dram GC preparing lists
   util::Instance<GC>().PrepareGCForAllCores();

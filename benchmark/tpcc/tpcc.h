@@ -435,6 +435,7 @@ class Client : public felis::EpochClient, public ClientBase {
   felis::BaseTxn *CreateTxn(uint64_t serial_id, void *txntype_id, void *txn_struct_buffer) final override;
   felis::BaseTxn *CreateTxnRecovery(uint64_t serial_id, int txntype_id, void *txn_struct_buffer) final override;
   size_t TxnInputSize(int txn_id) final override;
+  void PersistTxnStruct(int txn_id, void *base_txn, void *txn_struct_buffer) final override;
   void PersistAutoInc() final override;
 };
 

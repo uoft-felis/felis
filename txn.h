@@ -34,6 +34,7 @@ class BaseTxn {
   static int g_cur_numa_node;
 
  public:
+ int txn_typeid;
   BaseTxn(uint64_t serial_id)
       : epoch(nullptr), sid(serial_id) {}
 

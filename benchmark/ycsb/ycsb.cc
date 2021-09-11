@@ -410,10 +410,10 @@ BaseTxn *Client::CreateTxn(uint64_t serial_id, void *txntype_id, void *txn_struc
     return base_txn;
   }
 
-  // shirley: also return txn type id and txn struct
-  *(int *)txntype_id = 0;
-  RMWStruct txn_struct = *(RMWTxn *)base_txn;
-  memcpy(txn_struct_buffer, &txn_struct, sizeof(RMWStruct));
+  // // shirley: also return txn type id and txn struct
+  // *(int *)txntype_id = 0;
+  // RMWStruct txn_struct = *(RMWTxn *)base_txn;
+  // memcpy(txn_struct_buffer, &txn_struct, sizeof(RMWStruct));
 
   return base_txn;
 }
@@ -425,6 +425,12 @@ felis::BaseTxn *Client::CreateTxnRecovery(uint64_t serial_id, int txntype_id, vo
 
 size_t Client::TxnInputSize(int txn_id) {
   return util::Align(sizeof(RMWStruct), 8);
+}
+
+void Client::PersistTxnStruct(int txn_id, void *base_txn, void *txn_struct_buffer) {
+  RMWStruct txn_struct = *(RMWTxn *)base_txn;
+  memcpy(txn_struct_buffer, &txn_struct, sizeof(RMWStruct));
+  return;
 }
 
 }

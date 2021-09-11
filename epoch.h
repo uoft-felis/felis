@@ -176,6 +176,7 @@ class EpochClient {
   virtual BaseTxn *CreateTxn(uint64_t serial_id, void *txntype_id, void *txn_struct_buffer) = 0;
   virtual BaseTxn *CreateTxnRecovery(uint64_t serial_id, int txntype_id, void *txn_struct_buffer) = 0;
   virtual size_t TxnInputSize(int txn_id) = 0;
+  virtual void PersistTxnStruct(int txn_id, void *base_txn, void *txn_struct_buffer) = 0;
   virtual void PersistAutoInc() = 0;
 
  private:

@@ -232,44 +232,45 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id, void *txntype_id, void *tx
     txn_type_id++;
   }
   felis::BaseTxn *base_txn = TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
+  base_txn->txn_typeid = txn_type_id;
 
   if (!felis::Options::kLogInput) {
     return base_txn;
   }
   
-  // shirley: also return txn type id and txn struct
-  *(int *)txntype_id = txn_type_id;
-  switch (txn_type_id) {
-    case (int)(smallbank::TxnType::Balance): {
-      BalanceStruct txn_struct = *(BalanceTxn *)base_txn;
-      memcpy(txn_struct_buffer, &txn_struct, sizeof(BalanceStruct));
-      break;
-    }
-    case (int)(smallbank::TxnType::DepositChecking): {
-      DepositCheckingStruct txn_struct = *(DepositCheckingTxn *)base_txn;
-      memcpy(txn_struct_buffer, &txn_struct, sizeof(DepositCheckingStruct));
-      break;
-    }
-    case (int)(smallbank::TxnType::TransactSaving): {
-      TransactSavingStruct txn_struct = *(TransactSavingTxn *)base_txn;
-      memcpy(txn_struct_buffer, &txn_struct, sizeof(TransactSavingStruct));
-      break;
-    }
-    case (int)(smallbank::TxnType::Amalgamate): {
-      AmalgamateStruct txn_struct = *(AmalgamateTxn *)base_txn;
-      memcpy(txn_struct_buffer, &txn_struct, sizeof(AmalgamateStruct));
-      break;
-    }
-    case (int)(smallbank::TxnType::WriteCheck): {
-      WriteCheckStruct txn_struct = *(WriteCheckTxn *)base_txn;
-      memcpy(txn_struct_buffer, &txn_struct, sizeof(WriteCheckStruct));
-      break;
-    }
-    default: {
-      printf("smallbank CreateTxn unknown txn_type_id = %d\n", txn_type_id);
-      std::abort();
-    }
-  }
+  // // shirley: also return txn type id and txn struct
+  // *(int *)txntype_id = txn_type_id;
+  // switch (txn_type_id) {
+  //   case (int)(smallbank::TxnType::Balance): {
+  //     BalanceStruct txn_struct = *(BalanceTxn *)base_txn;
+  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(BalanceStruct));
+  //     break;
+  //   }
+  //   case (int)(smallbank::TxnType::DepositChecking): {
+  //     DepositCheckingStruct txn_struct = *(DepositCheckingTxn *)base_txn;
+  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(DepositCheckingStruct));
+  //     break;
+  //   }
+  //   case (int)(smallbank::TxnType::TransactSaving): {
+  //     TransactSavingStruct txn_struct = *(TransactSavingTxn *)base_txn;
+  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(TransactSavingStruct));
+  //     break;
+  //   }
+  //   case (int)(smallbank::TxnType::Amalgamate): {
+  //     AmalgamateStruct txn_struct = *(AmalgamateTxn *)base_txn;
+  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(AmalgamateStruct));
+  //     break;
+  //   }
+  //   case (int)(smallbank::TxnType::WriteCheck): {
+  //     WriteCheckStruct txn_struct = *(WriteCheckTxn *)base_txn;
+  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(WriteCheckStruct));
+  //     break;
+  //   }
+  //   default: {
+  //     printf("smallbank CreateTxn unknown txn_type_id = %d\n", txn_type_id);
+  //     std::abort();
+  //   }
+  // }
   return base_txn;
 }
 
@@ -301,6 +302,7 @@ felis::BaseTxn *Client::CreateTxnRecovery(uint64_t serial_id, int txntype_id, vo
       std::abort();
     }
   }
+  base_txn->txn_typeid = txntype_id;
   return base_txn;
 }
 
@@ -333,6 +335,41 @@ size_t Client::TxnInputSize(int txn_id) {
     }
   }
   return input_size;
+}
+
+void Client::PersistTxnStruct(int txn_id, void *base_txn, void *txn_struct_buffer) {
+  switch (txn_id) {
+    case (int)(smallbank::TxnType::Balance): {
+      BalanceStruct txn_struct = *(BalanceTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(BalanceStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::DepositChecking): {
+      DepositCheckingStruct txn_struct = *(DepositCheckingTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(DepositCheckingStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::TransactSaving): {
+      TransactSavingStruct txn_struct = *(TransactSavingTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(TransactSavingStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::Amalgamate): {
+      AmalgamateStruct txn_struct = *(AmalgamateTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(AmalgamateStruct));
+      break;
+    }
+    case (int)(smallbank::TxnType::WriteCheck): {
+      WriteCheckStruct txn_struct = *(WriteCheckTxn *)base_txn;
+      memcpy(txn_struct_buffer, &txn_struct, sizeof(WriteCheckStruct));
+      break;
+    }
+    default: {
+      printf("smallbank PersistTxnStruct unknown txn_id = %d\n", txn_id);
+      std::abort();
+    }
+  }
+  return;
 }
 
 } // namespace smallbank
