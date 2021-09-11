@@ -557,20 +557,25 @@ void EpochClient::OnExecuteComplete()
     logger->info("Autotune threshold={}", g_splitting_threshold);
   }
 
-  // shirley: here we persist the infos for this epoch
-  VHandle::PersistPoolOffsets(!(cur_epoch_nr % 2));
-  mem::PersistExternalPmemPoolOffsets(!(cur_epoch_nr % 2));
+  if (Options::kLogInput) {
+    // shirley: here we persist the infos for this epoch
+    bool first_slot = !(cur_epoch_nr % 2);
+    VHandle::PersistPoolOffsets(first_slot);
+    mem::PersistExternalPmemPoolOffsets(first_slot);
+    PersistAutoInc();
+    
+    // shirley pmem shirley test
+    // _mm_sfence();
 
-  // shirley pmem shirley test
-  // _mm_sfence();
+    // shirley: here persist largest sid of this epoch
+    uint64_t largest_sid = (cur_epoch_nr << 32) | (NumberOfTxns() << 8) | (conf.nr_nodes() & 0x00FF);
+    mem::GetPmemPersistInfo()->largest_sid = largest_sid;
+    // shirley pmem shirley test
+    // _mm_clwb(mem::GetPmemPersistInfo()); // just flush the first cacheline which contains largest_sid
 
-  // shirley: here persist largest sid of this epoch
-  uint64_t largest_sid = (cur_epoch_nr << 32) | (NumberOfTxns() << 8) | (conf.nr_nodes() & 0x00FF);
-  mem::GetPmemPersistInfo()->largest_sid = largest_sid;
-  mem::FlushPmemPersistInfo();
-
-  // shirley pmem shirley test
-  // _mm_sfence();
+    // shirley pmem shirley test
+    // _mm_sfence();
+  }
 
   if ((cur_epoch_nr + 1 < g_max_epoch) && (!Options::kRecovery)) {
     InitializeEpoch();

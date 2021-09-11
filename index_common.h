@@ -76,6 +76,18 @@ class Table {
     auto_increment_cnt[zone] = ts;
   }
 
+  void PersistAutoIncrement(uint64_t *pmemaddr) {
+    for (unsigned int i = 0; i < 160; i++) {
+      pmemaddr[i] = auto_increment_cnt[i];
+    }
+  }
+
+  void RecoverAutoIncrement(uint64_t *pmemaddr) {
+    for (unsigned int i = 0; i < 160; i++) {
+      auto_increment_cnt[i] = pmemaddr[i];
+    }
+  }
+
   // typedef struct IndexInfo {
   //   VHandle *vhandle;
   //   uint64_t *versions;

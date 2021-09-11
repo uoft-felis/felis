@@ -541,14 +541,14 @@ class ParallelBrk : public ParallelAllocator<Brk> {
 void *AllocFromRoutine(size_t sz);
 
 struct PmemPersistInfo {
-  uint64_t largest_sid;
+  uint64_t largest_sid = 0;
+  uint64_t auto_inc_cnt[160] = {0};
+  uint64_t auto_inc_cnt_2[160] = {0};
 };
 
 PmemPersistInfo *GetPmemPersistInfo();
 void InitPmemPersistInfo();
 void FlushPmemPersistInfo();
-
-static_assert(sizeof(PmemPersistInfo) <= 64, "PmemPersistInfo is greater than 64 bytes!\n");
 
 uint8_t **GetTxnInputLog();
 void InitTxnInputLog();

@@ -787,20 +787,21 @@ namespace mem {
   void InitPmemPersistInfo() {
     void *fixed_mmap_addr = nullptr;
     if (felis::Options::kRecovery) {
-      MapPersistentMemory(MemAllocType::PmemInfo, 0, 64, fixed_mmap_addr);
+      MapPersistentMemory(MemAllocType::PmemInfo, 0, sizeof(PmemPersistInfo), fixed_mmap_addr);
       g_pmem_info = (PmemPersistInfo *) fixed_mmap_addr;
     }
     else {
-      g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, 64, 0, -1, fixed_mmap_addr, false);
-      memset(g_pmem_info, 0, 64);
-      // shirley pmem shirley test
+      g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, sizeof(PmemPersistInfo), 0, -1, fixed_mmap_addr, false);
+      memset(g_pmem_info, 0, sizeof(PmemPersistInfo));
       FlushPmemPersistInfo();
     }
   }
 
   void FlushPmemPersistInfo() {
     // shirley pmem shirley test
-    // _mm_clwb(g_pmem_info);
+    for (unsigned int i = 0; i < sizeof(PmemPersistInfo); i += 64) {
+      // _mm_clwb(((uint8_t *)g_pmem_info) + i);
+    }
   }
 
   static uint8_t **g_txn_input_log; // pointer to an array of input logs

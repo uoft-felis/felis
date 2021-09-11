@@ -868,6 +868,18 @@ void Loader<LoaderType::Order>::DoLoad()
 {
   // shirley: don't load / initialize tables if is recovery
   if (felis::Options::kRecovery) {
+    uint64_t largest_sid = mem::GetPmemPersistInfo()->largest_sid;
+    uint64_t last_epoch_nr = largest_sid >> 32;
+    bool first_slot = !(last_epoch_nr % 2);
+    
+    uint64_t *auto_inc_addr;
+    if (first_slot) {
+      auto_inc_addr = mem::GetPmemPersistInfo()->auto_inc_cnt;
+    }
+    else {
+      auto_inc_addr = mem::GetPmemPersistInfo()->auto_inc_cnt_2;
+    }
+    util::Instance<TableManager>().Get<tpcc::OOrder>().RecoverAutoIncrement(auto_inc_addr);
     return;
   }
 
@@ -1131,6 +1143,21 @@ size_t Client::TxnInputSize(int txn_id) {
     }
   }
   return input_size;
+}
+
+void Client::PersistAutoInc() {
+  uint64_t curr_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+  bool first_slot = !(curr_epoch_nr % 2);
+  uint64_t *auto_inc_addr;
+  if (first_slot) {
+    auto_inc_addr = mem::GetPmemPersistInfo()->auto_inc_cnt;
+  }
+  else {
+    auto_inc_addr = mem::GetPmemPersistInfo()->auto_inc_cnt_2;
+  }
+  util::Instance<TableManager>().Get<tpcc::OOrder>().PersistAutoIncrement(auto_inc_addr);
+  mem::FlushPmemPersistInfo();
+  return;
 }
 
 using namespace felis;
