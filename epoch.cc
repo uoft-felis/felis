@@ -194,6 +194,9 @@ void EpochClient::GenerateBenchmarks()
     // for (int aaa = 0; aaa < 64; aaa ++) {
     //   log_offset[aaa] = 0;
     // }
+    if (felis::Options::kRecovery) {
+        i = ((mem::GetPmemPersistInfo()->largest_sid) >> 32) + 1;
+    }
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
       auto t = d.rem, pos = d.quot;
@@ -226,6 +229,10 @@ void EpochClient::GenerateBenchmarks()
         // }
         all_txns[i - 1].per_core_txns[t]->txns[pos] = generated_txn;
       }
+    }
+    // shirley: only need to recovery the last epoch's txn inputs.
+    if (felis::Options::kRecovery) {
+      return;
     }
   }
 }
@@ -432,6 +439,8 @@ void EpochClient::InitializeEpoch()
   // shirley: log the txn inputs for this new epoch
   if (felis::Options::kLogInput) {
     uint64_t log_offset[64] = {0}; // shirley: for now leave space for at most 64 threads
+    uint64_t log_clwb_offset[64] = {0}; // shirley: for now leave space for at most 64 threads
+
     uint8_t ** int_log_file = mem::GetTxnInputLog();
     for (uint64_t j = 1; j <= total_nr_txn; j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
@@ -446,14 +455,18 @@ void EpochClient::InitializeEpoch()
       uint8_t *log_txnstruct = log_txnid + 8;
       PersistTxnStruct(txnid, generated_txn, log_txnstruct);
 
-      uint64_t old_offset = log_offset[t];
-      log_offset[t] += TxnInputSize(txnid) + 8;
-      // shirley note: >> 6 is / 64. I.e. we wrote into a new cacheline, flush previous cacheline.
-      if (old_offset >> 6 != log_offset[t] >> 6) {
-        // shirley pmem shirley test
-        // _mm_clwb(log_txnid); // shirley note: this is part of the old cache line
+      uint64_t written_size = TxnInputSize(txnid) + 8;
+      log_offset[t] += written_size;
+      if (log_offset[t] - log_clwb_offset[t] >= 64) {
+        for (uint64_t i = log_clwb_offset[t]; i < log_offset[t]; i += 64) {
+          // shirley pmem shirley test
+          // _mm_clwb(log_txnid + i); // shirley note: this is part of the old cache line
+          log_clwb_offset[t] = i;
+        }
       }
     }
+    // shirley pmem shirley test
+    // _mm_sfence();
   }
 
   //SHIRLEY: major GC & dram GC preparing lists
