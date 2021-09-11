@@ -250,6 +250,24 @@ class Txn : public BaseTxn {
           vhandle->Copy2To1();
         }
 
+        auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+        if ((felis::Options::kRecovery) && (sid2 >> 32 == sid >> 32)) {
+          //i.e. before crash, we already wrote to this row.
+          if (vhandle->is_inline_ptr(ptr2)) {
+            // can directly copy to ptr2 if inlined bc of determinism
+            std::memcpy(ptr2, val_dram, val_sz);
+          }
+          else {
+            // should re-allocate if is external
+            VarStr *val_ext = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
+            std::memcpy(val_ext, val_dram, val_sz);
+            vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val_ext); 
+          }
+          vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
+          vhandle->add_majorGC_if_ext();
+          return result;
+        }
+
         // alloc inline val and copy data
         VarStr *val = (VarStr *) (vhandle->AllocFromInline(val_sz, felis::SortedArrayVHandle::SidType2));
         if (!val){
