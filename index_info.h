@@ -210,13 +210,8 @@ public:
       // we are in debug build
       VHandle *vhandle = (VHandle *)((int64_t)(this->vhandle) & 0x7FFFFFFFFFFFFFFF);
 #endif
-      auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
-      if (ptr2){
-        return vhandle->GetInlineSid(SortedArrayVHandle::SidType2);
-      }
-      else {
-        return vhandle->GetInlineSid(SortedArrayVHandle::SidType1); 
-      }
+      // shirley: should just return sid1
+      return vhandle->GetInlineSid(SortedArrayVHandle::SidType1);
     }
     else
       return versions_ptr(versions)[0];

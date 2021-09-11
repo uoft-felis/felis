@@ -868,6 +868,10 @@ void Loader<LoaderType::Order>::DoLoad()
 {
   // shirley: don't load / initialize tables if is recovery
   if (felis::Options::kRecovery) {
+    if (go::Scheduler::CurrentThreadPoolId() != 1) {
+      // shirley: only let 1 thread do the recovery
+      return;
+    }
     uint64_t largest_sid = mem::GetPmemPersistInfo()->largest_sid;
     uint64_t last_epoch_nr = largest_sid >> 32;
     bool first_slot = !(last_epoch_nr % 2);

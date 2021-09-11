@@ -243,7 +243,8 @@ class Txn : public BaseTxn {
         VHandle *vhandle = index_info->vhandle_ptr();
         // shirley: minor GC
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
-        if (ptr2){
+        // shirley: don't do minGC if is recovery
+        if (!felis::Options::kRecovery && ptr2){
           vhandle->remove_majorGC_if_ext();
           vhandle->FreePtr1(); 
           vhandle->Copy2To1();

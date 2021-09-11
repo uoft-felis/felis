@@ -77,14 +77,14 @@ class Table {
   }
 
   void PersistAutoIncrement(uint64_t *pmemaddr) {
-    for (unsigned int i = 0; i < 160; i++) {
-      pmemaddr[i] = auto_increment_cnt[i];
+    for (unsigned int i = 0; i < 171; i++) {
+      pmemaddr[i] = auto_increment_cnt[i].load();
     }
   }
 
   void RecoverAutoIncrement(uint64_t *pmemaddr) {
-    for (unsigned int i = 0; i < 160; i++) {
-      auto_increment_cnt[i] = pmemaddr[i];
+    for (unsigned int i = 0; i < 171; i++) {
+      auto_increment_cnt[i].store(pmemaddr[i]);
     }
   }
 
