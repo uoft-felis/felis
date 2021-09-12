@@ -542,6 +542,7 @@ void *AllocFromRoutine(size_t sz);
 
 struct PmemPersistInfo {
   uint64_t largest_sid = 0;
+  uint64_t largest_epoch_logging = 0;
   uint64_t auto_inc_cnt[171] = {0};
   uint64_t auto_inc_cnt_2[171] = {0};
 };

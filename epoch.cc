@@ -192,6 +192,10 @@ void EpochClient::GenerateBenchmarks()
   for (auto i = 1; i < g_max_epoch; i++) {
     if (felis::Options::kRecovery) {
         i = ((mem::GetPmemPersistInfo()->largest_sid) >> 32) + 1;
+        if (i > mem::GetPmemPersistInfo()->largest_epoch_logging) {
+          printf("GenerateBenchmarks: do not have input log of the latest epoch!\n");
+          std::abort();
+        }
     }
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
@@ -448,6 +452,13 @@ void EpochClient::InitializeEpoch()
         }
       }
     }
+    // shirley pmem shirley test
+    // _mm_sfence();
+
+    mem::GetPmemPersistInfo()->largest_epoch_logging = epoch_nr;
+    // shirley pmem shirley test
+    // _mm_clwb(mem::GetPmemPersistInfo()); // just flush the first cacheline which contains largest_epoch_logging
+
     // shirley pmem shirley test
     // _mm_sfence();
   }
