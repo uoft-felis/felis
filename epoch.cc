@@ -190,10 +190,6 @@ void EpochClient::GenerateBenchmarks()
   uint8_t ** int_log_file = mem::GetTxnInputLog();
   uint64_t log_offset[64] = {0}; // shirley: for now leave space for at most 64 threads
   for (auto i = 1; i < g_max_epoch; i++) {
-    // // shirley todo shirley temp: for now log each epoch and overwrite when logging next epoch.
-    // for (int aaa = 0; aaa < 64; aaa ++) {
-    //   log_offset[aaa] = 0;
-    // }
     if (felis::Options::kRecovery) {
         i = ((mem::GetPmemPersistInfo()->largest_sid) >> 32) + 1;
     }
@@ -213,20 +209,7 @@ void EpochClient::GenerateBenchmarks()
       }
       else {
         uint8_t *log_txnid = nullptr;
-        // if (felis::Options::kLogInput) {
-        //   log_txnid = ((uint8_t *)(int_log_file[t])) + log_offset[t];
-        // }
         BaseTxn *generated_txn = CreateTxn(GenerateSerialId(i, j), log_txnid, log_txnid + 8);
-        // if (felis::Options::kLogInput) {
-        //   int txnid = *((int*) log_txnid);
-        //   uint64_t old_offset = log_offset[t];
-        //   log_offset[t] += TxnInputSize(txnid) + 8;
-        //   // shirley note: >> 6 is / 64. I.e. we wrote into a new cacheline, flush previous cacheline.
-        //   if (old_offset >> 6 != log_offset[t] >> 6) {
-        //     // shirley pmem shirley test
-        //     // _mm_clwb(log_txnid); // shirley note: this is part of the old cache line
-        //   }
-        // }
         all_txns[i - 1].per_core_txns[t]->txns[pos] = generated_txn;
       }
     }

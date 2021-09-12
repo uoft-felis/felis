@@ -406,15 +406,6 @@ BaseTxn *Client::CreateTxn(uint64_t serial_id, void *txntype_id, void *txn_struc
 {
   felis::BaseTxn *base_txn = new RMWTxn(this, serial_id);
 
-  if (!felis::Options::kLogInput) {
-    return base_txn;
-  }
-
-  // // shirley: also return txn type id and txn struct
-  // *(int *)txntype_id = 0;
-  // RMWStruct txn_struct = *(RMWTxn *)base_txn;
-  // memcpy(txn_struct_buffer, &txn_struct, sizeof(RMWStruct));
-
   return base_txn;
 }
 

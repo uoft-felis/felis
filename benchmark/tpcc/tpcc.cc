@@ -1048,43 +1048,6 @@ felis::BaseTxn *Client::CreateTxn(uint64_t serial_id, void *txntype_id, void *tx
   felis::BaseTxn *base_txn = TxnFactory::Create(TxnType(txn_type_id), this, serial_id);
   base_txn->txn_typeid = txn_type_id;
 
-  if (!felis::Options::kLogInput) {
-    return base_txn;
-  }
-
-  // // shirley: also return txn type id and txn struct
-  // *(int *)txntype_id = txn_type_id;
-  // switch (txn_type_id) {
-  //   case (int)(tpcc::TxnType::NewOrder): {
-  //     NewOrderStruct txn_struct = *(NewOrderTxn *)base_txn;
-  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(NewOrderStruct));
-  //     break;
-  //   }
-  //   case (int)(tpcc::TxnType::Payment): {
-  //     PaymentStruct txn_struct = *(PaymentTxn *)base_txn;
-  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(PaymentStruct));
-  //     break;
-  //   }
-  //   case (int)(tpcc::TxnType::Delivery): {
-  //     DeliveryStruct txn_struct = *(DeliveryTxn *)base_txn;
-  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(DeliveryStruct));
-  //     break;
-  //   }
-  //   case (int)(tpcc::TxnType::OrderStatus): {
-  //     OrderStatusStruct txn_struct = *(OrderStatusTxn *)base_txn;
-  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(OrderStatusStruct));
-  //     break;
-  //   }
-  //   case (int)(tpcc::TxnType::StockLevel): {
-  //     StockLevelStruct txn_struct = *(StockLevelTxn *)base_txn;
-  //     memcpy(txn_struct_buffer, &txn_struct, sizeof(StockLevelStruct));
-  //     break;
-  //   }
-  //   default: {
-  //     printf("tpcc CreateTxn unknown txn_type_id = %d\n", txn_type_id);
-  //     std::abort();
-  //   }
-  // }
   return base_txn;
 }
 
