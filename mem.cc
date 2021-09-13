@@ -922,17 +922,12 @@ namespace mem {
 
   void *BrkWFree::Alloc() {
     if (offset_freelist){
-      // printf("BrkWFree::Alloc reached offset_freelist!\n");
-      // std::abort();
       // shirley: can allocate from freelist instead.
-      auto _ = util::Guard(lock_freelist);
-      void *ptr = (uint64_t *) *(get_freelist() + offset_freelist - 1);
+      // auto _ = util::Guard(lock_freelist);
+      // shirley: don't need lock here because alloc is done at own core.
+      auto off = offset_freelist;
       offset_freelist--;
-      // (*get_offset_freelist())--;
-      if (use_pmem_freelist){
-        // shirley pmem shirley test
-        // _mm_clwb(freelist);
-      }
+      void *ptr = (uint64_t *) *(get_freelist() + off - 1);
       return ptr;
     }
     // shirley: else, allocate from brk
@@ -953,19 +948,20 @@ namespace mem {
 
   void BrkWFree::Free(void *ptr) {
     // shirley todo: add to freelist
-    auto _ = util::Guard(lock_freelist);
+    // auto _ = util::Guard(lock_freelist);
+    util::MCSSpinLock::QNode qnode;
+    lock_freelist.Acquire(&qnode);
     size_t off = offset_freelist; // *get_offset_freelist();
+    offset_freelist++;
+    lock_freelist.Release(&qnode);
     uint64_t *flist = get_freelist();
     *(flist + off) = (uint64_t)ptr;
-    offset_freelist++;
+    
     // (*get_offset_freelist())++;
     // shirley pmem shirley test
     if (use_pmem_freelist){
-      // _mm_clwb(freelist);
-      if (off > 5) {
-        // shirley pmem shirley test
-        // _mm_clwb(flist + off);
-      }
+      // shirley pmem shirley test
+      // _mm_clwb(flist + off);
     }
     
     if (!use_pmem_freelist && use_pmem) {

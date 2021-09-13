@@ -557,7 +557,7 @@ void InitTxnInputLog();
 class BrkWFree;
 class ParallelBrkWFree;
 class BrkWFree {
-  util::SpinLock lock_freelist;
+  util::MCSSpinLock lock_freelist;
   uint8_t *data; // shirley: this should be calculated based on core id and fixe mmap address
   size_t offset; // shirley: cache this. move this to pmem file (in front of data)
   size_t limit; // shirley: cache this. move this to pmem file (in front of data)
