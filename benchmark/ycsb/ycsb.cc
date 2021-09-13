@@ -393,10 +393,8 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
       // // shirley: reset sid2 if was written
       // if (vhdl_sid2 >> 32 == curr_ep >> 32) {
       //   vhdl_row->ResetSid2();
-      //   for (int i = 0; i < sizeof(SortedArrayVHandle); i+= 64) {
-      //     //shirley pmem shirley test
-      //     // _mm_clwb(((uint8_t *)vhdl_row) + i);
-      //   }
+      //   //shirley pmem shirley test
+      //   // _mm_clwb(vhdl_row);
       // }
     }
   }
