@@ -429,6 +429,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
   if (felis::Options::kRecovery) {
     void *large_buf = alloca(1024);
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    // uint64_t curr_ep = util::Instance<EpochManager>().current_epoch_nr();
     mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
     uint8_t *data = vhandles_brk->get_data();
     uint64_t *freelist = vhandles_brk->get_freelist();
@@ -513,6 +514,12 @@ void Loader<LoaderType::Warehouse>::DoLoad()
           break;
         }
       }
+      // // shirley: if using non-deterministic order id for auto increment, then need to revert changes.
+      // uint64_t vhdl_sid2 = vhdl_row->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+      // // shirley: reset sid2 if was written
+      // if (vhdl_sid2 >> 32 == curr_ep >> 32) {
+      //   vhdl_row->ResetSid2();
+      // }
     }
 
     return;
