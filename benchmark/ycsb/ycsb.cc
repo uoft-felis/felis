@@ -356,7 +356,7 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
   if (felis::Options::kRecovery) {
     void *large_buf = alloca(1024);
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    // uint64_t curr_ep = util::Instance<EpochManager>().current_epoch_nr();
+    uint64_t curr_ep = util::Instance<EpochManager>().current_epoch_nr();
     mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
     uint8_t *data = vhandles_brk->get_data();
     uint64_t *freelist = vhandles_brk->get_freelist();
@@ -388,14 +388,25 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
               .Get<ycsb::Ycsb>()
               .RecoverySearchOrCreate(dbk.EncodeView(large_buf), vhdl_row);
       
-      // // shirley: if using non-deterministic order id for auto increment, then need to revert changes.
-      // uint64_t vhdl_sid2 = vhdl_row->GetInlineSid(felis::SortedArrayVHandle::SidType2);
-      // // shirley: reset sid2 if was written
-      // if (vhdl_sid2 >> 32 == curr_ep >> 32) {
-      //   vhdl_row->ResetSid2();
-      //   //shirley pmem shirley test
-      //   // _mm_clwb(vhdl_row);
-      // }
+      // shirley: if using non-deterministic order id for auto increment, then need to revert changes.
+      uint64_t vhdl_sid2 = vhdl_row->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+      if (!vhdl_sid2) {
+        continue;
+      }
+      // shirley: reset sid2 if was written
+      if (vhdl_sid2 >> 32 == curr_ep >> 32) {
+        vhdl_row->ResetSid2();
+        //shirley pmem shirley test
+        // _mm_clwb(vhdl_row);
+      }
+      else if (!(vhdl_row->is_inline_ptr(vhdl_row->GetInlinePtr(felis::SortedArrayVHandle::SidType1)))){
+        // shirley: sid2 exists from previous epoch. Perform minGC if ptr1 is external
+        vhdl_row->FreePtr1();
+        vhdl_row->Copy2To1();
+        vhdl_row->ResetSid2();
+        // shirley pmem shirley test
+        // _mm_clwb(vhdl_row); // just flush the cacheline that contains the sid1/2 info that we modified.
+      }
     }
   }
   return;
