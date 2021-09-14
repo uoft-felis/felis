@@ -217,6 +217,12 @@ public:
       return versions_ptr(versions)[0];
     // return versions[0];
   }
+
+  VarStr *first_version_ptr() const {
+    auto objects = versions_ptr(versions) + capacity_get(versions);
+    return (VarStr *) (objects[0]);
+  }
+
   uint64_t last_version() const {
     auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
     if (versions_ep == current_epoch_nr)

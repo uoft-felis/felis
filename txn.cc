@@ -84,6 +84,81 @@ bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
   }
 }
 
+bool BaseTxn::BaseTxnRow::WriteAbort() {
+  bool result = WriteVarStr((VarStr *) kIgnoreValue);
+  if ((index_info->last_version()) == this->sid) {
+    // shirley: now search for the latest non-ignore value
+    // if found in version array (and not the first element), then write that to vhandle (with minGC) and dram cache
+    // if found in first element of version array, then only write to dram cache and optional minGC (just don't minGC).
+  
+    // copy the found value to dram cache
+    VarStr *found_val = index_info->ReadWithVersion(sid, false);
+    int val_size = sizeof(VarStr) + found_val->length();
+    VarStr *val_dram = (VarStr *) mem::GetDataRegion().Alloc(val_size);
+    std::memcpy(val_dram, found_val, val_size);
+    val_dram->set_region_id(mem::ParallelPool::CurrentAffinity());
+    index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
+    index_info->dram_version->ep_num = sid; // util::Instance<EpochManager>().current_epoch_nr();
+
+    // now write the found value to vhandle if not already there
+    if (found_val != index_info->first_version_ptr()) {
+      // shirley: assume by now, prefetching vhandle has completed
+      VHandle *vhandle = index_info->vhandle_ptr();
+      // shirley: minor GC
+      auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+      // shirley: don't do minGC if is recovery bc dont have major GC list
+      if (!felis::Options::kRecovery && ptr2){
+        vhandle->remove_majorGC_if_ext();
+        vhandle->FreePtr1(); 
+        vhandle->Copy2To1();
+      }
+
+      auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+      if ((felis::Options::kRecovery) && (sid2 >> 32 == this->sid >> 32)) {
+        //i.e. before crash, we already wrote to this row.
+        if (vhandle->is_inline_ptr(ptr2)) {
+          // can directly copy to ptr2 if inlined bc of determinism
+          std::memcpy(ptr2, val_dram, val_size);
+        }
+        else {
+          // should re-allocate if is external
+          VarStr *val_ext = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
+          std::memcpy(val_ext, val_dram, val_size);
+          vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val_ext); 
+        }
+        vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2, this->sid); 
+        vhandle->add_majorGC_if_ext();
+        return result;
+      }
+
+      // alloc inline val and copy data
+      VarStr *val = (VarStr *) (vhandle->AllocFromInline(val_size, felis::SortedArrayVHandle::SidType2));
+      if (!val){
+        val = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
+        // val = (VarStr *) (mem::GetPersistentPool().Alloc(val_sz));
+      }
+      std::memcpy(val, val_dram, val_size);
+
+      // sid2 = sid;
+      vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2, this->sid); 
+      // ptr2 = val;
+      vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
+      // shirley: add to major GC if ptr1 inlined
+      vhandle->add_majorGC_if_ext();
+      
+      //shirley pmem: flush cache after last version write
+      // _mm_clwb((char *)vhandle); 
+      // _mm_clwb((char *)vhandle + 64);
+      // _mm_clwb((char *)vhandle + 128);
+      // _mm_clwb((char *)vhandle + 192);
+      //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
+      
+      return result;
+    }
+  }
+  return result;
+}
+
 int64_t BaseTxn::UpdateForKeyAffinity(int node, IndexInfo *row)
 {
   if (Options::kOnDemandSplitting) {

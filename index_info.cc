@@ -507,6 +507,15 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
 
   sync().WaitForData(addr, sid, versions_ptr(versions)[pos], (void *)vhandle);
 
+  // shirley: check if we read a ignore-value. If yes, read from the previous pos until pos = 0. 
+  // shirley: pos = 0 is guaranteed to be not ignore.
+  auto objects = versions_ptr(versions) + capacity_get(versions);
+  while (*addr == kIgnoreValue) {
+    pos--;
+    addr = &objects[pos];
+    sync().WaitForData(addr, sid, versions_ptr(versions)[pos], (void *)vhandle);
+  }
+
   return (VarStr *)*addr;
 }
 

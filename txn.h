@@ -108,6 +108,7 @@ class BaseTxn {
     VarStr *ReadVarStr(bool is_insert = false);
     bool WriteVarStr(VarStr *obj);
     bool Delete() { return WriteVarStr(nullptr); }
+    bool WriteAbort();
   };
 
   class BaseTxnHandle {
