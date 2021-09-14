@@ -9,12 +9,14 @@ namespace smallbank {
 using namespace felis;
 
 struct TransactSavingStruct {
+  static constexpr int percent_abort = 10;
   uint64_t account_id;
   int64_t transact_v;
 };
 
 struct TransactSavingState {
   IndexInfo *saving;
+  bool aborted = false;
   struct Completion : public TxnStateCompletion<TransactSavingState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       state->saving = rows[0];

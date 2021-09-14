@@ -7,6 +7,10 @@ DepositCheckingStruct ClientBase::GenerateTransactionInput<DepositCheckingStruct
   DepositCheckingStruct s;
   s.account_id = PickAccount();
   s.deposit_v = RandomNumber(1, 100);
+  int abort_txn = RandomNumber(1, 100);
+  if (abort_txn <= DepositCheckingStruct::percent_abort) {
+    s.deposit_v = -1;
+  }
   return s;
 }
 
@@ -23,11 +27,19 @@ DepositCheckingTxn::DepositCheckingTxn(Client *client, uint64_t serial_id, Depos
 }
 
 void DepositCheckingTxn::Prepare() {
-  INIT_ROUTINE_BRK(8192);
+  if (deposit_v < 0) {
+    state->aborted = true;
+    return;
+  }
+    INIT_ROUTINE_BRK(8192);
   auto &mgr = util::Instance<TableManager>();
   void *buf = alloca(512);
   auto account_key = Account::Key::New(account_id);
   auto account_ptr = mgr.Get<Account>().Search(account_key.EncodeView(buf));
+  if (!account_ptr) {
+    state->aborted = true;
+    return;
+  }
   // shirley note: this is a hack bc account table never changes so we can directly read from index_info using sid = 1
   uint64_t cid = account_ptr->ReadWithVersion(1)->template ToType<Account::Value>().CustomerID;
 
@@ -37,6 +49,10 @@ void DepositCheckingTxn::Prepare() {
 }
 
 void DepositCheckingTxn::Run() {
+  if (state->aborted) {
+    // we aborted before appending any versions, so can return immediately if aborted.
+    return;
+  }
   auto aff = std::numeric_limits<uint64_t>::max();
 
   root->AttachRoutine(

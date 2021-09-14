@@ -9,12 +9,14 @@ namespace smallbank {
 using namespace felis;
 
 struct DepositCheckingStruct {
+  static constexpr int percent_abort = 10;
   uint64_t account_id;
   int64_t deposit_v;
 };
 
 struct DepositCheckingState {
   IndexInfo *checking;
+  bool aborted = false;
   struct Completion : public TxnStateCompletion<DepositCheckingState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       state->checking = rows[0];
