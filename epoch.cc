@@ -516,7 +516,8 @@ void EpochClient::OnExecuteComplete()
     logger->info("Throughput {} txn/s", thr);
     logger->info("Insert / Initialize / Execute {} ms {} ms {} ms",
                  stats.insert_time_ms, stats.initialize_time_ms, stats.execution_time_ms);
-    logger->info("PriorityTxnService::execute_piece_time {}", PriorityTxnService::execute_piece_time);
+    if (NodeConfiguration::g_priority_txn)
+      logger->info("PriorityTxnService::execute_piece_time {} ms", PriorityTxnService::execute_piece_time);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
     PriorityTxnService::PrintStats();

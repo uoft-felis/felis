@@ -252,18 +252,9 @@ loop:
       }
 
       auto rt = next_r;
-      if (rt->sched_key != 0)
-        debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
+      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
 
-      if (NodeConfiguration::g_priority_txn) {
-        util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
-      }
-
-      auto tsc = __rdtsc();
       rt->callback(rt);
-      auto diff = (__rdtsc() - tsc) / 2200;
-      if (rt->sched_key != 0 && !rt->is_priority)
-        felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
       goto loop;
     }

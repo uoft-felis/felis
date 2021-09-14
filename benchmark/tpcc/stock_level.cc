@@ -157,7 +157,7 @@ void StockLevelTxn::Run()
         },
         aff);
     if (!Client::g_enable_granola && !Client::g_enable_pwv) {
-      root->AssignSchedulingKey(serial_id() + (2024ULL << 8));
+      root->AssignSchedulingKey(serial_id() + (2046ULL << 8));
     }
   } else { // kEnablePartition && !IsWarehousePinnable()
     state->barrier = FutureValue<void>();

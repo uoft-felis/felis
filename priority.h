@@ -64,12 +64,12 @@ class PriorityTxnService {
       std::abort();
     }
     /*
-      e.g. kStripBatched = 2, kStripPriority = nr_cores = 32, then
-        \  core_id |   batched    0   1   2   ...   30  31
+      e.g. kStripBatched = 1, kStripPriority = nr_cores = 32, then
+        \  core_id |   batched  0   1   2   ...   30  31
       idx  \       |
       -------------
-            0           1   2     3   4   5   ...   33  34
-            1           35  36    37  38  39  ...   67  68
+            0           1       2   3   4   ...   32  33
+            1           34      35  36  37  ...   65  66
       (seq starts with 1)
     */
     int k = g_strip_batched + g_strip_priority;

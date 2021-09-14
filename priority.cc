@@ -102,6 +102,8 @@ PriorityTxnService::PriorityTxnService()
   g_queue_length = g_nr_priority_txn * nr_epochs + 32;
 
   if (Options::kTicTocMode) {
+    logger->critical("Deprecated. This will cause write skew");
+    std::abort();
     // does not leave slots
     g_tictoc_mode = true;
     abort_if(Options::kSlotPercentage, "TicToc Mode does not need -XSlotPercentage");
