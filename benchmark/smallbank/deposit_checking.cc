@@ -27,6 +27,7 @@ DepositCheckingTxn::DepositCheckingTxn(Client *client, uint64_t serial_id, Depos
 }
 
 void DepositCheckingTxn::Prepare() {
+  state->aborted = false;
   if (deposit_v < 0) {
     state->aborted = true;
     return;

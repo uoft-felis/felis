@@ -27,6 +27,7 @@ TransactSavingTxn::TransactSavingTxn(Client *client, uint64_t serial_id, Transac
 }
 
 void TransactSavingTxn::Prepare() {
+  state->aborted = false;
   INIT_ROUTINE_BRK(8192);
   auto &mgr = util::Instance<TableManager>();
   void *buf = alloca(512);
