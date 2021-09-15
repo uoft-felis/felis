@@ -60,7 +60,6 @@ class TransportBatcher {
 
 class LocalTransport : public PromiseRoutineTransportService {
   LocalDispatcherImpl *lb;
-  bool pending_routines;
  public:
   LocalTransport();
   ~LocalTransport();
