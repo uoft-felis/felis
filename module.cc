@@ -75,7 +75,8 @@ class AllocatorModule : public Module<CoreModule> {
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads);
     mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
     //shirley: can't be too big (e.g. 4_G) or else alloc memory fails, use command line options later
-    mem::InitTransientPool(128_M); 
+    mem::InitTransientPool(128_M);
+    mem::InitTransientPmemPool(128_M);
     // Legacy
     //shirley: data region not used in this design anymore?
     mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));

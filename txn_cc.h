@@ -294,13 +294,18 @@ class Txn : public BaseTxn {
       }
       else {
         // felis::probes::NumReadWriteDramPmem{1,0,2}();
-        bool result = WriteVarStr(o.Encode(usePmem));
+        VarStr *val_transient = o.Encode(usePmem);
+        bool result = WriteVarStr(val_transient);
         // shirley zen: comparing Zen, also write varstr to pmem and flush varstr
-        // auto test_varstr = o.Encode(true);
-        // int test_length = sizeof(VarStr) + o.EncodeSize();
-        // for (int i = 0; i < test_length; i += 64){
-        //   _mm_clwb((char *)test_varstr + i);
-        // }
+        if (felis::Options::kEnableZen) {
+          size_t varlen = sizeof(VarStr) + o.EncodeSize();
+          VarStr *val_pmem = (VarStr *)mem::GetTransientPmemPool().Alloc(varlen);
+          std::memcpy(val_pmem, val_transient, varlen);
+          // shirley pmem shirley test
+          for (int i = 0; i < varlen; i += 64) {
+            // _mm_clwb(((char *)val_pmem) + i);
+          }
+        }
         return result;
       }
     }

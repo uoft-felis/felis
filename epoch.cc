@@ -484,6 +484,9 @@ void EpochClient::OnInsertComplete()
 {
   // Shirley: clear transient pool here (only 1 thread)
   mem::GetTransientPool().Reset();
+  if (felis::Options::kEnableZen) {
+    mem::GetTransientPmemPool().Reset();
+  }
 
   // Shirley: major GC print stats
   // // GC must have been completed

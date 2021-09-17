@@ -752,10 +752,14 @@ namespace mem {
 
   // transient and persistent pools
   static ParallelBrk g_transient_pool;
+  static ParallelBrk g_transient_pmem_pool;
   static ParallelRegion g_persistent_pool;
 
   ParallelBrk &GetTransientPool() { 
     return g_transient_pool;
+  }
+  ParallelBrk &GetTransientPmemPool() { 
+    return g_transient_pmem_pool;
   }
   ParallelRegion &GetPersistentPool() { 
     return g_persistent_pool;
@@ -763,7 +767,13 @@ namespace mem {
 
   void InitTransientPool(size_t t_mem) {
     //shirley pmem: when on pmem machine, set to false. when on our machine, set to true
-    g_transient_pool = ParallelBrk(t_mem, true);
+    g_transient_pool = ParallelBrk(mem::TransientPool, t_mem, true);
+  }
+
+  void InitTransientPmemPool(size_t t_mem) {
+    if (felis::Options::kEnableZen) {
+      g_transient_pmem_pool = ParallelBrk(mem::TransientPmemPool, t_mem, true);
+    }
   }
 
   static ParallelBrkWFree g_external_pmem_pool;
@@ -847,7 +857,7 @@ namespace mem {
     return p;
   }
 
-  ParallelBrk::ParallelBrk(size_t brk_pool_size, bool use_pmem)
+  ParallelBrk::ParallelBrk(MemAllocType alloc_type, size_t brk_pool_size, bool use_pmem)
   {
     uint8_t *mem = nullptr;
     for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
@@ -855,16 +865,16 @@ namespace mem {
       auto numa_offset = i % kNrCorePerNode;
       if (numa_offset == 0) {
         // note: we'll always keep the info in dram, only pool memory in pmem if required
-        mem = (uint8_t *)AllocMemory(TransientPool, kHeaderSize * kNrCorePerNode);
+        mem = (uint8_t *)AllocMemory(alloc_type, kHeaderSize * kNrCorePerNode);
       }
 
       auto p = mem + numa_offset * kHeaderSize;
       uint8_t *p_buf;
       if (use_pmem) {
-        p_buf = (uint8_t *)AllocPersistentMemory(PersistentPool, brk_pool_size, i);
+        p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, i);
       }
       else {
-        p_buf = (uint8_t *)AllocMemory(TransientPool, brk_pool_size);
+        p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
       }
       
       pools[i] = new (p) Brk(p_buf, brk_pool_size, use_pmem);

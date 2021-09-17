@@ -38,6 +38,7 @@ enum MemAllocType {
   RegionPool,
   Coroutine,
   TransientPool,
+  TransientPmemPool,
   PersistentPool,
   PmemInfo,
   TxnInputLog,
@@ -61,6 +62,7 @@ const std::string kMemAllocTypeLabel[] = {
   "^pool:region",
   "coroutine",
   "^pool:transient mem",
+  "^pool:transient pmem",
   "^pool:persistent mem",
   "pmem_persist_info",
   "txn_input_log",
@@ -512,15 +514,18 @@ class Brk {
 };
 
 ParallelBrk &GetTransientPool();
+ParallelBrk &GetTransientPmemPool();
 ParallelRegion &GetPersistentPool();
 void InitTransientPool(size_t t_mem);
+void InitTransientPmemPool(size_t t_mem);
 
 class ParallelBrk : public ParallelAllocator<Brk> {
 
  public:
   ParallelBrk() : ParallelAllocator() {}
   // change parameters for this function
-  ParallelBrk(size_t brk_pool_size, bool use_pmem = false);
+  ParallelBrk(MemAllocType alloc_type, size_t brk_pool_size,
+              bool use_pmem = false);
   ~ParallelBrk();
   ParallelBrk(ParallelBrk &&rhs) : ParallelAllocator(std::move(rhs)) {}
 
