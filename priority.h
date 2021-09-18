@@ -149,6 +149,18 @@ class PriorityTxnService {
   static void PrintStats();
   static unsigned long long g_tsc;
   static int execute_piece_time;
+
+ private:
+  class BatchPieceCount {
+    std::atomic_long cnt;
+   public:
+    BatchPieceCount() : cnt(0) {}
+    long Get(void) { return cnt.load(); }
+    void Increment(long inc) { cnt.fetch_add(inc); }
+    void Decrement(long dec) { cnt.fetch_sub(dec); }
+  };
+ public:
+  static BatchPieceCount BatchCnt;
 };
 
 struct BaseInsertKey {

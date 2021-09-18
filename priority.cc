@@ -47,6 +47,8 @@ bool PriorityTxnService::g_tpcc_pin = true;
 unsigned long long PriorityTxnService::g_tsc = 0;
 int PriorityTxnService::execute_piece_time = 0;
 
+PriorityTxnService::BatchPieceCount PriorityTxnService::BatchCnt;
+
 mem::ParallelSlabPool BaseInsertKey::pool;
 
 PriorityTxnService::PriorityTxnService()

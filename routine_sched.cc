@@ -640,6 +640,12 @@ retry:
           core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
   }
+
+  auto &bc = state.batch_complete_counter;
+  auto cnt = bc.completed;
+  PriorityTxnService::BatchCnt.Decrement(cnt);
+  bc.completed = 0;
+
   return false;
 }
 
@@ -663,6 +669,8 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
 
   // hack 3: make sure pq doesn't get run after this core has no piece to run
   if (queues[core_id]->pq.sched_pol->len == 0)
+    return false;
+  if (PriorityTxnService::BatchCnt.Get() == 0)
     return false;
 
   auto &tq = queues[core_id]->tq;
@@ -747,11 +755,15 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   return true;
 }
 
-void EpochExecutionDispatchService::Complete(int core_id)
+void EpochExecutionDispatchService::Complete(int core_id, bool priority)
 {
   auto &state = queues[core_id]->state;
   auto &c = state.complete_counter;
   c.completed++;
+  if (!priority) {
+    auto &bc = state.batch_complete_counter;
+    bc.completed++;
+  }
 }
 
 int EpochExecutionDispatchService::TraceDependency(uint64_t key)

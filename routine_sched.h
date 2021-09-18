@@ -111,6 +111,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     uint64_t current_sched_key;
     uint64_t ts;
     CompleteCounter complete_counter;
+    CompleteCounter batch_complete_counter;
 
     static constexpr int kSleeping = 0;
     static constexpr int kRunning = 1;
@@ -150,7 +151,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) final override;
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;
   void Reset() final override;
-  void Complete(int core_id) final override;
+  void Complete(int core_id, bool priority = false) final override;
   int TraceDependency(uint64_t key) final override;
   bool IsRunning(int core_id) final override {
     auto &s = queues[core_id]->state;

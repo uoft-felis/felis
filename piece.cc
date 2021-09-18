@@ -242,13 +242,13 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
       util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
       rt->callback(rt);
-      svc.Complete(core_id);
+      svc.Complete(core_id, true);
       continue;
     }
 
     if (svc.Peek(core_id, txn)) {
       txn->Run();
-      svc.Complete(core_id);
+      svc.Complete(core_id, true);
       continue;
     }
 
