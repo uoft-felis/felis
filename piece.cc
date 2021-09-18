@@ -189,12 +189,10 @@ void BasePieceCollection::ExecutionRoutine::Run()
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PieceRoutine *next_r;
-  bool give_up = false;
-  // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-      [&next_r, &give_up, sched]
+      [&next_r, sched]
       (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
         // If state != nullptr, meaning we have some other coroutine to run from, therefore you are
         // the temp routine for smaller pieces, you should give up, we should not pop another piece
@@ -208,18 +206,15 @@ void BasePieceCollection::ExecutionRoutine::Run()
           } else {
             trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
           }
-          give_up = true;
           return false;
         }
         // state is nullptr, meaning there is a new piece to run
-        give_up = false;
         next_r = r;
-        // next_state = state;
         return true;
       });
 
   auto should_pop_pri = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-      [&next_r, &give_up, sched]
+      [&next_r, sched]
       (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
@@ -229,10 +224,8 @@ void BasePieceCollection::ExecutionRoutine::Run()
           } else {
             trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
           }
-          give_up = true;
           return false;
         }
-        give_up = false;
         if (!r->is_priority) // is not a piece from priority txn
           return false;
         next_r = r;
@@ -242,35 +235,28 @@ void BasePieceCollection::ExecutionRoutine::Run()
   unsigned long cnt = 0x01F;
   PriorityTxn *txn;
 
-loop:
+  bool done = false;
   do {
     if (svc.Peek(core_id, should_pop_pri)) {
-      // Periodic flush
-      cnt++;
-      if ((cnt & 0x01F) == 0) {
-        transport.PeriodicIO(core_id);
-      }
-
       auto rt = next_r;
-      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
 
+      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
       rt->callback(rt);
       svc.Complete(core_id);
-      goto loop;
+      continue;
     }
 
     if (svc.Peek(core_id, txn)) {
       txn->Run();
       svc.Complete(core_id);
-      goto loop;
+      continue;
     }
 
     if (svc.Peek(core_id, should_pop)) {
-      // Periodic flush
       cnt++;
       if ((cnt & 0x01F) == 0) {
         transport.PeriodicIO(core_id);
-      }
+      } // Periodic flush
 
       auto rt = next_r;
       if (rt->sched_key != 0)
@@ -286,11 +272,16 @@ loop:
       if (rt->sched_key != 0 && !rt->is_priority)
         felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
       svc.Complete(core_id);
-      goto loop;
+      continue;
     }
-  } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
 
-  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {} give up {}", core_id, give_up);
+    if (!svc.IsReady(core_id))
+      done = true; // piece issuing on this core has not finished, quit
+    else if (!transport.PeriodicIO(core_id))
+      done = true; // did not receive new piece from network
+  } while (!done);
+
+  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
 }
 
 // gets called in vhandle_sync, when coroutine is spinning on the version.
