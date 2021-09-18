@@ -72,6 +72,8 @@ bool MWTxn_Run(PriorityTxn *txn)
   while (!txn->Init(rows, input.nr, nullptr, 0, nullptr)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
+    if (PriorityTxnService::BatchCnt.Get() == 0)
+      return false;
   }
 
   uint64_t succ_tsc = __rdtsc();

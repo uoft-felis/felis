@@ -85,6 +85,8 @@ bool StockTxn_Run(PriorityTxn *txn)
   while (!txn->Init(stock_rows, input.nr_items, nullptr, 0, nullptr)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
+    if (PriorityTxnService::BatchCnt.Get() == 0)
+      return false;
   }
 
   uint64_t succ_tsc = __rdtsc();
@@ -208,6 +210,8 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   while (!txn->Init(update_rows, nr_items + 1, insert_ikeys, nr_items + 2, insert_rows)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
+    if (PriorityTxnService::BatchCnt.Get() == 0)
+      return false;
   }
 
   uint64_t succ_tsc = __rdtsc();
