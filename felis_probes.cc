@@ -424,6 +424,7 @@ ProbeMain::~ProbeMain()
       result.insert({label, arr[i]->getAvg()});
     }
     // X_2, X_3, X_4, X_5 are 50%, 90%, 99%, 99.9% numbers, where X in [1,7]
+    int idx; // useless
     for (int i = 0; i < 7; ++i) {
       for (int j = 2; j <= 5; ++j) {
         std::string label = std::to_string(i+1) + "_" + std::to_string(j);
@@ -451,7 +452,7 @@ ProbeMain::~ProbeMain()
             result.insert({label, global.exec_hist.CalculatePercentile(pctile)});
             break;
           case 5:
-            result.insert({label, global.total_latency_hist.CalculatePercentile(pctile)});
+            result.insert({label, global.total_latency_hist.CalculatePercentile(pctile, idx)});
             break;
           case 6:
             result.insert({label, global.dist_local_hist.CalculatePercentile(pctile)});
@@ -493,9 +494,9 @@ ProbeMain::~ProbeMain()
         felis::Options::kOutputDir.Get() + "/pri" + now + ".json");
     result_output << json11::Json(result).dump() << std::endl;
 
-    // std::ofstream latency_dist_output(
-    //     felis::Options::kOutputDir.Get() + "/latency_dist.log");
-    // latency_dist_output << global.total_latency_hist();
+    std::ofstream latency_dist_output(
+        felis::Options::kOutputDir.Get() + "/latency_cdf.csv");
+    latency_dist_output << global.total_latency_hist().OutputCdf();
   }
 
 }

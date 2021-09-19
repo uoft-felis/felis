@@ -9,6 +9,7 @@
 #include <iostream>
 #include <iomanip>
 #include <limits>
+#include <sstream>
 
 
 template <typename T> void OnProbe(T t);
@@ -225,44 +226,57 @@ struct SpecialHistogram {
     for (int i = 0; i < N_SPECIAL; i++) hist[i] += rhs.hist[i];
     return *this;
   }
-  double CalculatePercentile(double scale) const {
+  double CalculatePercentile(double scale, int &idx) const {
     size_t total_nr = Count();
     long medium_idx = total_nr * scale;
     for (int i = 0; i < N_SPECIAL; i++) {
       medium_idx -= hist[i];
-      if (medium_idx < 0)
+      if (medium_idx < 0) {
+        idx = i;
         return buckets[i];
+      }
     }
     return 0;
   }
-  double CalculateMedian() { return CalculatePercentile(0.5); }
-  size_t Count() const  {
+  size_t Count() const {
     size_t total_nr = 0;
     for (int i = 0; i < N_SPECIAL; i++)
       total_nr += hist[i];
     return total_nr;
   }
+
+  std::string OutputCdf() {
+    std::ostringstream out;
+    const long total_cnt = Count();
+    long accu = 0;
+    out << std::fixed;
+    for (int i = 0; i < N_SPECIAL; ++i) {
+      accu += hist[i];
+      if (hist[i] != 0) {
+        double cdf = (double)accu / (double)total_cnt;
+        out << i+1 << "," << buckets[i] << "," << hist[i] << "," << cdf << std::endl;
+      }
+    }
+    return out.str();
+  }
 };
 
 std::ostream &operator<<(std::ostream &out, const SpecialHistogram& h)
 {
-
   // percentile calc
   const int pct_size = 4;
   double percentages[pct_size] = {50, 90, 99, 99.9};
 
-  // for (int i = 0; i < N_SPECIAL; ++i) {
-  //   out << i << " " << h.hist[i] << std::endl;
-  // }
-
-  for (int i = 0; i < pct_size; ++i)
-      out << std::setw(6) << percentages[i] << " percentile:  "
-          << h.CalculatePercentile(percentages[i] / 100)
-          // << ", " << lvls[i] * Bucket + Offset + Bucket << "), "
-          // << "bucket " << lvls[i] + 1 << "/" << N << ",   "
-          << std::endl;
+  for (int i = 0; i < pct_size; ++i) {
+    int idx;
+    out << std::setw(6) << percentages[i] << " percentile:  ["
+        << h.CalculatePercentile(percentages[i] / 100, idx)
+        << ", " << h.buckets[idx+1] << ")"
+        << std::endl;
+  }
   return out;
 }
+
 
 template <int N, int Offset, int Bucket>
 std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& h)
