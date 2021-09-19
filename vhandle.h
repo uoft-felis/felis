@@ -67,6 +67,9 @@ class BaseVHandle {
   // static mem::ParallelSlabPool inline_pool;
   static void InitPool();
   static void PersistPoolOffsets(bool first_slot = true);
+  static size_t GetTotalPoolSize() {
+    return inline_pool.TotalPoolSize();
+  }
 
   // Corey: Pool is not needed
   static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }

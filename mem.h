@@ -717,6 +717,14 @@ class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
     }
   }
 
+  size_t TotalPoolSize() {
+    size_t my_total = 0;
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      my_total += pools[i]->current_size();
+    }
+    return my_total;
+  }
+
   ParallelBrkWFree &operator=(ParallelBrkWFree &&rhs) {
     if (&rhs != this) {
       this->~ParallelBrkWFree();

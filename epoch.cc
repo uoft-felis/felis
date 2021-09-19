@@ -626,6 +626,9 @@ void EpochClient::OnExecuteComplete()
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
 
+    printf("VHandle Pool total size = %lu\n", VHandle::GetTotalPoolSize());
+    printf("External Pmem Pool total size = %lu\n", mem::GetExternalPmemPool().TotalPoolSize());
+
     if (Options::kOutputDir) {
       json11::Json::object result {
         {"cpu", static_cast<int>(NodeConfiguration::g_nr_threads)},
