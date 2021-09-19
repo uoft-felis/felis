@@ -231,13 +231,18 @@ class Txn : public BaseTxn {
         auto val_sz = sizeof(VarStr) + o.EncodeSize();
 
         // shirley: assuming data region alloc will be successful.
-        VarStr *val_dram = o.EncodeToPtr(mem::GetDataRegion().Alloc(val_sz));
-        val_dram->set_region_id(mem::ParallelPool::CurrentAffinity());
-        bool result = WriteVarStr(val_dram);
-        // shirley: update dram cache
-        // shirley: do this before accessing vhandle, and prefetch vhandle
-        index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
-        index_info->dram_version->ep_num = sid; // util::Instance<EpochManager>().current_epoch_nr();
+        VarStr *val_dram = nullptr;
+        bool result = false;
+        if (!felis::Options::kDisableDramCache) {
+          val_dram = o.EncodeToPtr(mem::GetDataRegion().Alloc(val_sz));
+          val_dram->set_region_id(mem::ParallelPool::CurrentAffinity());
+          result = WriteVarStr(val_dram);
+        
+          // shirley: update dram cache
+          // shirley: do this before accessing vhandle, and prefetch vhandle
+          index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
+          index_info->dram_version->ep_num = sid; // util::Instance<EpochManager>().current_epoch_nr();
+        }
 
         // shirley: assume by now, prefetching vhandle has completed
         VHandle *vhandle = index_info->vhandle_ptr();
@@ -255,12 +260,25 @@ class Txn : public BaseTxn {
           //i.e. before crash, we already wrote to this row.
           if (vhandle->is_inline_ptr(ptr2)) {
             // can directly copy to ptr2 if inlined bc of determinism
-            std::memcpy(ptr2, val_dram, val_sz);
+            if (!felis::Options::kDisableDramCache) {
+              std::memcpy(ptr2, val_dram, val_sz);
+            }
+            else {
+              o.EncodeToPtr(ptr2);
+              result = WriteVarStr((VarStr *)ptr2);
+            }
           }
           else {
             // should re-allocate if is external
             VarStr *val_ext = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
-            std::memcpy(val_ext, val_dram, val_sz);
+            if (!felis::Options::kDisableDramCache) {
+              std::memcpy(val_ext, val_dram, val_sz);
+            }
+            else {
+              o.EncodeToPtr(val_ext);
+              val_ext->set_region_id(mem::ParallelPool::CurrentAffinity());
+              result = WriteVarStr(val_ext);
+            }
             vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val_ext); 
           }
           vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 
@@ -274,7 +292,14 @@ class Txn : public BaseTxn {
           val = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
           // val = (VarStr *) (mem::GetPersistentPool().Alloc(val_sz));
         }
-        std::memcpy(val, val_dram, val_sz);
+        if (!felis::Options::kDisableDramCache) {
+          std::memcpy(val, val_dram, val_sz);
+        }
+        else {
+          o.EncodeToPtr(val);
+          val->set_region_id(mem::ParallelPool::CurrentAffinity());
+          result = WriteVarStr(val);
+        }
 
         // sid2 = sid;
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,sid); 

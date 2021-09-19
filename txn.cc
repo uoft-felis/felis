@@ -94,11 +94,15 @@ bool BaseTxn::BaseTxnRow::WriteAbort() {
     // copy the found value to dram cache
     VarStr *found_val = index_info->ReadWithVersion(sid, false);
     int val_size = sizeof(VarStr) + found_val->length();
-    VarStr *val_dram = (VarStr *) mem::GetDataRegion().Alloc(val_size);
-    std::memcpy(val_dram, found_val, val_size);
-    val_dram->set_region_id(mem::ParallelPool::CurrentAffinity());
-    index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
-    index_info->dram_version->ep_num = sid; // util::Instance<EpochManager>().current_epoch_nr();
+    VarStr *val_dram = nullptr;
+    
+    if (!felis::Options::kDisableDramCache) {
+      val_dram = (VarStr *) mem::GetDataRegion().Alloc(val_size);
+      std::memcpy(val_dram, found_val, val_size);
+      val_dram->set_region_id(mem::ParallelPool::CurrentAffinity());
+      index_info->dram_version->val = val_dram;//(VarStr*) mem::GetDataRegion().Alloc(val_sz);
+      index_info->dram_version->ep_num = sid; // util::Instance<EpochManager>().current_epoch_nr();
+    }
 
     // now write the found value to vhandle if not already there
     if (found_val != index_info->first_version_ptr()) {
@@ -118,12 +122,23 @@ bool BaseTxn::BaseTxnRow::WriteAbort() {
         //i.e. before crash, we already wrote to this row.
         if (vhandle->is_inline_ptr(ptr2)) {
           // can directly copy to ptr2 if inlined bc of determinism
-          std::memcpy(ptr2, val_dram, val_size);
+          if (!felis::Options::kDisableDramCache) {
+            std::memcpy(ptr2, val_dram, val_size);
+          }
+          else {
+            std::memcpy(ptr2, found_val, val_size);
+          }
         }
         else {
           // should re-allocate if is external
           VarStr *val_ext = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
-          std::memcpy(val_ext, val_dram, val_size);
+          if (!felis::Options::kDisableDramCache) {
+            std::memcpy(val_ext, val_dram, val_size);
+          }
+          else {
+            std::memcpy(val_ext, found_val, val_size);
+            val_ext->set_region_id(mem::ParallelPool::CurrentAffinity());
+          }
           vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val_ext); 
         }
         vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2, this->sid); 
@@ -137,7 +152,13 @@ bool BaseTxn::BaseTxnRow::WriteAbort() {
         val = (VarStr *) (mem::GetExternalPmemPool().Alloc(true));
         // val = (VarStr *) (mem::GetPersistentPool().Alloc(val_sz));
       }
-      std::memcpy(val, val_dram, val_size);
+      if (!felis::Options::kDisableDramCache) {
+        std::memcpy(val, val_dram, val_size);
+      }
+      else {
+        std::memcpy(val, found_val, val_size);
+        val->set_region_id(mem::ParallelPool::CurrentAffinity());
+      }
 
       // sid2 = sid;
       vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2, this->sid); 

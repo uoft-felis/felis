@@ -92,6 +92,8 @@ struct Options {
   static inline const auto kEnableZen = Option("EnableZen", false);
   static inline const auto kRecovery = Option("Recovery", false);
   static inline const auto kLogInput = Option("LogInput", false);
+  static inline const auto kPmemNaive = Option("PmemNaive", false);
+  static inline const auto kDisableDramCache = Option("DisableDramCache", false);
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

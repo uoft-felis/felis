@@ -766,8 +766,12 @@ namespace mem {
   }
 
   void InitTransientPool(size_t t_mem) {
-    //shirley pmem: when on pmem machine, set to false. when on our machine, set to true
-    g_transient_pool = ParallelBrk(mem::TransientPool, t_mem, true);
+    //shirley pmem: when on pmem machine, set default to false. when on our machine, set to true
+    bool use_pmem = true;
+    if (felis::Options::kPmemNaive) {
+      use_pmem = true;
+    }
+    g_transient_pool = ParallelBrk(mem::TransientPool, t_mem, use_pmem);
   }
 
   void InitTransientPmemPool(size_t t_mem) {

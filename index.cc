@@ -1,5 +1,6 @@
 #include "index.h"
 #include "felis_probes.h"
+#include "opts.h"
 
 using util::Instance;
 
@@ -20,15 +21,17 @@ void InitVersion(felis::IndexInfo *handle, int key_0, int key_1, int key_2, int 
   p_vhandle->set_table_keys(key_0, key_1, key_2, key_3, table_id);
 
   // // shirley: also init dram cache
-  auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-  temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(obj->length()));
-  std::memcpy(temp_dram_version->val, obj, VarStr::NewSize(obj->length()));
-  int curAffinity = mem::ParallelPool::CurrentAffinity();
-  ((VarStr*)(temp_dram_version->val))->set_region_id(curAffinity);
-  temp_dram_version->ep_num = 0;
-  temp_dram_version->this_coreid = curAffinity;
-  handle->dram_version = temp_dram_version;
-  util::Instance<GC_Dram>().AddRow(handle, 0);
+  if (!felis::Options::kDisableDramCache) {
+    auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+    temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(obj->length()));
+    std::memcpy(temp_dram_version->val, obj, VarStr::NewSize(obj->length()));
+    int curAffinity = mem::ParallelPool::CurrentAffinity();
+    ((VarStr*)(temp_dram_version->val))->set_region_id(curAffinity);
+    temp_dram_version->ep_num = 0;
+    temp_dram_version->this_coreid = curAffinity;
+    handle->dram_version = temp_dram_version;
+    util::Instance<GC_Dram>().AddRow(handle, 0);
+  }
 
   // shirley: don't need these things below. we're only creating sid1, ptr1, 
   // not using version array (should be nullptr).

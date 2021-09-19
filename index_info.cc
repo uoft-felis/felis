@@ -324,14 +324,16 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
           auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
           versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
         }
-        auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-        temp_dram_version->this_coreid = mem::ParallelPool::CurrentAffinity();
-        // shirley debug.
-        temp_dram_version->val = nullptr; // (VarStr *)0x87654321;
-        temp_dram_version->ep_num = current_epoch_nr << 32;
-        dram_version = temp_dram_version;
-        util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
-        // felis::probes::NumReadWriteDramPmem{0,2,1}();
+        if (!felis::Options::kDisableDramCache) {
+          auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+          temp_dram_version->this_coreid = mem::ParallelPool::CurrentAffinity();
+          // shirley debug.
+          temp_dram_version->val = nullptr; // (VarStr *)0x87654321;
+          temp_dram_version->ep_num = current_epoch_nr << 32;
+          dram_version = temp_dram_version;
+          util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
+          // felis::probes::NumReadWriteDramPmem{0,2,1}();
+        }
       }
       
       size_set(versions, 1);
@@ -426,6 +428,16 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
   // shirley: if versions is nullptr, read from sid1/sid2
   auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   if (versions_ep != current_epoch_nr)  {
+    if (felis::Options::kDisableDramCache) {
+      auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+      if (ptr2) {
+        return (VarStr *) ptr2;
+      }
+      else {
+        auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
+        return (VarStr *) ptr1;
+      }
+    }
     util::MCSSpinLock::QNode qnode;
     // shirley: we need to lock bc might race with GC!
     if (is_insert){
