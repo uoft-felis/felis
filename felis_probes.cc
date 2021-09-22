@@ -10,7 +10,7 @@
 #include "gc.h"
 
 static struct ProbeMain {
-  agg::Agg<agg::LogHistogram<16>> wait_cnt;
+  agg::Agg<agg::Histogram<128, 0, 256>> wait_cnt;
   agg::Agg<agg::LogHistogram<18, 0, 2>> versions;
   agg::Agg<agg::Histogram<32, 0, 1>> write_cnt;
 
@@ -21,8 +21,8 @@ static struct ProbeMain {
   agg::Agg<agg::Histogram<16, 0, 1>> absorb_memmove_size_detail;
   agg::Agg<agg::Histogram<1024, 0, 16>> absorb_memmove_size;
   agg::Agg<agg::Average> absorb_memmove_avg;
-  agg::Agg<agg::Histogram<128, 0, 1 << 10>> msc_wait_cnt;
-  agg::Agg<agg::Average> msc_wait_cnt_avg;
+  agg::Agg<agg::Histogram<128, 0, 1 << 10>> mcs_wait_cnt;
+  agg::Agg<agg::Average> mcs_wait_cnt_avg;
 
   std::vector<long> mem_usage;
   std::vector<long> expansion;
@@ -42,8 +42,8 @@ thread_local struct ProbePerCore {
   AGG(absorb_memmove_size_detail);
   AGG(absorb_memmove_size);
   AGG(absorb_memmove_avg);
-  AGG(msc_wait_cnt);
-  AGG(msc_wait_cnt_avg);
+  AGG(mcs_wait_cnt);
+  AGG(mcs_wait_cnt_avg);
 } statcnt;
 
 // Default for all probes
@@ -97,7 +97,9 @@ template <> void OnProbe(felis::probes::WaitCounters p)
   statcnt.wait_cnt << p.wait_cnt;
   last_wait_cnt = p.wait_cnt;
 }
+#endif
 
+#if 0
 template <> void OnProbe(felis::probes::TpccDelivery p)
 {
   CountUpdate(statcnt.delivery_cnt, p.nr_update);
@@ -155,6 +157,7 @@ template <> void OnProbe(felis::probes::VHandleExpand p)
 
 ProbeMain::~ProbeMain()
 {
+  //   std::cout << global.wait_cnt() << std::endl;
 #if 0
   std::cout
       << "waitcnt" << std::endl
@@ -183,9 +186,9 @@ ProbeMain::~ProbeMain()
 #endif
 
 #if 0
-  std::cout << "VHandle MSC Spin Time Distribution (in TSC)" << std::endl
+  std::cout << "VHandle MCS Spin Time Distribution (in TSC)" << std::endl
             << global.msc_wait_cnt << std::endl;
-  std::cout << "VHandle MSC Spin Time Avg: "
+  std::cout << "VHandle MCS Spin Time Avg: "
             << global.msc_wait_cnt_avg
             << std::endl;
 

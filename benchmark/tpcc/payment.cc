@@ -39,16 +39,16 @@ void PaymentTxn::Prepare()
       customer_warehouse_id, customer_district_id, customer_id);
 
   if (!VHandleSyncService::g_lock_elision) {
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+    }
+
     state->nodes =
         TxnIndexLookup<TpccSliceRouter, PaymentState::Completion, void>(
             nullptr,
             KeyParam<Warehouse>(warehouse_key),
             KeyParam<District>(district_key),
             KeyParam<Customer>(customer_key));
-
-    if (g_tpcc_config.IsWarehousePinnable()) {
-      root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
-    }
   } else {
     // Partition
     state->nodes = NodeBitmap();

@@ -94,9 +94,9 @@ void DeliveryTxn::Prepare()
     auto args = Tuple<int>(i);
 
     if (!VHandleSyncService::g_lock_elision || g_tpcc_config.IsWarehousePinnable()) {
-      if (VHandleSyncService::g_lock_elision) {
-        txn_indexop_affinity = warehouse_id - 1;
-        if (Client::g_enable_pwv) {
+      if (g_tpcc_config.IsWarehousePinnable()) {
+        txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+        if (Client::g_enable_pwv && VHandleSyncService::g_lock_elision) {
           util::Instance<PWVGraphManager>()[txn_indexop_affinity]->ReserveEdge(serial_id(), 4);
         }
       }

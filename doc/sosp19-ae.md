@@ -112,9 +112,9 @@ The last distributed transaction experiment is not fully automated yet. So we ne
   "nodes": [
     {
       "name": "host1",
-      "ssh_hostname": "c169",
-      "worker": {"host": "142.150.234.169", "port": 1091},
-      "index_shipper": {"host": "142.150.234.169", "port": 43411}
+      "ssh_hostname": "c186",
+      "worker": {"host": "142.150.234.186", "port": 1091},
+      "index_shipper": {"host": "142.150.234.186", "port": 43411}
     },
     {
       "name": "host2",

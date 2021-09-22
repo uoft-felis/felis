@@ -77,12 +77,9 @@ void NewOrderTxn::PrepareInsert()
   auto args1 = OOrder::Value::New(customer_id, 0, nr_items,
                                   all_local, ts_now);
 
-
-
   if (g_tpcc_config.IsWarehousePinnable() || !VHandleSyncService::g_lock_elision) {
-    if (VHandleSyncService::g_lock_elision) {
-      // txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
-      txn_indexop_affinity = std::numeric_limits<uint32_t>::max(); // magic to flatten out indexops
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
     }
 
     state->orderlines_nodes =
@@ -168,15 +165,14 @@ void NewOrderTxn::Prepare()
           Stock::Key::New(detail.supplier_warehouse_id[i], detail.item_id[i]);
     }
 
+    if (g_tpcc_config.IsWarehousePinnable()) {
+      txn_indexop_affinity = g_tpcc_config.WarehouseToCoreId(warehouse_id);
+    }
     // abort_if(nr_items < 5, "WTF {}", nr_items);
     state->stocks_nodes =
         TxnIndexLookup<TpccSliceRouter, NewOrderState::StocksLookupCompletion, void>(
             nullptr,
             KeyParam<Stock>(stock_keys, nr_items));
-
-    if (g_tpcc_config.IsWarehousePinnable()) {
-      root->AssignAffinity(g_tpcc_config.WarehouseToCoreId(warehouse_id));
-    }
   } else {
     // PWV partitions the initialization phase! We don't support multiple-nodes
     // under PWV, because we don't want to keep a per-core partitioning result
@@ -398,6 +394,14 @@ void NewOrderTxn::Run()
                     params.supplier_warehouses[i] != warehouse_id,
                     i);
               }
+
+            },
+            aff);
+
+        auto r = root->AttachRoutine(
+            MakeContext(warehouse_id), node,
+            [](const auto &ctx) {
+              auto &[state, index_handle, warehouse_id] = ctx;
               void *buf = alloca(8);
               auto warehouse = util::Instance<TableManager>().Get<tpcc::Warehouse>().Search(
                   Warehouse::Key::New(warehouse_id).EncodeView(buf));
@@ -405,6 +409,7 @@ void NewOrderTxn::Run()
               row.Read<Warehouse::Value>();
             },
             aff);
+        r->sched_key = serial_id() + (2048ULL << 8);
       } else {
         // Remote piece
         root->AttachRoutine(

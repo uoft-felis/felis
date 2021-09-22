@@ -371,7 +371,7 @@ class Txn : public BaseTxn {
   }
 
   static constexpr uint64_t kIndexOpFlatten = std::numeric_limits<uint32_t>::max();
-  uint64_t txn_indexop_affinity = std::numeric_limits<uint64_t>::max();
+  uint64_t txn_indexop_affinity = kIndexOpFlatten;
 
   template <typename IndexOp,
             typename OnCompleteParam,
@@ -390,8 +390,7 @@ class Txn : public BaseTxn {
         op_ctx.set_extra(*pp);
       }
 
-      if ((node != 0 && current_node != node)
-          || (VHandleSyncService::g_lock_elision && txn_indexop_affinity != kIndexOpFlatten)) {
+      if ((node != 0 && current_node != node) || txn_indexop_affinity != kIndexOpFlatten) {
         root->AttachRoutine(
             op_ctx, node,
             [](auto &ctx) {
