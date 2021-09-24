@@ -151,7 +151,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) final override;
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;
   void Reset() final override;
-  void Complete(int core_id, bool priority = false) final override;
+  void Complete(int core_id, CompleteType type = BatchPiece) final override;
   int TraceDependency(uint64_t key) final override;
   bool IsRunning(int core_id) final override {
     auto &s = queues[core_id]->state;

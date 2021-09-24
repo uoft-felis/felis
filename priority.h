@@ -151,16 +151,56 @@ class PriorityTxnService {
   static int execute_piece_time;
 
  private:
-  class BatchPieceCount {
+  class PieceCounter {
     std::atomic_long cnt;
+    bool output;
+    uint64_t last_output;
+    int* buf;
+    const size_t buf_size = 1000;
+    int i;
+    void Record(void) {
+      if (output) {
+        auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+        if (cur_epoch_nr != 1) return;
+        auto now = __rdtsc();
+        if (now - last_output > 2200 * 1000) {// every ms
+          auto &start = PriorityTxnService::g_tsc;
+          if (last_output > start) {
+            buf[i++] = cnt.load();
+          }
+          last_output = now;
+        }
+      }
+    }
    public:
-    BatchPieceCount() : cnt(0) {}
+    PieceCounter() : cnt(0), output(false), last_output(0), buf(nullptr) {}
+    PieceCounter(bool _output) : cnt(0), output(_output), last_output(0) {
+      if (_output) {
+        int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+        int numa_node = core_id / mem::kNrCorePerNode;
+        buf = (int*)mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(int) * buf_size, numa_node);
+        i = 0;
+        memset(buf, 0, sizeof(int) * buf_size);
+      } else {
+        buf = nullptr;
+      }
+    }
     long Get(void) { return cnt.load(); }
-    void Increment(long inc) { cnt.fetch_add(inc); }
-    void Decrement(long dec) { cnt.fetch_sub(dec); }
+    void Increment(long inc) { cnt.fetch_add(inc); Record(); }
+    void Decrement(long dec) { cnt.fetch_sub(dec); Record(); }
+    std::string Output(void) {
+      std::string res;
+      if (!output) return res;
+      for (int j = 0; j < this->i; ++j) {
+        res += std::to_string(j) + "," + std::to_string(buf[j]) + "\n";
+      }
+      return res;
+    }
   };
  public:
-  static BatchPieceCount BatchCnt;
+  static PieceCounter BatchPcCnt;
+  std::array<PieceCounter*, NodeConfiguration::kMaxNrThreads> PriPcCnt;
+  std::string OutputPriPc(void) { return PriPcCnt[0]->Output(); }
 };
 
 struct BaseInsertKey {
@@ -338,6 +378,7 @@ class PriorityTxn {
 
     // put PromiseRoutineWithInput into PQ
     EpochClient::g_workload_client->completion_object()->Increment(1);
+    util::Instance<PriorityTxnService>().PriPcCnt[core_id]->Increment(1);
     util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &routine, 1, true);
   }
 

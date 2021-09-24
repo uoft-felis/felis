@@ -109,6 +109,7 @@ class PromiseRoutineTransportService {
   virtual uint8_t GetNumberOfNodes() { return 0; }
 };
 
+
 class PriorityTxn;
 class PromiseRoutineDispatchService {
  public:
@@ -128,6 +129,11 @@ class PromiseRoutineDispatchService {
     }
   };
 
+  enum CompleteType {
+    BatchPiece,
+    PriorityPiece,
+    PriorityInit,
+  };
   virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines, bool from_pri = false) = 0;
   virtual void Add(int core_id, PriorityTxn *t) = 0;
   virtual void AddBubble() = 0;
@@ -135,7 +141,7 @@ class PromiseRoutineDispatchService {
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
   virtual bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) = 0;
   virtual void Reset() = 0;
-  virtual void Complete(int core_id, bool priority = false) = 0;
+  virtual void Complete(int core_id, CompleteType type = BatchPiece) = 0;
   virtual bool IsRunning(int core_id) = 0;
   virtual bool IsReady(int core_id) = 0;
 

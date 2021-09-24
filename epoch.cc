@@ -457,6 +457,14 @@ void EpochClient::OnExecuteComplete()
 {
   stats.execution_time_ms += callback.perf.duration_ms();
   PriorityTxnService::execute_piece_time += (__rdtsc() - PriorityTxnService::g_tsc) / 2200000;
+  if (NodeConfiguration::g_priority_txn) {
+    abort_if(PriorityTxnService::BatchPcCnt.Get() != 0, "BatchPcCnt != 0, {}");
+    auto &svc = util::Instance<PriorityTxnService>();
+    for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+      auto pcs = svc.PriPcCnt[i]->Get();
+      abort_if(pcs != 0, "Priority piece cnt [{}] != 0, {}", i, pcs);
+    }
+  }
   fmt::memory_buffer buf;
   long ctt = 0;
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();

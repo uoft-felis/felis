@@ -497,8 +497,11 @@ ProbeMain::~ProbeMain()
     std::ofstream latency_dist_output(
         felis::Options::kOutputDir.Get() + "/latency_cdf.csv");
     latency_dist_output << global.total_latency_hist().OutputCdf();
-  }
 
+    std::ofstream pri_pc_output(
+        felis::Options::kOutputDir.Get() + "/pri_piece.csv");
+    pri_pc_output << util::Instance<felis::PriorityTxnService>().OutputPriPc();
+  }
 }
 
 PROBE_LIST;
