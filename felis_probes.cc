@@ -484,6 +484,17 @@ ProbeMain::~ProbeMain()
     std::cout << "[Pri-stat] actual priority percentage " << pct
               << ", priority throughput " << static_cast<int>(pri_tpt_1) << " txn/s"
               << std::endl;
+    // 9_5 pre-generated priority txn max time range (ms)
+    auto time_range = felis::PriorityTxnService::g_nr_priority_txn * felis::PriorityTxnService::g_interval_priority_txn / 1000000;
+    result.insert({"9_5", static_cast<int>(time_range)});
+    // 9_6 actual execution phase time (ms)
+    double exec_phase_time = (double)felis::PriorityTxnService::execute_piece_time / (client->g_max_epoch - 1);
+    result.insert({"9_6", exec_phase_time});
+    // 9_7 ratio of PriTxn executed / PriTxn Generated
+    double finished_pri_txn_per_epoch = (double)cnt / (client->g_max_epoch - 1);
+    double ratio = finished_pri_txn_per_epoch / felis::PriorityTxnService::g_nr_priority_txn;
+    result.insert({"9_7", ratio});
+    std::cout << "[Pri-stat] range " << time_range << ", exec " << exec_phase_time << ", ratio " << ratio << std::endl;
 
     auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
     time_t tm;
