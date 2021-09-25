@@ -530,6 +530,16 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
   }
 }
 
+void EpochExecutionDispatchService::ProcessBatchCounter(int core_id)
+{
+  auto &state = queues[core_id]->state;
+  auto &bc = state.batch_complete_counter;
+  auto cnt = bc.completed;
+  util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Decrement(cnt);
+  bc.completed = 0;
+}
+
+
 // Peek the ZeroQueue and PQ to see if we have anything for this routine to run.
 // if current ExecutionRoutine has more thing to run, return true
 // if not (for instance you're temporarily spawned, or the q is empty), return false
@@ -641,11 +651,7 @@ retry:
     comp->Complete(n + nr_bubbles);
   }
 
-  auto &bc = state.batch_complete_counter;
-  auto cnt = bc.completed;
-  PriorityTxnService::BatchPcCnt.Decrement(cnt);
-  bc.completed = 0;
-
+  this->ProcessBatchCounter(core_id);
   return false;
 }
 
@@ -670,7 +676,8 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
   // hack 3: make sure pq doesn't get run after this core has no piece to run
   if (queues[core_id]->pq.sched_pol->len == 0)
     return false;
-  if (PriorityTxnService::BatchPcCnt.Get() == 0)
+  this->ProcessBatchCounter(core_id);
+  if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
     return false;
 
   auto &tq = queues[core_id]->tq;

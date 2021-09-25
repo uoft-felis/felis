@@ -147,6 +147,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines, bool from_pri = false) final override;
   void Add(int core_id, PriorityTxn *txn) final override;
   void AddBubble() final override;
+  void ProcessBatchCounter(int core_id);
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
   bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) final override;
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;

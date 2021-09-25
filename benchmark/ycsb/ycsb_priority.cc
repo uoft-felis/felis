@@ -72,7 +72,8 @@ bool MWTxn_Run(PriorityTxn *txn)
   while (!txn->Init(rows, input.nr, nullptr, 0, nullptr)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
-    if (PriorityTxnService::BatchPcCnt.Get() == 0)
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
       return false;
   }
 

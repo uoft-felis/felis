@@ -47,8 +47,6 @@ bool PriorityTxnService::g_tpcc_pin = true;
 unsigned long long PriorityTxnService::g_tsc = 0;
 int PriorityTxnService::execute_piece_time = 0;
 
-PriorityTxnService::PieceCounter PriorityTxnService::BatchPcCnt;
-
 mem::ParallelSlabPool BaseInsertKey::pool;
 
 PriorityTxnService::PriorityTxnService()
@@ -238,6 +236,9 @@ PriorityTxnService::PriorityTxnService()
         PriPcCnt[i] = new (buf) PieceCounter();
       else
         PriPcCnt[i] = new (buf) PieceCounter(true);
+      buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(PieceCounter), numa_node);
+      BatchPcCnt[i] = new (buf) PieceCounter();
+
       if (g_sid_bitmap) {
         auto buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(Bitmap), numa_node);
         seq_bitmap[i] = new (buf) Bitmap(EpochClient::g_txn_per_epoch);

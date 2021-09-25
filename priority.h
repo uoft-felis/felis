@@ -198,7 +198,7 @@ class PriorityTxnService {
     }
   };
  public:
-  static PieceCounter BatchPcCnt;
+  std::array<PieceCounter*, NodeConfiguration::kMaxNrThreads> BatchPcCnt;
   std::array<PieceCounter*, NodeConfiguration::kMaxNrThreads> PriPcCnt;
   std::string OutputPriPc(void) { return PriPcCnt[0]->Output(); }
 };

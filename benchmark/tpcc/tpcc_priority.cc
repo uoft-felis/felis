@@ -85,7 +85,8 @@ bool StockTxn_Run(PriorityTxn *txn)
   while (!txn->Init(stock_rows, input.nr_items, nullptr, 0, nullptr)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
-    if (PriorityTxnService::BatchPcCnt.Get() == 0)
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
       return false;
   }
 
@@ -210,7 +211,8 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   while (!txn->Init(update_rows, nr_items + 1, insert_ikeys, nr_items + 2, insert_rows)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
-    if (PriorityTxnService::BatchPcCnt.Get() == 0)
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
       return false;
   }
 
