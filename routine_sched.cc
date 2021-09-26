@@ -449,8 +449,14 @@ again:
   lock.Unlock();
   // util::Impl<VHandleSyncService>().Notify(1 << core_id);
 
-  if (from_pri)
-    ProcessPending(queues[core_id]->pq);
+  if (NodeConfiguration::g_priority_txn) {
+    if (from_pri) {
+      util::Instance<PriorityTxnService>().PriPcCnt[core_id]->Increment(nr_routines);
+      ProcessPending(queues[core_id]->pq);
+    } else {
+      util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Increment(nr_routines);
+    }
+  }
 }
 
 void EpochExecutionDispatchService::Add(int core_id, PriorityTxn *txn)
@@ -532,6 +538,8 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
 
 void EpochExecutionDispatchService::ProcessBatchCounter(int core_id)
 {
+  if (!NodeConfiguration::g_priority_txn)
+    return;
   auto &state = queues[core_id]->state;
   auto &bc = state.batch_complete_counter;
   auto cnt = bc.completed;

@@ -310,8 +310,6 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
         if (dst + 1 == node_id()) {
           trace(TRACE_COMPLETION "Increment {} of pieces from local counters", counter);
           EpochClient::g_workload_client->completion_object()->Increment(counter);
-          int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-          util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Increment(counter);
         }
       }
     }

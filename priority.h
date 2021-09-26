@@ -378,7 +378,6 @@ class PriorityTxn {
 
     // put PromiseRoutineWithInput into PQ
     EpochClient::g_workload_client->completion_object()->Increment(1);
-    util::Instance<PriorityTxnService>().PriPcCnt[core_id]->Increment(1);
     util::Impl<felis::PromiseRoutineDispatchService>().Add(core_id, &routine, 1, true);
   }
 
