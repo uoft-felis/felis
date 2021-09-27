@@ -314,8 +314,15 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         // felis::probes::NumReadWriteDramPmem{0,1,1}();
       }
       else{
+        bool sid2_valid_for_recovery = true;
+        if (felis::Options::kRecovery) {
+          auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+          if (sid2 >> 32 == current_epoch_nr) {
+            sid2_valid_for_recovery = false;
+          }
+        }
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
-        if (ptr2){
+        if (ptr2 && sid2_valid_for_recovery){
           // auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
           versions_ptr(versions)[initial_cap] = (uint64_t)ptr2;
         }

@@ -361,21 +361,29 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
     uint64_t curr_ep = util::Instance<EpochManager>().current_epoch_nr();
     mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
     uint8_t *data = vhandles_brk->get_data();
-    uint64_t *freelist = vhandles_brk->get_freelist();
+    uint64_t *ring_buffer = vhandles_brk->get_ring_buffer(); 
     size_t data_offset = vhandles_brk->get_cached_offset();
-    size_t freelist_offset = vhandles_brk->get_cached_offset_freelist();
+    size_t initial_offset_freelist = vhandles_brk->get_cached_initial_offset_freelist();
+    size_t initial_offset_pending_freelist = vhandles_brk->get_cached_initial_offset_pending_freelist();
     size_t data_block_size = vhandles_brk->get_cached_block_size();
-    bool data_use_pmem = vhandles_brk->get_cached_use_pmem();
-    bool freelist_use_pmem = vhandles_brk->get_cached_use_pmem_freelist();
+    size_t lmt_rb = vhandles_brk->get_cached_limit_ring_buffer();
 
     // reset deleted vhandles
-    if (freelist_use_pmem) {
-      for (int i = 0; i < freelist_offset; i++) {
-        std::memset((uint8_t *)(freelist[i]), 0, 64);
-        // shirley pmem shirey test
-        // _mm_clwb((uint64_t *)(freelist[i]));
+    // note: assuming we'll never delete too much into pending freelist that it loops over to freelist
+    for (size_t i_off = initial_offset_freelist; i_off != initial_offset_pending_freelist; i_off++) {
+      if (i_off == lmt_rb) {
+        i_off = 0;
+        if (i_off == initial_offset_pending_freelist) {
+          // we've scanned tne entire freelist.
+          break;
+        }
       }
+      std::memset((uint8_t *)(ring_buffer[i_off]), 0, 64);
+      // shirley pmem shirey test
+      // _mm_clwb((uint64_t *)(ring_buffer[i_off]));
     }
+    // shirley pmem shirey test
+    // _mm_sfence();
 
     // now read vhandles and rebuild index
     for (uint64_t i = 0; i < data_offset; i += data_block_size) {
@@ -390,24 +398,17 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
               .Get<ycsb::Ycsb>()
               .RecoverySearchOrCreate(dbk.EncodeView(large_buf), vhdl_row);
       
-      // shirley: if using non-deterministic order id for auto increment, then need to revert changes.
+      // shirley: no non-determinism in ycsb. dont need to revert. but need to rebuild major GC list
       uint64_t vhdl_sid2 = vhdl_row->GetInlineSid(felis::SortedArrayVHandle::SidType2);
+      uint64_t vhdl_sid1 = vhdl_row->GetInlineSid(felis::SortedArrayVHandle::SidType1);
       if (!vhdl_sid2) {
         continue;
       }
-      // shirley: reset sid2 if was written
-      if (vhdl_sid2 >> 32 == curr_ep >> 32) {
-        vhdl_row->ResetSid2();
-        //shirley pmem shirley test
-        // _mm_clwb(vhdl_row);
+      if (vhdl_sid2 >> 32 == curr_ep) {
+        continue;
       }
-      else if (!(vhdl_row->is_inline_ptr(vhdl_row->GetInlinePtr(felis::SortedArrayVHandle::SidType1)))){
-        // shirley: sid2 exists from previous epoch. Perform minGC if ptr1 is external
-        vhdl_row->FreePtr1();
-        vhdl_row->Copy2To1();
-        vhdl_row->ResetSid2();
-        // shirley pmem shirley test
-        // _mm_clwb(vhdl_row); // just flush the cacheline that contains the sid1/2 info that we modified.
+      if (vhdl_sid1 != vhdl_sid2) {
+        vhdl_row->add_majorGC_if_ext();
       }
     }
   }

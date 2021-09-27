@@ -92,13 +92,13 @@ void BaseVHandle::InitPool()
   size_t VHandlePoolSize = ((size_t)1024)*1024*1024*2; // 2 GB for now
   // shirley TODO: pool should be removed, only need inline_pool
   // shirley pmem: when on pmem machine, set to true. when on our machines, set to false
-  // shirley test: set to false to test everything in dram
+
   pool = mem::ParallelSlabPool(mem::VhandlePool, kSize, 4, false);
   // shirley: changed to parallel brk w free pool. also don't register
   void *fixed_mmap_addr = nullptr;
-  inline_pool =
-      mem::ParallelBrkWFree(mem::VhandlePool, mem::VhandleFreelistPool, fixed_mmap_addr,
-                            VHandlePoolSize, kInlinedSize, true, true, Options::kRecovery);
+  inline_pool = mem::ParallelBrkWFree(
+      mem::VhandlePool, mem::VhandleFreelistPool, fixed_mmap_addr,
+      VHandlePoolSize, kInlinedSize, false, Options::kRecovery);
   // inline_pool = mem::ParallelSlabPool(mem::VhandlePool, kInlinedSize, 4, false);
   pool.Register();
   // inline_pool.Register();

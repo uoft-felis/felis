@@ -561,22 +561,29 @@ void InitTxnInputLog();
 
 class BrkWFree;
 class ParallelBrkWFree;
+
 class BrkWFree {
-  util::MCSSpinLock lock_freelist;
+  util::MCSSpinLock lock_ring_buffer;
   uint8_t *data; // shirley: this should be calculated based on core id and fixe mmap address
   size_t offset; // shirley: cache this. move this to pmem file (in front of data)
   size_t limit; // shirley: cache this. move this to pmem file (in front of data)
   size_t block_size; // shirley: cache this. shirley: move this to pmem file (in front of data)
   
-  uint64_t *freelist; // shirley: this should be calculated based on core id and fixe mmap address 
-  // shirley: add limit and offset of freelist to pmem file (in front of freelist)
-  size_t offset_freelist; // shirley: cache this. move this to pmem file (in front of freelist)
-  size_t limit_freelist; // shirley: cache this. move this to pmem file (in front of freelist)
+  uint64_t *ring_buffer; // shirley: this should be calculated based on core id and fixe mmap address 
+  size_t initial_offset_freelist; // shirley: cache the initial_offset that we can't free beyond
+  size_t initial_offset_pending_freelist; // shirley: cache the initial_offset that we can't alloc beyond
+  // head of free list
+  size_t offset_freelist; // shirley: cache this. move this to pmem file (in front of ring buffer)
+  // tail of free list
+  size_t offset_pending_freelist; // shirley: cache this. move this to pmem file (in front of ring buffer)
+  size_t limit_ring_buffer; // shirley: cache this. move this to pmem file (in front of ring buffer)
   
-  bool use_pmem; // data in pmem or dram
-  bool use_pmem_freelist; // freelist in pmem or dram
-  static constexpr size_t metadata_size = 32; // 12 bytes metadata in front of data. offset 1 & 2, limit, block_size.
-  static constexpr size_t metadata_size_freelist = 24; // 8 bytes metadata in front of freelist. offset 1 & 2, limit.
+  bool persist_pending_freelist = false;
+  bool is_gc = false;
+  
+  static constexpr size_t metadata_size = 32; // 32 bytes metadata in front of data. offset 1 & 2, limit, block_size.
+  static constexpr size_t metadata_size_ring_buffer = 24; // 24 bytes metadata in front of ring buffer. offset 1 & 2, limit.
+  static constexpr size_t metadata_size_ring_buffer_persist_pending = 32; // 32 bytes metadata in front of ring buffer. offset 1 & 2, limit, offset_current.
 
   size_t *get_offset(bool first_slot = true) const {
     if (first_slot) {
@@ -588,58 +595,94 @@ class BrkWFree {
   }
   size_t *get_limit() { return (size_t*) (data + 16); }
   size_t *get_block_size() { return (size_t*) (data + 24); }
-  size_t *get_offset_freelist(bool first_slot = true) {
+  size_t *get_offsets_ring_buffer(bool first_slot = true) {
     if (first_slot) {
-      return (size_t *)freelist;
+      return (size_t *)ring_buffer;
     }
     else {
-      return (size_t *)((uint8_t *)freelist + 8);
+      return (size_t *)((uint8_t *)ring_buffer + 8);
     }
   }
-  size_t *get_limit_freelist() { return (size_t *)((uint8_t*)freelist + 16); }
+  size_t *get_limit_ring_buffer() { return (size_t *)((uint8_t*)ring_buffer + 16); }
+  size_t *get_current_offset_pending_freelist() {
+    if (!persist_pending_freelist) {
+      printf("Not persisting pending freelist but trying to access current offset of pending freelist in pmem?!\n");
+      std::abort();
+    }
+    return (size_t *)((uint8_t*)ring_buffer + 24);
+  }
   
 
 public:
-  BrkWFree() : data(nullptr), freelist(nullptr), use_pmem(false), use_pmem_freelist(false) {}
-  BrkWFree(void *d, void *f, size_t limit, size_t limit_freelist,
-           size_t block_size, bool use_pmem = false,
-           bool use_pmem_freelist = false, bool is_recovery = false)
-      : data((uint8_t *)d), freelist((uint64_t *)f), use_pmem(use_pmem),
-        use_pmem_freelist(use_pmem_freelist), offset(0), limit(limit),
-        block_size(block_size), limit_freelist(limit_freelist),
-        offset_freelist(0) {
+  BrkWFree() : data(nullptr), ring_buffer(nullptr), persist_pending_freelist(false), is_gc(false) {}
+  BrkWFree(void *d, void *rb, size_t limit, size_t limit_ring_buffer,
+           size_t block_size, bool persist_pending_freelist = false,
+           bool is_recovery = false)
+      : data((uint8_t *)d), ring_buffer((uint64_t *)rb),
+        persist_pending_freelist(persist_pending_freelist), is_gc(false),
+        offset(0), limit(limit), block_size(block_size), offset_freelist(0),
+        offset_pending_freelist(0), initial_offset_freelist(0),
+        initial_offset_pending_freelist(0) {
     // shirley: initialize the inlined metadata.
+    if (persist_pending_freelist) {
+      this->limit_ring_buffer = limit_ring_buffer - 4;
+    }
+    else {
+      this->limit_ring_buffer = limit_ring_buffer - 3;
+    }
     // shirley: handle case if is recovery
     if (is_recovery) {
       uint64_t largest_sid = mem::GetPmemPersistInfo()->largest_sid;
       uint64_t last_epoch_nr = largest_sid >> 32;
       bool first_slot = !(last_epoch_nr % 2);
       offset = *get_offset(first_slot);
-      offset_freelist = *get_offset_freelist(first_slot);
+      size_t offsets_ring_buffer = *get_offsets_ring_buffer(first_slot);
+      offset_freelist = offsets_ring_buffer >> 32;
+      size_t gc_tail = *get_current_offset_pending_freelist();
+      if ((gc_tail >> 32) <= last_epoch_nr) {
+        offset_pending_freelist = offsets_ring_buffer & (0x00000000FFFFFFFF);
+      } else {
+        offset_pending_freelist = gc_tail & 0x00000000FFFFFFFF;
+      }
+      initial_offset_freelist = offset_freelist;
+      initial_offset_pending_freelist = offset_pending_freelist;
     }
     else {
       *get_offset() = (size_t)0;
       *get_offset(false) = (size_t)0;
       *get_limit() = limit;
       *get_block_size() = block_size;
-      *get_offset_freelist() = (size_t)0;
-      *get_offset_freelist(false) = (size_t)0;
-      *get_limit_freelist() = limit_freelist;
+
+      *get_offsets_ring_buffer() = (size_t)0;
+      *get_offsets_ring_buffer(false) = (size_t)0;
+      *get_limit_ring_buffer() = this->limit_ring_buffer;
+      if (persist_pending_freelist) {
+        *get_current_offset_pending_freelist() = (size_t)0;
+      }
       // shirley pmem shirley test : flush initial metadata
       // _mm_clwb(data);
-      // _mm_clwb(freelist);
+      // _mm_clwb(ring_buffer);
     }
   }
   ~BrkWFree() {}
 
   BrkWFree(BrkWFree &&rhs) {
     data = rhs.data;
-    freelist = rhs.freelist;
-    use_pmem = rhs.use_pmem;
-    use_pmem_freelist = rhs.use_pmem_freelist;
+    ring_buffer = rhs.ring_buffer;
+    persist_pending_freelist = rhs.persist_pending_freelist;
+    
+    offset = rhs.offset;
+    limit = rhs.limit;
+    block_size = rhs.block_size;
+    
+    offset_freelist = rhs.offset_freelist;
+    offset_pending_freelist = rhs.offset_pending_freelist;
+    initial_offset_freelist = rhs.initial_offset_freelist;
+    initial_offset_pending_freelist = rhs.initial_offset_pending_freelist;
+    limit_ring_buffer = rhs.limit_ring_buffer;
 
     rhs.data = nullptr;
-    rhs.freelist = nullptr;
+    rhs.ring_buffer = nullptr;
   }
 
   BrkWFree &operator =(BrkWFree &&rhs) {
@@ -650,29 +693,61 @@ public:
     return *this;
   }
 
-  bool Check(size_t s) { 
-    // return (*get_offset() + s <= *get_limit());
-    return offset + s <= limit;
-  }
-  void Reset() 
-  {
-    offset = 0;
-    offset_freelist = 0;
-    // *get_offset() = 0;
-    // *get_offset_freelist() = 0;
+  // void Reset() 
+  // {
+  //   offset = 0;
+  //   offset_freelist = 0;
+  //   // *get_offset() = 0;
+  //   // *get_offset_freelist() = 0;
+  // }
+
+  // at end of epoch, persist head and tail offsets
+  void persistOffsets(bool first_slot = true) {
+    // persist brk offsets
+    *get_offset(first_slot) = offset;
+    // shirley pmem shirley test
+    // _mm_clwb(data);
+
+    // persist freelist & pending freelist offsets
+    size_t new_offsets = ((offset_freelist << 32) & 0xFFFFFFFF00000000) |
+                          (offset_pending_freelist & 0x00000000FFFFFFFF);
+    *get_offsets_ring_buffer(first_slot) = new_offsets;
+    // shirley pmem shirley test
+    // _mm_clwb(ring_buffer);
+
+    printf("updating initial offsets (%lu, %lu) -> (%lu, %lu)\n",
+          initial_offset_freelist, initial_offset_pending_freelist,
+          offset_freelist, offset_pending_freelist);
+    // shirley: also update the initial offset (freelist / pending freelist) for next epoch in DRAM
+    this->initial_offset_freelist = offset_freelist;
+    this->initial_offset_pending_freelist = offset_pending_freelist;
   }
 
-  void persistOffsets(bool first_slot = true) {
-    if (use_pmem) {
-      *get_offset(first_slot) = offset;
-      // shirley pmem shirley test
-      // _mm_clwb(data);
+  // after major GC, update tail in DRAM (optional: PMem) to match GC current tail.
+  void persistOffsetsGC() {
+    if (!persist_pending_freelist) {
+      printf("not persisting pending frelist but trying to persist its offset??\n");
+      std::abort();
     }
-    if (use_pmem_freelist) {
-      *get_offset_freelist(first_slot) = offset_freelist;
-      // shirley pmem shirley test
-      // _mm_clwb(freelist);
+    size_t current_offset_pending_freelist = (*get_current_offset_pending_freelist()) & 0x00000000FFFFFFFF;
+    offset_pending_freelist = current_offset_pending_freelist;
+    // shirley: we update the initial offset pending freelist here
+    // bc GC deletes are committed to free list and can be re-allocated now.
+    initial_offset_pending_freelist = offset_pending_freelist;
+  }
+
+  // at beginning of epoch, update GC current tail to match tail in DRAM.
+  // NOTE: after recovery, we should update tail in DRAM based on GC current tail's ep number
+  void updateOffsetsGC (uint64_t cur_ep) {
+    if (!persist_pending_freelist) {
+      printf("not persisting pending frelist but trying to update its offset??\n");
+      std::abort();
     }
+    size_t new_offset_gc = (cur_ep << 32) | (offset_pending_freelist & 0x00000000FFFFFFFF);
+    *get_current_offset_pending_freelist() = new_offset_gc;
+    //shirley pmem shirley test
+    // _mm_clwb(ring_buffer);
+    // _mm_sfence();
   }
 
   void *Alloc();
@@ -683,18 +758,167 @@ public:
     // return *get_offset();
   }
 
+  void set_is_gc(bool gc) {
+    is_gc = gc;
+  }
+
   uint8_t *get_data() const { return data + metadata_size; }
-  uint64_t *get_freelist() {
-    return (uint64_t *)((uint8_t *)freelist + metadata_size_freelist);
+  uint64_t *get_ring_buffer() {
+    if (persist_pending_freelist) {
+      return (uint64_t *)((uint8_t *)ring_buffer + metadata_size_ring_buffer_persist_pending);
+    }
+    else {
+      return (uint64_t *)((uint8_t *)ring_buffer + metadata_size_ring_buffer);
+    }
   }
   size_t get_cached_offset() { return offset; }
   size_t get_cached_limit() { return limit; }
   size_t get_cached_block_size() { return block_size; }
   size_t get_cached_offset_freelist() { return offset_freelist; }
-  size_t get_cached_limit_freelist() { return limit_freelist; }
-  size_t get_cached_use_pmem() { return use_pmem; }
-  size_t get_cached_use_pmem_freelist() { return use_pmem_freelist; }
+  size_t get_cached_offset_pending_freelist() { return offset_pending_freelist; }
+  size_t get_cached_initial_offset_freelist() { return initial_offset_freelist; }
+  size_t get_cached_initial_offset_pending_freelist() { return initial_offset_pending_freelist; }
+  size_t get_cached_limit_ring_buffer() { return limit_ring_buffer; }
+  // size_t get_cached_use_pmem() { return true; }
+  // size_t get_cached_use_pmem_freelist() { return true; }
+  bool get_cached_persist_pending_freelist() { return persist_pending_freelist; }
 };
+
+// shirley: this is the old implementation.
+// class BrkWFree {
+//   util::MCSSpinLock lock_freelist;
+//   uint8_t *data; // shirley: this should be calculated based on core id and fixe mmap address
+//   size_t offset; // shirley: cache this. move this to pmem file (in front of data)
+//   size_t limit; // shirley: cache this. move this to pmem file (in front of data)
+//   size_t block_size; // shirley: cache this. shirley: move this to pmem file (in front of data)
+  
+//   uint64_t *freelist; // shirley: this should be calculated based on core id and fixe mmap address 
+//   // shirley: add limit and offset of freelist to pmem file (in front of freelist)
+//   size_t offset_freelist; // shirley: cache this. move this to pmem file (in front of freelist)
+//   size_t limit_freelist; // shirley: cache this. move this to pmem file (in front of freelist)
+  
+//   bool use_pmem; // data in pmem or dram
+//   bool use_pmem_freelist; // freelist in pmem or dram
+//   static constexpr size_t metadata_size = 32; // 12 bytes metadata in front of data. offset 1 & 2, limit, block_size.
+//   static constexpr size_t metadata_size_freelist = 24; // 8 bytes metadata in front of freelist. offset 1 & 2, limit.
+
+//   size_t *get_offset(bool first_slot = true) const {
+//     if (first_slot) {
+//       return (size_t *)data;
+//     }
+//     else {
+//       return (size_t *)(data + 8);
+//     }
+//   }
+//   size_t *get_limit() { return (size_t*) (data + 16); }
+//   size_t *get_block_size() { return (size_t*) (data + 24); }
+//   size_t *get_offset_freelist(bool first_slot = true) {
+//     if (first_slot) {
+//       return (size_t *)freelist;
+//     }
+//     else {
+//       return (size_t *)((uint8_t *)freelist + 8);
+//     }
+//   }
+//   size_t *get_limit_freelist() { return (size_t *)((uint8_t*)freelist + 16); }
+  
+
+// public:
+//   BrkWFree() : data(nullptr), freelist(nullptr), use_pmem(false), use_pmem_freelist(false) {}
+//   BrkWFree(void *d, void *f, size_t limit, size_t limit_freelist,
+//            size_t block_size, bool use_pmem = false,
+//            bool use_pmem_freelist = false, bool is_recovery = false)
+//       : data((uint8_t *)d), freelist((uint64_t *)f), use_pmem(use_pmem),
+//         use_pmem_freelist(use_pmem_freelist), offset(0), limit(limit),
+//         block_size(block_size), limit_freelist(limit_freelist),
+//         offset_freelist(0) {
+//     // shirley: initialize the inlined metadata.
+//     // shirley: handle case if is recovery
+//     if (is_recovery) {
+//       uint64_t largest_sid = mem::GetPmemPersistInfo()->largest_sid;
+//       uint64_t last_epoch_nr = largest_sid >> 32;
+//       bool first_slot = !(last_epoch_nr % 2);
+//       offset = *get_offset(first_slot);
+//       offset_freelist = *get_offset_freelist(first_slot);
+//     }
+//     else {
+//       *get_offset() = (size_t)0;
+//       *get_offset(false) = (size_t)0;
+//       *get_limit() = limit;
+//       *get_block_size() = block_size;
+//       *get_offset_freelist() = (size_t)0;
+//       *get_offset_freelist(false) = (size_t)0;
+//       *get_limit_freelist() = limit_freelist;
+//       // shirley pmem shirley test : flush initial metadata
+//       // _mm_clwb(data);
+//       // _mm_clwb(freelist);
+//     }
+//   }
+//   ~BrkWFree() {}
+
+//   BrkWFree(BrkWFree &&rhs) {
+//     data = rhs.data;
+//     freelist = rhs.freelist;
+//     use_pmem = rhs.use_pmem;
+//     use_pmem_freelist = rhs.use_pmem_freelist;
+
+//     rhs.data = nullptr;
+//     rhs.freelist = nullptr;
+//   }
+
+//   BrkWFree &operator =(BrkWFree &&rhs) {
+//     if (this != &rhs) {
+//       this->~BrkWFree();
+//       new (this) BrkWFree(std::move(rhs));
+//     }
+//     return *this;
+//   }
+
+//   bool Check(size_t s) { 
+//     // return (*get_offset() + s <= *get_limit());
+//     return offset + s <= limit;
+//   }
+//   void Reset() 
+//   {
+//     offset = 0;
+//     offset_freelist = 0;
+//     // *get_offset() = 0;
+//     // *get_offset_freelist() = 0;
+//   }
+
+//   void persistOffsets(bool first_slot = true) {
+//     if (use_pmem) {
+//       *get_offset(first_slot) = offset;
+//       // shirley pmem shirley test
+//       // _mm_clwb(data);
+//     }
+//     if (use_pmem_freelist) {
+//       *get_offset_freelist(first_slot) = offset_freelist;
+//       // shirley pmem shirley test
+//       // _mm_clwb(freelist);
+//     }
+//   }
+
+//   void *Alloc();
+//   void Free(void *ptr);
+//   uint8_t *ptr() const { return get_data(); }
+//   size_t current_size() const {
+//     return offset;
+//     // return *get_offset();
+//   }
+
+//   uint8_t *get_data() const { return data + metadata_size; }
+//   uint64_t *get_freelist() {
+//     return (uint64_t *)((uint8_t *)freelist + metadata_size_freelist);
+//   }
+//   size_t get_cached_offset() { return offset; }
+//   size_t get_cached_limit() { return limit; }
+//   size_t get_cached_block_size() { return block_size; }
+//   size_t get_cached_offset_freelist() { return offset_freelist; }
+//   size_t get_cached_limit_freelist() { return limit_freelist; }
+//   size_t get_cached_use_pmem() { return use_pmem; }
+//   size_t get_cached_use_pmem_freelist() { return use_pmem_freelist; }
+// };
 
 class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
 
@@ -703,17 +927,34 @@ class ParallelBrkWFree : public ParallelAllocator<BrkWFree> {
   // change parameters for this function
   ParallelBrkWFree(MemAllocType alloc_type, MemAllocType freelist_alloc_type,
                    void *fixed_mmap_addr, size_t brk_pool_size,
-                   size_t block_size, bool use_pmem = false,
-                   bool use_pmem_freelist = false, bool is_recovery = false);
+                   size_t block_size, bool persist_pending_freelist = false, bool is_recovery = false);
   ~ParallelBrkWFree();
   ParallelBrkWFree(ParallelBrkWFree &&rhs) : ParallelAllocator(std::move(rhs)) {}
 
-  void Reset();
+  // void Reset();
+
+  void setIsGC(bool is_gc) {
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      pools[i]->set_is_gc(is_gc);
+    }
+  }
 
   // shirley: flush the offsets from cache to pmem file
   void persistOffsets(bool first_slot = true) {
     for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
       pools[i]->persistOffsets(first_slot);
+    }
+  }
+
+  void persistOffsetsGC() {
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      pools[i]->persistOffsetsGC();
+    }
+  }
+
+  void updateOffsetsGC (uint64_t cur_ep) {
+    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+      pools[i]->updateOffsetsGC(cur_ep);
     }
   }
 

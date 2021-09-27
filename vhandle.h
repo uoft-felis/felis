@@ -153,6 +153,7 @@ class SortedArrayVHandle : public BaseVHandle {
   std::atomic_long buf_pos = -1;
 
   // shirley: used by minor gc. Will need in new minorGC design to remove from majorGC list
+  // shirley: note: we don't need this is we're only deleting external values in major GC.
   std::atomic<uint64_t> gc_handle = 0; 
   SortedArrayVHandle();
 
@@ -274,11 +275,14 @@ public:
     if (!is_inline_ptr(ptr1)){
       auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
       auto &gc = util::Instance<GC>();
-      gc_handle.store(gc.AddRow((VHandle *)this, current_epoch_nr), std::memory_order_relaxed);
+      gc.AddRow((VHandle *)this, current_epoch_nr);
+      // gc_handle.store(gc.AddRow((VHandle *)this, current_epoch_nr), std::memory_order_relaxed);
     }
   }
 
   void remove_majorGC_if_ext(){
+    printf("remove_majorGC_if_ext: we shouldn't reach this function!\n");
+    std::abort();
     if (!is_inline_ptr(ptr1)) {
       auto &gc = util::Instance<GC>();
       gc.RemoveRow((VHandle *)this, gc_handle);
@@ -384,8 +388,8 @@ public:
 
   //Corey: Set (sid2, ptr2) to (0, null) //is it correct to use 0?
   void ResetSid2() {
-    sid2 = 0;
     ptr2 = nullptr;
+    sid2 = 0;
     // shirley note: I think don't need to reset mask here?
     // SetInlineSid(SidType2, 0);
     // SetInlinePtr(SidType2, nullptr);

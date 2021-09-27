@@ -789,7 +789,7 @@ namespace mem {
     void *fixed_mmap_addr = nullptr;
     g_external_pmem_pool = mem::ParallelBrkWFree(
         mem::ExternalPmemPool, mem::ExternalPmemFreelistPool, fixed_mmap_addr,
-        kExternalPmemPoolSize, kExternalPmemValuesSize, true, true,  felis::Options::kRecovery);
+        kExternalPmemPoolSize, kExternalPmemValuesSize, true, felis::Options::kRecovery);
   }
 
   void PersistExternalPmemPoolOffsets(bool first_slot) {
@@ -935,13 +935,16 @@ namespace mem {
   }
 
   void *BrkWFree::Alloc() {
-    if (offset_freelist){
+    if (offset_freelist != initial_offset_pending_freelist){
       // shirley: can allocate from freelist instead.
       // auto _ = util::Guard(lock_freelist);
       // shirley: don't need lock here because alloc is done at own core.
       auto off = offset_freelist;
-      offset_freelist--;
-      void *ptr = (uint64_t *) *(get_freelist() + off - 1);
+      offset_freelist++;
+      if (offset_freelist == limit_ring_buffer) {
+        offset_freelist = 0;
+      }
+      void *ptr = (uint64_t *) *(get_ring_buffer() + off);
       return ptr;
     }
     // shirley: else, allocate from brk
@@ -964,25 +967,52 @@ namespace mem {
     // shirley todo: add to freelist
     // auto _ = util::Guard(lock_freelist);
     util::MCSSpinLock::QNode qnode;
-    lock_freelist.Acquire(&qnode);
-    size_t off = offset_freelist; // *get_offset_freelist();
-    offset_freelist++;
-    lock_freelist.Release(&qnode);
-    uint64_t *flist = get_freelist();
-    *(flist + off) = (uint64_t)ptr;
-    
-    // (*get_offset_freelist())++;
-    // shirley pmem shirley test
-    if (use_pmem_freelist){
-      // shirley pmem shirley test
-      // _mm_clwb(flist + off);
+    lock_ring_buffer.Acquire(&qnode);
+    size_t off;
+
+    if (!is_gc) {
+      off = offset_pending_freelist;
+      offset_pending_freelist++;
+      if (offset_pending_freelist == limit_ring_buffer) {
+        offset_pending_freelist = 0;
+      }
+    } else {
+      off = (*get_current_offset_pending_freelist()) & 0x00000000FFFFFFFF;
+    }
+
+    // shirley: assume our ring buffer is large enough so we won't run out of space to free.
+    // if (off == initial_offset_freelist && /*we have deleted in this epoch already*/) {
+    //   printf("We run out of space in pending freelist!! We are running into freelist area\n");
+    //   std::abort();
+    // }
+
+    if (!is_gc) {
+      // can release right after incrementing offset
+      lock_ring_buffer.Release(&qnode);
     }
     
-    if (!use_pmem_freelist && use_pmem) {
-      // reset the values (just the first cache line)
-      std::memset(ptr, 0, 64);
+    uint64_t *rb = get_ring_buffer();
+    *(rb + off) = (uint64_t)ptr;
+
+    // shirley note: can optimize by flushing only every cacheline / 256 bytes
+    // shirley pmem shirley test
+    // _mm_clwb(rb + off);
+
+    if (is_gc) {
       // shirley pmem shirley test
-      // _mm_clwb(ptr);
+      // _mm_sfence();
+
+      size_t old_off = *get_current_offset_pending_freelist();
+      size_t new_off = off + 1;
+      if (new_off == limit_ring_buffer) {
+        new_off = 0;
+      }
+      *get_current_offset_pending_freelist() = ((old_off & 0xFFFFFFFF00000000) | (new_off & 0x00000000FFFFFFFF));
+      // shirley pmem shirley test
+      // _mm_clwb(ring_buffer);
+      // _mm_sfence();
+
+      lock_ring_buffer.Release(&qnode);
     }
   }
 
@@ -990,7 +1020,7 @@ namespace mem {
                                      MemAllocType freelist_alloc_type,
                                      void *fixed_mmap_addr,
                                      size_t brk_pool_size, size_t block_size,
-                                     bool use_pmem, bool use_pmem_freelist,
+                                     bool persist_pending_freelist,
                                      bool is_recovery) {
     uint8_t *mem = nullptr;
     for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
@@ -1006,36 +1036,34 @@ namespace mem {
       uint8_t *p_buf_freelist;
       size_t freelist_size = 4096; // brk_pool_size / block_size;
       // shirley todo: if is recovery, don't alloc, just mmap file to fixed address
-      if (use_pmem) {
-        void *hint_addr = fixed_mmap_addr ? ((uint8_t*)fixed_mmap_addr + (i * brk_pool_size)) : nullptr;
-        if (is_recovery) {
-          MapPersistentMemory(alloc_type, i, brk_pool_size, hint_addr);
-          p_buf = (uint8_t *) hint_addr;
-        }
-        else {
-          p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, i, -1, hint_addr);
-        }
+      // alloc brks
+      void *hint_addr = fixed_mmap_addr ? ((uint8_t*)fixed_mmap_addr + (i * brk_pool_size)) : nullptr;
+      if (is_recovery) {
+        MapPersistentMemory(alloc_type, i, brk_pool_size, hint_addr);
+        p_buf = (uint8_t *) hint_addr;
       }
       else {
-        p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
+        // shirley test
+        p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, i, -1, hint_addr);
+        // p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
       }
-      if (use_pmem_freelist) {
-        void *hint_addr_freelist = (fixed_mmap_addr) ? 
-            ((uint8_t *)fixed_mmap_addr +
-            (ParallelAllocationPolicy::g_nr_cores * brk_pool_size) +
-            (i * freelist_size * 8) + 1024*1024*1024) : nullptr; // shirley: add 1G to leave some space in between for mmap
-        if (is_recovery) {
-          MapPersistentMemory(freelist_alloc_type, i, freelist_size, hint_addr_freelist);
-          p_buf_freelist = (uint8_t *)hint_addr_freelist;
-        }
-        else {
-          p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size, i, -1, hint_addr_freelist);
-        }
+      
+      // alloc ring buffers
+      void *hint_addr_freelist = (fixed_mmap_addr) ? 
+          ((uint8_t *)fixed_mmap_addr +
+          (ParallelAllocationPolicy::g_nr_cores * brk_pool_size) +
+          (i * freelist_size * 8) + 1024*1024*1024) : nullptr; // shirley: add 1G to leave some space in between for mmap
+      if (is_recovery) {
+        MapPersistentMemory(freelist_alloc_type, i, freelist_size, hint_addr_freelist);
+        p_buf_freelist = (uint8_t *)hint_addr_freelist;
       }
       else {
-        p_buf_freelist = (uint8_t *)AllocMemory(freelist_alloc_type, brk_pool_size);
+        // shirley test
+        p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size, i, -1, hint_addr_freelist);
+        // p_buf_freelist = (uint8_t *)AllocMemory(freelist_alloc_type, freelist_size);
       }
-      pools[i] = new (p) BrkWFree(p_buf, p_buf_freelist, brk_pool_size, freelist_size, block_size, use_pmem, use_pmem_freelist, is_recovery);
+        
+      pools[i] = new (p) BrkWFree(p_buf, p_buf_freelist, brk_pool_size, freelist_size, block_size, persist_pending_freelist, is_recovery);
       
       p += sizeof(BrkWFree);
       free_lists[i] = (uintptr_t *) p;
@@ -1051,12 +1079,12 @@ namespace mem {
     }
   }
 
-  void ParallelBrkWFree::Reset()
-  {
-    for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
-      pools[i]->Reset();
-    }
-  }
+  // void ParallelBrkWFree::Reset()
+  // {
+  //   for (unsigned int i = 0; i < ParallelAllocationPolicy::g_nr_cores; i++) {
+  //     pools[i]->Reset();
+  //   }
+  // }
 
   ParallelBrkWFree::~ParallelBrkWFree()
   {

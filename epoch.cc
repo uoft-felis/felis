@@ -412,6 +412,10 @@ void EpochClient::InitializeEpoch()
     mgr.AdvanceTo(epoch_nr, this);
   }
 
+  // shirley: update external pmem value pool free list GC tail
+  mem::GetExternalPmemPool().updateOffsetsGC(epoch_nr);
+  mem::GetExternalPmemPool().setIsGC(true); // External pmem deletes are due to GC before append phase.
+
   util::Impl<PromiseAllocationService>().Reset();
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
@@ -487,6 +491,10 @@ void EpochClient::OnInsertComplete()
   if (felis::Options::kEnableZen) {
     mem::GetTransientPmemPool().Reset();
   }
+
+  // shirley: update the external pmem value pool freelist tail offset
+  mem::GetExternalPmemPool().persistOffsetsGC();
+  mem::GetExternalPmemPool().setIsGC(false); // GC completed. External pmem deletes are due to txns now.
 
   // Shirley: major GC print stats
   // // GC must have been completed

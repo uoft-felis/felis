@@ -250,8 +250,9 @@ class Txn : public BaseTxn {
         auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
         // shirley: don't do minGC if is recovery bc dont have major GC list
         if (!felis::Options::kRecovery && ptr2){
-          vhandle->remove_majorGC_if_ext();
-          vhandle->FreePtr1(); 
+          // shirley: with new design, external values always GC'd during major GC at end of epoch
+          // vhandle->remove_majorGC_if_ext();
+          // vhandle->FreePtr1(); 
           vhandle->Copy2To1();
         }
 
