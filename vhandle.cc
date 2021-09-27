@@ -827,6 +827,7 @@ bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
     cur->next = n;
     head = dummy.next;
 
+    size++;
     lock.Unlock(&qnode);
     return true;
   }
@@ -856,6 +857,7 @@ bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
         cur->next = n;
         // logger->info("lock append sid {} on {:p}", sid, (void*)this);
 
+        size++;
         lock.Unlock(&qnode);
         return true;
       }

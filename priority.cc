@@ -63,7 +63,7 @@ PriorityTxnService::PriorityTxnService()
     }
   } else { // YCSB read-only 8
     _exec_time = 24.95;
-    coefficient = 0.3061;
+    coefficient = 0.5061;
   }
   // 3 ways: percentage / incoming rate / # of priTxn + interval
   if (Options::kPercentagePriorityTxn) {
@@ -446,14 +446,12 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     }
 
     // backoff by txn->min_sid
-    if (!g_exp_distri_backoff) {
-      // SID cannot be in previous/same strip as txn->min_sid from last abort
-      uint64_t last_time_seq = sid2seq(txn->min_sid);
-      if (last_time_seq == 0) last_time_seq = 1;
-      int k = g_strip_batched + g_strip_priority;
-      if ((min_seq - 1) / k <= (last_time_seq - 1) / k) {
-        min_seq = last_time_seq + k;
-      }
+    // SID cannot be in previous/same strip as txn->min_sid from last abort
+    uint64_t last_time_seq = sid2seq(txn->min_sid);
+    if (last_time_seq == 0) last_time_seq = 1;
+    int k = g_strip_batched + g_strip_priority;
+    if ((min_seq - 1) / k <= (last_time_seq - 1) / k) {
+      min_seq = last_time_seq + k;
     }
 
     if (PriorityTxnService::g_tictoc_mode) {
