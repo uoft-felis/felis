@@ -67,6 +67,7 @@ class BaseVHandle {
   // static mem::ParallelSlabPool inline_pool;
   static void InitPool();
   static void PersistPoolOffsets(bool first_slot = true);
+  static void PoolSetCurrentAffinity(int aff);
   static size_t GetTotalPoolSize() {
     return inline_pool.TotalPoolSize();
   }

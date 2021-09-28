@@ -1054,12 +1054,12 @@ namespace mem {
           (ParallelAllocationPolicy::g_nr_cores * brk_pool_size) +
           (i * freelist_size * 8) + 1024*1024*1024) : nullptr; // shirley: add 1G to leave some space in between for mmap
       if (is_recovery) {
-        MapPersistentMemory(freelist_alloc_type, i, freelist_size, hint_addr_freelist);
+        MapPersistentMemory(freelist_alloc_type, i, freelist_size * 8, hint_addr_freelist);
         p_buf_freelist = (uint8_t *)hint_addr_freelist;
       }
       else {
         // shirley test
-        p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size, i, -1, hint_addr_freelist);
+        p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size * 8, i, -1, hint_addr_freelist);
         // p_buf_freelist = (uint8_t *)AllocMemory(freelist_alloc_type, freelist_size);
       }
         

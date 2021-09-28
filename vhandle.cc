@@ -108,4 +108,8 @@ void BaseVHandle::PersistPoolOffsets(bool first_slot) {
   inline_pool.persistOffsets(first_slot);
 }
 
+void BaseVHandle::PoolSetCurrentAffinity(int aff) {
+  inline_pool.SetCurrentAffinity(aff);
+}
+
 }

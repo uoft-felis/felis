@@ -311,6 +311,8 @@ void YcsbLoader::Run()
     MasstreeIndex::ResetThreadInfo();
 
     mem::ParallelPool::SetCurrentAffinity(t);
+    mem::GetExternalPmemPool().SetCurrentAffinity(t);
+    felis::VHandle::PoolSetCurrentAffinity(t);
     util::Cpu info;
     info.set_affinity(t);
     info.Pin();
@@ -335,6 +337,8 @@ void YcsbLoader::Run()
   info.Pin();
 
   mem::ParallelPool::SetCurrentAffinity(-1);
+  mem::GetExternalPmemPool().SetCurrentAffinity(-1);
+  felis::VHandle::PoolSetCurrentAffinity(-1);
   MasstreeIndex::ResetThreadInfo();
 
   done = true;
