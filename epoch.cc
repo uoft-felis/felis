@@ -602,11 +602,12 @@ void EpochClient::OnExecuteComplete()
     logger->info("Autotune threshold={}", g_splitting_threshold);
   }
 
+  // shirley: here we persist the infos for this epoch
+  bool first_slot = !(cur_epoch_nr % 2);
+  VHandle::PersistPoolOffsets(first_slot);
+  mem::PersistExternalPmemPoolOffsets(first_slot);
+
   if (Options::kLogInput) {
-    // shirley: here we persist the infos for this epoch
-    bool first_slot = !(cur_epoch_nr % 2);
-    VHandle::PersistPoolOffsets(first_slot);
-    mem::PersistExternalPmemPoolOffsets(first_slot);
     PersistAutoInc();
     
     // shirley pmem shirley test

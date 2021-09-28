@@ -107,7 +107,21 @@ class BaseTxn {
     void AppendNewVersion(int ondemand_split_weight = 0);
     VarStr *ReadVarStr(bool is_insert = false);
     bool WriteVarStr(VarStr *obj);
-    bool Delete() { return WriteVarStr(nullptr); }
+    bool Delete() {
+      // return WriteVarStr(nullptr);
+      bool result =  WriteVarStr(nullptr);
+      if (index_info->last_version() == sid) {
+        VHandle *myvhdl = index_info->vhandle_ptr();
+        auto ptr2_del = myvhdl->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+        if ((ptr2_del) && !(myvhdl->is_inline_ptr(ptr2_del))) {
+          delete (VarStr *)ptr2_del;
+        }
+        // shirley: don't delete vhandle for now since we don't remove it from masstree.
+        // delete (VHandle *)myvhdl;
+      }
+
+      return result;
+    }
     bool WriteAbort();
   };
 
