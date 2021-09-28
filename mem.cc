@@ -1042,7 +1042,7 @@ namespace mem {
       auto p = mem + numa_offset * kHeaderSize;
       uint8_t *p_buf;
       uint8_t *p_buf_freelist;
-      size_t freelist_size = 4096; // brk_pool_size / block_size;
+      size_t freelist_size = 16384; // brk_pool_size / block_size;
       if (alloc_type == mem::ExternalPmemPool) {
         freelist_size = ((size_t)2) * 1024 * 1024;
       }
