@@ -715,9 +715,9 @@ public:
     // shirley pmem shirley test
     // _mm_clwb(ring_buffer);
 
-    printf("updating initial offsets (%lu, %lu) -> (%lu, %lu)\n",
-          initial_offset_freelist, initial_offset_pending_freelist,
-          offset_freelist, offset_pending_freelist);
+    // printf("updating initial offsets (%lu, %lu) -> (%lu, %lu)\n",
+    //        initial_offset_freelist, initial_offset_pending_freelist,
+    //        offset_freelist, offset_pending_freelist);
     // shirley: also update the initial offset (freelist / pending freelist) for next epoch in DRAM
     this->initial_offset_freelist = offset_freelist;
     this->initial_offset_pending_freelist = offset_pending_freelist;
