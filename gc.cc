@@ -116,7 +116,7 @@ void GarbageBlockSlab::Remove(GarbageBlock *blk, int idx)
 }
 
 uint64_t GC::AddRow(VHandle *row, uint64_t epoch_nr) {
-  abort_if(epoch_nr == 0, "Should not even detect garbage during loader");
+  // abort_if(epoch_nr == 0, "Should not even detect garbage during loader");
   int q_idx = epoch_nr % g_gc_every_epoch;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   return g_slabs[core_id]->Add(row, q_idx);
