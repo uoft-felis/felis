@@ -116,8 +116,10 @@ class BaseTxn {
         if ((ptr2_del) && !(myvhdl->is_inline_ptr(ptr2_del))) {
           delete (VarStr *)ptr2_del;
         }
-        // shirley: don't delete vhandle for now since we don't remove it from masstree.
-        // delete (VHandle *)myvhdl;
+        // shirley: deleting vhandle actually helps with throughput. 
+        // we're assuming the user application makes sure to not write to deleted rows. 
+        // if they do, its treated as insert instead of append.
+        delete (VHandle *)myvhdl;
       }
 
       return result;
