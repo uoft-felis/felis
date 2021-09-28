@@ -1035,6 +1035,9 @@ namespace mem {
       uint8_t *p_buf;
       uint8_t *p_buf_freelist;
       size_t freelist_size = 4096; // brk_pool_size / block_size;
+      if (alloc_type == mem::ExternalPmemPool) {
+        freelist_size = ((size_t)2) * 1024 * 1024;
+      }
       // shirley todo: if is recovery, don't alloc, just mmap file to fixed address
       // alloc brks
       void *hint_addr = fixed_mmap_addr ? ((uint8_t*)fixed_mmap_addr + (i * brk_pool_size)) : nullptr;
