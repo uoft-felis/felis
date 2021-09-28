@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <array>
 #include <sys/mman.h>
+#include <unordered_map>
 
 #include <immintrin.h>
 
@@ -577,7 +578,7 @@ class BrkWFree {
   // tail of free list
   size_t offset_pending_freelist; // shirley: cache this. move this to pmem file (in front of ring buffer)
   size_t limit_ring_buffer; // shirley: cache this. move this to pmem file (in front of ring buffer)
-  
+  std::unordered_map<void *, bool> *freelist_hash = nullptr; // shirley: used for duplicate detection during recovery
   bool persist_pending_freelist = false;
   bool is_gc = false;
   
@@ -614,7 +615,7 @@ class BrkWFree {
   
 
 public:
-  BrkWFree() : data(nullptr), ring_buffer(nullptr), persist_pending_freelist(false), is_gc(false) {}
+  BrkWFree() : data(nullptr), ring_buffer(nullptr), persist_pending_freelist(false), is_gc(false), freelist_hash(nullptr) {}
   BrkWFree(void *d, void *rb, size_t limit, size_t limit_ring_buffer,
            size_t block_size, bool persist_pending_freelist = false,
            bool is_recovery = false)
@@ -622,7 +623,7 @@ public:
         persist_pending_freelist(persist_pending_freelist), is_gc(false),
         offset(0), limit(limit), block_size(block_size), offset_freelist(0),
         offset_pending_freelist(0), initial_offset_freelist(0),
-        initial_offset_pending_freelist(0) {
+        initial_offset_pending_freelist(0), freelist_hash(nullptr) {
     // shirley: initialize the inlined metadata.
     if (persist_pending_freelist) {
       this->limit_ring_buffer = limit_ring_buffer - 4;
@@ -651,6 +652,19 @@ public:
       }
       initial_offset_freelist = offset_freelist;
       initial_offset_pending_freelist = offset_pending_freelist;
+      
+      // create hash for duplicate detection
+      if (persist_pending_freelist) {
+        freelist_hash = new std::unordered_map<void *, bool>;
+        size_t freelist_duplicate_it = offsets_ring_buffer & (0x00000000FFFFFFFF);
+        while (freelist_duplicate_it != offset_pending_freelist) {
+          freelist_hash->insert({(void *)(*(get_ring_buffer() + freelist_duplicate_it)), true});
+          freelist_duplicate_it++;
+          if (freelist_duplicate_it == this->limit_ring_buffer) {
+            freelist_duplicate_it = 0;
+          }
+        }
+      }
     }
     else {
       *get_offset() = (size_t)0;

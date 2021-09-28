@@ -964,6 +964,14 @@ namespace mem {
   }
 
   void BrkWFree::Free(void *ptr) {
+    if (felis::Options::kRecovery) {
+      if (is_gc) {
+        if (freelist_hash->find(ptr) != freelist_hash->end()) {
+          // is a duplicate.
+          return;
+        }
+      }
+    }
     // shirley todo: add to freelist
     // auto _ = util::Guard(lock_freelist);
     util::MCSSpinLock::QNode qnode;
