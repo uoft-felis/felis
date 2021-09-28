@@ -167,6 +167,14 @@ bool BaseTxn::BaseTxnRow::WriteAbort() {
       // shirley: add to major GC if ptr1 inlined
       vhandle->add_majorGC_if_ext();
       
+      // flush external varstr
+      if (!(vhandle->is_inline_ptr((uint8_t *)val))) {
+        for (int val_i = 0; val_i < val_size; val_i += 64) {
+          //shirley pmem shirley test
+          // _mm_clwb((char *)val + val_i);
+        }
+      }
+
       //shirley pmem: flush cache after last version write
       // _mm_clwb((char *)vhandle); 
       // _mm_clwb((char *)vhandle + 64);

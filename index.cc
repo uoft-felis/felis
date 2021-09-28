@@ -20,11 +20,12 @@ void InitVersion(felis::IndexInfo *handle, int key_0, int key_1, int key_2, int 
   // shirley: setting keys in vhandle
   p_vhandle->set_table_keys(key_0, key_1, key_2, key_3, table_id);
 
+  size_t obj_len = VarStr::NewSize(obj->length());
   // // shirley: also init dram cache
   if (!felis::Options::kDisableDramCache) {
     auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
-    temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(VarStr::NewSize(obj->length()));
-    std::memcpy(temp_dram_version->val, obj, VarStr::NewSize(obj->length()));
+    temp_dram_version->val = (VarStr*) mem::GetDataRegion().Alloc(obj_len);
+    std::memcpy(temp_dram_version->val, obj, obj_len);
     int curAffinity = mem::ParallelPool::CurrentAffinity();
     ((VarStr*)(temp_dram_version->val))->set_region_id(curAffinity);
     temp_dram_version->ep_num = 0;
@@ -41,6 +42,14 @@ void InitVersion(felis::IndexInfo *handle, int key_0, int key_1, int key_2, int 
   //   abort_if(!handle->WriteWithVersion(0, obj, 0),
   //             "Diverging outcomes during setup setup");
   // }
+
+  // flush external varstr
+  if (!(p_vhandle->is_inline_ptr((uint8_t *)obj))) {
+    for (int obj_i = 0; obj_i < obj_len; obj_i += 64) {
+      // shirley pmem shirley test
+      // _mm_clwb((char *)obj + obj_i);
+    }
+  }
 
   //shirley pmem: flush cache after initial row insert
   // _mm_clwb((char *)p_vhandle);

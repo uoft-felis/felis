@@ -308,6 +308,14 @@ class Txn : public BaseTxn {
         vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
         // shirley: add to major GC if ptr1 inlined
         vhandle->add_majorGC_if_ext();
+
+        // flush external varstr
+        if (!(vhandle->is_inline_ptr((uint8_t *)val))) {
+          for (int val_i = 0; val_i < val_sz; val_i += 64) {
+            //shirley pmem shirley test
+            // _mm_clwb((char *)val + val_i);
+          }
+        }
         
         //shirley pmem: flush cache after last version write
         // _mm_clwb((char *)vhandle); 
@@ -374,6 +382,14 @@ class Txn : public BaseTxn {
       vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType1,sid); 
       // vhandle -> ptr1 = val
       vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)val); 
+      
+      // flush external varstr
+      if (!(vhandle->is_inline_ptr((uint8_t *)val))) {
+        for (int val_i = 0; val_i < sizeof(VarStr) + o.EncodeSize(); val_i += 64) {
+          //shirley pmem shirley test
+          // _mm_clwb((char *)val + val_i);
+        }
+      }
       
       //shirley pmem: flush cache after insert
       // _mm_clwb((char *)vhandle);
