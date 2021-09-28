@@ -638,11 +638,16 @@ public:
       offset = *get_offset(first_slot);
       size_t offsets_ring_buffer = *get_offsets_ring_buffer(first_slot);
       offset_freelist = offsets_ring_buffer >> 32;
-      size_t gc_tail = *get_current_offset_pending_freelist();
-      if ((gc_tail >> 32) <= last_epoch_nr) {
+      if (persist_pending_freelist) {
+        size_t gc_tail = *get_current_offset_pending_freelist();
+        if ((gc_tail >> 32) <= last_epoch_nr) {
+          offset_pending_freelist = offsets_ring_buffer & (0x00000000FFFFFFFF);
+        } else {
+          offset_pending_freelist = gc_tail & 0x00000000FFFFFFFF;
+        }
+      }
+      else {
         offset_pending_freelist = offsets_ring_buffer & (0x00000000FFFFFFFF);
-      } else {
-        offset_pending_freelist = gc_tail & 0x00000000FFFFFFFF;
       }
       initial_offset_freelist = offset_freelist;
       initial_offset_pending_freelist = offset_pending_freelist;
