@@ -267,13 +267,14 @@ class PriorityTxn {
     // assign only happens when the rhs is never Run(), so set init value
     this->piece_count.store(0);
     this->min_sid = 0;
-    if (PriorityTxnService::g_row_rts) {
+    if (PriorityTxnService::g_sid_row_rts) {
       if (PriorityTxnService::g_progress_backoff)
         this->distance = INT_MIN;
       else if (PriorityTxnService::g_exp_distri_backoff || PriorityTxnService::g_exp_backoff ||
                PriorityTxnService::g_rate_backoff)
         this->distance = 0;
     } else {
+      // SIDForwardReadBit and SIDReadBit kind of requires progress backoff
       this->distance = PriorityTxnService::g_dist;
       this->distance_max = abs(PriorityTxnService::g_dist);
     }

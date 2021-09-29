@@ -472,7 +472,9 @@ uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int siz
     return result;
   }
 
-  abort_if(g_exp_distri_backoff, "exp. distri. currently only works with row rts");
+  abort_if(g_exp_distri_backoff, "exp. distri. only works with row rts");
+  abort_if(g_exp_backoff, "exp. backoff only works with row rts");
+  abort_if(g_rate_backoff, "rate backoff only works with row rts");
   int max_prog_seq = sid2seq(this->GetMaxProgress());
 
   uint64_t min_seq;
