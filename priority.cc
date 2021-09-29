@@ -153,9 +153,9 @@ PriorityTxnService::PriorityTxnService()
       g_sid_forward_read_bit = true;
       if (Options::kLastVersionPatch) {
         g_last_version_patch = true;
-      } else {
-        abort_if(Options::kLastVersionPatch, "-XLastVersionPatch requires -XSIDForwardReadBit")
       }
+    } else {
+      abort_if(Options::kLastVersionPatch, "-XLastVersionPatch requires -XSIDForwardReadBit")
     }
   } else {
     abort_if(Options::kConflictReadBit, "-XConflictReadBit requires -XReadBit");
@@ -185,14 +185,15 @@ PriorityTxnService::PriorityTxnService()
   if (Options::kProgressBackoff) {
     g_progress_backoff = true;
     int logical_dist = INT_MAX;
-    if (Options::kDist) {
-      logical_dist = Options::kDist.ToInt(); // independent of priority txn slot ratio
-      g_dist = logical_dist * (g_strip_batched + g_strip_priority);
-      if (Options::kSIDRowRTS) {
-        logger->info("Neglecting Global Backoff Distance for RowRTS");
-        g_dist = INT_MAX;
-      }
+    abort_if(!Options::kDist, "Must specify Dist when progress backoff")
+    logical_dist = Options::kDist.ToInt(); // independent of priority txn slot ratio
+    g_dist = logical_dist * (g_strip_batched + g_strip_priority);
+    if (Options::kSIDRowRTS) {
+      logger->info("Neglecting Global Backoff Distance for RowRTS");
+      g_dist = INT_MAX;
     }
+  } else {
+    abort_if(Options::kDist, "-XDist is used with -XProgressBackoff");
   }
   if (Options::kExpDistriBackoff) {
     abort_if(!g_row_rts, "-XExpDistriBackoff only works with RowRTS");
