@@ -80,14 +80,17 @@ bool StockTxn_Run(PriorityTxn *txn)
     txn->InitRegisterUpdate<Stock>(stock_keys[i], stock_rows[i]);
   }
   // init
+  bool give_up = false;
   uint64_t fail_tsc = start_tsc;
   int fail_cnt = 0;
   while (!txn->Init(stock_rows, input.nr_items, nullptr, 0, nullptr)) {
     fail_tsc = __rdtsc();
     ++fail_cnt;
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
-      return false;
+    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0) {
+      give_up = true;
+      break;
+    }
   }
 
   uint64_t succ_tsc = __rdtsc();
@@ -95,6 +98,8 @@ bool StockTxn_Run(PriorityTxn *txn)
   txn->measure_tsc = succ_tsc;
   probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
   probes::PriInitTime{succ, fail, fail_cnt, txn->serial_id()}();
+  if (give_up)
+    return false;
 
   struct Context {
     uint warehouse_id;
@@ -199,6 +204,7 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   txn->InitRegisterUpdate<Customer>(customer_key, customer_row);
 
   // init
+  bool give_up = false;
   VHandle *update_rows[nr_items + 1], *insert_rows[nr_items + 2];
   BaseInsertKey *insert_ikeys[nr_items + 2];
   update_rows[0] = customer_row;
@@ -212,8 +218,10 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
     fail_tsc = __rdtsc();
     ++fail_cnt;
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
-      return false;
+    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0) {
+      give_up = true;
+      break;
+    }
   }
 
   uint64_t succ_tsc = __rdtsc();
@@ -221,6 +229,8 @@ bool NewOrderDeliveryTxn_Run(PriorityTxn *txn)
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
   probes::PriInitQueueTime{init_q, txn->serial_id()}();
   probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
+  if (give_up)
+    return false;
 
   struct Context {
     NewOrderStruct in;
