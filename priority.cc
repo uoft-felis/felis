@@ -650,8 +650,15 @@ bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
     return false;
   // if max progress not passed, then read did not happen, does not need to check read bit
 
-  if (PriorityTxnService::g_conflict_read_bit)
+  if (PriorityTxnService::g_conflict_read_bit) {
+    if (PriorityTxnService::g_row_rts) {
+      auto rts = handle->GetRowRTS();
+      auto wts = this->serial_id() >> 8;
+      if (wts > rts)
+        return false;
+    }
     return handle->CheckReadBit(this->sid);
+  }
   if (PriorityTxnService::g_conflict_row_rts) {
     auto rts = handle->GetRowRTS();
     auto wts = this->serial_id() >> 8;
