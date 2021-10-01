@@ -233,10 +233,10 @@ PriorityTxnService::PriorityTxnService()
       auto buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(uint64_t), numa_node);
       exec_progress[i] = new (buf) uint64_t(0);
       buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(PieceCounter), numa_node);
-      if (i != 0)
-        PriPcCnt[i] = new (buf) PieceCounter();
-      else
-        PriPcCnt[i] = new (buf) PieceCounter(true);
+      // if (i != 0)
+      PriPcCnt[i] = new (buf) PieceCounter();
+      // else
+        // PriPcCnt[i] = new (buf) PieceCounter(true);
       buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(PieceCounter), numa_node);
       BatchPcCnt[i] = new (buf) PieceCounter();
 
