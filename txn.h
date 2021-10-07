@@ -25,6 +25,7 @@ using UpdateForKeyCallback = void (*)(IndexInfo *row, void *ctx);
 class BaseTxn {
  protected:
   friend class EpochClient;
+  friend class TransactionInputLogger;
 
   Epoch *epoch;
   uint64_t sid;

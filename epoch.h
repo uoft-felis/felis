@@ -112,6 +112,19 @@ struct EpochTxnSet {
 
 class CommitBuffer;
 
+class TransactionInputLogger : public go::Routine {
+  std::atomic_int *cd;
+  EpochClient *ep_client;
+ public:
+  TransactionInputLogger(std::atomic_int *c, EpochClient *ep_client) : cd(c), ep_client(ep_client) {}
+
+  void LogInputs();
+  virtual void Run() {
+    LogInputs();
+    cd->fetch_sub(1);
+  }
+};
+
 class EpochClient {
   friend class EpochCallback;
   friend class RunTxnPromiseWorker;
@@ -119,6 +132,7 @@ class EpochClient {
   friend class AllocStateTxnWorker;
   friend class EpochExecutionDispatchService;
   friend class ContentionManager;
+  friend class TransactionInputLogger;
 
   int core_limit;
   int best_core;

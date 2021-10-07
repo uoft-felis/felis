@@ -3,6 +3,8 @@
 
 #include <syscall.h>
 
+#include <thread>
+
 #include "epoch.h"
 #include "txn.h"
 #include "log.h"
@@ -398,6 +400,53 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   }
 }
 
+void TransactionInputLogger::LogInputs()
+{
+  int my_core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+
+  uint64_t log_offset = 0;
+  uint64_t log_clwb_offset = 0;
+
+  uint8_t ** int_log_file = mem::GetTxnInputLog();
+
+  auto my_txns = ep_client->all_txns[epoch_nr - 1].per_core_txns[my_core_id];
+
+  for (uint64_t j = 1; j <= ep_client->total_nr_txn; j++) {
+    auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
+    auto t = d.rem, pos = d.quot;
+    if (t != my_core_id) {
+      continue;
+    }
+
+    BaseTxn *generated_txn = my_txns->txns[pos];
+    int txnid = generated_txn->txn_typeid;
+
+    uint8_t *log_txnid = ((uint8_t *)(int_log_file[my_core_id])) + log_offset;
+    *((int*) log_txnid) = txnid;
+    uint8_t *log_txnstruct = log_txnid + 8;
+    ep_client->PersistTxnStruct(txnid, generated_txn, log_txnstruct);
+
+    uint64_t written_size = ep_client->TxnInputSize(txnid) + 8;
+    log_offset += written_size;
+    if (log_offset - log_clwb_offset >= 256) {
+      for (uint64_t i = log_clwb_offset; i < log_offset; i += 64) {
+        // shirley pmem shirley test
+        // _mm_clwb((uint8_t *)(int_log_file[my_core_id]) + i); // shirley note: this is part of the old cache line
+        log_clwb_offset = i;
+      }
+    }
+  }
+  
+  if (log_offset > log_clwb_offset) {
+    for (uint64_t i = log_clwb_offset; i < log_offset; i += 64) {
+      // shirley pmem shirley test
+      // _mm_clwb((uint8_t *)(int_log_file[my_core_id]) + i); // shirley note: this is part of the old cache line
+    }
+  }
+  return;
+}
+
 void EpochClient::InitializeEpoch()
 {
   auto &mgr = util::Instance<EpochManager>();
@@ -429,33 +478,31 @@ void EpochClient::InitializeEpoch()
 
   // shirley: log the txn inputs for this new epoch
   if (felis::Options::kLogInput) {
-    uint64_t log_offset[64] = {0}; // shirley: for now leave space for at most 64 threads
-    uint64_t log_clwb_offset[64] = {0}; // shirley: for now leave space for at most 64 threads
+    
+    // spawn threads to log input in parallel.
+    std::atomic_int log_countdown(NodeConfiguration::g_nr_threads);
 
-    uint8_t ** int_log_file = mem::GetTxnInputLog();
-    for (uint64_t j = 1; j <= total_nr_txn; j++) {
-      auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
-      auto t = d.rem, pos = d.quot;
-      BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
-
-      BaseTxn *generated_txn = all_txns[epoch_nr - 1].per_core_txns[t]->txns[pos];
-      int txnid = generated_txn->txn_typeid;
-
-      uint8_t *log_txnid = ((uint8_t *)(int_log_file[t])) + log_offset[t];
-      *((int*) log_txnid) = txnid;
-      uint8_t *log_txnstruct = log_txnid + 8;
-      PersistTxnStruct(txnid, generated_txn, log_txnstruct);
-
-      uint64_t written_size = TxnInputSize(txnid) + 8;
-      log_offset[t] += written_size;
-      if (log_offset[t] - log_clwb_offset[t] >= 64) {
-        for (uint64_t i = log_clwb_offset[t]; i < log_offset[t]; i += 64) {
-          // shirley pmem shirley test
-          // _mm_clwb(log_txnid + i); // shirley note: this is part of the old cache line
-          log_clwb_offset[t] = i;
-        }
+    int client_core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    
+    for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+      if (i == client_core_id) {
+        // the epoch client is taking up a thread. we will run this logger on this core.
+        continue;
       }
+      auto sched = go::GetSchedulerFromPool(i + 1);
+      sched->WakeUp(new TransactionInputLogger(&log_countdown, this));
     }
+
+    if (client_core_id != -1) {
+      auto backup_logger = new TransactionInputLogger(&log_countdown, this);
+      backup_logger->LogInputs();
+      log_countdown.fetch_sub(1);
+    }
+
+    while (log_countdown.load() > 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+
     // shirley pmem shirley test
     // _mm_sfence();
 

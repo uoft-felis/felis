@@ -21,6 +21,7 @@ class DummySliceRouter {
 
 struct RMWStruct {
   uint64_t keys[kTotal];
+  char write_data[100*10];
 };
 
 struct RMWState {
