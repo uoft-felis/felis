@@ -588,7 +588,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
           // shirley: probe size of version value
           // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
           // shirley: DON'T bc init tables. probe transient vs persistent
-          // // felis::probes::TransientPersistentCount{true}();
+          // felis::probes::TransientPersistentCount{true}();
           // shirley: initial database should be allocated from inline pmem.
           auto p = handle->vhandle_ptr()->AllocFromInline(v.EncodeSize());
           felis::InitVersion(handle, i, -1, -1, -1, (int)tpcc::TableType::Warehouse, v.EncodeToPtrOrDefault(p));
@@ -640,7 +640,7 @@ void Loader<LoaderType::Item>::DoLoad()
     // shirley: probe size of version value
     // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
     // shirley: DON'T bc init tables. probe transient vs persistent
-    // // felis::probes::TransientPersistentCount{true}();
+    // felis::probes::TransientPersistentCount{true}();
     auto p = handle->vhandle_ptr()->AllocFromInline(v.EncodeSize());
     felis::InitVersion(handle, i, -1, -1, -1, (int)tpcc::TableType::Item, v.EncodeToPtrOrDefault(p));
   }
@@ -682,7 +682,7 @@ void Loader<LoaderType::Stock>::DoLoad()
             // shirley: probe size of version value
             // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
             // shirley: DON'T bc init tables. probe transient vs persistent
-            // // felis::probes::TransientPersistentCount{true}();
+            // felis::probes::TransientPersistentCount{true}();
             // shirley: initial database should be allocated from inline pmem.
             auto p = handle->vhandle_ptr()->AllocFromInline(v.EncodeSize());
             felis::InitVersion(handle, w, i, -1, -1, (int)tpcc::TableType::Stock, v.EncodeToPtrOrDefault(p));
@@ -762,7 +762,7 @@ void Loader<LoaderType::District>::DoLoad()
             // shirley: probe size of version value
             // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
             // shirley: DON'T bc init tables. probe transient vs persistent
-            // // felis::probes::TransientPersistentCount{true}();
+            // felis::probes::TransientPersistentCount{true}();
             // shirley: initial database should be allocated from inline pmem.
             auto p = handle->vhandle_ptr()->AllocFromInline(v.EncodeSize());
             felis::InitVersion(handle, w, d, -1, -1, (int)tpcc::TableType::District, v.EncodeToPtrOrDefault(p));
@@ -838,7 +838,7 @@ void Loader<LoaderType::Customer>::DoLoad()
               // shirley: probe size of version value
               // felis::probes::VersionValueSizeArray{(int)v.EncodeSize()}();
               // shirley: DON'T bc init tables. probe transient vs persistent
-              // // felis::probes::TransientPersistentCount{true}();
+              // felis::probes::TransientPersistentCount{true}();
               // shirley: initial database should be allocated from inline pmem.
               auto p = handle->vhandle_ptr()->AllocFromInline(v.EncodeSize());
               felis::InitVersion(handle, w, d, c, -1, (int)tpcc::TableType::Customer, v.EncodeToPtrOrDefault(p));
@@ -975,7 +975,7 @@ void Loader<LoaderType::Order>::DoLoad()
               // shirley: probe size of version value
               // felis::probes::VersionValueSizeArray{(int)v_oo.EncodeSize()}();
               // shirley: DON'T bc init tables. probe transient vs persistent
-              // // felis::probes::TransientPersistentCount{true}();
+              // felis::probes::TransientPersistentCount{true}();
               auto p = oo_handle->vhandle_ptr()->AllocFromInline(v_oo.EncodeSize());
               felis::InitVersion(oo_handle, w, d, order_id, -1, (int)tpcc::TableType::OOrder, v_oo.EncodeToPtrOrDefault(p));
             });
@@ -991,7 +991,7 @@ void Loader<LoaderType::Order>::DoLoad()
               // shirley: probe size of version value
               // felis::probes::VersionValueSizeArray{(int)v_oo_idx.EncodeSize()}();
               // shirley: DON'T bc init tables. probe transient vs persistent
-              // // felis::probes::TransientPersistentCount{true}();
+              // felis::probes::TransientPersistentCount{true}();
               auto p = oo_idx_handle->vhandle_ptr()->AllocFromInline(v_oo_idx.EncodeSize());
               felis::InitVersion(oo_idx_handle, k_oo.o_w_id, k_oo.o_d_id, c_ids[c - 1], k_oo.o_id, (int)tpcc::TableType::OOrderCIdIdx, v_oo_idx.EncodeToPtrOrDefault(p));
             });
@@ -1008,7 +1008,7 @@ void Loader<LoaderType::Order>::DoLoad()
                 // shirley: probe size of version value
                 // felis::probes::VersionValueSizeArray{(int)v_no.EncodeSize()}();
                 // shirley: DON'T bc init tables. probe transient vs persistent
-                // // felis::probes::TransientPersistentCount{true}();
+                // felis::probes::TransientPersistentCount{true}();
                 auto p = no_handle->vhandle_ptr()->AllocFromInline(v_no.EncodeSize());
                 felis::InitVersion(no_handle, w, d, k_oo.o_id, c_ids[c - 1], (int)tpcc::TableType::NewOrder, v_no.EncodeToPtrOrDefault(p));
               });
@@ -1044,7 +1044,7 @@ void Loader<LoaderType::Order>::DoLoad()
                 // shirley: probe size of version value
                 // felis::probes::VersionValueSizeArray{(int)v_ol.EncodeSize()}();
                 // shirley: DON'T bc init tables. probe transient vs persistent
-                // // felis::probes::TransientPersistentCount{true}();
+                // felis::probes::TransientPersistentCount{true}();
                 auto p = ol_handle->vhandle_ptr()->AllocFromInline(v_ol.EncodeSize());
                 felis::InitVersion(ol_handle, w, d, k_oo.o_id, l, (int)tpcc::TableType::OrderLine, v_ol.EncodeToPtrOrDefault(p));
               });

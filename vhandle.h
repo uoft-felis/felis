@@ -73,7 +73,7 @@ class BaseVHandle {
   }
 
   // Corey: Pool is not needed
-  static void Quiescence() { pool.Quiescence(); inline_pool.Quiescence(); }
+  static void Quiescence() { /*pool.Quiescence();*/ inline_pool.Quiescence(); }
  public:
 
   //  VHandleSyncService &sync(); // shirley todo: move sync to index_info

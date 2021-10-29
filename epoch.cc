@@ -333,9 +333,10 @@ void CallTxnsWorker::Run()
   if (client->callback.phase == EpochPhase::Execute) {
     VHandle::Quiescence(); // shirley: this shouldn't be needed? bc we never delete vhandles
     IndexInfo::Quiescence(); // shirley: this shouldn't be needed too?
-    RowEntity::Quiescence();
-
-    mem::GetDataRegion().Quiescence();
+    // RowEntity::Quiescence();
+    if (!felis::Options::kDisableDramCache) {
+      mem::GetDataRegion().Quiescence();
+    }
     //mem::GetDataRegion(true).Quiescence();
     //shirley: quiescence persistent pool? faster if in dram, similar(slower?) if in pmem
     // mem::GetPersistentPool().Quiescence();
@@ -500,7 +501,7 @@ void EpochClient::InitializeEpoch()
     }
 
     while (log_countdown.load() > 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      std::this_thread::sleep_for(std::chrono::microseconds(500));
     }
 
     // shirley pmem shirley test

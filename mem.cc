@@ -1071,7 +1071,7 @@ namespace mem {
       else {
         // shirley test
         p_buf_freelist = (uint8_t *)AllocPersistentMemory(freelist_alloc_type, freelist_size * 8, i, -1, hint_addr_freelist);
-        // p_buf_freelist = (uint8_t *)AllocMemory(freelist_alloc_type, freelist_size);
+        // p_buf_freelist = (uint8_t *)AllocMemory(freelist_alloc_type, freelist_size * 8);
       }
         
       pools[i] = new (p) BrkWFree(p_buf, p_buf_freelist, brk_pool_size, freelist_size, block_size, persist_pending_freelist, is_recovery);

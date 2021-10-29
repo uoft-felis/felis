@@ -329,6 +329,7 @@ void YcsbLoader::Run()
       auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeView(buf));
       // TODO: slice mapping table stuff?
       // shirley: initial database should be allocated from inline pmem.
+      // felis::probes::TransientPersistentCount{true}();
       auto p = handle->vhandle_ptr()->AllocFromInline(dbv.EncodeSize());
       felis::InitVersion(handle, i, -1, -1, -1, (int)ycsb::TableType::Ycsb, dbv.EncodeToPtrOrDefault(p));
     }
@@ -420,7 +421,7 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
   return;
 }
 
-size_t Client::g_table_size = 10000000;
+size_t Client::g_table_size = 8388607; // 10000000;
 double Client::g_theta = 0.00;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;

@@ -79,7 +79,10 @@ class AllocatorModule : public Module<CoreModule> {
     mem::InitTransientPmemPool(128_M);
     // Legacy
     //shirley: data region not used in this design anymore?
-    mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
+    if (!Options::kDisableDramCache) {
+      //shirley: don't need when testing everything in DRAM bc no need for dram cache.
+      mem::GetDataRegion().ApplyFromConf(console.FindConfigSection("mem"));
+    }
     //mem::GetDataRegion(true).ApplyFromConf(console.FindConfigSection("mem"));
     // mem::GetPersistentPool().ApplyFromConf(console.FindConfigSection("mem"));
 
@@ -126,7 +129,11 @@ class AllocatorModule : public Module<CoreModule> {
     GC_Dram::g_lazy = false; // shirley todo: can modify this later
 
     // logger->info("setting up regions {}", i);
-    tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
+    //shirley: don't need when testing everything in DRAM bc no need for dram cache. comment out to save memory.
+    if (!Options::kDisableDramCache) {
+      tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
+    }
+
     //tasks.emplace_back([]() { mem::GetDataRegion(true).InitPools(true); });
     //shirley test: don't set to true to put everything in dram
     // tasks.emplace_back([]() { mem::GetPersistentPool().InitPools(true); });

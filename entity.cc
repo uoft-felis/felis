@@ -77,7 +77,7 @@ mem::ParallelSlabPool RowEntity::pool;
 
 void RowEntity::InitPool()
 {
-  pool = mem::ParallelSlabPool(mem::EntityPool, sizeof(RowEntity), 4);
+  pool = mem::ParallelSlabPool(mem::EntityPool, sizeof(RowEntity), 4, true);
   pool.Register();
 }
 

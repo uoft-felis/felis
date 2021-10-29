@@ -294,7 +294,7 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
       latest_version_set(versions, -1);
 
       // now add initial version (just set sid=0, ptr2/1) to the new version array
-      versions_ptr(versions)[0] = 0; //it's okay to set sid to 0 here.
+      versions_ptr(versions)[0] = 0; //need to update sid later bc range scans & inserts
 #ifndef NDEBUG
       // we are in debug build
       VHandle *vhandle = vhandle_ptr();//(VHandle *)((int64_t)vhandle & 0x7FFFFFFFFFFFFFFF);
@@ -327,9 +327,12 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
           versions_ptr(versions)[initial_cap] = (uint64_t)ptr2;
         }
         else{
-          // auto sid1 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType1);
+          auto sid1 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType1);
           auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
           versions_ptr(versions)[initial_cap] = (uint64_t)ptr1;
+          // shirley: need to set sid here bc maybe this row was inserted in current epoch.
+          // need the correct sid (not just 0) for correct range scan during insert (delivery txn, first_version()).
+          versions_ptr(versions)[0] = (uint64_t)sid1;
         }
         if (!felis::Options::kDisableDramCache) {
           auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));

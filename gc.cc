@@ -48,7 +48,7 @@ GarbageBlockSlab::GarbageBlockSlab(int core_id)
     : core_id(core_id)
 {
   auto blks = (GarbageBlock *) mem::AllocMemory(
-      mem::VhandlePool, GarbageBlock::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
+      mem::EntityPool, GarbageBlock::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
 
   for (size_t i = 0; i < kNrQueue; i++) {
     half[i].Initialize();
@@ -379,6 +379,10 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
 }
 
 size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
+  auto ptr2 = handle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+  if (!ptr2) {
+    return 0;
+  }
   //auto *versions = handle->versions;
   //uintptr_t *objects = handle->versions + handle->capacity;
   //int i = handle->size; //shirley: don't need this return value. just return 1.

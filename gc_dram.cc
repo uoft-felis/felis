@@ -30,7 +30,7 @@ struct GarbageBlockDram : public util::GenericListNode<GarbageBlockDram> {
 static_assert(sizeof(GarbageBlockDram) == GarbageBlockDram::kBlockSize, "Block doesn't match block size?");
 
 struct GarbageBlockSlabDram {
-  static constexpr size_t kPreallocPerCore = 64_K;
+  static constexpr size_t kPreallocPerCore = 192_K;
   static constexpr size_t kNrQueue = 200;
   util::MCSSpinLock lock;
   int core_id;
@@ -48,7 +48,7 @@ GarbageBlockSlabDram::GarbageBlockSlabDram(int core_id)
     : core_id(core_id)
 {
   auto blks = (GarbageBlockDram *) mem::AllocMemory(
-      mem::VhandlePool, GarbageBlockDram::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
+      mem::RegionPool, GarbageBlockDram::kBlockSize * kPreallocPerCore, core_id / mem::kNrCorePerNode);
 
   for (size_t i = 0; i < kNrQueue; i++) {
     half[i].Initialize();

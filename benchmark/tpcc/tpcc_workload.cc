@@ -1,3 +1,6 @@
+#include <chrono>
+#include <thread>
+
 #include "table_decl.h"
 
 #include "tpcc.h"
@@ -66,6 +69,8 @@ static void LoadTPCCDataSet()
 
   LoaderBuilder builder(&count_down);
 
+  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto sched = go::GetSchedulerFromPool(i + 1);
     sched->WakeUp(builder.CreateLoader<tpcc::loaders::Warehouse>(9324));
@@ -78,10 +83,13 @@ static void LoadTPCCDataSet()
 
   int load_elapse = 0;
   while (count_down.load() > 0) {
-    sleep(1);
-    load_elapse++;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // sleep(1);
+    // load_elapse++;
   }
-  logger->info("loader done {} seconds", load_elapse);
+  std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+  printf("(recovery) loader done %lld [ms]\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+  // logger->info("loader done {} seconds", load_elapse);
 }
 
 class TPCCModule : public Module<WorkloadModule> {

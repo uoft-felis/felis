@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <cstdio>
 #include <string_view>
+#include <chrono>
 
 #include "module.h"
 #include "node_config.h"
@@ -10,6 +11,9 @@
 #include "epoch.h"
 #include "opts.h"
 #include "pmem_mgr.h"
+
+#include "vhandle.h"
+#include "mem.h"
 
 void show_usage(const char *progname)
 {
@@ -97,7 +101,17 @@ int main(int argc, char *argv[])
 
   auto client = EpochClient::g_workload_client;
   logger->info("Generating Benchmarks...");
+
+  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
   client->GenerateBenchmarks();
+
+  if (Options::kRecovery) {
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    printf("Recovering Txns Time = %lld [ms]\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+    
+    printf("VHandle Pool total size = %lu MB\n", VHandle::GetTotalPoolSize()/1024/1024);
+    printf("External Pmem Pool total size = %lu MB\n", mem::GetExternalPmemPool().TotalPoolSize()/1024/1024);
+  }
 
   console.UpdateServerStatus(Console::ServerStatus::Listening);
   logger->info("Ready. Waiting for run command from the controller.");

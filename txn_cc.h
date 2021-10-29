@@ -332,9 +332,12 @@ class Txn : public BaseTxn {
         bool result = WriteVarStr(val_transient);
         // shirley zen: comparing Zen, also write varstr to pmem and flush varstr
         if (felis::Options::kEnableZen) {
-          size_t varlen = sizeof(VarStr) + o.EncodeSize();
+          size_t varlen = sizeof(VarStr) + o.EncodeSize() + 12; // + 12 bc Zen uses 16 bytes header, we use 4 in VarStr.
           VarStr *val_pmem = (VarStr *)mem::GetTransientPmemPool().Alloc(varlen);
-          std::memcpy(val_pmem, val_transient, varlen);
+          std::memcpy(val_pmem, val_transient, varlen - 12);
+          *((char *)val_pmem + varlen - 12) = (uint32_t)sid; // simulate writing metadata in Zen to each pmem tuple.
+          *((char *)val_pmem + varlen - 8) = (uint32_t)sid; // simulate writing metadata in Zen to each pmem tuple.
+          *((char *)val_pmem + varlen - 4) = (uint32_t)sid; // simulate writing metadata in Zen to each pmem tuple.
           // shirley pmem shirley test
           for (int i = 0; i < varlen; i += 64) {
             // _mm_clwb(((char *)val_pmem) + i);

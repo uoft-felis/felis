@@ -120,7 +120,7 @@ void SmallBankLoader::Run()
 
       auto handle_a = mgr.Get<smallbank::Account>().SearchOrCreate(k_acc.EncodeView(buf));
       // shirley: init tables. probe transient vs persistent (optional)
-      // // felis::probes::TransientPersistentCount{true}();
+      // felis::probes::TransientPersistentCount{true}();
 
       auto p_a = handle_a->vhandle_ptr()->AllocFromInline(v_acc.EncodeSize());
       felis::InitVersion(handle_a, i, -1, -1, -1, (int)smallbank::TableType::Account, v_acc.EncodeToPtrOrDefault(p_a));
@@ -132,7 +132,7 @@ void SmallBankLoader::Run()
 
       auto handle_s = mgr.Get<smallbank::Saving>().SearchOrCreate(k_sv.EncodeView(buf_sv));
       // shirley: init tables. probe transient vs persistent (optional)
-      // // felis::probes::TransientPersistentCount{true}();
+      // felis::probes::TransientPersistentCount{true}();
 
       auto p_s = handle_s->vhandle_ptr()->AllocFromInline(v_sv.EncodeSize());
       felis::InitVersion(handle_s, i + 1, -1, -1, -1, (int)smallbank::TableType::Saving, v_sv.EncodeToPtrOrDefault(p_s));
@@ -144,7 +144,7 @@ void SmallBankLoader::Run()
 
       auto handle_c = mgr.Get<smallbank::Checking>().SearchOrCreate(k_ck.EncodeView(buf_ck));
       // shirley: init tables. probe transient vs persistent (optional)
-      // // felis::probes::TransientPersistentCount{true}();
+      // felis::probes::TransientPersistentCount{true}();
 
       auto p_c = handle_c->vhandle_ptr()->AllocFromInline(v_ck.EncodeSize());
       felis::InitVersion(handle_c, i + 1, -1, -1, -1, (int)smallbank::TableType::Checking, v_ck.EncodeToPtrOrDefault(p_c));
