@@ -144,8 +144,9 @@ class Table {
 
   IndexInfo *NewRow(void *vhandle = nullptr);
   size_t row_size() const {
-    if (is_enable_inline()) return VHandle::kInlinedSize;
-    else return VHandle::kSize;
+    return IndexInfo::kIndexInfoSize;
+    // if (is_enable_inline()) return VHandle::kInlinedSize;
+    // else return VHandle::kSize;
   }
 };
 

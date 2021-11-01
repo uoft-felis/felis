@@ -61,7 +61,7 @@ static thread_local ThreadInfo *local_ti = nullptr;
 
 IndexInfo *HashEntry::value() const
 {
-  return (IndexInfo *) ((uint8_t *) this - 96);
+  return (IndexInfo *) ((uint8_t *) this - 40);
 }
 
 static HashEntry *kNextForUninitialized = (HashEntry *) 0;
@@ -88,13 +88,14 @@ HashtableIndex::HashtableIndex(std::tuple<HashFunc, size_t, bool> conf)
   // "external" elements through the NewRow which actually calls vhandle::new_inline (or new)
   // and will allocate from PMEM.
   // the index itself is inlined in the vhandle, it's 32 bytes starting from byte 96.
+  // shirley: modify it so hash index is inlined to index_info starting from byte 40.
   table = (uint8_t *)
           mmap(nullptr, nrpg << 12, PROT_READ | PROT_WRITE,
                MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   printf("addr %p %p\n", table, table + (nrpg << 12));
 }
 
-static constexpr size_t kOffset = 96;
+static constexpr size_t kOffset = 40;
 
 IndexInfo *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
 {
@@ -109,7 +110,9 @@ IndexInfo *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
       first->key = HashEntry::Convert(k);
       auto row = first->value();
 
-      new (row) SortedArrayVHandle();
+      new (row) IndexInfo();
+
+      // new (row) SortedArrayVHandle();
       // row->capacity = 1; //shirley: removed this bc we already set it in constructor
       // shirley: need to initialize our fields here as well, because here just
       // calls vhandle constructor without initializing required fields as in
@@ -143,7 +146,7 @@ IndexInfo *HashtableIndex::SearchOrCreate(const VarStrView &k, bool *created)
       row = NewRow();
       //shirley: don't let it set capacity to 1, we set it in vhandle constructor already
       // row->capacity = 1;
-      newentry = (HashEntry *) ((uint8_t *) row + 96);
+      newentry = (HashEntry *) ((uint8_t *) row + 40);
       newentry->key = x;
       newentry->next = kNextForEnd;
     }
