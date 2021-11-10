@@ -217,6 +217,8 @@ class EpochManager {
   void DoAdvance(EpochClient *client);
 };
 
+template <typename T> class GenericEpochObject;
+
 class EpochObject {
   friend class Epoch;
  protected:
@@ -229,6 +231,16 @@ class EpochObject {
 
   int origin_node_id() const { return node_id; }
   uint64_t nr() const { return epoch_nr; }
+
+  template <typename P>
+  static GenericEpochObject<P> Convert(P *ptr) {
+    uint8_t *p = (uint8_t *) ptr;
+    auto &mgr = util::Instance<EpochManager>();
+    auto &conf = util::Instance<NodeConfiguration>();
+    uint8_t *basep = util::Instance<EpochManager>().ptr(mgr.current_epoch_nr(), conf.node_id(), 0);
+    int64_t off = p - basep;
+    return GenericEpochObject<P>(mgr.current_epoch_nr(), conf.node_id(), off);
+  }
 };
 
 template <typename T>
@@ -245,14 +257,6 @@ class GenericEpochObject : public EpochObject {
 
   T *operator->() const {
     return (T *) util::Instance<EpochManager>().ptr(epoch_nr, node_id, offset);
-  }
-
-  template <typename P>
-  GenericEpochObject<P> Convert(P *ptr) {
-    uint8_t *p = (uint8_t *) ptr;
-    uint8_t *self = util::Instance<EpochManager>().ptr(epoch_nr, node_id, offset);
-    int64_t off = p - self;
-    return GenericEpochObject<P>(epoch_nr, node_id, offset + off);
   }
 };
 

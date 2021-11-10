@@ -111,51 +111,34 @@ class NodeBitmap {
 template <typename T> class FutureValue;
 
 template <>
-class FutureValue<void> {
- protected:
-  std::atomic_bool ready = false;
- public:
-  FutureValue() {}
-  FutureValue(const FutureValue<void> &rhs) : ready(rhs.ready.load()) {}
-  const FutureValue<void> &operator=(const FutureValue<void> &rhs) {
-    ready = rhs.ready.load();
-    return *this;
-  }
-  void Signal() { ready = true; }
-  void Wait() {
-    long wait_cnt = 0;
-    while (!ready) {
-      wait_cnt++;
-      if ((wait_cnt & 0x0FFFF) == 0) {
-        auto routine = go::Scheduler::Current()->current_routine();
-        if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
-          continue;
-        }
-      }
-      _mm_pause();
-    }
-  }
-};
+class FutureValue<void> : public BaseFutureValue {};
 
 template <typename T>
-class FutureValue : public FutureValue<void> {
+class FutureValue final : public BaseFutureValue {
   T value;
  public:
   using ValueType = T;
-
-  FutureValue() {}
-
+  FutureValue() : BaseFutureValue() {}
   FutureValue(const FutureValue<T> &rhs) : value(rhs.value) {
     ready = rhs.ready.load();
+    value = rhs.value;
   }
-
   void Signal(T v) {
     value = v;
-    FutureValue<void>::Signal();
+    BaseFutureValue::Signal();
   }
   T &Wait() {
-    FutureValue<void>::Wait();
+    BaseFutureValue::Wait();
     return value;
+  }
+  size_t EncodeSize() override {
+    return sql::Serializer<T>::EncodeSize(&value);
+  }
+  void EncodeTo(uint8_t *buf) override {
+    return sql::Serializer<T>::EncodeTo(buf, &value);
+  }
+  void DecodeFrom(const uint8_t *buf) override {
+    return sql::Serializer<T>::DecodeFrom(&value, buf);
   }
 };
 

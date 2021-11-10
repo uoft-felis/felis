@@ -180,6 +180,31 @@ class BaseTxn {
   static VHandle *BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx);
 };
 
+class BaseFutureValue {
+ public:
+  static constexpr uint8_t kMaxSubscription = 6;
+ protected:
+   protected:
+  std::atomic_bool ready = false;
+  uint8_t nr_nodes = 0;
+  uint8_t nodes[kMaxSubscription];
+ public:
+  BaseFutureValue() {}
+  BaseFutureValue(const BaseFutureValue &rhs) : ready(rhs.ready.load()) {}
+  const BaseFutureValue &operator=(const BaseFutureValue &rhs) {
+    ready = rhs.ready.load();
+    return *this;
+  }
+  void Signal();
+  void Wait();
+  void Subscribe(uint8_t node) { nodes[nr_nodes++] = node; }
+  virtual size_t EncodeSize() { return 0; }
+  virtual void EncodeTo(uint8_t *buf) {}
+  virtual void DecodeFrom(const uint8_t *buf) {}
+ protected:
+  GenericEpochObject<BaseFutureValue> ConvertToEpochObject() { return EpochObject::Convert(this); }
+};
+
 }
 
 #endif /* TXN_H */

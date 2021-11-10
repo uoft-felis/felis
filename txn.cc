@@ -245,4 +245,24 @@ VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx
   return result;
 }
 
+void BaseFutureValue::Signal()
+{
+  ready = true;
+}
+
+void BaseFutureValue::Wait()
+{
+  long wait_cnt = 0;
+  while (!ready) {
+    wait_cnt++;
+    if ((wait_cnt & 0x0FFFF) == 0) {
+      auto routine = go::Scheduler::Current()->current_routine();
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+        continue;
+      }
+    }
+    _mm_pause();
+  }
+}
+
 }
