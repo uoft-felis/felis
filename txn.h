@@ -194,7 +194,7 @@ class BaseTxn {
     const uint8_t *DecodeFrom(const uint8_t *buf);
   };
 
-  static constexpr size_t kMaxRangeScanKeys = 32;
+  static constexpr size_t kMaxRangeScanKeys = 100;
   using LookupRowResult = std::array<IndexInfo *, kMaxRangeScanKeys>;
 
   static LookupRowResult BaseTxnIndexOpLookup(const BaseTxnIndexOpContext &ctx, int idx);

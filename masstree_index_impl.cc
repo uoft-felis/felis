@@ -63,8 +63,13 @@ void MasstreeMap::Iterator<MasstreeIteratorImpl>::Adapt()
 template <class MasstreeIteratorImpl>
 void MasstreeMap::Iterator<MasstreeIteratorImpl>::Next()
 {
+  // uint64_t cur_key_old = *(uint64_t *)(cur_key.data());
   this->next(*ti);
   Adapt();
+  // uint64_t cur_key_new = *(uint64_t *)(cur_key.data());
+  // printf("Iterator: cur_key_old = %lu, cur_key_new = %lu\n", 
+  //         cur_key_old,
+  //         cur_key_new);
 }
 
 template <>

@@ -52,6 +52,26 @@ smallbank_srcs = [
     'benchmark/smallbank/write_check.cc',
 ]
 
+mcbm_headers = [
+    'benchmark/mcbm/table_decl.h',
+    'benchmark/mcbm/mcbm.h',
+    'benchmark/mcbm/mcbm_insert.h',
+    'benchmark/mcbm/mcbm_lookup.h',
+    'benchmark/mcbm/mcbm_rangescan.h',
+    'benchmark/mcbm/mcbm_update.h',
+    'benchmark/mcbm/mcbm_delete.h',
+]
+
+mcbm_srcs = [
+    'benchmark/mcbm/mcbm.cc',
+    'benchmark/mcbm/mcbm_workload.cc',
+    'benchmark/mcbm/mcbm_insert.cc',
+    'benchmark/mcbm/mcbm_lookup.cc',
+    'benchmark/mcbm/mcbm_rangescan.cc',
+    'benchmark/mcbm/mcbm_update.cc',
+    'benchmark/mcbm/mcbm_delete.cc',
+]
+
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'routine_sched.h', 'gc.h', 'gc_dram.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'pmem_mgr.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'piece.h', 'piece_cc.h',
@@ -109,13 +129,21 @@ cxx_library(
     link_whole=True,
 )
 
+cxx_library(
+    name='mcbm',
+    srcs=mcbm_srcs,
+    compiler_flags=includes,
+    headers=db_headers + mcbm_headers,
+    link_whole=True,
+)
+
 cxx_binary(
     name='db',
     srcs=['main.cc', 'module.cc'] + db_srcs,
     headers=db_headers,
     compiler_flags=includes,
     linker_flags=libs,
-    deps=[':tpcc', ':smallbank', ':ycsb'],
+    deps=[':tpcc', ':smallbank', ':mcbm', ':ycsb'],
 )
 
 cxx_test(

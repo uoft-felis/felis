@@ -307,6 +307,8 @@ BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpConte
     auto handle = tbl->Search(key);
     result[0] = handle;
   } else if (ctx.slice_ids[idx] == -1) {
+    // printf("BaseTxnIndexOpLookup: reached range lookup, range_start = %lu, range_end = %lu\n",
+    //         *(uint64_t *)(ctx.key_data[idx]), *(uint64_t *)(ctx.key_data[idx + 1]));
     VarStrView range_start(ctx.key_len[idx], ctx.key_data[idx]);
     VarStrView range_end(ctx.key_len[idx + 1], ctx.key_data[idx + 1]);
     // auto &table = mgr[ctx.relation_ids[idx]];
@@ -324,7 +326,9 @@ BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpConte
 
     for (auto it = tbl->IndexSearchIterator(range_start, range_end);
          it->IsValid(); it->Next(), i++) {
+      // printf("BaseTxnIndexOpLookup loop %d, result row %p\n", i, it->row());
       result[i] = it->row();
+      if (i == kMaxRangeScanKeys - 1) break; // shirley: bug hack to prevent array out of bound access
     }
     r->set_userdata(olddata);
   }
