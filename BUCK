@@ -75,7 +75,7 @@ mcbm_srcs = [
 db_headers = [
     'console.h', 'felis_probes.h', 'epoch.h', 'routine_sched.h', 'gc.h', 'gc_dram.h', 'index.h', 'index_common.h',
     'log.h', 'mem.h', 'pmem_mgr.h', 'module.h', 'opts.h', 'node_config.h', 'probe_utils.h', 'piece.h', 'piece_cc.h',
-    'masstree_index_impl.h', 'hashtable_index_impl.h', 'varstr.h', 'sqltypes.h',
+    'masstree_index_impl.h', 'dptree_index_impl.h', 'hashtable_index_impl.h', 'varstr.h', 'sqltypes.h',
     'txn.h', 'txn_cc.h', 'index_info.h', 'vhandle.h', 'vhandle_sync.h', 'contention_manager.h', 'locality_manager.h', 'threshold_autotune.h',
     'commit_buffer.h', 'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
@@ -86,7 +86,7 @@ db_headers = [
 db_srcs = [
     'epoch.cc', 'routine_sched.cc', 'txn.cc', 'log.cc', 'index_info.cc', 'vhandle.cc', 'vhandle_sync.cc', 'contention_manager.cc', 'locality_manager.cc',
     'gc.cc', 'gc_dram.cc', 'index.cc', 'mem.cc', 'pmem_mgr.cc',
-    'piece.cc', 'masstree_index_impl.cc', 'hashtable_index_impl.cc',
+    'piece.cc', 'masstree_index_impl.cc', 'dptree_index_impl.cc', 'hashtable_index_impl.cc',
     'node_config.cc', 'console.cc', 'console_client.cc',
     'commit_buffer.cc', 'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
     'felis_probes.cc',
