@@ -11,7 +11,7 @@
 
 namespace sql {
 
-FIELD(uint32_t, k);
+FIELD(uint64_t, k);
 KEYS(McbmKey);
 
 

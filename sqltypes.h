@@ -283,6 +283,18 @@ struct KeySerializer<uint32_t> : public Serializer<uint32_t> {
   }
 };
 
+template <>
+struct KeySerializer<uint64_t> : public Serializer<uint64_t> {
+  static void EncodeTo(uint8_t *buf, const uint64_t *ptr) {
+    uint64_t be = htobe64(*ptr); // has to be BE!
+    __builtin_memcpy(buf, &be, EncodeSize(ptr));
+  }
+  static void DecodeFrom(uint64_t *ptr, const uint8_t *buf) {
+    uint64_t h = be64toh(*(const uint64_t *) buf);
+    *ptr = h;
+  }
+};
+
 struct InheritBasePtr {
   VarStr *base = nullptr;
 };
