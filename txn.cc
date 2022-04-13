@@ -328,7 +328,6 @@ BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpConte
          it->IsValid(); it->Next(), i++) {
       // printf("BaseTxnIndexOpLookup loop %d, result row %p\n", i, it->row());
       result[i] = it->row();
-      if (i == kMaxRangeScanKeys - 1) break; // shirley: bug hack to prevent array out of bound access
     }
     r->set_userdata(olddata);
   }
