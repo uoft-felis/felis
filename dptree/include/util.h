@@ -142,20 +142,20 @@ private:
 };
 
 
-class elided_spin_lock {
-private:
-    int lockvar;
-    char padding[END_PADDING_SIZE(sizeof(lockvar))];
-public:
-    elided_spin_lock(): lockvar(0) {}
+// class elided_spin_lock {
+// private:
+//     int lockvar;
+//     char padding[END_PADDING_SIZE(sizeof(lockvar))];
+// public:
+//     elided_spin_lock(): lockvar(0) {}
     
-    void lock() {
-        /* Acquire lock with lock elision */
-        while (__atomic_exchange_n(&lockvar, 1, __ATOMIC_ACQUIRE|__ATOMIC_HLE_ACQUIRE))
-            _mm_pause(); /* Abort failed transaction */
-    }
+//     void lock() {
+//         /* Acquire lock with lock elision */
+//         while (__atomic_exchange_n(&lockvar, 1, __ATOMIC_ACQUIRE|__ATOMIC_HLE_ACQUIRE))
+//             _mm_pause(); /* Abort failed transaction */
+//     }
     
-    void unlock() {
-        __atomic_store_n(&lockvar, 0, __ATOMIC_RELEASE|__ATOMIC_HLE_RELEASE);
-    }
-};
+//     void unlock() {
+//         __atomic_store_n(&lockvar, 0, __ATOMIC_RELEASE|__ATOMIC_HLE_RELEASE);
+//     }
+// };

@@ -31,8 +31,8 @@
 #include "art_idx.hpp"
 #include "bloom.hpp"
 #include "util.h"
-#include "ARTOLC/ARTOLC.hpp"
-#include <key_entry_types.h>
+#include "../misc/ARTOLC/ARTOLC.hpp"
+#include "key_entry_types.h"
 
 #ifdef USE_PAPI
 #include <papi.h>
