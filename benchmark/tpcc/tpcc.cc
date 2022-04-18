@@ -450,11 +450,11 @@ void Loader<LoaderType::Warehouse>::DoLoad()
         }
       }
       std::memset((uint8_t *)(ring_buffer[i_off]), 0, 64);
-      // shirley pmem shirey test
-      // _mm_clwb((uint64_t *)(ring_buffer[i_off]));
+      // shirley pmem shirley test
+      _mm_clwb((uint64_t *)(ring_buffer[i_off]));
     }
-    // shirley pmem shirey test
-    // _mm_sfence();
+    // shirley pmem shirley test
+    _mm_sfence();
 
     // now read vhandles and rebuild index
     for (uint64_t i = 0; i < data_offset; i += data_block_size) {
@@ -529,9 +529,10 @@ void Loader<LoaderType::Warehouse>::DoLoad()
       }
       // shirley: reset sid2 if was written
       if (vhdl_sid2 >> 32 == curr_ep) {
+        // continue;
         vhdl_row->ResetSid2();
         //shirley pmem shirley test
-        // _mm_clwb(vhdl_row);
+        _mm_clwb(vhdl_row);
       }
       else {
         auto vhdl_sid1 = vhdl_row->GetInlineSid(felis::SortedArrayVHandle::SidType1);
@@ -1062,7 +1063,7 @@ void Loader<LoaderType::Order>::DoLoad()
 
 }
 
-//45, 43, 4, 4, 4
+//45, 43, 4, 4, 4 //50, 50, 0, 0, 0
 static constexpr int kTPCCTxnMix[] = {
   45, 43, 4, 4, 4
 };

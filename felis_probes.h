@@ -157,7 +157,12 @@ struct NumUnwrittenDramCache {
 struct NumReadWriteDramPmem {
   int access_type; // 0: read, 1: write
   int mem_type; // 0: transient, 1: dram cache, 2: pmem
-  int phase_type; // 0: insert, 1: append, 2: execute
+  int phase_type; // 0: insert, 1: append, 2: execute, 3: majorGC, 4: dramGC
+  void operator()() const;
+};
+
+struct RowSize {
+  unsigned int *keys;
   void operator()() const;
 };
 
@@ -189,6 +194,7 @@ struct NumReadWriteDramPmem {
   PROBE_PROXY(felis::probes::IndexSizeTotal);                                  \
   PROBE_PROXY(felis::probes::NumVHandlesTotal);                                \
   PROBE_PROXY(felis::probes::NumUnwrittenDramCache);                           \
-  PROBE_PROXY(felis::probes::NumReadWriteDramPmem);
+  PROBE_PROXY(felis::probes::NumReadWriteDramPmem);                            \
+  PROBE_PROXY(felis::probes::RowSize);
 
 #endif /* FELIS_PROBES_H */

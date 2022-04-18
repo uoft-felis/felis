@@ -313,15 +313,15 @@ class Txn : public BaseTxn {
         if (!(vhandle->is_inline_ptr((uint8_t *)val))) {
           for (int val_i = 0; val_i < val_sz; val_i += 64) {
             //shirley pmem shirley test
-            // _mm_clwb((char *)val + val_i);
+            _mm_clwb((char *)val + val_i);
           }
         }
         
-        //shirley pmem: flush cache after last version write
-        // _mm_clwb((char *)vhandle); 
-        // _mm_clwb((char *)vhandle + 64);
-        // _mm_clwb((char *)vhandle + 128);
-        // _mm_clwb((char *)vhandle + 192);
+        //shirley pmem shirley test: flush cache after last version write
+        _mm_clwb((char *)vhandle);
+        _mm_clwb((char *)vhandle + 64);
+        _mm_clwb((char *)vhandle + 128);
+        _mm_clwb((char *)vhandle + 192);
         //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
         
         return result;
@@ -340,7 +340,7 @@ class Txn : public BaseTxn {
           *((char *)val_pmem + varlen - 4) = (uint32_t)sid; // simulate writing metadata in Zen to each pmem tuple.
           // shirley pmem shirley test
           for (int i = 0; i < varlen; i += 64) {
-            // _mm_clwb(((char *)val_pmem) + i);
+            _mm_clwb(((char *)val_pmem) + i);
           }
         }
         return result;
@@ -358,6 +358,19 @@ class Txn : public BaseTxn {
       //shirley: probe size of version value
       // felis::probes::VersionValueSizeArray{(int)o.EncodeSize()}();
 
+      // shirley try: WRITING TO DRAM CACHE
+      // auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
+      // temp_dram_version->val = o.EncodeToPtr(mem::GetDataRegion().Alloc(sizeof(VarStr) + o.EncodeSize()));
+      // int curAffinity = mem::ParallelPool::CurrentAffinity();
+      // ((VarStr*)(temp_dram_version->val))->set_region_id(curAffinity);
+      // temp_dram_version->ep_num = sid; // curr_ep_nr;// util::Instance<EpochManager>().current_epoch_nr();
+      // temp_dram_version->this_coreid = curAffinity; 
+      // index_info->dram_version = temp_dram_version;
+      // uint64_t curr_ep_nr = util::Instance<EpochManager>().current_epoch_nr();
+      // util::Instance<GC_Dram>().AddRow(index_info, curr_ep_nr);
+      // shirley try: end of writing to dram cache
+
+      
       //shirley: initial version (after insert) should be inlined if possible.
       bool usePmem = true;
       VHandle *vhandle = index_info->vhandle_ptr();
@@ -390,15 +403,15 @@ class Txn : public BaseTxn {
       if (!(vhandle->is_inline_ptr((uint8_t *)val))) {
         for (int val_i = 0; val_i < sizeof(VarStr) + o.EncodeSize(); val_i += 64) {
           //shirley pmem shirley test
-          // _mm_clwb((char *)val + val_i);
+          _mm_clwb((char *)val + val_i);
         }
       }
       
-      //shirley pmem: flush cache after insert
-      // _mm_clwb((char *)vhandle);
-      // _mm_clwb((char *)vhandle + 64);
-      // _mm_clwb((char *)vhandle + 128);
-      // _mm_clwb((char *)vhandle + 192);
+      //shirley pmem shirley test: flush cache after insert
+      _mm_clwb((char *)vhandle);
+      _mm_clwb((char *)vhandle + 64);
+      _mm_clwb((char *)vhandle + 128);
+      _mm_clwb((char *)vhandle + 192);
       //shirley: don't need flush val. first insert always inlined in miniheap (max varstr is 83 bytes?)
 
       //shirley: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault

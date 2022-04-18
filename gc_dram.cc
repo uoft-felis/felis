@@ -266,6 +266,10 @@ size_t GC_Dram::Process(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) 
 
 size_t GC_Dram::Collect(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
 
+  // shirley: probe dram cache access during dram GC
+  // felis::probes::NumReadWriteDramPmem{0,1,4}();
+  // felis::probes::NumReadWriteDramPmem{1,1,4}();
+
   // shirley todo: detect prev_X and current_X epoch, skip if already cleaned based on memory pressure
 
   if (!(handle->dram_version)) return 0;
@@ -305,6 +309,96 @@ void GC_Dram::PrintStats()
   }
   logger->info("GC_Dram: {}", std::string_view(buf.data(), buf.size()));
 }
+
+/*
+// shirley: this is to try write to pmem only during dram gc
+size_t GC_Dram::Collect(IndexInfo *handle, uint64_t cur_epoch_nr, size_t limit) {
+
+  // shirley todo: detect prev_X and current_X epoch, skip if already cleaned based on memory pressure
+
+  if (!(handle->dram_version)) return 0;
+  if ( (handle->dram_version->ep_num >> 32) > (cur_epoch_nr - g_gc_every_epoch + 1)) {
+    // shirley: this row has been accessed more recently.
+    // GC_Dram::AddRow(handle, cur_epoch_nr);
+    GC_Dram::AddRow(handle, (handle->dram_version->ep_num >> 32) );
+    return 0;
+  }
+
+  VarStr *dram_ver = (VarStr *)(handle->dram_version->val);
+  if (!dram_ver){
+    mem::GetDataRegion().Free(handle->dram_version, handle->dram_version->this_coreid, sizeof(DramVersion));
+    handle->dram_version = nullptr;
+    return 1;
+  }
+  
+  auto var_reg_id = dram_ver->get_region_id();
+  auto var_len = dram_ver->length();
+
+  // shirley: first perform minor GC and write final version to pmem
+  if (cur_epoch_nr + 1 != g_gc_every_epoch){
+
+    // felis::probes::NumReadWriteDramPmem{1,2,4}();
+
+    // shirley: minor GC
+    VHandle *vhandle = handle->vhandle_ptr();
+    // shirley: minor GC
+    auto ptr1 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType1);
+    auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
+    if (ptr2 && ptr1){
+      vhandle->remove_majorGC_if_ext();
+      vhandle->FreePtr1(); 
+      vhandle->Copy2To1();
+    }
+
+    if (ptr1){
+      // alloc inline val and copy data
+      VarStr *val = (VarStr *) (vhandle->AllocFromInline(sizeof(VarStr) + var_len, felis::SortedArrayVHandle::SidType2));
+      if (!val){
+        val = (VarStr *) (mem::GetPersistentPool().Alloc(sizeof(VarStr) + var_len));
+      }
+      std::memcpy(val, dram_ver, sizeof(VarStr) + var_len);
+
+      // sid2 = sid;
+      vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType2,handle->dram_version->ep_num); 
+      // ptr2 = val;
+      vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType2,(uint8_t *)val); 
+      // shirley: add to major GC if ptr1 inlined
+      vhandle->add_majorGC_if_ext();
+    }
+    else{ // ptr 1 doesn't exist. write to ptr1 not ptr2.
+      // alloc inline val and copy data
+      VarStr *val = (VarStr *) (vhandle->AllocFromInline(sizeof(VarStr) + var_len, felis::SortedArrayVHandle::SidType1));
+      if (!val){
+        val = (VarStr *) (mem::GetPersistentPool().Alloc(sizeof(VarStr) + var_len));
+      }
+      std::memcpy(val, dram_ver, sizeof(VarStr) + var_len);
+
+      // sid2 = sid;
+      vhandle->SetInlineSid(felis::SortedArrayVHandle::SidType1,handle->dram_version->ep_num); 
+      // ptr2 = val;
+      vhandle->SetInlinePtr(felis::SortedArrayVHandle::SidType1,(uint8_t *)val);
+    }
+    
+    //shirley pmem shirley test: flush cache after last version write
+    _mm_clwb((char *)vhandle); 
+    _mm_clwb((char *)vhandle + 64);
+    _mm_clwb((char *)vhandle + 128);
+    _mm_clwb((char *)vhandle + 192);
+  }
+
+  // shirley: free dram cache
+  if (dram_ver) {
+    mem::GetDataRegion().Free(dram_ver, var_reg_id, sizeof(VarStr) + var_len);
+  }
+  else{
+    // felis::probes::NumUnwrittenDramCache{1}();
+  }
+  mem::GetDataRegion().Free(handle->dram_version, handle->dram_version->this_coreid, sizeof(DramVersion));
+  handle->dram_version = nullptr;
+
+  return 1;
+}
+*/
 
 }
 

@@ -1,3 +1,6 @@
+#ifndef ART_IDX_HPP
+#define ART_IDX_HPP
+
 #include <stdlib.h>    // malloc, free
 #include <string.h>    // memset, memcpy
 #include <stdint.h>    // integer types
@@ -988,3 +991,5 @@ struct art_tree
     }
 };
 } // namespace Art
+
+#endif /* ART_IDX_HPP */

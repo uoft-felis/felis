@@ -75,8 +75,8 @@ class AllocatorModule : public Module<CoreModule> {
     mem::InitTotalNumberOfCores(NodeConfiguration::g_nr_threads);
     mem::InitSlab(Options::kMem.ToLargeNumber("4G"));
     //shirley: can't be too big (e.g. 4_G) or else alloc memory fails, use command line options later
-    mem::InitTransientPool(128_M);
-    mem::InitTransientPmemPool(128_M);
+    mem::InitTransientPool(160_M); // 128_M // 16_M works for original TPCC. need to increase for other benchmarks.
+    mem::InitTransientPmemPool(160_M); // 128_M
     // Legacy
     //shirley: data region not used in this design anymore?
     if (!Options::kDisableDramCache) {
@@ -125,7 +125,7 @@ class AllocatorModule : public Module<CoreModule> {
     //shirley: set to 1 if want K = every epoch?
     GC::g_gc_every_epoch = 1;// 2 + Options::kMajorGCThreshold.ToLargeNumber("600K") / EpochClient::g_txn_per_epoch;
     GC::g_lazy = Options::kMajorGCLazy;
-    GC_Dram::g_gc_every_epoch = 20; // shirley: can't set to 1?
+    GC_Dram::g_gc_every_epoch = 20; // 50 if dont want any dram gc // shirley: can't set to 1?
     GC_Dram::g_lazy = false; // shirley todo: can modify this later
 
     // logger->info("setting up regions {}", i);
@@ -135,7 +135,7 @@ class AllocatorModule : public Module<CoreModule> {
     }
 
     //tasks.emplace_back([]() { mem::GetDataRegion(true).InitPools(true); });
-    //shirley test: don't set to true to put everything in dram
+    //shirley: don't set to true to put everything in dram
     // tasks.emplace_back([]() { mem::GetPersistentPool().InitPools(true); });
     tasks.emplace_back([]() { mem::InitPmemPersistInfo(); });
     tasks.emplace_back([]() { mem::InitTxnInputLog(); });

@@ -171,15 +171,15 @@ bool BaseTxn::BaseTxnRow::WriteAbort() {
       if (!(vhandle->is_inline_ptr((uint8_t *)val))) {
         for (int val_i = 0; val_i < val_size; val_i += 64) {
           //shirley pmem shirley test
-          // _mm_clwb((char *)val + val_i);
+          _mm_clwb((char *)val + val_i);
         }
       }
 
-      //shirley pmem: flush cache after last version write
-      // _mm_clwb((char *)vhandle); 
-      // _mm_clwb((char *)vhandle + 64);
-      // _mm_clwb((char *)vhandle + 128);
-      // _mm_clwb((char *)vhandle + 192);
+      //shirley pmem shirley test: flush cache after last version write
+      _mm_clwb((char *)vhandle); 
+      _mm_clwb((char *)vhandle + 64);
+      _mm_clwb((char *)vhandle + 128);
+      _mm_clwb((char *)vhandle + 192);
       //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
       
       return result;

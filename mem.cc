@@ -270,7 +270,7 @@ namespace mem {
 
   static SlabMemory *g_slabmem;
   static SlabMemory *g_slabpmem;
-  uint8_t *pmem_addr_fixed = nullptr; // (uint8_t *)0x7e0000000000;
+  uint8_t *pmem_addr_fixed = (uint8_t *)0x7e0000000000; // nullptr; // (uint8_t *)0x7e0000000000;
 
   void InitSlab(size_t memsz)
   {
@@ -767,7 +767,7 @@ namespace mem {
 
   void InitTransientPool(size_t t_mem) {
     //shirley pmem: when on pmem machine, set default to false. when on our machine, set to true
-    bool use_pmem = true;
+    bool use_pmem = false;
     if (felis::Options::kPmemNaive) {
       use_pmem = true;
     }
@@ -781,12 +781,13 @@ namespace mem {
   }
 
   static ParallelBrkWFree g_external_pmem_pool;
-  static size_t kExternalPmemPoolSize = 1024*1024*1024; // 1 GB
+  // shirley test: for DRAM only, set to 472 MB for tpcc.
+  static size_t kExternalPmemPoolSize = ((size_t)1024)*1024*1024;// ((size_t)1280)*1024*1024; // ((size_t)472)*1024*1024; // 472 MB // ((size_t)2)*1024*1024*1024; // 1 GB
   static size_t kExternalPmemValuesSize = 1024; // 1 KB
   ParallelBrkWFree &GetExternalPmemPool() { return g_external_pmem_pool; }
 
   void InitExternalPmemPool() {
-    void *fixed_mmap_addr = nullptr;
+    void *fixed_mmap_addr = (void *) 0x7F0000000000; // nullptr;
     g_external_pmem_pool = mem::ParallelBrkWFree(
         mem::ExternalPmemPool, mem::ExternalPmemFreelistPool, fixed_mmap_addr,
         kExternalPmemPoolSize, kExternalPmemValuesSize, true, felis::Options::kRecovery);
@@ -799,13 +800,15 @@ namespace mem {
   static PmemPersistInfo *g_pmem_info;
   PmemPersistInfo *GetPmemPersistInfo() { return g_pmem_info; }
   void InitPmemPersistInfo() {
-    void *fixed_mmap_addr = nullptr;
+    void *fixed_mmap_addr = (void *) 0x7FD800000000; // nullptr;
     if (felis::Options::kRecovery) {
       MapPersistentMemory(MemAllocType::PmemInfo, 0, sizeof(PmemPersistInfo), fixed_mmap_addr);
       g_pmem_info = (PmemPersistInfo *) fixed_mmap_addr;
     }
     else {
+      // shirley test
       g_pmem_info = (PmemPersistInfo *) AllocPersistentMemory(MemAllocType::PmemInfo, sizeof(PmemPersistInfo), 0, -1, fixed_mmap_addr, false);
+      // g_pmem_info = (PmemPersistInfo *) AllocMemory(MemAllocType::PmemInfo, sizeof(PmemPersistInfo), -1);
       memset(g_pmem_info, 0, sizeof(PmemPersistInfo));
       FlushPmemPersistInfo();
     }
@@ -814,7 +817,7 @@ namespace mem {
   void FlushPmemPersistInfo() {
     // shirley pmem shirley test
     for (unsigned int i = 0; i < sizeof(PmemPersistInfo); i += 64) {
-      // _mm_clwb(((uint8_t *)g_pmem_info) + i);
+      _mm_clwb(((uint8_t *)g_pmem_info) + i);
     }
   }
 
@@ -825,7 +828,7 @@ namespace mem {
     if (!felis::Options::kLogInput && !felis::Options::kRecovery) {
       return;
     }
-    void *fixed_mmap_addr = nullptr;
+    void *fixed_mmap_addr = (void *) 0x7F4000000000; // nullptr; 
     int num_cores = ParallelAllocationPolicy::g_nr_cores;
     g_txn_input_log = (uint8_t **) malloc(num_cores * sizeof(void*));
 
@@ -1004,11 +1007,11 @@ namespace mem {
 
     // shirley note: can optimize by flushing only every cacheline / 256 bytes
     // shirley pmem shirley test
-    // _mm_clwb(rb + off);
+    _mm_clwb(rb + off);
 
     if (is_gc) {
       // shirley pmem shirley test
-      // _mm_sfence();
+      _mm_sfence();
 
       size_t old_off = *get_current_offset_pending_freelist();
       size_t new_off = off + 1;
@@ -1017,8 +1020,8 @@ namespace mem {
       }
       *get_current_offset_pending_freelist() = ((old_off & 0xFFFFFFFF00000000) | (new_off & 0x00000000FFFFFFFF));
       // shirley pmem shirley test
-      // _mm_clwb(ring_buffer);
-      // _mm_sfence();
+      _mm_clwb(ring_buffer);
+      _mm_sfence();
 
       lock_ring_buffer.Release(&qnode);
     }
@@ -1044,6 +1047,7 @@ namespace mem {
       uint8_t *p_buf_freelist;
       size_t freelist_size = 16384; // brk_pool_size / block_size;
       if (alloc_type == mem::ExternalPmemPool) {
+        // shirley test: might need to reduce freelist size (if all inlined)
         freelist_size = ((size_t)2) * 1024 * 1024;
       }
       // shirley todo: if is recovery, don't alloc, just mmap file to fixed address
@@ -1056,6 +1060,7 @@ namespace mem {
       else {
         // shirley test
         p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, i, -1, hint_addr);
+        printf("ParallelBrkWFree type %d core %d p_buf = %p\n", alloc_type, i, p_buf);
         // p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
       }
       
@@ -1173,8 +1178,8 @@ namespace mem {
     // sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
     // sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), memAllocTypeCount[alloc_type].fetch_add(1));
 
-    // sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
-    sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
+    sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
+    // sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
 
     void *p = util::OSMemory::g_default.PmemAlloc(pmem_file_name, length, numa_node, addr, on_demand);
 
@@ -1191,8 +1196,8 @@ namespace mem {
     // file name
     char pmem_file_name[50];
     // shirley pmem: when on pmem machine, use /mnt/pmem0. when on our machine, use ../temp_files
-    // sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
-    sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
+    sprintf(pmem_file_name, "/mnt/pmem0/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
+    // sprintf(pmem_file_name, "../temp_files/m%s_%d", MemTypeToString(alloc_type).c_str(), core_id);
     bool success = util::OSMemory::g_default.PmemMap(pmem_file_name, length, addr);
     if (!success) {
       printf("MapPersistentMemory failed!\n");

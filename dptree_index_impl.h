@@ -21,7 +21,7 @@ class DptreeIndex final : public Table {
   template <typename Func>
   IndexInfo *SearchOrCreateImpl(const VarStrView &k, Func f);
  public:
-
+  void *tree;
   DptreeIndex(std::tuple<bool> conf) noexcept; // no configuration required
 
   IndexInfo *SearchOrCreate(const VarStrView &k, bool *created) override;

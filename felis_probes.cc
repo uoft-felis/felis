@@ -103,10 +103,10 @@ template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
   if (offset > max_mem_allocated_per_epoch){
     max_mem_allocated_per_epoch = offset;
   }
-  int epoch_index = mem_probe_index;
+  // int epoch_index = mem_probe_index;
 
-  mem_alloc_parallel_brk_pool_per_epoch[epoch_index] += offset;
-  mem_probe_index += 1;
+  // mem_alloc_parallel_brk_pool_per_epoch[epoch_index] += offset;
+  // mem_probe_index += 1;
 }
 
 
@@ -293,12 +293,12 @@ template <> void OnProbe(felis::probes::NumUnwrittenDramCache p) {
 
 static std::mutex num_rwdp_m;
 // number of bytes allocated for varstr
-static long long num_rd_trans_total[3] = {0,0,0};
-static long long num_rd_drcache_total[3] = {0,0,0};
-static long long num_rd_pmem_total[3] = {0,0,0};
-static long long num_wr_trans_total[3] = {0,0,0};
-static long long num_wr_drcache_total[3] = {0,0,0};
-static long long num_wr_pmem_total[3] = {0,0,0};
+static long long num_rd_trans_total[5] = {0,0,0,0,0};
+static long long num_rd_drcache_total[5] = {0,0,0,0,0};
+static long long num_rd_pmem_total[5] = {0,0,0,0,0};
+static long long num_wr_trans_total[5] = {0,0,0,0,0};
+static long long num_wr_drcache_total[5] = {0,0,0,0,0};
+static long long num_wr_pmem_total[5] = {0,0,0,0,0};
 template <> void OnProbe(felis::probes::NumReadWriteDramPmem p) {
   std::lock_guard _(num_rwdp_m); // released automatically when lockguard
                                  // variable is destroyed
@@ -326,6 +326,20 @@ template <> void OnProbe(felis::probes::NumReadWriteDramPmem p) {
   }
 }
 
+static std::mutex row_size_m;
+// number of bytes allocated for varstr
+
+static uint64_t row_size[8388607] = {0};
+static uint64_t row_size_total[5000000] = {0};
+template <> void OnProbe(felis::probes::RowSize p) {
+  std::lock_guard _(row_size_m); // released automatically when lockguard
+                                      // variable is destroyed
+  for (int i = 0; i < 10; i++){
+    row_size[p.keys[i]]++;
+  }
+  
+}
+
 ProbeMain::~ProbeMain()
 {
   std::cout << std::endl;
@@ -341,54 +355,71 @@ ProbeMain::~ProbeMain()
   std::cout << "number of persistent varstr: " << total_persistent << std::endl;
   std::cout << std::endl;
 
-  std::cout << "NUMBER OF READS:" << std::endl;
-  std::cout << "insert: " << num_rd_trans_total[0] << " " << num_rd_drcache_total[0] << " " << num_rd_pmem_total[0] << std::endl;
-  std::cout << "append: " << num_rd_trans_total[1] << " " << num_rd_drcache_total[1] << " " << num_rd_pmem_total[1] << std::endl;
-  std::cout << "execute: " << num_rd_trans_total[2] << " " << num_rd_drcache_total[2] << " " << num_rd_pmem_total[2] << std::endl;
-  std::cout << "NUMBER OF WRITES:" << std::endl;
-  std::cout << "insert: " << num_wr_trans_total[0] << " " << num_wr_drcache_total[0] << " " << num_wr_pmem_total[0] << std::endl;
-  std::cout << "append: " << num_wr_trans_total[1] << " " << num_wr_drcache_total[1] << " " << num_wr_pmem_total[1] << std::endl;
-  std::cout << "execute: " << num_wr_trans_total[2] << " " << num_wr_drcache_total[2] << " " << num_wr_pmem_total[2] << std::endl;
-  std::cout << std::endl;
+  // std::cout << "NUMBER OF READS:" << std::endl;
+  // std::cout << "insert: " << num_rd_trans_total[0] << " " << num_rd_drcache_total[0] << " " << num_rd_pmem_total[0] << std::endl;
+  // std::cout << "append: " << num_rd_trans_total[1] << " " << num_rd_drcache_total[1] << " " << num_rd_pmem_total[1] << std::endl;
+  // std::cout << "execute: " << num_rd_trans_total[2] << " " << num_rd_drcache_total[2] << " " << num_rd_pmem_total[2] << std::endl;
+  // std::cout << "major GC: " << num_rd_trans_total[3] << " " << num_rd_drcache_total[3] << " " << num_rd_pmem_total[3] << std::endl;
+  // std::cout << "dram GC: " << num_rd_trans_total[4] << " " << num_rd_drcache_total[4] << " " << num_rd_pmem_total[4] << std::endl;
+  
+  // std::cout << "NUMBER OF WRITES:" << std::endl;
+  // std::cout << "insert: " << num_wr_trans_total[0] << " " << num_wr_drcache_total[0] << " " << num_wr_pmem_total[0] << std::endl;
+  // std::cout << "append: " << num_wr_trans_total[1] << " " << num_wr_drcache_total[1] << " " << num_wr_pmem_total[1] << std::endl;
+  // std::cout << "execute: " << num_wr_trans_total[2] << " " << num_wr_drcache_total[2] << " " << num_wr_pmem_total[2] << std::endl;
+  // std::cout << "major GC: " << num_wr_trans_total[3] << " " << num_wr_drcache_total[3] << " " << num_wr_pmem_total[3] << std::endl;
+  // std::cout << "dram GC: " << num_wr_trans_total[4] << " " << num_wr_drcache_total[4] << " " << num_wr_pmem_total[4] << std::endl;
+  // std::cout << std::endl;
 
-  std::cout << "Total Bytes VarStr::New use_pmem=true: " << total_varstr_new_pmem_bytes << std::endl;
-  std::cout << "Total Number VarStr::New use_pmem=true: " << total_varstr_new_pmem_number << std::endl;
-  std::cout << std::endl;
+  // // calculate row size
+  // std::cout << "ROW SIZES:" << std::endl;
+  // for (unsigned int i = 0; i < 8388607; i++) {
+  //   row_size_total[row_size[i] + 1]++;
+  // }
+  // for (unsigned int i = 0; i < 5000000; i++) {
+  //   if (row_size_total[i]) {
+  //     printf("%u\t%lu\n", i, row_size_total[i]);
+  //   }
+  // }
+  // std::cout << std::endl;
 
-  std::cout << "MOMO printing versionSizeArray" << std::endl;
-  for(int i = 0; i < 5002; i++) {
-    if (version_size_array[i]) {
-      std::cout << "MOMO versionSizeArray[" << i << "]:" << version_size_array[i] << std::endl;
-    }
-  }
-  std::cout << "MOMO DONE printing versionSizeArray" << std::endl;
-  std::cout << std::endl;
+  // std::cout << "Total Bytes VarStr::New use_pmem=true: " << total_varstr_new_pmem_bytes << std::endl;
+  // std::cout << "Total Number VarStr::New use_pmem=true: " << total_varstr_new_pmem_number << std::endl;
+  // std::cout << std::endl;
 
-  std::cout << "START print version values sizes" << std::endl;
-  for(int i = 0; i < 162; i++) {
-    if (version_value_size_array[i]) {
-      std::cout << "version value of size[" << i << "]:" << version_value_size_array[i] << std::endl;
-    }
-  }
-  std::cout << "DONE printing version value size" << std::endl;
-  std::cout << std::endl;
+  // std::cout << "MOMO printing versionSizeArray" << std::endl;
+  // for(int i = 0; i < 5002; i++) {
+  //   if (version_size_array[i]) {
+  //     std::cout << "MOMO versionSizeArray[" << i << "]:" << version_size_array[i] << std::endl;
+  //   }
+  // }
+  // std::cout << "MOMO DONE printing versionSizeArray" << std::endl;
+  // std::cout << std::endl;
+
+  // std::cout << "START print version values sizes" << std::endl;
+  // for(int i = 0; i < 162; i++) {
+  //   if (version_value_size_array[i]) {
+  //     std::cout << "version value of size[" << i << "]:" << version_value_size_array[i] << std::endl;
+  //   }
+  // }
+  // std::cout << "DONE printing version value size" << std::endl;
+  // std::cout << std::endl;
 
   std::cout << "Verison Alloc compare | Inline: " << countInlineAlloc << " , External: " << countExtAlloc << std::endl;
   std::cout << std::endl;
 
-  std::cout << "Total Amount of Memory Allocated through Transient Parallel Brk Pool : " << total_mem_allocated << std::endl;
-  std::cout << "Max Amount of Memory Allocated through Transient Parallel Brk Pool In An Epoch: " << max_mem_allocated_per_epoch << std::endl;
+  // std::cout << "Total Amount of Memory Allocated through Transient Parallel Brk Pool : " << total_mem_allocated << std::endl;
+  std::cout << "Max Transient Pool Size In An Epoch: " << max_mem_allocated_per_epoch << std::endl;
 
-  std::cout << "MOMO printing Memory Allocated per epoch" << std::endl;
-  for(int i = 0; i < 51; i++) {
-    if (mem_alloc_parallel_brk_pool_per_epoch[i]) {
-      std::cout << "MOMO mem_allocated_for_epoch[" << i << "]:" 
-                << mem_alloc_parallel_brk_pool_per_epoch[i]
-                << std::endl;
-    }
-  }
-  std::cout << "MOMO DONE printing mem_allocated_for_epoch" << std::endl;
-  std::cout << std::endl;
+  // std::cout << "MOMO printing Memory Allocated per epoch" << std::endl;
+  // for(int i = 0; i < 51; i++) {
+  //   if (mem_alloc_parallel_brk_pool_per_epoch[i]) {
+  //     std::cout << "MOMO mem_allocated_for_epoch[" << i << "]:" 
+  //               << mem_alloc_parallel_brk_pool_per_epoch[i]
+  //               << std::endl;
+  //   }
+  // }
+  // std::cout << "MOMO DONE printing mem_allocated_for_epoch" << std::endl;
+  // std::cout << std::endl;
 
 #if 0
   std::cout << "number of bytes allocated for varstr: "

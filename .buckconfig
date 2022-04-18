@@ -14,9 +14,9 @@
 
 [cxx#debug]
 #shirley pmem: need -march=native in all 3 to build clwb on pmem machine
-  cxxflags = -g -O0 -fstandalone-debug -std=c++17 -stdlib=libc++ -U_FORTIFY_SOURCE
-  cflags = -g -O0 -fstandalone-debug -U_FORTIFY_SOURCE
-  ldflags = -fuse-ld=lld -std=c++17 -g -O0 -fstandalone-debug -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -nostdlib++
+  cxxflags = -march=native -g -O0 -fstandalone-debug -std=c++17 -stdlib=libc++ -U_FORTIFY_SOURCE
+  cflags = -march=native -g -O0 -fstandalone-debug -U_FORTIFY_SOURCE
+  ldflags = -march=native -fuse-ld=lld -std=c++17 -g -O0 -fstandalone-debug -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -nostdlib++
 
 [cxx#release]
   cxxflags = -Ofast -march=native -flto=thin -std=c++17 -stdlib=libc++ -fwhole-program-vtables -fvisibility=hidden -fvisibility-inlines-hidden -fforce-emit-vtables -fstrict-vtable-pointers -DNDEBUG

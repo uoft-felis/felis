@@ -47,15 +47,15 @@ void InitVersion(felis::IndexInfo *handle, int key_0, int key_1, int key_2, int 
   if (!(p_vhandle->is_inline_ptr((uint8_t *)obj))) {
     for (int obj_i = 0; obj_i < obj_len; obj_i += 64) {
       // shirley pmem shirley test
-      // _mm_clwb((char *)obj + obj_i);
+      _mm_clwb((char *)obj + obj_i);
     }
   }
 
-  //shirley pmem: flush cache after initial row insert
-  // _mm_clwb((char *)p_vhandle);
-  // _mm_clwb(((char *)p_vhandle) + 64);
-  // _mm_clwb(((char *)p_vhandle) + 128);
-  // _mm_clwb(((char *)p_vhandle) + 192);
+  //shirley pmem shirley test: flush cache after initial row insert
+  _mm_clwb((char *)p_vhandle);
+  _mm_clwb(((char *)p_vhandle) + 64);
+  _mm_clwb(((char *)p_vhandle) + 128);
+  _mm_clwb(((char *)p_vhandle) + 192);
   //shirley: don't need flush obj. first insert always inlined in miniheap (max varstr is 83 bytes?)
 
 }

@@ -58,6 +58,9 @@ extern void cpu_pause();
 size_t pool_size_ = ((size_t)(1024 * 1024 * 16) * 1024); // 16 GB
 const char *pool_path_ = "/mnt/pmem0/dp_pool";
 
+#define parallel_merge_worker_num 8
+#define pmem_log_worker_num 8
+
 namespace dptree
 {
 
@@ -274,7 +277,7 @@ public:
     {
         struct bitmap
         {
-            static constexpr int ints = std::ceil(key_capacity / 64.0);
+            static constexpr int ints = (key_capacity / 64.0);
             uint64_t bits[ints];
             bitmap() { memset(bits, 0, sizeof(bits)); }
             int popcount()
@@ -516,12 +519,21 @@ public:
             }
         }
 
+        // shirley: an example constexpr ceil function
+        // constexpr int int_ceil(float f)
+        // {
+        //     const int i = static_cast<int>(f);
+        //     return f > i ? i + 1 : i;
+        // }
+
         static constexpr double fill_factor = 0.70;
         // When merging a stream of new upsert kvs with a node,
         // any new nodes created should hold at most `max_initial_fill_keys` keys,
         // so there mgiht be enough empty cells to accomadate later upserts.
         static constexpr int max_initial_fill_keys =
-            (int)std::ceil(fill_factor * key_capacity);
+            ((fill_factor * key_capacity) > (int)(fill_factor * key_capacity)) ? 
+            (int)(fill_factor * key_capacity) + 1 : (int)(fill_factor * key_capacity);
+            // (int)std::ceil(fill_factor * key_capacity);
         // Nodes with # keys less than this constant are considered under-utilized
         // and need merging.
         static constexpr int merge_node_threshold = key_capacity / 3;

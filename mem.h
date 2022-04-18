@@ -582,7 +582,8 @@ class BrkWFree {
   bool persist_pending_freelist = false;
   bool is_gc = false;
   
-  static constexpr size_t metadata_size = 32; // 32 bytes metadata in front of data. offset 1 & 2, limit, block_size.
+  // shirley: try metadata size of 256 so vhandles are in the same pmem granularity.
+  static constexpr size_t metadata_size = 256; // 32; // 32 bytes metadata in front of data. offset 1 & 2, limit, block_size.
   static constexpr size_t metadata_size_ring_buffer = 24; // 24 bytes metadata in front of ring buffer. offset 1 & 2, limit.
   static constexpr size_t metadata_size_ring_buffer_persist_pending = 32; // 32 bytes metadata in front of ring buffer. offset 1 & 2, limit, offset_current.
 
@@ -665,6 +666,7 @@ public:
           }
         }
       }
+      // printf("Recovering initial offsets (%lu, %lu)\n", initial_offset_freelist, initial_offset_pending_freelist);
     }
     else {
       *get_offset() = (size_t)0;
@@ -679,8 +681,8 @@ public:
         *get_current_offset_pending_freelist() = (size_t)0;
       }
       // shirley pmem shirley test : flush initial metadata
-      // _mm_clwb(data);
-      // _mm_clwb(ring_buffer);
+      _mm_clwb(data);
+      _mm_clwb(ring_buffer);
     }
   }
   ~BrkWFree() {}
@@ -725,16 +727,16 @@ public:
     // persist brk offsets
     *get_offset(first_slot) = offset;
     // shirley pmem shirley test
-    // _mm_clwb(data);
+    _mm_clwb(data);
 
     // persist freelist & pending freelist offsets
     size_t new_offsets = ((offset_freelist << 32) & 0xFFFFFFFF00000000) |
                           (offset_pending_freelist & 0x00000000FFFFFFFF);
     *get_offsets_ring_buffer(first_slot) = new_offsets;
     // shirley pmem shirley test
-    // _mm_clwb(ring_buffer);
+    _mm_clwb(ring_buffer);
 
-    // printf("updating initial offsets (%lu, %lu) -> (%lu, %lu)\n",
+    // printf("end of epoch updating initial offsets (%lu, %lu) -> (%lu, %lu)\n",
     //        initial_offset_freelist, initial_offset_pending_freelist,
     //        offset_freelist, offset_pending_freelist);
     // shirley: also update the initial offset (freelist / pending freelist) for next epoch in DRAM
@@ -752,6 +754,9 @@ public:
     offset_pending_freelist = current_offset_pending_freelist;
     // shirley: we update the initial offset pending freelist here
     // bc GC deletes are committed to free list and can be re-allocated now.
+    // printf("after GC updating initial offsets (%lu, %lu) -> (%lu, %lu)\n",
+    //        initial_offset_freelist, initial_offset_pending_freelist,
+    //        initial_offset_freelist, offset_pending_freelist);
     initial_offset_pending_freelist = offset_pending_freelist;
   }
 
@@ -765,8 +770,9 @@ public:
     size_t new_offset_gc = (cur_ep << 32) | (offset_pending_freelist & 0x00000000FFFFFFFF);
     *get_current_offset_pending_freelist() = new_offset_gc;
     //shirley pmem shirley test
-    // _mm_clwb(ring_buffer);
-    // _mm_sfence();
+    _mm_clwb(ring_buffer);
+    _mm_sfence();
+    // printf("beginning of epoch updating GC offset -> (%lu, %lu)\n", cur_ep, offset_pending_freelist & 0x00000000FFFFFFFF);
   }
 
   void *Alloc();

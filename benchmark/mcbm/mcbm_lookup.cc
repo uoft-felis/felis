@@ -5,8 +5,8 @@ namespace mcbm {
 template <>
 LookupStruct ClientBase::GenerateTransactionInput<LookupStruct>() {
   LookupStruct s;
-  // s.row_id = PickRowNoDup();
-  s.row_id = PickRow();
+  s.row_id = PickRowNoDup();
+  // s.row_id = PickRow();
   return s;
 }
 

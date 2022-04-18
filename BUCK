@@ -99,11 +99,15 @@ db_srcs = [
         ('masstree/kvthread.cc', ['-include', 'masstree/build/config.h']),
 	('masstree/string.cc', ['-include', 'masstree/build/config.h']),
 	('masstree/straccum.cc', ['-include', 'masstree/build/config.h']),
+    ] + [
+        ('dptree/src/util.cpp', ['-include', 'dptree/include/util.h']),
+        ('dptree/src/MurmurHash2.cpp', ['-include', 'dptree/include/MurmurHash2.h']),
+        ('dptree/src/art_idx.cpp', ['-include', 'dptree/include/art_idx.hpp'])
     ]
 
 #shirley pmem: add libs for dptree
-#libs = ['-pthread', '-lrt', '-ldl', '-ltbb', '-ltcmalloc_minimal', '-lpmem', '-lpmemobj']
-libs = ['-pthread', '-lrt', '-ldl']
+libs = ['-pthread', '-lrt', '-ldl', '-ltbb', '-ltcmalloc_minimal', '-lpmem', '-lpmemobj']
+#libs = ['-pthread', '-lrt', '-ldl']
 #test_srcs = ['test/promise_test.cc', 'test/serializer_test.cc', 'test/shipping_test.cc']
 test_srcs = ['test/xnode_measure_test.cc']
 

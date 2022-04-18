@@ -19,7 +19,7 @@ class bloom1
     static constexpr int word_hash_bits = 24;
     static constexpr int word_hash_bits_mask = (1ULL << word_hash_bits) - 1;
     static constexpr int k = 3;
-    static constexpr int member_hash_bits = std::ceil(k * member_bit_width);
+    static constexpr int member_hash_bits = (k * member_bit_width);
     static constexpr uint64_t hash_seed = 0xdeadbeef12345678ULL;
     bloom1(int entries, double fp_rate)
     {

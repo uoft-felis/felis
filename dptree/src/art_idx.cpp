@@ -1,4 +1,4 @@
-#include "art_idx.hpp"
+#include "../include/art_idx.hpp"
 
 namespace ART_IDX {
 static thread_local std::vector<Node *> ancestors;

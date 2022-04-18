@@ -1,5 +1,5 @@
 
-#include "util.h"
+#include "../include/util.h"
 #include <unordered_set>
 #include <random>
 #include <algorithm>
@@ -27,63 +27,63 @@ vector<uint64_t> notExistKeys;
 
 void prepareKeys(int n, const string &keyFile, bool sparseKey, bool sorted)
 {
-    uint64_t end;
-    unordered_set<uint64_t> keySet;
-    size_t totalKeyCount = n;
-    keys.reserve(totalKeyCount);
-    lookupKeys.reserve(totalKeyCount);
-    std::random_device rd;
+    // uint64_t end;
+    // unordered_set<uint64_t> keySet;
+    // size_t totalKeyCount = n;
+    // keys.reserve(totalKeyCount);
+    // lookupKeys.reserve(totalKeyCount);
+    // std::random_device rd;
 
-    std::mt19937_64 e2(0);
+    // std::mt19937_64 e2(0);
 
-    std::uniform_int_distribution<unsigned long long> dist(0, std::llround(std::pow(2, 63)));
+    // std::uniform_int_distribution<unsigned long long> dist(0, std::llround(std::pow(2, 63)));
 
-    if (sparseKey == false)
-    {
-        end = n;
-        for (uint64_t i = 0; i < end; ++i)
-        {
-            keys.push_back(i);
-        }
-    }
-    else
-    {
-        keySet.reserve(totalKeyCount);
-        end = std::numeric_limits<uint64_t>::max();
-        while (keySet.size() != totalKeyCount)
-        {
-            uint64_t key = dist(e2) % end;
-            keySet.insert(key);
-        }
-        auto tset = keySet;
-        for (int i = 0; i < n && keySet.empty() == false; ++i)
-        {
-            uint64_t key = *keySet.begin();
-            keySet.erase(key);
-            keys.push_back(key);
-        }
-        for (int i = 0; i < totalKeyCount; ++i) {
-            uint64_t key = dist(e2) % end;
-            if (tset.find(key) != tset.end()) {
-                --i;
-                continue;
-            }
-            notExistKeys.push_back(key);
-        }
-    }
+    // if (sparseKey == false)
+    // {
+    //     end = n;
+    //     for (uint64_t i = 0; i < end; ++i)
+    //     {
+    //         keys.push_back(i);
+    //     }
+    // }
+    // else
+    // {
+    //     keySet.reserve(totalKeyCount);
+    //     end = std::numeric_limits<uint64_t>::max();
+    //     while (keySet.size() != totalKeyCount)
+    //     {
+    //         uint64_t key = dist(e2) % end;
+    //         keySet.insert(key);
+    //     }
+    //     auto tset = keySet;
+    //     for (int i = 0; i < n && keySet.empty() == false; ++i)
+    //     {
+    //         uint64_t key = *keySet.begin();
+    //         keySet.erase(key);
+    //         keys.push_back(key);
+    //     }
+    //     for (int i = 0; i < totalKeyCount; ++i) {
+    //         uint64_t key = dist(e2) % end;
+    //         if (tset.find(key) != tset.end()) {
+    //             --i;
+    //             continue;
+    //         }
+    //         notExistKeys.push_back(key);
+    //     }
+    // }
 
-    if (sorted)
-    {
-        sort(keys.begin(), keys.end());
-    }
-    lookupKeys = keys;
-    std::random_shuffle(lookupKeys.begin(), lookupKeys.end());
-    sortedKeys = keys;
-    std::sort(sortedKeys.begin(), sortedKeys.end());
-    // shirley: also shuffle keys (used for insert)
-    std::random_shuffle(keys.begin(), keys.end());
-    //print_memory_usage();
-    printf("Keys: %d, Lookup Keys: %d, NotExist Keys: %d\n", (int)keys.size(), (int)lookupKeys.size(), (int) notExistKeys.size());
+    // if (sorted)
+    // {
+    //     sort(keys.begin(), keys.end());
+    // }
+    // lookupKeys = keys;
+    // std::random_shuffle(lookupKeys.begin(), lookupKeys.end());
+    // sortedKeys = keys;
+    // std::sort(sortedKeys.begin(), sortedKeys.end());
+    // // shirley: also shuffle keys (used for insert)
+    // std::random_shuffle(keys.begin(), keys.end());
+    // //print_memory_usage();
+    // printf("Keys: %d, Lookup Keys: %d, NotExist Keys: %d\n", (int)keys.size(), (int)lookupKeys.size(), (int) notExistKeys.size());
 }
 
 inline unsigned ctz(unsigned x) {

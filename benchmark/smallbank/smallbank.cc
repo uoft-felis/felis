@@ -15,9 +15,9 @@ using felis::IndexInfo;
 using felis::VHandle;
 
 Config::Config() {
-  nr_accounts = 18000; // original 18000
+  nr_accounts = 1800000; // original 18000
   hotspot_percent = 90; // 90% txns to hotspots
-  hotspot_number = 1000; // original 1000 // #hotspot accounts out of nr_accounts
+  hotspot_number = 100000; // original 1000 // #hotspot accounts out of nr_accounts
 }
 
 Config g_smallbank_config;
@@ -187,11 +187,11 @@ void SmallBankLoaderRecovery::DoLoadRecovery() {
         }
       }
       std::memset((uint8_t *)(ring_buffer[i_off]), 0, 64);
-      // shirley pmem shirey test
-      // _mm_clwb((uint64_t *)(ring_buffer[i_off]));
+      // shirley pmem shirley test
+      _mm_clwb((uint64_t *)(ring_buffer[i_off]));
     }
-    // shirley pmem shirey test
-    // _mm_sfence();
+    // shirley pmem shirley test
+    _mm_sfence();
 
     // now read vhandles and rebuild index
     for (uint64_t i = 0; i < data_offset; i += data_block_size) {

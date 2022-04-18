@@ -393,6 +393,9 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   //handle->cur_start = 0;
   //handle->latest_version = -1; //shirley: removed bc latest version is stored in versions
 
+  // // shirley: for ycsb probe pmem access during pmem major GC
+  // felis::probes::NumReadWriteDramPmem{0,2,3}();
+  // felis::probes::NumReadWriteDramPmem{1,2,3}();
 
   // shirley: free ptr1 if it's not from inline
   handle->FreePtr1();
@@ -413,7 +416,7 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
   handle->ResetSid2();
 
   //shirley pmem shirley test: flush cache after GC
-  // _mm_clwb((char *)handle);
+  _mm_clwb((char *)handle);
   // _mm_clwb(((char *)handle) + 64);
   // _mm_clwb(((char *)handle) + 128);
   // _mm_clwb(((char *)handle) + 192);

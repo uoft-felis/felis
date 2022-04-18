@@ -273,6 +273,7 @@ public:
 
   // shirley: add/remove row to major GC if ptr1 points to external
   void add_majorGC_if_ext(){
+    // shirley: for disabling minGC, don't check if ptr1 is external, just add.
     if (!is_inline_ptr(ptr1)){
       auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
       auto &gc = util::Instance<GC>();

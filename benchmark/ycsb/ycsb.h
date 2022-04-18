@@ -22,10 +22,11 @@ struct Ycsb {
   }
 
   static constexpr auto kTable = TableType::Ycsb;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 10000000, false);
-  // static constexpr auto kIndexArgs = std::make_tuple(true);
-
-  using IndexBackend = felis::HashtableIndex; // shirley: changed into masstree index
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 10000000, false);
+  static constexpr auto kIndexArgs = std::make_tuple(true);
+  using IndexBackend = felis::DptreeIndex;
+  // using IndexBackend = felis::MasstreeIndex;
+  // using IndexBackend = felis::HashtableIndex; // shirley: if HashtableIndex, then change index_info size to 72.
   using Key = sql::YcsbKey;
   using Value = sql::YcsbValue;
 };

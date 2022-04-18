@@ -39,6 +39,8 @@ struct InsertState {
       MBTable::Value v;
       v.v = args.value;
 
+      // printf("inserted row %lu\n", args.value);
+
       // shirley: use WriteInitialInline bc writing initial version after row insert
       handle(row).WriteInitialInline(v);
     }

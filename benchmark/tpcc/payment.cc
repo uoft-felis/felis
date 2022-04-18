@@ -265,7 +265,7 @@ void PaymentTxn::Run()
   }
   // shirley zen: add sfence after txn run
   if (felis::Options::kEnableZen) {
-    // _mm_sfence();
+    _mm_sfence();
   }
 }
 

@@ -32,7 +32,7 @@ public:
 class BaseIndexInfo {
 public:
   static constexpr size_t VerArrayInfoSize = 32;
-  static constexpr size_t kIndexInfoSize = 72;// 40; // shirley: 40 for index info, 72 if using hash index?
+  static constexpr size_t kIndexInfoSize = 40; // shirley: 40 for index info, 72 if using hash index?
   static mem::ParallelSlabPool pool;
   static void InitPool();
   static void Quiescence() { pool.Quiescence(); }
@@ -206,6 +206,14 @@ public:
   uint64_t first_version() const {
     auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
     if (versions_ep != current_epoch_nr) {
+      // shirley: this optimization is never reached.
+      // if (dram_version && (dram_version->ep_num != current_epoch_nr)){
+      //   // shirley: because first_version is used for range scan
+      //   // so it's safe to return fake sid of 0 
+      //   // this row was inserted in a prev epoch bc dram_version exists from prev epoch but version array not current
+      //   // i.e. row is not modified or read in this epoch so 
+      //   return 0;
+      // }
 #ifndef NDEBUG
       // we are in debug build
       VHandle *vhandle = (VHandle *)((int64_t)(this->vhandle) & 0x7FFFFFFFFFFFFFFF);

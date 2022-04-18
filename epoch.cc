@@ -433,7 +433,7 @@ void TransactionInputLogger::LogInputs()
     if (log_offset - log_clwb_offset >= 256) {
       for (uint64_t i = log_clwb_offset; i < log_offset; i += 64) {
         // shirley pmem shirley test
-        // _mm_clwb((uint8_t *)(int_log_file[my_core_id]) + i); // shirley note: this is part of the old cache line
+        _mm_clwb((uint8_t *)(int_log_file[my_core_id]) + i); // shirley note: this is part of the old cache line
         log_clwb_offset = i;
       }
     }
@@ -442,7 +442,7 @@ void TransactionInputLogger::LogInputs()
   if (log_offset > log_clwb_offset) {
     for (uint64_t i = log_clwb_offset; i < log_offset; i += 64) {
       // shirley pmem shirley test
-      // _mm_clwb((uint8_t *)(int_log_file[my_core_id]) + i); // shirley note: this is part of the old cache line
+      _mm_clwb((uint8_t *)(int_log_file[my_core_id]) + i); // shirley note: this is part of the old cache line
     }
   }
   return;
@@ -479,6 +479,7 @@ void EpochClient::InitializeEpoch()
 
   // shirley: log the txn inputs for this new epoch
   if (felis::Options::kLogInput) {
+    // std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     
     // spawn threads to log input in parallel.
     std::atomic_int log_countdown(NodeConfiguration::g_nr_threads);
@@ -505,14 +506,18 @@ void EpochClient::InitializeEpoch()
     }
 
     // shirley pmem shirley test
-    // _mm_sfence();
+    _mm_sfence();
+
+    // std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    // printf("Logging Time = %lld [ms]\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+
 
     mem::GetPmemPersistInfo()->largest_epoch_logging = epoch_nr;
     // shirley pmem shirley test
-    // _mm_clwb(mem::GetPmemPersistInfo()); // just flush the first cacheline which contains largest_epoch_logging
+    _mm_clwb(mem::GetPmemPersistInfo()); // just flush the first cacheline which contains largest_epoch_logging
 
     // shirley pmem shirley test
-    // _mm_sfence();
+    _mm_sfence();
   }
 
   //SHIRLEY: major GC & dram GC preparing lists
@@ -659,16 +664,21 @@ void EpochClient::OnExecuteComplete()
     PersistAutoInc();
     
     // shirley pmem shirley test
-    // _mm_sfence();
+    _mm_sfence();
+
+    // // shirley: crash right before commit!
+    // if (cur_epoch_nr == 40) {
+    //   std::abort();
+    // }
 
     // shirley: here persist largest sid of this epoch
     uint64_t largest_sid = (cur_epoch_nr << 32) | (NumberOfTxns() << 8) | (conf.nr_nodes() & 0x00FF);
     mem::GetPmemPersistInfo()->largest_sid = largest_sid;
     // shirley pmem shirley test
-    // _mm_clwb(mem::GetPmemPersistInfo()); // just flush the first cacheline which contains largest_sid
+    _mm_clwb(mem::GetPmemPersistInfo()); // just flush the first cacheline which contains largest_sid
 
     // shirley pmem shirley test
-    // _mm_sfence();
+    _mm_sfence();
   }
 
   if ((cur_epoch_nr + 1 < g_max_epoch) && (!Options::kRecovery)) {

@@ -51,8 +51,8 @@ extern std::vector<uint64_t> notExistKeys;
 extern unsigned long write_latency_in_ns;
 extern unsigned long CPU_FREQ_MHZ;
 extern unsigned long long cycles_total;
-extern int parallel_merge_worker_num;
-extern int pmem_log_worker_num; // shirley: number of workers to construct pmem log
+// extern int parallel_merge_worker_num;
+// extern int pmem_log_worker_num; // shirley: number of workers to construct pmem log
 static constexpr int cacheline_size = 64;
 unsigned long long cycles_now();
 unsigned ctz(unsigned);
