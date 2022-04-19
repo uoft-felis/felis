@@ -324,11 +324,22 @@ BaseTxn::LookupRowResult BaseTxn::BaseTxnIndexOpLookup(const BaseTxnIndexOpConte
       r->set_userdata(mem::Brk::New(buf, 512));
     }
 
-    for (auto it = tbl->IndexSearchIterator(range_start, range_end);
-         it->IsValid(); it->Next(), i++) {
-      // printf("BaseTxnIndexOpLookup loop %d, result row %p\n", i, it->row());
-      result[i] = it->row();
+    auto it = tbl->IndexSearchIterator(range_start, range_end);
+
+    if (it) {
+      for (; it->IsValid(); it->Next(), i++) {
+        // printf("BaseTxnIndexOpLookup loop %d, result row %p\n", i, it->row());
+        result[i] = it->row();
+      }
     }
+    else { // index search iterator not supported. use scan
+      std::vector<IndexInfo *> res = tbl->SearchRange(range_start, range_end);
+      for (int j = 0; j < res.size(); j++) {
+        if (res[j] == nullptr) break;
+        result[j] = res[j];
+      }
+    }
+    
     r->set_userdata(olddata);
   }
   return result;

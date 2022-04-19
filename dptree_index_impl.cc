@@ -7,6 +7,53 @@ namespace felis {
 
 typedef dptree::concur_dptree<uint64_t, entry_pair> dpt;
 
+// shirley: do not use.
+// typedef btreeolc::BTree<uint64_t, entry_pair>::unsafe_iterator dpt_it;
+
+// struct DptreeIterator : public Table::Iterator, public dpt_it {
+//   void Adapt();
+
+//   void Next() override final;
+//   bool IsValid() const override final;
+
+//   DptreeIterator(VarStr &start) {
+    
+//   }
+
+//   static void *operator new(size_t sz) {
+//     // shirley: probe bytes allocated for masstree map iterator
+//     // felis::probes::IndexSizeTotal{sz}();
+//     return mem::AllocFromRoutine(sz);
+//   }
+//   static void operator delete(void *p) {}
+// };
+
+// void DptreeIterator::Adapt()
+// {
+//   if (this->node) {
+//     // wrap the iterator
+//     uint64_t s = ((dpt_it *) this)->key();
+//     *(uint64_t *)(cur_key.data()) = s;
+//     index_info = (IndexInfo *) ((dpt_it *) this)->value().first;
+//   }
+// }
+
+// void DptreeIterator::Next()
+// {
+//   // uint64_t cur_key_old = *(uint64_t *)(cur_key.data());
+//   ++((dpt_it)(*(dpt_it *)this));
+//   Adapt();
+//   // uint64_t cur_key_new = *(uint64_t *)(cur_key.data());
+//   // printf("Iterator: cur_key_old = %lu, cur_key_new = %lu\n", 
+//   //         cur_key_old,
+//   //         cur_key_new);
+// }
+
+// bool DptreeIterator::IsValid() const
+// {
+//   return this->node && !(end_key < cur_key);
+// }
+
 DptreeIndex::DptreeIndex(std::tuple<bool> conf) noexcept
     : Table()
 {
@@ -21,7 +68,7 @@ DptreeIndex::DptreeIndex(std::tuple<bool> conf) noexcept
 template <typename Func>
 IndexInfo *DptreeIndex::SearchOrCreateImpl(const VarStrView &k, Func f)
 {
-  uint64_t _k = *(uint64_t *)(k.data());
+  uint64_t _k = be64toh(*(uint64_t *)(k.data()));
   entry_pair value = entry_pair(0, 0);
   bool res = ((dpt *)tree)->lookup(_k, value);
   if(!res) {
@@ -48,7 +95,7 @@ IndexInfo *DptreeIndex::SearchOrCreate(const VarStrView &k, bool *created)
 
 IndexInfo *DptreeIndex::Search(const VarStrView &k)
 {
-  uint64_t _k = *(uint64_t *)(k.data());
+  uint64_t _k = be64toh(*(uint64_t *)(k.data()));
   entry_pair value = entry_pair(0, 0);
   bool res = ((dpt *)tree)->lookup(_k, value);
   assert(res);
@@ -60,16 +107,34 @@ IndexInfo *DptreeIndex::RecoverySearchOrCreate(const VarStrView &k, void *vhandl
   return SearchOrCreateImpl(k, [=]() { return NewRow(vhandle); });
 }
 
-
+// shirley: do not use for dptree, bc need both buffer & base tree for scan.
 Table::Iterator *DptreeIndex::IndexSearchIterator(const VarStrView &start, const VarStrView &end)
 {
-  Table::Iterator *it = nullptr;
-  return it;
+  return nullptr;
 }
 
 Table::Iterator *DptreeIndex::IndexSearchIterator(const VarStrView &start)
 {
   return IndexSearchIterator(start, VarStrView(std::numeric_limits<uint16_t>::max(), nullptr));
+}
+
+std::vector<IndexInfo *> DptreeIndex::SearchRange(const VarStrView &start, const VarStrView &end) {
+  std::vector<entry_pair> res;
+  
+  uint64_t key_start = be64toh(*(uint64_t *)(start.data()));
+  uint64_t key_end = be64toh(*(uint64_t *)(end.data()));
+  // uint64_t key_start = *(uint64_t *)(start.data());
+  // uint64_t key_end = *(uint64_t *)(end.data());
+
+  // printf("key_start = %lu, key_end = %lu\n", key_start, key_end);
+
+  ((dpt *)tree)->lookup_range(key_start, key_end - key_start + 1, res);
+
+  std::vector<IndexInfo *> result;
+  for (auto p : res) {
+    result.push_back((IndexInfo *) (p.first));
+  }
+  return result;
 }
 
 

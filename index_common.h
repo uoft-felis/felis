@@ -141,6 +141,9 @@ class Table {
   virtual Table::Iterator *IndexReverseIterator(const VarStrView &start, const VarStrView &end) {
     return nullptr;
   }
+  virtual std::vector<IndexInfo *> SearchRange(const VarStrView &start, const VarStrView &end) {
+    return std::vector<IndexInfo *>();
+  }
 
   IndexInfo *NewRow(void *vhandle = nullptr);
   size_t row_size() const {

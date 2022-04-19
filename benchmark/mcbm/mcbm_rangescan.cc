@@ -5,8 +5,8 @@ namespace mcbm {
 template <>
 RangescanStruct ClientBase::GenerateTransactionInput<RangescanStruct>() {
   RangescanStruct s;
-  // s.row_id = PickRowNoDup();
-  s.row_id = PickRow();
+  s.row_id = PickRowNoDup();
+  // s.row_id = PickRow();
   return s;
 }
 
@@ -52,7 +52,7 @@ void RangescanTxn::Run() {
       auto &[state, index_handle] = ctx;
       for (int i = 0; i < MAX_SCANRANGE; i++) {
         if (state->scan_rows[i]) {
-          // printf("reading range start: %lu, current_expected: %lu\n", state->rowid, state->rowid + i);
+          // printf("reading range start: %lu, current_expected[%d]: %lu\n", state->rowid, i, state->rowid + i);
           ReadRow(index_handle(state->scan_rows[i]));
         }
         else {
