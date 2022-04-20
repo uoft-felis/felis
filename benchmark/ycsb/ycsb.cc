@@ -830,6 +830,9 @@ void YcsbLoader::Run()
   felis::VHandle::PoolSetCurrentAffinity(-1);
   MasstreeIndex::ResetThreadInfo();
 
+  // shirley: also trigger merge for dptree index
+  mgr.Get<ycsb::Ycsb>().IndexMerge();
+
   done = true;
 
   // Generate a random permutation
@@ -938,6 +941,16 @@ size_t Client::TxnInputSize(int txn_id) {
 void Client::PersistTxnStruct(int txn_id, void *base_txn, void *txn_struct_buffer) {
   RMWStruct txn_struct = *(RMWTxn *)base_txn;
   memcpy(txn_struct_buffer, &txn_struct, sizeof(RMWStruct));
+  return;
+}
+
+void Client::IdxMerge() {
+  util::Instance<TableManager>().Get<ycsb::Ycsb>().IndexMerge();
+  return;
+}
+
+void Client::IdxLog() {
+  util::Instance<TableManager>().Get<ycsb::Ycsb>().IndexLog();
   return;
 }
 

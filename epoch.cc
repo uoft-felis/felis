@@ -666,6 +666,9 @@ void EpochClient::OnExecuteComplete()
     // shirley pmem shirley test
     _mm_sfence();
 
+    // shirley: persist pmem index log here before committing epoch
+    IdxLog();
+
     // // shirley: crash right before commit!
     // if (cur_epoch_nr == 40) {
     //   std::abort();
@@ -679,6 +682,9 @@ void EpochClient::OnExecuteComplete()
 
     // shirley pmem shirley test
     _mm_sfence();
+
+    // shirley: merge pmem index here right before initializing next epoch
+    IdxMerge();
   }
 
   if ((cur_epoch_nr + 1 < g_max_epoch) && (!Options::kRecovery)) {

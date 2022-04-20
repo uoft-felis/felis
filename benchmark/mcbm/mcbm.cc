@@ -146,7 +146,8 @@ void McBmLoader::Run()
   mem::ParallelPool::SetCurrentAffinity(-1);
   felis::MasstreeIndex::ResetThreadInfo();
 
-  // shirley TODO: if using DPTree index, also trigger merge?
+  // shirley: also trigger merge for dptree index
+  mgr.Get<mcbm::MBTable>().IndexMerge();
 
   done = true;
 }
@@ -332,6 +333,16 @@ void Client::PersistTxnStruct(int txn_id, void *base_txn, void *txn_struct_buffe
       std::abort();
     }
   }
+  return;
+}
+
+void Client::IdxMerge() {
+  util::Instance<TableManager>().Get<mcbm::MBTable>().IndexMerge();
+  return;
+}
+
+void Client::IdxLog() {
+  util::Instance<TableManager>().Get<mcbm::MBTable>().IndexLog();
   return;
 }
 

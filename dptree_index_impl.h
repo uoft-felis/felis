@@ -32,6 +32,8 @@ class DptreeIndex final : public Table {
   Table::Iterator *IndexSearchIterator(const VarStrView &start, const VarStrView &end) override;
   Table::Iterator *IndexSearchIterator(const VarStrView &start) override;
   std::vector<IndexInfo *> SearchRange(const VarStrView &start, const VarStrView &end) override;
+  void IndexMerge() override;
+  void IndexLog() override;
 
 };
 

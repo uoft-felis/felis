@@ -137,5 +137,18 @@ std::vector<IndexInfo *> DptreeIndex::SearchRange(const VarStrView &start, const
   return result;
 }
 
+void DptreeIndex::IndexMerge() {
+  ((dpt *)tree)->force_merge();
+  while (((dpt *)tree)->is_merging());
+  while (!(((dpt *)tree)->is_no_merge()));
+  return;
+}
+
+void DptreeIndex::IndexLog() {
+  bool from_dram = false;
+  ((dpt *)tree)->construct_pmlog(from_dram);
+  return;
+}
+
 
 }

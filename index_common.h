@@ -145,6 +145,14 @@ class Table {
     return std::vector<IndexInfo *>();
   }
 
+  virtual void IndexMerge() {
+    return;
+  }
+
+  virtual void IndexLog() {
+    return;
+  }
+
   IndexInfo *NewRow(void *vhandle = nullptr);
   size_t row_size() const {
     return IndexInfo::kIndexInfoSize;

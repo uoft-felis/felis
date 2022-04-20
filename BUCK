@@ -80,7 +80,7 @@ db_headers = [
     'commit_buffer.h', 'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
     'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h',
-    'pwv_graph.h'
+    'pwv_graph.h', 'dptree/include/concur_dptree.hpp'
 ]
 
 db_srcs = [

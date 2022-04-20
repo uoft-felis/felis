@@ -257,7 +257,8 @@ template <typename Key, typename Value>
 class concur_cvhtree
 {
 public:
-    static constexpr int key_capacity = 256;
+    static constexpr int key_capacity = 128; // shirley: for entry_pair type, store at most 128
+    // static constexpr int key_capacity = 256;
     static constexpr int probe_limit = 4;
     static constexpr double bits_per_key_doubled = std::log2(key_capacity + 1);
     static constexpr int bits_per_key = std::ceil(bits_per_key_doubled);
@@ -2265,9 +2266,9 @@ class durable_concur_buffer_btree
         int total_entries = actual_size.load();
         int thread_entries = total_entries / pmem_log_worker_num; // note: last thread might do some extra work.
 
-        // shirley: test key/value is expected with printf
-        key_type test_key = start_it.key();
-        value_type test_value = start_it.value();
+        if (total_entries == 0) {
+            return;
+        }
 
         // thread 0: [start_it : start_it + thread_entries)
         // thread 1: [start_it + thread_entries * 1 : start_it + thread_entries * 2)
@@ -2354,9 +2355,10 @@ class durable_concur_buffer_btree
         }
         auto btree_leaf_insert_func = [&key, &value, this]() {
             // shirley: try removing logs completely?
-            *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
-            int id = std::hash<key_type>()(key) % stripes;
-            logs[id]->append_and_flush(local_record);
+            // *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
+            // int id = std::hash<key_type>()(key) % stripes;
+            // logs[id]->append_and_flush(local_record);
+
             // shirley: increment buffer size
             actual_size.fetch_add(1);
             bloom->insert(key);
@@ -2375,9 +2377,10 @@ class durable_concur_buffer_btree
         }
         auto btree_leaf_insert_func = [&key, &value, this]() {
             // shirley: try removing logs completely?
-            *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
-            int id = std::hash<key_type>()(key) % stripes;
-            logs[id]->append_and_flush(local_record);
+            // *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
+            // int id = std::hash<key_type>()(key) % stripes;
+            // logs[id]->append_and_flush(local_record);
+            
             // shirley: increment buffer size
             actual_size.fetch_add(1);
             bloom->insert(key);
@@ -2888,6 +2891,9 @@ class concur_dptree
 
     // shirley: we can call this function to manually trigger a merge
     void force_merge() {
+        if (front_buffer_tree->real_size() == 0) {
+            return;
+        }
         start_merge(front_buffer_tree);
     }
 

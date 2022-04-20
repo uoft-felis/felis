@@ -53,6 +53,8 @@ class Client : public felis::EpochClient {
   size_t TxnInputSize(int txn_id) final override;
   void PersistTxnStruct(int txn_id, void *base_txn, void *txn_struct_buffer) final override;
   void PersistAutoInc() final override { return; }
+  void IdxMerge() final override;
+  void IdxLog() final override;
 
   template <typename T> T GenerateTransactionInput();
 };
