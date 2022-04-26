@@ -34,6 +34,9 @@
 #include "../misc/ARTOLC/ARTOLC.hpp"
 #include "key_entry_types.h"
 
+#include "../../mem.h"
+#include "../../epoch.h"
+
 #ifdef USE_PAPI
 #include <papi.h>
 #endif
@@ -1691,6 +1694,12 @@ public:
 
         // 7. flip the global version
         {
+            // store in caracal pmem info
+            uint64_t gv_ep = (util::Instance<felis::EpochManager>().current_epoch_nr() << 32);
+            if (nv) gv_ep |= 0x01;
+            mem::GetPmemPersistInfo()->dptree_gv_ep = gv_ep;
+            // printf("gv epoch = %lu\n", mem::GetPmemPersistInfo()->dptree_gv_ep);
+            clflush(mem::GetPmemPersistInfo());
             gv = nv;
             clflush_then_sfence(&gv);
         }
@@ -2185,8 +2194,12 @@ class durable_concur_buffer_btree
         std::atomic_int entry_cnt;
         entry_cnt.store(0);
 
+        std::atomic_int log_cnt;
+        log_cnt.store(0);
+
         auto log_worker_func = [&, this](int thread_id) {
-            log_record_pm<key_type, value_type> *my_log = (log_record_pm<key_type, value_type> *) (pmlogs[thread_id]);
+            log_record_pm<key_type, value_type> *_log = (log_record_pm<key_type, value_type> *) (pmlogs[thread_id]);
+            log_record_pm<key_type, value_type> *my_log = (log_record_pm<key_type, value_type> *) ((char *)_log + 256);
             uint64_t size = 0;
             while (true) {
                 int lognum = entry_cnt.fetch_add(1);
@@ -2228,12 +2241,19 @@ class durable_concur_buffer_btree
                     }
                 }
             }
+
+            if (size == 0) return;
+            log_cnt.fetch_add(size);
+
             int extra_cachelines = ((size % 256) + 63) / 64;
             if (extra_cachelines >= 1) clflush(((char*)my_log) - ((size % 64) ? 0 : 64));
             if (extra_cachelines >= 2) clflush(((char*)my_log) - ((size % 64) ? 64 : 128));
             if (extra_cachelines >= 3) clflush(((char*)my_log) - ((size % 64) ? 128 : 192));
             if (extra_cachelines >= 4) clflush(((char*)my_log) - ((size % 64) ? 192 : 256));
 
+            *(uint64_t *)_log = size;
+            // printf("thread %d log size = %lu\n", thread_id, size);
+            clflush(_log);
             // shirley TODO: update caracal g_pmem_info to update dptree pmlog sizes
             // mem::GetPmemPersistInfo()-> idx_pmlog_sizes [thread_id] = size / sizeof(log_record_pm<key_type, value_type>);
         };
@@ -2253,8 +2273,14 @@ class durable_concur_buffer_btree
         // shirley: ensure logs are flushed?
         sfence();
 
+        if (log_cnt.load() == 0) return;
+
         // shirley TODO: flush caracal's g_pmem_info cachelines that contain the dp_pmlog_sizes array.
         // don't flush the whole caracal g_pmem_info
+        mem::GetPmemPersistInfo()->dptree_pmlog_ep = util::Instance<felis::EpochManager>().current_epoch_nr();
+        // printf("pmlog ep = %lu\n", mem::GetPmemPersistInfo()->dptree_pmlog_ep);
+        clflush(mem::GetPmemPersistInfo());
+        sfence();
 
         return;
     }
@@ -2283,7 +2309,8 @@ class durable_concur_buffer_btree
         auto log_worker_func = [&, this](int thread_id) {
             auto my_start = thread_its[thread_id];
             auto my_end = thread_its[thread_id + 1];
-            log_record_pm<key_type, value_type> *my_log = (log_record_pm<key_type, value_type> *) (pmlogs[thread_id]);
+            log_record_pm<key_type, value_type> *_log = (log_record_pm<key_type, value_type> *) (pmlogs[thread_id]);
+            log_record_pm<key_type, value_type> *my_log = (log_record_pm<key_type, value_type> *) ((char *)_log + 256);
             uint64_t size = 0;
             while (my_start != my_end) {
                 // log my_start's entry
@@ -2309,6 +2336,10 @@ class durable_concur_buffer_btree
             if (extra_cachelines >= 2) clflush(((char*)my_log) - ((size % 64) ? 64 : 128));
             if (extra_cachelines >= 3) clflush(((char*)my_log) - ((size % 64) ? 128 : 192));
             if (extra_cachelines >= 4) clflush(((char*)my_log) - ((size % 64) ? 192 : 256));
+
+            *(uint64_t *)_log = size;
+            // printf("thread %d log size = %lu\n", thread_id, size);
+            clflush(_log);
         };
 
         ThreadPool *th_pool = new ThreadPool(pmem_log_worker_num);
@@ -2333,6 +2364,12 @@ class durable_concur_buffer_btree
 
         // shirley: ensure logs are flushed?
         sfence();
+
+        mem::GetPmemPersistInfo()->dptree_pmlog_ep = util::Instance<felis::EpochManager>().current_epoch_nr();
+        // printf("pmlog ep = %lu\n", mem::GetPmemPersistInfo()->dptree_pmlog_ep);
+        clflush(mem::GetPmemPersistInfo());
+        sfence();
+
         return;
     }
 
@@ -2355,9 +2392,9 @@ class durable_concur_buffer_btree
         }
         auto btree_leaf_insert_func = [&key, &value, this]() {
             // shirley: try removing logs completely?
-            // *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
-            // int id = std::hash<key_type>()(key) % stripes;
-            // logs[id]->append_and_flush(local_record);
+            *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
+            int id = std::hash<key_type>()(key) % stripes;
+            logs[id]->append_and_flush(local_record);
 
             // shirley: increment buffer size
             actual_size.fetch_add(1);
@@ -2377,9 +2414,9 @@ class durable_concur_buffer_btree
         }
         auto btree_leaf_insert_func = [&key, &value, this]() {
             // shirley: try removing logs completely?
-            // *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
-            // int id = std::hash<key_type>()(key) % stripes;
-            // logs[id]->append_and_flush(local_record);
+            *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
+            int id = std::hash<key_type>()(key) % stripes;
+            logs[id]->append_and_flush(local_record);
             
             // shirley: increment buffer size
             actual_size.fetch_add(1);
