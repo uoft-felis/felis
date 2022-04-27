@@ -24,7 +24,11 @@ class DummySliceRouter {
 
 struct RMWStruct {
   uint64_t keys[kTotal];
+#ifdef YCSB_SMALL_VALUES
+  char write_data[72*10];
+#else
   char write_data[100*10];
+#endif
 };
 
 struct RMWState {
@@ -50,9 +54,13 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
 {
   RMWStruct s;
 
+  // shirley note: kNrMSBContentionKey (most sig bit) adjusts the # of keys that are contended?
+  // shirley note: g_contention_key sets the number (out of kTotal = 10) 
+  // shirley note: of accesses to contended keys per transaction. default is 0
+
   int nr_lsb = 63 - __builtin_clzll(g_table_size) - kNrMSBContentionKey;
   size_t mask = 0;
-  if (nr_lsb > 0) mask = (1 << nr_lsb) - 1;
+  if (nr_lsb > 0) mask = (1 << nr_lsb) - 1; // shirley note: mask contains nr_lsb bits of 1 starting from LSB.
 
   for (int i = 0; i < kTotal; i++) {
  again:
@@ -68,6 +76,12 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
       if (s.keys[i] == s.keys[j])
         goto again;
   }
+
+  // unsigned int probe_keys[10];
+  // for (int i = 0; i < kTotal; i++){
+  //   probe_keys[i] = s.keys[i];
+  // }
+  // felis::probes::RowSize{probe_keys}();
 
   return s;
 }
@@ -164,8 +178,13 @@ void RMWTxn::Prepare()
 void RMWTxn::WriteRow(TxnRow vhandle)
 {
   auto dbv = vhandle.Read<Ycsb::Value>();
+#ifdef YCSB_SMALL_VALUES
+  dbv.v.assign(Client::zero_data, 72);
+  dbv.v.resize_junk(72);
+#else
   dbv.v.assign(Client::zero_data, 100);
   dbv.v.resize_junk(999);
+#endif
   vhandle.Write(dbv);
 }
 
@@ -230,11 +249,20 @@ void RMWTxn::Run()
                 TxnRow vhandle = handle(state->rows[i]);
                 auto dbv = vhandle.Read<Ycsb::Value>();
 
+#ifdef YCSB_SMALL_VALUES
+                static thread_local volatile char buffer[72];
+                std::copy(dbv.v.data(), dbv.v.data() + 72, buffer);
+#else
                 static thread_local volatile char buffer[100];
                 std::copy(dbv.v.data(), dbv.v.data() + 100, buffer);
+#endif
 
                 if (i < kTotal - Client::g_extra_read) {
+#ifdef YCSB_SMALL_VALUES
+                  dbv.v.resize_junk(72);
+#else
                   dbv.v.resize_junk(90);
+#endif
                   vhandle.Write(dbv);
                   if (Client::g_dependency && i < kTotal - Client::g_extra_read - 1) {
                     state->signal.fetch_add(1);
@@ -255,7 +283,11 @@ void RMWTxn::Run()
           const auto &[k, i, _1, _2, _part] = t;
           if (i > kTotal - Client::g_extra_read) return;
 
+#ifdef YCSB_SMALL_VALUES
+          static thread_local volatile char buffer[72];
+#else
           static thread_local volatile char buffer[100];
+#endif
 
           if (i == kTotal - Client::g_extra_read) {
             // All reads here
@@ -266,7 +298,11 @@ void RMWTxn::Run()
 
                   TxnRow vhandle = handle(state->rows[i]);
                   auto v = vhandle.Read<Ycsb::Value>();
+#ifdef YCSB_SMALL_VALUES
+                  std::copy(v.v.data(), v.v.data() + 72, buffer);
+#else
                   std::copy(v.v.data(), v.v.data() + 100, buffer);
+#endif
                 });
           } else {
             root->AttachRoutine(
@@ -281,9 +317,15 @@ void RMWTxn::Run()
                   TxnRow vhandle = handle(state->rows[i]);
                   auto v = vhandle.Read<Ycsb::Value>();
 
+#ifdef YCSB_SMALL_VALUES
+                  std::copy(v.v.data(), v.v.data() + 72, buffer);
+
+                  v.v.resize_junk(72);
+#else
                   std::copy(v.v.data(), v.v.data() + 100, buffer);
 
                   v.v.resize_junk(90);
+#endif
                   vhandle.Write(v);
                   state->signal.fetch_add(1);
                 }, part);
@@ -328,7 +370,11 @@ void YcsbLoader::Run()
       Ycsb::Key dbk;
       Ycsb::Value dbv;
       dbk.k = i;
+#ifdef YCSB_SMALL_VALUES
+      dbv.v.resize_junk(72);
+#else
       dbv.v.resize_junk(999);
+#endif
       auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeView(buf));
       // TODO: slice mapping table stuff?
       // shirley: initial database should be allocated from inline pmem.
