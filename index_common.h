@@ -32,7 +32,7 @@ class Checkpoint {
 
 class Table {
  public:
-  static constexpr size_t kAutoIncrementZones = 2048;
+  static constexpr size_t kAutoIncrementZones = 2571;
 
  protected:
   int id;
@@ -77,13 +77,13 @@ class Table {
   }
 
   void PersistAutoIncrement(uint64_t *pmemaddr) {
-    for (unsigned int i = 0; i < 171; i++) {
+    for (unsigned int i = 0; i < 2571; i++) {
       pmemaddr[i] = auto_increment_cnt[i].load();
     }
   }
 
   void RecoverAutoIncrement(uint64_t *pmemaddr) {
-    for (unsigned int i = 0; i < 171; i++) {
+    for (unsigned int i = 0; i < 2571; i++) {
       auto_increment_cnt[i].store(pmemaddr[i]);
     }
   }

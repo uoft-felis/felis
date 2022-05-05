@@ -87,7 +87,7 @@ class VarStr final {
     }
     else {
       //shirley probe
-      // probes::VarStrNewPmem{NewSize(length)}();
+      // probes::VarStrNewPmem{(int)NewSize(length)}();
       //shirley: use persistent pool 
       // ins = (VarStr *)mem::GetTransientPool().Alloc(NewSize(length));
       ins = (VarStr *)mem::GetExternalPmemPool().Alloc(true);
@@ -109,6 +109,8 @@ class VarStr final {
     // shirley: probe
     // probes::RegionPoolVarstr{(-1 * (long long)(sizeof(VarStr) +
     // ins->len))}();
+
+    // probes::VarStrNewPmem{-1 * (int)NewSize(ins->len)}();
 
     //shirley: I forgot to change to persistent pool before?? Assuming always free persistent pool, don't free transient
     //mem::GetDataRegion().Free(ptr, ins->region_id, sizeof(VarStr) + ins->len);

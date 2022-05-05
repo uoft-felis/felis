@@ -158,7 +158,12 @@ void McBmLoaderRecovery::DoLoadRecovery() {
     void *large_buf = alloca(1024);
     auto &mgr = util::Instance<felis::TableManager>();
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    uint64_t curr_ep = util::Instance<felis::EpochManager>().current_epoch_nr();
+    
+    // uint64_t curr_ep_stale = util::Instance<EpochManager>().current_epoch_nr();
+    uint64_t curr_ep = (mem::GetPmemPersistInfo()->largest_sid >> 32) + 1;
+    // shirley: epoch manager haven't advanced yet.
+    // printf("EpochManager ep = %lu, pmem ep = %lu\n", curr_ep_stale, curr_ep);
+
     mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
     uint8_t *data = vhandles_brk->get_data();
     uint64_t *ring_buffer = vhandles_brk->get_ring_buffer(); 

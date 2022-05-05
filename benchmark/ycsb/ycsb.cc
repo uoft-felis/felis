@@ -11,7 +11,7 @@ namespace ycsb {
 using namespace felis;
 
 static constexpr int kTotal = 10;
-static constexpr int kNrMSBContentionKey = 6;
+static constexpr int kNrMSBContentionKey = 7;
 
 class DummySliceRouter {
  public:
@@ -415,7 +415,12 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
   if (felis::Options::kRecovery) {
     void *large_buf = alloca(1024);
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    uint64_t curr_ep = util::Instance<EpochManager>().current_epoch_nr();
+
+    // uint64_t curr_ep_stale = util::Instance<EpochManager>().current_epoch_nr();
+    uint64_t curr_ep = (mem::GetPmemPersistInfo()->largest_sid >> 32) + 1;
+    // shirley: epoch manager haven't advanced yet.
+    // printf("EpochManager ep = %lu, pmem ep = %lu\n", curr_ep_stale, curr_ep);
+
     mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
     uint8_t *data = vhandles_brk->get_data();
     uint64_t *ring_buffer = vhandles_brk->get_ring_buffer(); 
@@ -472,7 +477,7 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
   return;
 }
 
-size_t Client::g_table_size = 8388607; // 10000000;
+size_t Client::g_table_size = 16777215; // 8388607; // 10000000; // 16777215 = 16M - 1 // 33554431 = 32M - 1 // 134217727 = 2^27 - 1 = 128M
 double Client::g_theta = 0.00;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;

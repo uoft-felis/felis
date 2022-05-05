@@ -781,8 +781,8 @@ namespace mem {
   }
 
   static ParallelBrkWFree g_external_pmem_pool;
-  // shirley test: for DRAM only, set to 472 MB for tpcc.
-  static size_t kExternalPmemPoolSize = ((size_t)1024)*1024*1024;// ((size_t)1280)*1024*1024; // ((size_t)472)*1024*1024; // 472 MB // ((size_t)2)*1024*1024*1024; // 1 GB
+  // shirley test: adjust when running all-DRAM experiment.
+  static size_t kExternalPmemPoolSize = ((size_t)1024)*1024*1024*3;// ((size_t)1280)*1024*1024; // ((size_t)472)*1024*1024; // 472 MB // ((size_t)2)*1024*1024*1024; // 1 GB
   static size_t kExternalPmemValuesSize = 1024; // 1 KB
   ParallelBrkWFree &GetExternalPmemPool() { return g_external_pmem_pool; }
 
@@ -1060,8 +1060,8 @@ namespace mem {
       else {
         // shirley test
         p_buf = (uint8_t *)AllocPersistentMemory(alloc_type, brk_pool_size, i, -1, hint_addr);
-        printf("ParallelBrkWFree type %d core %d p_buf = %p\n", alloc_type, i, p_buf);
         // p_buf = (uint8_t *)AllocMemory(alloc_type, brk_pool_size);
+        printf("ParallelBrkWFree type %d core %d p_buf = %p\n", alloc_type, i, p_buf);
       }
       
       // alloc ring buffers

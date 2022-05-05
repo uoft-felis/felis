@@ -15,9 +15,9 @@ using felis::IndexInfo;
 using felis::VHandle;
 
 Config::Config() {
-  nr_accounts = 1800000; // original 18000
+  nr_accounts = 18000000; // original 18000 // 1800000
   hotspot_percent = 90; // 90% txns to hotspots
-  hotspot_number = 100000; // original 1000 // #hotspot accounts out of nr_accounts
+  hotspot_number = 10000; // 1000000; // original 1000 // #hotspot accounts out of nr_accounts
 }
 
 Config g_smallbank_config;
@@ -166,7 +166,12 @@ void SmallBankLoaderRecovery::DoLoadRecovery() {
     void *large_buf = alloca(1024);
     auto &mgr = util::Instance<felis::TableManager>();
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
-    uint64_t curr_ep = util::Instance<EpochManager>().current_epoch_nr();
+
+    // uint64_t curr_ep_stale = util::Instance<EpochManager>().current_epoch_nr();
+    uint64_t curr_ep = (mem::GetPmemPersistInfo()->largest_sid >> 32) + 1;
+    // shirley: epoch manager haven't advanced yet.
+    // printf("EpochManager ep = %lu, pmem ep = %lu\n", curr_ep_stale, curr_ep);
+
     mem::BrkWFree *vhandles_brk = felis::VHandle::inline_pool.get_pool(core_id);
     uint8_t *data = vhandles_brk->get_data();
     uint64_t *ring_buffer = vhandles_brk->get_ring_buffer(); 

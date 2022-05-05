@@ -311,6 +311,8 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         dram_version->val = nullptr; // (VarStr *)0x12345678;
         mem::GetDataRegion().Free(dramval, init_val->get_region_id(), varstr_sz);
         dram_version->ep_num = current_epoch_nr << 32;
+        // printf("AppendNewVersion: intializing version array of vhdl %p from dram cache %lu_%p\n",
+        //         vhandle, versions_ptr(versions)[0], versions_ptr(versions)[initial_cap]);
         // felis::probes::NumReadWriteDramPmem{0,1,1}();
       }
       else{
@@ -325,6 +327,8 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
         if (ptr2 && sid2_valid_for_recovery){
           // auto sid2 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType2);
           versions_ptr(versions)[initial_cap] = (uint64_t)ptr2;
+          // printf("AppendNewVersion: intializing version array of vhdl %p from ptr2 %lu_%p\n",
+          //       vhandle, versions_ptr(versions)[0], versions_ptr(versions)[initial_cap]);
         }
         else{
           auto sid1 = vhandle->GetInlineSid(felis::SortedArrayVHandle::SidType1);
@@ -333,6 +337,8 @@ void IndexInfo::AppendNewVersion(uint64_t sid, uint64_t epoch_nr,
           // shirley: need to set sid here bc maybe this row was inserted in current epoch.
           // need the correct sid (not just 0) for correct range scan during insert (delivery txn, first_version()).
           versions_ptr(versions)[0] = (uint64_t)sid1;
+          // printf("AppendNewVersion: intializing version array of vhdl %p from ptr1 %lu_%p\n",
+          //       vhandle, versions_ptr(versions)[0], versions_ptr(versions)[initial_cap]);
         }
         if (!felis::Options::kDisableDramCache) {
           auto temp_dram_version = (DramVersion*) mem::GetDataRegion().Alloc(sizeof(DramVersion));
@@ -420,6 +426,13 @@ found:
   */
 
   pos = --p - versions_ptr(versions);
+  // printf("WithVersion: sid%lu found pos = %d\n", sid, pos);
+  // for (int dd = 0; dd < size_get(versions); dd++) {
+  //   printf("version array [%d] : %p\n", dd*2, versions_ptr(versions)[dd*2]);
+  //   printf("version array [%d] : %p\n", dd*2 + 1, versions_ptr(versions)[dd*2+1]);
+  //   // printf("WithVersion: version array [%d] = %lu_%p\n",
+  //   //         dd, versions_ptr(versions)[dd], *(versions_ptr(versions) + dd + capacity_get(versions)));
+  // }
   return &objects[pos];
 }
 
@@ -438,6 +451,7 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
   // shirley: if versions is nullptr, read from sid1/sid2
   auto current_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
   if (versions_ep != current_epoch_nr)  {
+    // printf("ReadWithVersion: sid%lu no version array, reading from cache/sid1/sid2\n", sid);
     if (felis::Options::kDisableDramCache) {
       auto ptr2 = vhandle->GetInlinePtr(felis::SortedArrayVHandle::SidType2);
       if (ptr2) {
@@ -501,6 +515,7 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
         util::Instance<GC_Dram>().AddRow(this, current_epoch_nr);
       }
       lock.Unlock(&qnode);
+      // if (!dram_version->val) printf("ReadWithVersion: returning null dram_version->val !!!\n");
       return dram_version->val;
     }
     
@@ -538,6 +553,13 @@ VarStr *IndexInfo::ReadWithVersion(uint64_t sid, bool is_insert) {
     sync().WaitForData(addr, sid, versions_ptr(versions)[pos], (void *)vhandle);
   }
 
+  // if (!(*addr)) printf("ReadWithVersion: sid%lu returning null *addr !!!\n", sid);
+  // printf("ReadWithVersion: sid%lu read from vhdl %p version array pos = %d, *addr = %p, ptr1 = %p, ptr2 = %p\n",
+  //         sid, vhandle, pos, *addr, vhandle->GetInlinePtr(SortedArrayVHandle::SidType1), vhandle->GetInlinePtr(SortedArrayVHandle::SidType2));
+  // for (int dd = 0; dd < size_get(versions); dd++) {
+  //   printf("version array [%d] : %p\n", dd*2, versions_ptr(versions)[dd*2]);
+  //   printf("version array [%d] : %p\n", dd*2 + 1, versions_ptr(versions)[dd*2+1]);
+  // }
   return (VarStr *)*addr;
 }
 

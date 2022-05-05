@@ -57,6 +57,9 @@ size_t OSMemory::AlignLength(size_t length)
   return length;
 }
 
+// static uint64_t total_huge = 0;
+// static uint64_t total_small = 0;
+
 void *OSMemory::Alloc(size_t length, int numa_node, bool on_demand)
 {
   int flags = MAP_ANONYMOUS | MAP_PRIVATE;
@@ -66,8 +69,20 @@ void *OSMemory::Alloc(size_t length, int numa_node, bool on_demand)
   if (length >= 2 << 20) flags |= MAP_HUGETLB;
 
   void *mem = mmap(nullptr, length, prot, flags, (int) mem_map_desc, 0);
-  if (mem == MAP_FAILED)
+  if (mem == MAP_FAILED) {
+    // printf("os_linux.cc: Alloc FAILED for size %lu (huge: %d)\n", length, (flags & MAP_HUGETLB) ? 1 : 0);
     return nullptr;
+  }
+  // else {
+  //   if (flags & MAP_HUGETLB) {
+  //     total_huge += length;
+  //   }
+  //   else {
+  //     total_small += length;
+  //   }
+  //   printf("os_linux.cc: Alloc SUCCESS for size %lu (huge: %d). total: (h%lu, s%lu)\n", 
+  //           length, (flags & MAP_HUGETLB) ? 1 : 0, total_huge, total_small);
+  // }
 
   if (numa_node != -1) BindMemory(mem, length, numa_node);
   if (!on_demand) LockMemory(mem, length);

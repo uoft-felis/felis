@@ -417,9 +417,9 @@ size_t GC::CollectPmem(VHandle *handle, uint64_t cur_epoch_nr, size_t limit) {
 
   //shirley pmem shirley test: flush cache after GC
   _mm_clwb((char *)handle);
-  // _mm_clwb(((char *)handle) + 64);
-  // _mm_clwb(((char *)handle) + 128);
-  // _mm_clwb(((char *)handle) + 192);
+  // // _mm_clwb(((char *)handle) + 64);
+  // // _mm_clwb(((char *)handle) + 128);
+  // // _mm_clwb(((char *)handle) + 192);
 
   return 1;
 }

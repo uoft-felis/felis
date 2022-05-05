@@ -135,7 +135,7 @@ struct MemAllocParallelBrkPool {
 };
 
 struct VarStrNewPmem {
-  size_t num_bytes;
+  int num_bytes;
   void operator()() const;
 };
 

@@ -112,11 +112,13 @@ template <> void OnProbe(felis::probes::MemAllocParallelBrkPool p) {
 
 //shirley: # versions allocated through varstr new use_pmem=true, total bytes allocated for them
 static std::mutex varstr_new_pmem_m;
-static size_t total_varstr_new_pmem_bytes = 0;
+static int total_varstr_new_pmem_bytes = 0;
+static int max_varstr_new_pmem_bytes = 0;
 static unsigned long total_varstr_new_pmem_number = 0;
 template <> void OnProbe(felis::probes::VarStrNewPmem p) {
   std::lock_guard _(varstr_new_pmem_m);
-  total_varstr_new_pmem_bytes += p.num_bytes;
+  total_varstr_new_pmem_bytes += (p.num_bytes > 0) ? p.num_bytes : 0;
+  max_varstr_new_pmem_bytes += p.num_bytes;
   total_varstr_new_pmem_number += 1;
 }
 
@@ -382,7 +384,8 @@ ProbeMain::~ProbeMain()
   // }
   // std::cout << std::endl;
 
-  // std::cout << "Total Bytes VarStr::New use_pmem=true: " << total_varstr_new_pmem_bytes << std::endl;
+  std::cout << "Total Bytes VarStr::New use_pmem=true: " << total_varstr_new_pmem_bytes 
+            << " (max: " << max_varstr_new_pmem_bytes << ")" << std::endl;
   // std::cout << "Total Number VarStr::New use_pmem=true: " << total_varstr_new_pmem_number << std::endl;
   // std::cout << std::endl;
 

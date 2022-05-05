@@ -84,6 +84,7 @@ for controller:
     java -jar out/FelisController/assembly/dest/out.jar config.json
 for code:
     buck-out/gen/db#release -c 127.0.0.1:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
+    (controller local) buck-out/gen/db#release -c 127.0.0.1:43022 -n host1 -w tpcc -Xcpu8 -Xmem16G
 
 for ycsb, need to run with 17G (idk why)
 ```
