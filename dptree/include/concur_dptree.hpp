@@ -2219,7 +2219,7 @@ class durable_concur_buffer_btree
                 for (int i = (int)pages.size() - 1; i >= 0; --i) {
                     log_page<64 * 1024> * p = pages[i];
                     size_t off = 0;
-                    while (off + sizeof(log_record<key_type, value_type>) <= log_page<64 * 1024>::effective_storage_size) {
+                    while (off + sizeof(log_record<key_type, value_type>) <= std::min((int)(p->off), log_page<64 * 1024>::effective_storage_size)) {
                         log_record<key_type, value_type>  * rp = reinterpret_cast<log_record<key_type, value_type> *>(p->storage + off);
                         // log rp's entry
                         *my_log = log_record_pm<key_type, value_type>(
@@ -2254,8 +2254,6 @@ class durable_concur_buffer_btree
             *(uint64_t *)_log = size;
             // printf("thread %d log size = %lu\n", thread_id, size);
             clflush(_log);
-            // shirley TODO: update caracal g_pmem_info to update dptree pmlog sizes
-            // mem::GetPmemPersistInfo()-> idx_pmlog_sizes [thread_id] = size / sizeof(log_record_pm<key_type, value_type>);
         };
 
         ThreadPool *th_pool = new ThreadPool(pmem_log_worker_num);
