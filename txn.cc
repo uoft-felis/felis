@@ -182,6 +182,9 @@ bool BaseTxn::BaseTxnRow::WriteAbort() {
       _mm_clwb((char *)vhandle + 192);
       //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
       
+      // shirley temp: for smallbank flush first line of vhandle and val (inline).
+      // _mm_clwb(val);
+
       return result;
     }
   }

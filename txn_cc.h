@@ -10,6 +10,9 @@
 #include "contention_manager.h"
 #include "piece_cc.h"
 
+// shirley temp
+#include <libpmem.h>
+
 namespace felis {
 
 // C++ api layer.
@@ -324,6 +327,10 @@ class Txn : public BaseTxn {
         _mm_clwb((char *)vhandle + 192);
         //shirley: flush val in case it's external? need to check size, might be larger than 64 bytes
         
+        // shirley temp: for ycsb all inlined, flush val that's within vhandle
+        // shirley: commented out vhandle flush above except first bc flushing inlined val manually
+        // pmem_flush(val, val_sz);
+
         return result;
       }
       else {
@@ -413,6 +420,10 @@ class Txn : public BaseTxn {
       _mm_clwb((char *)vhandle + 128);
       _mm_clwb((char *)vhandle + 192);
       //shirley: don't need flush val. first insert always inlined in miniheap (max varstr is 83 bytes?)
+
+      // shirley temp: for ycsb all inlined, flush val that's within vhandle
+      // shirley: commented out vhandle flush except first above bc flushing inlined val here
+      // pmem_flush(val, sizeof(VarStr) + o.EncodeSize());
 
       //shirley: remove call to WriteVarStr, simply set vhandle->ptr1 to the result of o.EncodeToPtrOrDefault
       return true;

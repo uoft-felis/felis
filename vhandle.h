@@ -53,7 +53,7 @@ class BaseVHandle {
   static constexpr size_t kSize = 128;
   //Corey: Inlineded version values in new vhandle layout
   //Corey: Total size to be used for VHandle + Inline for PMem design
-  static constexpr size_t kInlinedSize = 256;//vhandleMetadataSize + inlineTwoVersionArraySize +
+  static constexpr size_t kInlinedSize = 256; // 2304; // 256;//vhandleMetadataSize + inlineTwoVersionArraySize +
                 //inlineMiniHeapMask1Size + inlineMiniHeapMask2Size +
                 //inlineMiniHeapSize; // Should be 256
   //shirley TODO: (un-inlined) pool can be removed bc all vhandles are inlined
@@ -265,7 +265,7 @@ public:
   };
 
   bool is_inline_ptr(uint8_t *ptr){
-    if (ptr < (uint8_t *)this || ptr >= (((uint8_t *)this) + 256)) {
+    if (ptr < (uint8_t *)this || ptr >= (((uint8_t *)this) + kInlinedSize)) {
       return false;
     }
     return true;
@@ -355,7 +355,7 @@ public:
 
   //Corey: Free ptr1 (only if it’s external pmem call Persistent Pool. free()  )
   void FreePtr1() {
-    if (ptr1 < (uint8_t *) this || ptr1 >= ((uint8_t *) this + 256)) {
+    if (ptr1 < (uint8_t *) this || ptr1 >= ((uint8_t *) this + kInlinedSize)) {
       delete (VarStr *)ptr1;
     }
     return;
@@ -409,6 +409,8 @@ public:
   uint8_t *AllocFromInline(size_t sz, SidType sidType = SidType1) {
     // printf("Size: %ld\n", sz);
     sz = util::Align(sz, 8); // shirley note: need to have align or else seg fault.
+    // shirley temp: for ycsb inline set to 1024 by default.
+    // sz = util::Align(sz, 1024);
 
     // Check requests size fits in miniheap
     if (sz > (MiniHeapSize)) {

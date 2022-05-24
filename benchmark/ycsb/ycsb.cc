@@ -1,4 +1,4 @@
-#define YCSB_SMALL_VALUES 1
+// #define YCSB_SMALL_VALUES 1
 
 #include "ycsb.h"
 #include "index.h"
@@ -477,7 +477,7 @@ void YcsbLoaderRecovery::DoLoadRecovery() {
   return;
 }
 
-size_t Client::g_table_size = 16777215; // 8388607; // 10000000; // 16777215 = 16M - 1 // 33554431 = 32M - 1 // 134217727 = 2^27 - 1 = 128M
+size_t Client::g_table_size = 16777215; // 67108863; // 16777215; // 8388607; // 10000000; // 16777215 = 16M - 1 // 33554431 = 32M - 1 // 134217727 = 2^27 - 1 = 128M
 double Client::g_theta = 0.00;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;

@@ -44,6 +44,14 @@ struct Account {
   static constexpr auto kIndexArgs = std::make_tuple(true);
 
   using IndexBackend = felis::MasstreeIndex;
+  
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    auto x = (uint8_t *) k.data();
+    return *(uint32_t *) x;
+  }
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 18000000, true);
+  // using IndexBackend = felis::HashtableIndex;
+  
   using Key = sql::AccountKey;
   using Value = sql::AccountValue;
 };
@@ -53,6 +61,14 @@ struct Saving {
   static constexpr auto kIndexArgs = std::make_tuple(true);
 
   using IndexBackend = felis::MasstreeIndex;
+
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    auto x = (uint8_t *) k.data();
+    return *(uint32_t *) x;
+  }
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 18000000, true);
+  // using IndexBackend = felis::HashtableIndex;
+
   using Key = sql::SavingKey;
   using Value = sql::SavingValue;
 };
@@ -62,6 +78,14 @@ struct Checking {
   static constexpr auto kIndexArgs = std::make_tuple(true);
 
   using IndexBackend = felis::MasstreeIndex;
+
+  static uint32_t HashKey(const felis::VarStrView &k) {
+    auto x = (uint8_t *) k.data();
+    return *(uint32_t *) x;
+  }
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 18000000, true);
+  // using IndexBackend = felis::HashtableIndex;
+  
   using Key = sql::CheckingKey;
   using Value = sql::CheckingValue;
 };

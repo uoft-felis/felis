@@ -32,7 +32,7 @@ public:
 class BaseIndexInfo {
 public:
   static constexpr size_t VerArrayInfoSize = 32;
-  static constexpr size_t kIndexInfoSize = 40; // shirley: 40 for index info, 72 if using hash index?
+  static constexpr size_t kIndexInfoSize = 40; // shirley: 40 for index info, 72 if using hash index
   static mem::ParallelSlabPool pool;
   static void InitPool();
   static void Quiescence() { pool.Quiescence(); }

@@ -2,6 +2,8 @@
 #include "felis_probes.h"
 #include "opts.h"
 
+#include <libpmem.h>
+
 using util::Instance;
 
 namespace felis {
@@ -58,8 +60,13 @@ void InitVersion(felis::IndexInfo *handle, int key_0, int key_1, int key_2, int 
   _mm_clwb(((char *)p_vhandle) + 64);
   _mm_clwb(((char *)p_vhandle) + 128);
   _mm_clwb(((char *)p_vhandle) + 192);
+  //shirley: don't need to flush miniheap
   //shirley: don't need flush obj. first insert always inlined in miniheap (max varstr is 83 bytes?)
 
+  // shirley temp: for ycsb all inlined, flush val that's within vhandle
+  // commented out above flush and use this instead
+  // pmem_flush(p_vhandle, 2560); // slower
+  // pmem_flush(obj, obj_len); // faster. only keep first cache line flush of vhandle above.
 }
 
 // shirley: modify this to allocate new IndexInfo that contains ptr to new vhandle

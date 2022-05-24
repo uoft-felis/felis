@@ -668,6 +668,8 @@ namespace mem {
     int k = SizeToClass(sz);
     if (k < 0) return nullptr;
 
+    // printf("size %ld, class %d\n", sz, k);
+
     auto &p = pools[k];
     void *r = nullptr;
 
@@ -782,7 +784,7 @@ namespace mem {
 
   static ParallelBrkWFree g_external_pmem_pool;
   // shirley test: adjust when running all-DRAM experiment.
-  static size_t kExternalPmemPoolSize = ((size_t)1024)*1024*1024*3;// ((size_t)1280)*1024*1024; // ((size_t)472)*1024*1024; // 472 MB // ((size_t)2)*1024*1024*1024; // 1 GB
+  static size_t kExternalPmemPoolSize = ((size_t)1024)*1024*1024*5;// ((size_t)1280)*1024*1024; // ((size_t)472)*1024*1024; // 472 MB // ((size_t)2)*1024*1024*1024; // 1 GB
   static size_t kExternalPmemValuesSize = 1024; // 1 KB
   ParallelBrkWFree &GetExternalPmemPool() { return g_external_pmem_pool; }
 
@@ -800,7 +802,7 @@ namespace mem {
   static PmemPersistInfo *g_pmem_info;
   PmemPersistInfo *GetPmemPersistInfo() { return g_pmem_info; }
   void InitPmemPersistInfo() {
-    void *fixed_mmap_addr = (void *) 0x7FD800000000; // nullptr;
+    void *fixed_mmap_addr = (void *) 0x7F8000000000; // nullptr;
     if (felis::Options::kRecovery) {
       MapPersistentMemory(MemAllocType::PmemInfo, 0, sizeof(PmemPersistInfo), fixed_mmap_addr);
       g_pmem_info = (PmemPersistInfo *) fixed_mmap_addr;
@@ -822,7 +824,7 @@ namespace mem {
   }
 
   static uint8_t **g_txn_input_log; // pointer to an array of input logs
-  static uint64_t txn_input_log_size = 32*1024*1024; // 32 MB
+  static uint64_t txn_input_log_size = 256*1024*1024; // 32*1024*1024; // 32 MB
   uint8_t **GetTxnInputLog() { return g_txn_input_log; }
   void InitTxnInputLog() {
     if (!felis::Options::kLogInput && !felis::Options::kRecovery) {
@@ -841,7 +843,9 @@ namespace mem {
     }
     else {
       for (int i = 0; i < num_cores; i++) {
+        // shirley test
         g_txn_input_log[i] = (uint8_t *) AllocPersistentMemory(TxnInputLog, txn_input_log_size, i, -1, nullptr, false);
+        // g_txn_input_log[i] = (uint8_t *) AllocMemory(TxnInputLog, txn_input_log_size);
       }
     }
   }

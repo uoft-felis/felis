@@ -534,7 +534,7 @@ void Loader<LoaderType::Warehouse>::DoLoad()
       }
       // shirley: reset sid2 if was written
       if (vhdl_sid2 >> 32 == curr_ep) {
-        // continue;
+        // continue; // shirley: for measuring revert time
         vhdl_row->ResetSid2();
         //shirley pmem shirley test
         _mm_clwb(vhdl_row);

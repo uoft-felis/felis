@@ -184,6 +184,62 @@ IndexInfo *HashtableIndex::Search(const VarStrView &k)
   return nullptr;
 }
 
+IndexInfo *HashtableIndex::RecoverySearchOrCreate(const VarStrView &k, void *vhandle)
+{
+  auto idx = hash(k) % nr_buckets;
+  HashEntry *first = (HashEntry *) (table + idx * row_size() + kOffset);
+
+  // if element is uninitialized, use the inlined space immediately 
+  // this doesn't allocate from pmem because
+  if (first->next == kNextForUninitialized) {
+    HashEntry *old = kNextForUninitialized;
+    if (first->next.compare_exchange_strong(old, kNextForInitializing)) {
+      first->key = HashEntry::Convert(k);
+      auto row = first->value();
+
+      new (row) IndexInfo(vhandle);
+
+      // new (row) SortedArrayVHandle();
+      // row->capacity = 1; //shirley: removed this bc we already set it in constructor
+      // shirley: need to initialize our fields here as well, because here just
+      // calls vhandle constructor without initializing required fields as in
+      // vhandle NewInline. shirley: we use inline for all tables!
+      //row->inline_used = 0;
+      
+      first->next = kNextForEnd;
+      return row;
+    }
+  }
+  while (first->next == kNextForInitializing) _mm_pause();
+
+  HashEntry *p = first, *newentry = nullptr;
+  std::atomic<HashEntry *> *parent = nullptr;
+  auto x = HashEntry::Convert(k);
+  IndexInfo *row = nullptr;
+
+  do {
+    while (p != kNextForEnd) {
+      if (p->Compare(x)) {
+        if (row) delete row;
+        return p->value();
+      }
+      parent = &p->next;
+      p = parent->load();
+    }
+
+    if (newentry == nullptr) {
+      row = NewRow(vhandle);
+      //shirley: don't let it set capacity to 1, we set it in vhandle constructor already
+      // row->capacity = 1;
+      newentry = (HashEntry *) ((uint8_t *) row + 40);
+      newentry->key = x;
+      newentry->next = kNextForEnd;
+    }
+
+  } while (!parent->compare_exchange_strong(p, newentry));
+  return row;
+}
+
 uint32_t DefaultHash(const VarStrView &k)
 {
   return XXH32(k.data(), k.length(), 0xdeadbeef);

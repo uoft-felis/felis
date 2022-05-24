@@ -119,6 +119,8 @@ struct Customer {
   static constexpr auto kTable = TableType::Customer;
   static constexpr auto kIndexArgs = std::make_tuple(true); //shirley: previously was std::make_tuple(HashKey, 8 << 20, true); //inlined was false
   using IndexBackend = felis::MasstreeIndex; //shirley: previously was felis::HashtableIndex;
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 8 << 20, true); //shirley: previously was std::make_tuple(HashKey, 64 << 9, true); //inlined was false
+  // using IndexBackend = felis::HashtableIndex; //shirley: previously was felis::HashtableIndex;
   using Key = sql::CustomerKey;
   using Value = sql::CustomerValue;
 };
@@ -147,6 +149,8 @@ struct District {
   static constexpr auto kTable = TableType::District;
   static constexpr auto kIndexArgs = std::make_tuple(true); //shirley: previously was std::make_tuple(HashKey, 64 << 9, true); //inlined was false
   using IndexBackend = felis::MasstreeIndex; //shirley: previously was felis::HashtableIndex;
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, true); //shirley: previously was std::make_tuple(HashKey, 64 << 9, true); //inlined was false
+  // using IndexBackend = felis::HashtableIndex; //shirley: previously was felis::HashtableIndex;
   using Key = sql::DistrictKey;
   using Value = sql::DistrictValue;
 };
@@ -168,6 +172,8 @@ struct Item {
   static constexpr auto kTable = TableType::Item;
   static constexpr auto kIndexArgs = std::make_tuple(true); //shirley: previously was std::make_tuple(HashKey, 2 << 20, true);
   using IndexBackend = felis::MasstreeIndex; //shirley: previously was felis::HashtableIndex;
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 2 << 20, true); //shirley: previously was std::make_tuple(HashKey, 64 << 9, true); //inlined was false
+  // using IndexBackend = felis::HashtableIndex; //shirley: previously was felis::HashtableIndex;
   using Key = sql::ItemKey;
   using Value = sql::ItemValue;
 };
@@ -220,6 +226,8 @@ struct Stock {
   static constexpr auto kTable = TableType::Stock;
   static constexpr auto kIndexArgs = std::make_tuple(true); //shirley: previously was std::make_tuple(HashKey, 16 << 20, true); //inlined was false
   using IndexBackend = felis::MasstreeIndex; //shirley: previously was felis::HashtableIndex;
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 16 << 20, true); //shirley: previously was std::make_tuple(HashKey, 64 << 9, true); //inlined was false
+  // using IndexBackend = felis::HashtableIndex; //shirley: previously was felis::HashtableIndex;
   using Key = sql::StockKey;
   using Value = sql::StockValue;
 };
@@ -243,6 +251,8 @@ struct Warehouse {
   static constexpr auto kTable = TableType::Warehouse;
   static constexpr auto kIndexArgs = std::make_tuple(true); //shirley: previously was std::make_tuple(HashKey, 64 << 9, true); //inlined was false
   using IndexBackend = felis::MasstreeIndex; //shirley: previously was felis::HashtableIndex;
+  // static constexpr auto kIndexArgs = std::make_tuple(HashKey, 64 << 9, true); //shirley: previously was std::make_tuple(HashKey, 64 << 9, true); //inlined was false
+  // using IndexBackend = felis::HashtableIndex; //shirley: previously was felis::HashtableIndex;
   using Key = sql::WarehouseKey;
   using Value = sql::WarehouseValue;
 };
