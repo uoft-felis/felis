@@ -36,6 +36,7 @@
 
 #include "../../mem.h"
 #include "../../epoch.h"
+#include "../../opts.h"
 
 #ifdef USE_PAPI
 #include <papi.h>
@@ -1694,12 +1695,14 @@ public:
 
         // 7. flip the global version
         {
-            // store in caracal pmem info
-            uint64_t gv_ep = (util::Instance<felis::EpochManager>().current_epoch_nr() << 32);
-            if (nv) gv_ep |= 0x01;
-            mem::GetPmemPersistInfo()->dptree_gv_ep = gv_ep;
-            // printf("gv epoch = %lu\n", mem::GetPmemPersistInfo()->dptree_gv_ep);
-            clflush(mem::GetPmemPersistInfo());
+            if (!felis::Options::kDptreeOriginal) {
+                // store in caracal pmem info
+                uint64_t gv_ep = (util::Instance<felis::EpochManager>().current_epoch_nr() << 32);
+                if (nv) gv_ep |= 0x01;
+                mem::GetPmemPersistInfo()->dptree_gv_ep = gv_ep;
+                // printf("gv epoch = %lu\n", mem::GetPmemPersistInfo()->dptree_gv_ep);
+                clflush(mem::GetPmemPersistInfo());
+            }
             gv = nv;
             clflush_then_sfence(&gv);
         }
@@ -1948,9 +1951,15 @@ struct log_page
     static log_page_type *new_log_page()
     {
         void *ptr = nullptr;
-        // shirley: change to DRAM.
-        auto res = posix_memalign(&ptr, cacheline_size, PageSize);
-        // auto res = nvm_dram_alloc(&ptr, cacheline_size, PageSize);
+        int res;
+        // shirley: change to DRAM log.
+        if (felis::Options::kDptreeOriginal || felis::Options::kDptreeOriginalForceMerge) {
+            res = nvm_dram_alloc(&ptr, cacheline_size, PageSize);
+        }
+        else {
+            res = posix_memalign(&ptr, cacheline_size, PageSize);
+        }
+
         if (res == 0)
         {
             return new (ptr) log_page_type();
@@ -1959,9 +1968,13 @@ struct log_page
     }
     static void delete_log_page(log_page_type *p)
     {
-        // shirley: change to DRAM.
-        free(p);
-        // nvm_dram_free(p, PageSize);
+        // shirley: change to DRAM log.
+        if (felis::Options::kDptreeOriginal || felis::Options::kDptreeOriginalForceMerge) {
+            nvm_dram_free(p, PageSize);
+        }
+        else {
+            free(p);
+        }
     }
 };
 
@@ -2384,18 +2397,26 @@ class durable_concur_buffer_btree
     {
         if (local_record == nullptr)
         {
-            // shirley: use DRAM. Not sure why use pmem for local record in the first place.
-            posix_memalign((void**)&local_record, cacheline_size, cacheline_size);
-            // nvm_dram_alloc((void**)&local_record, cacheline_size, cacheline_size);
+            if (felis::Options::kDptreeOriginal || felis::Options::kDptreeOriginalForceMerge) {
+                nvm_dram_alloc((void**)&local_record, cacheline_size, cacheline_size);
+            }
+            else {
+                // shirley: use DRAM. Not sure why use pmem for local record in the first place.
+                posix_memalign((void**)&local_record, cacheline_size, cacheline_size);
+            }
         }
         auto btree_leaf_insert_func = [&key, &value, this]() {
-            // shirley: try removing logs completely?
-            *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
-            int id = std::hash<key_type>()(key) % stripes;
-            logs[id]->append_and_flush(local_record);
 
+            // shirley: dram log
+            if (felis::Options::kDptreeDramLog || felis::Options::kDptreeOriginal || felis::Options::kDptreeOriginalForceMerge) {
+                *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
+                int id = std::hash<key_type>()(key) % stripes;
+                logs[id]->append_and_flush(local_record);
+            }
+            
             // shirley: increment buffer size
             actual_size.fetch_add(1);
+
             bloom->insert(key);
         };
         btree->insert(key, value, btree_leaf_insert_func);
@@ -2406,18 +2427,25 @@ class durable_concur_buffer_btree
     {
         if (local_record == nullptr)
         {
-            // shirley: use DRAM. Not sure why use pmem for local record in the first place.
-            posix_memalign((void**)&local_record, cacheline_size, cacheline_size);
-            // nvm_dram_alloc((void**)&local_record, cacheline_size, cacheline_size);
+            if (felis::Options::kDptreeOriginal || felis::Options::kDptreeOriginalForceMerge) {
+                nvm_dram_alloc((void**)&local_record, cacheline_size, cacheline_size);
+            }
+            else {
+                // shirley: use DRAM. Not sure why use pmem for local record in the first place.
+                posix_memalign((void**)&local_record, cacheline_size, cacheline_size);
+            }
         }
         auto btree_leaf_insert_func = [&key, &value, this]() {
-            // shirley: try removing logs completely?
-            *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
-            int id = std::hash<key_type>()(key) % stripes;
-            logs[id]->append_and_flush(local_record);
+            // shirley: dram log
+            if (felis::Options::kDptreeDramLog || felis::Options::kDptreeOriginal || felis::Options::kDptreeOriginalForceMerge) {
+                *local_record = log_record<key_type, value_type>(op_type::upsertion, key, value);
+                int id = std::hash<key_type>()(key) % stripes;
+                logs[id]->append_and_flush(local_record);
+            }
             
             // shirley: increment buffer size
             actual_size.fetch_add(1);
+            
             bloom->insert(key);
         };
         btree->upsert(key, value, should_insert_func, btree_leaf_insert_func);
@@ -2434,18 +2462,17 @@ class durable_concur_buffer_btree
         return btree->end_unsafe();
     }
 
-    size_t size() { return approx_size.load(std::memory_order_relaxed); }
+    size_t size() {
+        // shirley: this is used when determining if dptree should merge or not. 
+        // use actual size instead of approx bc approx is not being updated.
+        return actual_size.load(std::memory_order_relaxed);
+        // return approx_size.load(std::memory_order_relaxed);
+    }
     size_t capacity() { return cap; }
     size_t real_size()
     {
         // shirley: avoid using log to calculate sizes
         return actual_size;
-        // size_t c = approx_size;
-        // for (int i = 0; i < stripes; ++i)
-        // {
-        //     c += logs[i]->record_count_in_current_page();
-        // }
-        // return c;
     }
 
     typename btreeolc::BTree<key_type, value_type>::range_iterator lookup_range(const key_type & start_key) {
@@ -2630,6 +2657,10 @@ class concur_dptree
     
     void insert(const key_type &key, const value_type &value, bool check_merge_threshold = true)
     {
+        if (!check_merge_threshold) {
+            printf("DPTree: check_merge_threshold is turned off!!!\n");
+            std::abort();
+        }
         // register writer
         front_writer_local_epoch.register_to_manager(&front_writer_epoch_manager);
         buffer_btree_type *buffer_tree;
@@ -2914,8 +2945,13 @@ class concur_dptree
 
     inline bool should_merge()
     {
-        return false;
-        // return front_buffer_tree->size() >= front_buffer_tree->capacity();
+        if (felis::Options::kDptreeOriginal) {
+            return front_buffer_tree->size() >= front_buffer_tree->capacity();
+        }
+        else {
+            // shirley: don't merge based on size. manually trigger merge.
+            return false;
+        }
     }
 
     void start_merge(buffer_btree_type * buffer_tree) {
@@ -3030,6 +3066,17 @@ class concur_dptree
 
     // shirley: this function constructs the pmlog using the entries in the buffer tree leafs
     void construct_pmlog(bool use_dram_log = false) {
+        // if using original with force merge, log is already in pmem so just update pmlog ep.
+        if (felis::Options::kDptreeOriginalForceMerge) {
+            if (front_buffer_tree->real_size() != 0) {
+                mem::GetPmemPersistInfo()->dptree_pmlog_ep = util::Instance<felis::EpochManager>().current_epoch_nr();
+                // printf("pmlog ep = %lu\n", mem::GetPmemPersistInfo()->dptree_pmlog_ep);
+                _mm_clwb(mem::GetPmemPersistInfo());
+                _mm_sfence();
+            }
+            return;
+        }
+        
         if (use_dram_log) {
             front_buffer_tree->dramlog_to_pmlog();
         }

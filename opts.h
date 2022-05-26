@@ -95,6 +95,10 @@ struct Options {
   static inline const auto kPmemNaive = Option("PmemNaive", false);
   static inline const auto kDisableDramCache = Option("DisableDramCache", false);
 
+  static inline const auto kDptreeOriginal = Option("DptreeOriginal", false);
+  static inline const auto kDptreeOriginalForceMerge = Option("DptreeOriginalForceMerge", false);
+  static inline const auto kDptreeDramLog = Option("DptreeDramLog", false);
+
   static inline bool ParseExtentedOptions(std::string arg)
   {
     for (auto o: Option::g_options) {

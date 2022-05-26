@@ -667,7 +667,10 @@ void EpochClient::OnExecuteComplete()
     _mm_sfence();
 
     // shirley: persist pmem index log here before committing epoch
-    IdxLog();
+    if (!felis::Options::kDptreeOriginal) {
+      IdxLog();
+    }
+    
 
     // // shirley: crash right before commit!
     // if (cur_epoch_nr == 40) {
@@ -684,7 +687,9 @@ void EpochClient::OnExecuteComplete()
     _mm_sfence();
 
     // shirley: merge pmem index here right before initializing next epoch
-    IdxMerge();
+    if (!felis::Options::kDptreeOriginal) {
+      IdxMerge();
+    }
   }
 
   if ((cur_epoch_nr + 1 < g_max_epoch) && (!Options::kRecovery)) {

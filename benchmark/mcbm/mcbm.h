@@ -45,6 +45,7 @@ struct MBTable {
   static constexpr auto kIndexArgs = std::make_tuple(true);
 
   using IndexBackend = felis::DptreeIndex;
+  // using IndexBackend = felis::MasstreeIndex;
   using Key = sql::McbmKey;
   using Value = sql::McbmValue;
 };

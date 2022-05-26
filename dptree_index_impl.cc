@@ -145,7 +145,7 @@ void DptreeIndex::IndexMerge() {
 }
 
 void DptreeIndex::IndexLog() {
-  bool from_dram = false;
+  bool from_dram = felis::Options::kDptreeDramLog;
   ((dpt *)tree)->construct_pmlog(from_dram);
   return;
 }
