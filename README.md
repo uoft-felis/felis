@@ -40,19 +40,21 @@ Setting Things Up
 
 Felis need to use HugePages for memory allocation (to reduce
 the TLB misses). Common CSL cluster machines should have these already
-setup, and you may skip this step. The following pre-allocates 400GB
+setup, and you may skip this step. The following pre-allocates 64GB
 of HugePages. You can adjust the amount depending on your memory
 size. (Each HugePage is 2MB by default in Linux.)
 
 ```
-echo 204800 > /proc/sys/vm/nr_hugepages
+echo 32768 > /proc/sys/vm/nr_hugepages
 ```
+
+Our pmem mount directory is /mnt/pmem0. If you use a different path, you need to specify it in mem.cc lines 1185 and 1203.
 
 Run the Controller
 ----------------
 
 To run the workload, the felis-controller is needed. It is in a separate
-git repository. Please check the README in felis-controller.
+git repository https://github.com/uoft-felis/felis-controller. Please check the README in felis-controller.
 
 First, you need to enter the config for the nodes and controller, in
 `config.json` in felis-controller.
@@ -70,23 +72,8 @@ Start the database on each node
 Once the controller is initialized, on each node you can run:
 
 ```
-for controller:
-java -Dvertx.cacheDirBase=/tmp/$USER/ -jar out/FelisController/assembly/dest/out.jar config_single.json
-
-buck-out/gen/db#release -c <controller_ip>:<rpc_port> -n host1 -w tpcc -Xcpu16 -Xmem16G
-buck-out/gen/db#release -c 127.0.0.1:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
-buck-out/gen/db#release -c 142.150.234.169:3148 -n host1 -w tpcc -Xcpu16 -Xmem16G
-
-lldb -- buck-out/gen/db#debug -c 142.150.234.169:3148 -n host1 -w tpcc -Xcpu16 -Xmem16G
-
-on pmem machine:
-for controller:
-    java -jar out/FelisController/assembly/dest/out.jar config.json
-for code:
-    buck-out/gen/db#release -c 127.0.0.1:3148 -n host1 -w tpcc -Xcpu8 -Xmem16G
-    (controller local) buck-out/gen/db#release -c 127.0.0.1:43022 -n host1 -w tpcc -Xcpu8 -Xmem16G
-
-for ycsb, need to run with 17G (idk why)
+buck-out/gen/db#release -c <controller_ip>:<rpc_port> -n host1 -w tpcc -Xcpu8 -Xmem12G
+buck-out/gen/db#release -c 127.0.0.1:<rpc_port> -n host1 -w tpcc -Xcpu8 -Xmem12G
 ```
 
 `-c` is the felis-controller IP address (<rpc_port> and <http_port>
@@ -109,11 +96,6 @@ proceed:
 
 ```
 curl localhost:<http_port>/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
-curl 127.0.0.1:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
-curl 142.150.234.169:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
-
-on pmem machine:
-curl localhost:8666/broadcast/ -d '{"type": "status_change", "status": "connecting"}'
 ```
 
 Upon receiving this, the controller would broadcast to every node to
@@ -177,9 +159,3 @@ all unit tests. We use google-test. To run partial test, please look
 at
 https://github.com/google/googletest/blob/master/googletest/docs/advanced.md#running-a-subset-of-the-tests
 .
-
-
-SHIRLEY VERSION HISTORY
-=======================
-20210527:
-ECE1724 version + freelist in DRAM + CLWB
