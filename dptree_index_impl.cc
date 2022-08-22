@@ -138,15 +138,36 @@ std::vector<IndexInfo *> DptreeIndex::SearchRange(const VarStrView &start, const
 }
 
 void DptreeIndex::IndexMerge() {
-  ((dpt *)tree)->force_merge();
-  while (((dpt *)tree)->is_merging());
-  while (!(((dpt *)tree)->is_no_merge()));
+
+  // shirley: async merge
+  auto merge_func = [&](std::atomic<bool> *started) {
+      ((dpt *)tree)->force_merge(started);
+      // printf("dptree merge completed\n");
+  };
+
+  // shirley: spawn a background thread to do the merge asynchronously
+  std::atomic<bool> started(false);
+  std::thread merge_t(merge_func, &started);
+  merge_t.detach();
+  while (!started.load(std::memory_order_relaxed)) {
+  } // shirley: wait until merge is triggered before starting the next epoch.
+
+  // shirley: below is old synchronous merge.
+  // ((dpt *)tree)->force_merge();
+  // while (((dpt *)tree)->is_merging());
+  // while (!(((dpt *)tree)->is_no_merge()));
   return;
 }
 
 void DptreeIndex::IndexLog() {
   bool from_dram = felis::Options::kDptreeDramLog;
-  ((dpt *)tree)->construct_pmlog(from_dram);
+  bool use_entry_persist = felis::Options::kDptreeEntryPersist;
+  ((dpt *)tree)->construct_pmlog(use_entry_persist, from_dram);
+
+  // shirley: for async merge, ensure merge of prev epoch is complete here (since we log right before commit)
+  while (((dpt *)tree)->is_merging());
+  while (!(((dpt *)tree)->is_no_merge()));
+
   return;
 }
 

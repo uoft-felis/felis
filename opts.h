@@ -98,6 +98,7 @@ struct Options {
   static inline const auto kDptreeOriginal = Option("DptreeOriginal", false);
   static inline const auto kDptreeOriginalForceMerge = Option("DptreeOriginalForceMerge", false);
   static inline const auto kDptreeDramLog = Option("DptreeDramLog", false);
+  static inline const auto kDptreeEntryPersist = Option("DptreeEntryPersist", false);
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

@@ -9,6 +9,9 @@
 #include "mcbm_update.h"
 #include "mcbm_delete.h"
 
+#include <chrono>
+#include <thread>
+
 namespace mcbm {
 
 using felis::IndexInfo;
@@ -25,7 +28,7 @@ Config g_mcbm_config;
 
 // insert, lookup, rangescan, update, delete
 // currently don't support a mix of insert with others.
-static constexpr int kMcBmTxnMix[] = {0, 100, 0, 0, 0};
+static constexpr int kMcBmTxnMix[] = {100, 0, 0, 0, 0};
 
 
 ClientBase::ClientBase(const util::FastRandom &r)
@@ -97,7 +100,6 @@ void McBmLoader::Run()
 {
   auto &mgr = util::Instance<felis::TableManager>();
   mgr.Create<MBTable>();
-  // mgr.Create<Account>();
 
   // shirley: don't load init database if is recovery
   if (felis::Options::kRecovery) {
@@ -148,6 +150,11 @@ void McBmLoader::Run()
 
   // shirley: also trigger merge for dptree index
   mgr.Get<mcbm::MBTable>().IndexMerge();
+
+  // shirley: hack: index log ensures any existing merge completes before returning.
+  // shirley: sleep first so the merge actually started and we dont actually log anything
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  mgr.Get<mcbm::MBTable>().IndexLog();
 
   done = true;
 }

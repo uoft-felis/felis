@@ -105,6 +105,14 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t ver2_start = 0;
   uint8_t ver2_size = 0;
 
+public:
+  int table_id = -1;
+  int key_0 = -1;
+  int key_1 = -1;
+  int key_2 = -1;
+  int key_3 = -1;
+
+private:
   // shirley: used by versions? vhandle? to lock vhandle during append. 
   // shirley todo: Should move to index
   // util::MCSSpinLock lock; 
@@ -159,11 +167,11 @@ class SortedArrayVHandle : public BaseVHandle {
   SortedArrayVHandle();
 
 public:
-  int table_id = -1;
-  int key_0 = -1;
-  int key_1 = -1;
-  int key_2 = -1;
-  int key_3 = -1;
+  // int table_id = -1;
+  // int key_0 = -1;
+  // int key_1 = -1;
+  // int key_2 = -1;
+  // int key_3 = -1;
   static void operator delete(void *ptr) {
     // shirley: we currently don't ever delete vhandle
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;

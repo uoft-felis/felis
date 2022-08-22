@@ -17,7 +17,7 @@ using felis::VHandle;
 Config::Config() {
   nr_accounts = 18000000; // original 18000 // 1800000
   hotspot_percent = 90; // 90% txns to hotspots
-  hotspot_number = 10000; // 1000000; // original 1000 // #hotspot accounts out of nr_accounts
+  hotspot_number = 1000000; // 10000; // 1000000; // original 1000 // #hotspot accounts out of nr_accounts
 }
 
 Config g_smallbank_config;

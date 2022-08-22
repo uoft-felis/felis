@@ -80,7 +80,7 @@ db_headers = [
     'commit_buffer.h', 'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
     'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h',
-    'pwv_graph.h', 'dptree/include/concur_dptree.hpp'
+    'pwv_graph.h', 'dptree/include/concur_dptree.hpp', 'masstree/masstree_insert.hh', 'dptree/include/art_idx.hpp'
 ]
 
 db_srcs = [
@@ -102,7 +102,7 @@ db_srcs = [
     ] + [
         ('dptree/src/util.cpp', ['-include', 'dptree/include/util.h']),
         ('dptree/src/MurmurHash2.cpp', ['-include', 'dptree/include/MurmurHash2.h']),
-        ('dptree/src/art_idx.cpp', ['-include', 'dptree/include/art_idx.hpp'])
+        ('dptree/src/art_idx.cpp')
     ]
 
 #shirley pmem: add libs for dptree

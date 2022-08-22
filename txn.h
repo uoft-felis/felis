@@ -121,6 +121,7 @@ class BaseTxn {
         // we're assuming the user application makes sure to not write to deleted rows. 
         // if they do, its treated as insert instead of append.
         delete (VHandle *)myvhdl;
+        // shirley: should set vhandle ptr to null in index_info?
       }
 
       return result;

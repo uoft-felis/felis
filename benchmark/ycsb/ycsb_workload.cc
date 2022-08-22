@@ -45,7 +45,7 @@ class YcsbModule : public Module<WorkloadModule> {
       }
       int load_elapse = 0;
       while (count_down.load() > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
         // sleep(1);
         // load_elapse++;
       }

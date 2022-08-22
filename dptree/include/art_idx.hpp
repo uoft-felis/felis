@@ -27,6 +27,8 @@ static const int8_t NodeType256 = 3;
 // demand
 static const unsigned maxPrefixLength = 9;
 
+// static std::atomic<uint64_t> total_alloc_size(0);
+
 // Shared header of all inner nodes
 struct Node
 {
@@ -40,6 +42,22 @@ struct Node
     uint8_t prefix[maxPrefixLength];
 
     Node(int8_t type) : prefixLength(0), count(0), type(type) {}
+
+    // void *operator new(size_t size)
+    // {
+    //     void *p = ::operator new(size);
+    //     total_alloc_size.fetch_add(size);
+    //     printf("new Node total size = %lu (size of Node = %lu)\n", total_alloc_size.load(), sizeof(Node));
+    //     //void * p = malloc(size); will also work fine
+    //     return p;
+    // }
+
+    // void operator delete(void * p)
+    // {
+    //     total_alloc_size.fetch_sub(sizeof(Node));
+    //     printf("delete: total size = %lu\n", total_alloc_size.load());
+    //     free(p);
+    // }
 };
 
 // Node with up to 4 children
@@ -53,6 +71,22 @@ struct Node4 : Node
         memset(key, 0, sizeof(key));
         memset(child, 0, sizeof(child));
     }
+
+    // void *operator new(size_t size)
+    // {
+    //     void *p = ::operator new(size);
+    //     total_alloc_size.fetch_add(size);
+    //     printf("new Node4 total size = %lu (size of Node4 = %lu)\n", total_alloc_size.load(), sizeof(Node4));
+    //     //void * p = malloc(size); will also work fine
+    //     return p;
+    // }
+
+    // void operator delete(void * p)
+    // {
+    //     total_alloc_size.fetch_sub(sizeof(Node4));
+    //     printf("delete: total size = %lu\n", total_alloc_size.load());
+    //     free(p);
+    // }
 };
 
 // Node with up to 16 children
@@ -66,6 +100,22 @@ struct Node16 : Node
         memset(key, 0, sizeof(key));
         memset(child, 0, sizeof(child));
     }
+
+    // void *operator new(size_t size)
+    // {
+    //     void *p = ::operator new(size);
+    //     total_alloc_size.fetch_add(size);
+    //     printf("new Node16 total size = %lu (size of Node16 = %lu)\n", total_alloc_size.load(), sizeof(Node16));
+    //     //void * p = malloc(size); will also work fine
+    //     return p;
+    // }
+
+    // void operator delete(void * p)
+    // {
+    //     total_alloc_size.fetch_sub(sizeof(Node16));
+    //     printf("delete: total size = %lu\n", total_alloc_size.load());
+    //     free(p);
+    // }
 };
 
 static const uint8_t emptyMarker = 48;
@@ -81,6 +131,22 @@ struct Node48 : Node
         memset(childIndex, emptyMarker, sizeof(childIndex));
         memset(child, 0, sizeof(child));
     }
+
+    // void *operator new(size_t size)
+    // {
+    //     void *p = ::operator new(size);
+    //     total_alloc_size.fetch_add(size);
+    //     printf("new Node48 total size = %lu (size of Node48 = %lu)\n", total_alloc_size.load(), sizeof(Node48));
+    //     //void * p = malloc(size); will also work fine
+    //     return p;
+    // }
+
+    // void operator delete(void * p)
+    // {
+    //     total_alloc_size.fetch_sub(sizeof(Node48));
+    //     printf("delete: total size = %lu\n", total_alloc_size.load());
+    //     free(p);
+    // }
 };
 
 // Node with up to 256 children
@@ -92,6 +158,22 @@ struct Node256 : Node
     {
         memset(child, 0, sizeof(child));
     }
+
+    // void *operator new(size_t size)
+    // {
+    //     void *p = ::operator new(size);
+    //     total_alloc_size.fetch_add(size);
+    //     printf("new Node256 total size = %lu (size of Node256 = %lu)\n", total_alloc_size.load(), sizeof(Node256));
+    //     //void * p = malloc(size); will also work fine
+    //     return p;
+    // }
+
+    // void operator delete(void * p)
+    // {
+    //     total_alloc_size.fetch_sub(sizeof(Node256));
+    //     printf("delete: total size = %lu\n", total_alloc_size.load());
+    //     free(p);
+    // }
 };
 
 // This address is used to communicate that search failed

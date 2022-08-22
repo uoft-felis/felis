@@ -56,6 +56,7 @@ class McBmModule : public Module<WorkloadModule> {
     // shirley: initialize the insert rows random order.
     for (uint64_t i = 0; i < g_mcbm_config.nr_rows; i++) {
       g_mcbm_config.insert_row_ids.push_back(i);
+      // g_mcbm_config.insert_row_ids.push_back(i * (0xFFFFFFFFFFFFFFFF / g_mcbm_config.nr_rows));
     }
     // shuffle the insert rows.
     auto rng = std::default_random_engine {};
@@ -76,7 +77,7 @@ class McBmModule : public Module<WorkloadModule> {
       }
       int load_elapse = 0;
       while (count_down.load() > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
         // sleep(1);
         // load_elapse++;
       }

@@ -81,7 +81,7 @@ void concur_dptree_test(int nworkers, int n) {
 
     // shirley: construct pmlog
     double start_log_time = secs_now();
-    index.construct_pmlog(true);
+    index.construct_pmlog(false, true);
     double end_log_time = secs_now();
     printf("Logging Elapsed %lf seconds\n", end_log_time - start_log_time);
 
@@ -122,7 +122,7 @@ void concur_dptree_test(int nworkers, int n) {
 
     // shirley: construct pmlog
     start_log_time = secs_now();
-    index.construct_pmlog(true);
+    index.construct_pmlog(false, true);
     end_log_time = secs_now();
     printf("Logging Elapsed %lf seconds\n", end_log_time - start_log_time);
 

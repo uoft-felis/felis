@@ -1739,6 +1739,19 @@ public:
         }
         parallel_merge_work_time += secs_now() - starttime;
         // sanity_check_func(head[gv]);
+
+        // // shirley: count number of pmem leaf nodes in base tree:
+        // leaf_node *gv_start_leaf = head[gv];
+        // uint64_t total_leaf_nvm = 0;
+        // uint64_t total_leafs = 0;
+        // while (gv_start_leaf) {
+        //     total_leafs++;
+        //     total_leaf_nvm += sizeof(leaf_node);
+        //     gv_start_leaf = gv_start_leaf->next_sibling(gv);
+        // }
+        // printf("concur_dptree.hpp end of merge gv = %d, total leafs in base tree: %lu, total nvm: %lu\n",
+        //         gv, total_leafs, total_leaf_nvm);
+        
     }
 
     double &art_tree_build_time;
@@ -2144,6 +2157,7 @@ struct log_record_pm
 };
 // shirley: size of log_record_pm with value type = entry pair is 32 bytes
 static_assert(sizeof(log_record_pm<uint64_t, entry_pair>) == 32);
+static_assert(sizeof(log_record_pm<uint64_t, uint64_t>) == 24);
 
 constexpr int stripes = 60;
 constexpr double bloom_err_rate = 0.05;
@@ -2209,6 +2223,13 @@ class durable_concur_buffer_btree
 
         std::atomic_int log_cnt;
         log_cnt.store(0);
+
+        int total_entries = actual_size.load();
+        int thread_entries = total_entries / pmem_log_worker_num; // note: last thread might do some extra work.
+
+        if (total_entries == 0) {
+            return;
+        }
 
         auto log_worker_func = [&, this](int thread_id) {
             log_record_pm<key_type, value_type> *_log = (log_record_pm<key_type, value_type> *) (pmlogs[thread_id]);
@@ -2296,6 +2317,7 @@ class durable_concur_buffer_btree
         return;
     }
 
+    // THIS ONE IS LOGGING BOTH INDEX_INFO PTR AND VHANDLE PTR
     // shirley: this function constructs "pmem_log_worker_num" # of pm logs using leaf entries with "pmem_log_worker_num" threads
     void entries_to_pmlog() {
         auto start_it = btree->begin_unsafe();
@@ -2323,6 +2345,7 @@ class durable_concur_buffer_btree
             log_record_pm<key_type, value_type> *_log = (log_record_pm<key_type, value_type> *) (pmlogs[thread_id]);
             log_record_pm<key_type, value_type> *my_log = (log_record_pm<key_type, value_type> *) ((char *)_log + 256);
             uint64_t size = 0;
+            size_t log_record_size = sizeof(log_record_pm<key_type, value_type>);
             while (my_start != my_end) {
                 // log my_start's entry
                 *my_log = log_record_pm<key_type, value_type>(
@@ -2334,7 +2357,7 @@ class durable_concur_buffer_btree
                 // printf("t%d: key %lu, value %lu, %lu\n", thread_id, my_start.key(), my_start.value().first, my_start.value().second);
                 my_log++;
                 ++my_start;
-                size += sizeof(log_record_pm<key_type, value_type>);
+                size += log_record_size; // sizeof(log_record_pm<key_type, value_type>);
                 if (size % 256 == 0) {
                     clflush(((char*)my_log) - 256);
                     clflush(((char*)my_log) - 192);
@@ -2365,6 +2388,193 @@ class durable_concur_buffer_btree
             }
             thread_its.push_back(temp_it);
             temp_it.forward(thread_entries);
+
+            log_worker_futures.emplace_back(th_pool->enqueue(log_worker_func, i));
+        }
+
+        // synchronize
+        std::for_each(log_worker_futures.begin(), log_worker_futures.end(),
+                      [](std::future<void> &f) { f.get(); });
+
+        // shirley: ensure logs are flushed?
+        sfence();
+
+        mem::GetPmemPersistInfo()->dptree_pmlog_ep = util::Instance<felis::EpochManager>().current_epoch_nr();
+        // printf("pmlog ep = %lu\n", mem::GetPmemPersistInfo()->dptree_pmlog_ep);
+        clflush(mem::GetPmemPersistInfo());
+        sfence();
+
+        return;
+    }
+
+
+    // // THIS ONE LOGS ONLY THE VHANDLE PTR, NOT INDEX_INFO PTR
+    // // shirley: this function constructs "pmem_log_worker_num" # of pm logs using leaf entries with "pmem_log_worker_num" threads
+    // void entries_to_pmlog() {
+    //     auto start_it = btree->begin_unsafe();
+    //     auto end_it = btree->end_unsafe();
+    //     int total_entries = actual_size.load();
+    //     int thread_entries = total_entries / pmem_log_worker_num; // note: last thread might do some extra work.
+    //     if (total_entries == 0) {
+    //         return;
+    //     }
+
+    //     // thread 0: [start_it : start_it + thread_entries)
+    //     // thread 1: [start_it + thread_entries * 1 : start_it + thread_entries * 2)
+    //     // ...
+    //     // thread n: [start_it + thread_entries * n : start_it + thread_entries * (n+1))
+    //     // ...
+    //     // thread last: [start_it + thread_entries * last : end_it]
+
+    //     // array of start/(end) iterators for the threads
+    //     std::vector<struct btreeolc::BTree<key_type, value_type>::unsafe_iterator> thread_its = {start_it};
+
+    //     auto log_worker_func = [&, this](int thread_id) {
+    //         auto my_start = thread_its[thread_id];
+    //         auto my_end = thread_its[thread_id + 1];
+    //         log_record_pm<key_type, uint64_t> *_log = (log_record_pm<key_type, uint64_t> *) (pmlogs[thread_id]);
+    //         log_record_pm<key_type, uint64_t> *my_log = (log_record_pm<key_type, uint64_t> *) ((char *)_log + 256);
+    //         uint64_t size = 0;
+    //         uint64_t flushed_size = 0;
+    //         size_t log_record_size = sizeof(log_record_pm<key_type, uint64_t>);
+    //         while (my_start != my_end) {
+    //             // log my_start's entry
+    //             *my_log = log_record_pm<key_type, uint64_t>(
+    //                       // shirley TODO: support deletes: if (my_start.value()) & 1 then is delete.
+    //                       // check is_delete_op function in cvhtree.
+    //                       ((false) ? op_type::deletion : op_type::upsertion),
+    //                       my_start.key(),
+    //                       my_start.value().second);
+    //             // printf("t%d: key %lu, value %lu, %lu\n", thread_id, my_start.key(), my_start.value().first, my_start.value().second);
+    //             my_log++;
+    //             ++my_start;
+    //             size += log_record_size; // sizeof(log_record_pm<key_type, uint64_t>);
+    //             if (size - flushed_size >= 256) {
+    //                 clflush((char *)_log + 256 + flushed_size);
+    //                 clflush((char *)_log + 256 + flushed_size + 64);
+    //                 clflush((char *)_log + 256 + flushed_size + 128);
+    //                 clflush((char *)_log + 256 + flushed_size + 192);
+    //                 flushed_size += 256;
+    //             }
+    //             // if (size % 256 == 0) {
+    //             //     clflush(((char*)my_log) - 256);
+    //             //     clflush(((char*)my_log) - 192);
+    //             //     clflush(((char*)my_log) - 128);
+    //             //     clflush(((char*)my_log) - 64);
+    //             // }
+    //         }
+    //         int extra_cachelines = (size - flushed_size + 63) / 64;
+    //         if (extra_cachelines >= 1) clflush((char*)_log + 256 + flushed_size);
+    //         if (extra_cachelines >= 2) clflush((char*)_log + 256 + flushed_size + 64);
+    //         if (extra_cachelines >= 3) clflush((char*)_log + 256 + flushed_size + 128);
+    //         if (extra_cachelines >= 4) clflush((char*)_log + 256 + flushed_size + 192);
+    //         // int extra_cachelines = ((size % 256) + 63) / 64;
+    //         // if (extra_cachelines >= 1) clflush(((char*)my_log) - ((size % 64) ? 0 : 64));
+    //         // if (extra_cachelines >= 2) clflush(((char*)my_log) - ((size % 64) ? 64 : 128));
+    //         // if (extra_cachelines >= 3) clflush(((char*)my_log) - ((size % 64) ? 128 : 192));
+    //         // if (extra_cachelines >= 4) clflush(((char*)my_log) - ((size % 64) ? 192 : 256));
+
+    //         *(uint64_t *)_log = size;
+    //         // printf("thread %d log size = %lu\n", thread_id, size);
+    //         clflush(_log);
+    //     };
+
+    //     ThreadPool *th_pool = new ThreadPool(pmem_log_worker_num);
+    //     std::vector<std::future<void>> log_worker_futures;
+
+    //     auto temp_it = start_it;
+    //     temp_it.forward(thread_entries);
+    //     for (size_t i = 0; i < pmem_log_worker_num; ++i)
+    //     {
+    //         if (i == pmem_log_worker_num - 1) {
+    //             temp_it = end_it;
+    //         }
+    //         thread_its.push_back(temp_it);
+    //         temp_it.forward(thread_entries);
+
+    //         log_worker_futures.emplace_back(th_pool->enqueue(log_worker_func, i));
+    //     }
+
+    //     // synchronize
+    //     std::for_each(log_worker_futures.begin(), log_worker_futures.end(),
+    //                   [](std::future<void> &f) { f.get(); });
+
+    //     // shirley: ensure logs are flushed?
+    //     sfence();
+
+    //     mem::GetPmemPersistInfo()->dptree_pmlog_ep = util::Instance<felis::EpochManager>().current_epoch_nr();
+    //     // printf("pmlog ep = %lu\n", mem::GetPmemPersistInfo()->dptree_pmlog_ep);
+    //     clflush(mem::GetPmemPersistInfo());
+    //     sfence();
+
+    //     return;
+    // }
+
+    // shirley: this function copies leaf entries to pmem (multithread)
+    void entries_to_pm() {
+        auto start_it = btree->begin_unsafe();
+        auto end_it = btree->end_unsafe();
+        int total_entries = actual_size.load();
+        int thread_entries = total_entries / pmem_log_worker_num; // note: last thread might do some extra work.
+
+        if (total_entries == 0) {
+            return;
+        }
+
+        // thread 0: [start_it : start_it + thread_entries)
+        // thread 1: [start_it + thread_entries * 1 : start_it + thread_entries * 2)
+        // ...
+        // thread n: [start_it + thread_entries * n : start_it + thread_entries * (n+1))
+        // ...
+        // thread last: [start_it + thread_entries * last : end_it]
+
+        // array of start/(end) iterators for the threads
+        std::vector<struct btreeolc::BTree<key_type, value_type>::unsafe_iterator> thread_its = {start_it};
+
+        auto log_worker_func = [&, this](int thread_id) {
+            auto my_start = thread_its[thread_id];
+            auto my_end = thread_its[thread_id + 1];
+
+            size_t leaf_node_size = ((int)(sizeof(btreeolc::BTreeLeaf<key_type, value_type>) + 63) / 64 ) * 64;
+            // printf("rounded size of btreeold::BTreeLeaf<key_type, value_type> is %lu\n", leaf_node_size);
+
+            char *_log = (char *) (pmlogs[thread_id]);
+            char *my_log = (char *) ((char *)_log + 256);
+            uint64_t size = 0;
+            while (my_start != my_end) {
+                // memcpy leaf node to log
+                std::memcpy(my_log, my_start.node, sizeof(btreeolc::BTreeLeaf<key_type, value_type>));
+                
+                my_log += leaf_node_size;
+                key_type last_key = my_start.key();
+                my_start.next_node(last_key);
+                size += leaf_node_size;
+
+                // flush whole leaf node to pmem
+                for (int i = 0; i < leaf_node_size; i += 64) {
+                    clflush(((char*)my_log) + i);
+                }
+            }
+
+            *(uint64_t *)_log = size;
+            // printf("thread %d log size = %lu\n", thread_id, size);
+            clflush(_log);
+        };
+
+        ThreadPool *th_pool = new ThreadPool(pmem_log_worker_num);
+        std::vector<std::future<void>> log_worker_futures;
+
+        auto temp_it = start_it;
+        temp_it.forward(thread_entries);
+        temp_it.pos = 0;
+        for (size_t i = 0; i < pmem_log_worker_num; ++i)
+        {
+            if (i == pmem_log_worker_num - 1) {
+                temp_it = end_it;
+            }
+            thread_its.push_back(temp_it);
+            temp_it.forward(thread_entries);
+            temp_it.pos = 0;
 
             log_worker_futures.emplace_back(th_pool->enqueue(log_worker_func, i));
         }
@@ -2744,12 +2954,14 @@ class concur_dptree
             buffer_tree = reinterpret_cast<buffer_btree_type *>(
                     front_writer_local_epoch.set_value((uintptr_t)front_buffer_tree));
             assert(buffer_tree);
-            if (buffer_tree->bloom_check(key) == false) {
-                bool updated = rear_base_tree->update_if_found(key, value);
-                if (updated == true) {
-                    return;
-                }
-            }
+
+            // shirley: disallow this, no modifications to the base tree except merge
+            // if (buffer_tree->bloom_check(key) == false) {
+            //     bool updated = rear_base_tree->update_if_found(key, value);
+            //     if (updated == true) {
+            //         return;
+            //     }
+            // }
 
             auto should_insert_f_cpbt = [&key, &value, this](const key_type &k) -> bool {
                 return true;
@@ -2954,18 +3166,19 @@ class concur_dptree
         }
     }
 
-    void start_merge(buffer_btree_type * buffer_tree) {
+    void start_merge(buffer_btree_type * buffer_tree, std::atomic<bool> *started = nullptr) {
         auto start = secs_now();
-        do_merge(buffer_tree);
+        do_merge(buffer_tree, started);
         merge_wait_time = merge_wait_time.load() + secs_now() - start;
     }
 
     // shirley: we can call this function to manually trigger a merge
-    void force_merge() {
+    void force_merge(std::atomic<bool> *started = nullptr) {
         if (front_buffer_tree->real_size() == 0) {
+            *started = true;
             return;
         }
-        start_merge(front_buffer_tree);
+        start_merge(front_buffer_tree, started);
     }
 
     double get_real_merge_time() { return merge_time; }
@@ -2976,7 +3189,7 @@ class concur_dptree
 
     std::atomic<bool> leaf_merge_done{false};
 
-    void do_merge(buffer_btree_type *front_buffer_tree_snapshot)
+    void do_merge(buffer_btree_type *front_buffer_tree_snapshot, std::atomic<bool> *started = nullptr)
     {
         int local_ms = merge_state.load();
 
@@ -3015,6 +3228,9 @@ class concur_dptree
                 __atomic_store_n(&middle_buffer_tree, old_front_buffer_tree, __ATOMIC_SEQ_CST);
                 // new writers now go to new_front_buffer_tree
                 __atomic_store_n(&front_buffer_tree, new_front_buffer_tree, __ATOMIC_SEQ_CST);
+                // shirley: now we can continue with next epoch since we created a new front buffer tree
+                *started = true;
+                // printf("created new front buffer tree. set started = true\n");
                 // start a merge worker thread
                 std::thread([this, local_ms, old_front_buffer_tree]() { // mfence
                     // wait for old writers to finish
@@ -3065,7 +3281,7 @@ class concur_dptree
     }
 
     // shirley: this function constructs the pmlog using the entries in the buffer tree leafs
-    void construct_pmlog(bool use_dram_log = false) {
+    void construct_pmlog(bool use_entry_persist = false, bool use_dram_log = false) {
         // if using original with force merge, log is already in pmem so just update pmlog ep.
         if (felis::Options::kDptreeOriginalForceMerge) {
             if (front_buffer_tree->real_size() != 0) {
@@ -3074,6 +3290,11 @@ class concur_dptree
                 _mm_clwb(mem::GetPmemPersistInfo());
                 _mm_sfence();
             }
+            return;
+        }
+
+        if (use_entry_persist) {
+            front_buffer_tree->entries_to_pm();
             return;
         }
         
