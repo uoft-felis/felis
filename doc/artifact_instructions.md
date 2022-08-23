@@ -110,19 +110,20 @@ run all the time.
 Once the controller is initialized, you can run the experiments:
 
 ```
-buck-out/gen/db#release -c <controller_ip>:<rpc_port> -n host1 -w tpcc -Xcpu8 -Xmem12G
-buck-out/gen/db#release -c 127.0.0.1:<rpc_port> -n host1 -w tpcc -Xcpu8 -Xmem12G
+buck-out/gen/db#release -c <controller_ip>:<rpc_port> -n host1 -w tpcc -Xcpu8 -Xmem12G -XLogInput
+e.g. buck-out/gen/db#release -c 127.0.0.1:3148 -n host1 -w tpcc -Xcpu8 -Xmem12G -XLogInput
 ```
 
 `-c` is the felis-controller IP address (<rpc_port> and <http_port>
 below are specified in config.json as well), `-n` is the host name for
 this node, and `-w` means the workload it will run (tpcc/ycsb/smallbank).
 
-For contended TPCC, add the flag -XTpccWarehouses1
+For high-contention TPCC, add the flag -XTpccWarehouses1
 
-For contended YCSB, add the flag -XYcsbContentionKey7
+For high-contention YCSB, add the flag -XYcsbContentionKey7
 
-For contended smallbank, set the hotspot_number to 10000 in ~/your-directory/felis/benchmark/smallbank/smallbank.cc line 20
+For high-contention smallbank, set the hotspot_number to 10000 in ~/your-directory/felis/benchmark/smallbank/smallbank.cc line 20 and rebuild the database.
+
 
 ## Contact
 
