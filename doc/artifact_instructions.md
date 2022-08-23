@@ -61,7 +61,7 @@ Caracal needs to use HugePages for memory allocation. The following pre-allocate
 echo 32768 > /proc/sys/vm/nr_hugepages
 ```
 
-Our pmem mount directory is /mnt/pmem0. If you use a different path, you need to specify it in mem.cc lines 1185 and 1203.
+Our pmem mount directory is `/mnt/pmem0`. If you use a different path, you need to specify it in mem.cc lines 1185 and 1203.
 
 ## Running Experiments
 
@@ -119,7 +119,9 @@ below are specified in config.json as well), `-n` is the host name for
 this node, and `-w` means the workload it will run (tpcc/ycsb/smallbank).
 
 For contended TPCC, add the flag -XTpccWarehouses1
+
 For contended YCSB, add the flag -XYcsbContentionKey7
+
 For contended smallbank, set the hotspot_number to 10000 in ~/your-directory/felis/benchmark/smallbank/smallbank.cc line 20
 
 ## Contact
