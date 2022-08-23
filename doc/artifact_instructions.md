@@ -6,8 +6,8 @@
 You need to clone two repositories to your local directory:
 
 ```
-git clone --recursive https://github.com:uoft-felis/felis.git -b pmem
-git clone https://github.com:uoft-felis/felis-controller.git
+git clone --recursive https://github.com/uoft-felis/felis.git -b pmem
+git clone https://github.com/uoft-felis/felis-controller.git
 ```
 
 Felis is the code name for Caracal. The felis repository has many submodules, so please make sure they are also initialized.
@@ -128,3 +128,5 @@ For high-contention smallbank, set the hotspot_number to 10000 in ~/your-directo
 ## Contact
 
 Contact shirley.wang@mail.utoronto.ca if you have any question.
+
+
