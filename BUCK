@@ -95,7 +95,7 @@ db_srcs = [
     'xxHash/xxhash.c', 'util/os_linux.cc', 'util/locks.cc',
     'pwv_graph.cc',
     'gopp/gopp.cc', 'gopp/channels.cc',
-    'gopp/asm.S'] + [
+    'gopp/start-x86_64.S'] + [
         ('masstree/kvthread.cc', ['-include', 'masstree/build/config.h']),
 	('masstree/string.cc', ['-include', 'masstree/build/config.h']),
 	('masstree/straccum.cc', ['-include', 'masstree/build/config.h']),
