@@ -12,7 +12,7 @@
 	url = https://github.com/gabime/spdlog.git
 [submodule "masstree"]
 	path = masstree
-	url = git@fs.csl.utoronto.ca:masstree.git
+	url = https://github.com/uoft-felis/masstree.git
 [submodule "gopp"]
 	path = gopp
-	url = git@fs.csl.utoronto.ca:gopp.git
+	url = https://github.com/uoft-felis/gopp.git
