@@ -1,18 +1,1 @@
-[submodule "json11"]
-	path = json11
-	url = https://github.com/dropbox/json11.git
-[submodule "Release/jemalloc"]
-	path = Release/jemalloc
-	url = https://github.com/jemalloc/jemalloc.git
-[submodule "xxHash"]
-	path = xxHash
-	url = https://github.com/Cyan4973/xxHash.git
-[submodule "spdlog"]
-	path = spdlog
-	url = https://github.com/gabime/spdlog.git
-[submodule "masstree"]
-	path = masstree
-	url = https://github.com/uoft-felis/masstree.git
-[submodule "gopp"]
-	path = gopp
-	url = https://github.com/uoft-felis/gopp.git
+
