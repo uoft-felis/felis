@@ -34,7 +34,7 @@ void Cpu::set_affinity(int cpu)
 void Cpu::Pin()
 {
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), (cpu_set_t *) os_cpuset);
-  pthread_yield();
+  sched_yield();
 }
 
 OSMemory::OSMemory()
