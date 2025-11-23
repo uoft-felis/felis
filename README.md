@@ -6,35 +6,33 @@ Build
 =====
 
 If you on the CSL cluster, you don't need to install any
-dependencies. Otherwise, you need to install Clang 8 manually.
+dependencies. Otherwise, you need to install Clang manually.
 
-1. First, run the configure script
+We use [SCons](https://scons.org/pages/download.html) as build tool. You can get it from `pip`.
 
-```
-./configure
-```
-
-to download the build tool `buck` and generate local config file for it.
-
-2. Now you can use `buck` to build. You can either use the `buck.pex`
-downloaded by the script, or if you're on the CSL cluster, `buck`
-installed in the environment.
-
-The command
 
 ```
-buck build db
+scons .
 ```
 
-will generate the debug binary to `buck-out/gen/db#debug`. If you need
-optimized build, you can run
+This builds the release version `release/db`. You can also build the debug version
+
 
 ```
-buck build db_release
+scons . BUILD_TYPE=debug
 ```
 
-to generate the release binary to `buck-out/gen/db#release`.
+To generate [`ccls`](https://github.com/MaskRay/ccls) configuration file:
 
+```
+scons lsp
+```
+
+For help, see
+
+```
+scons -h
+```
 
 Run
 ===
@@ -127,21 +125,20 @@ Development
 ccls language server
 --------------------
 
-We use `ccls` <https://github.com/MaskRay/ccls> to help our development.
+We use [`ccls`](https://github.com/MaskRay/ccls) to help our development.
 ccls is a C/C++/ObjC language server supporting cross references,
 hierarchies, completion and semantic highlighting. It is *not* essential
 for running the experiment.
 
-If you have run the `./configure` script, it would generate a `.ccls`
-configuration file for you. `ccls` supports
+You can generate a ccls configuration by
+
+```
+scons lsp
+```
+
 [Emacs](https://github.com/MaskRay/ccls/wiki/lsp-mode),
 [Vim](https://github.com/MaskRay/ccls/wiki/vim-lsp) and
 [VSCode](https://github.com/MaskRay/ccls/wiki/Visual-Studio-Code).
-
-Mike has a precompiled `ccls` binary on the cluster machine. You can
-download at <http://fs.csl.utoronto.ca/~mike/ccls>.
-
-Zhiqi has some experience with using ccls with VSCode.
 
 
 Test
@@ -149,14 +146,3 @@ Test
 
 FIXME: Unit tests are broken now. You may skip this section.
 
-Use
-
-```
-./buck build test
-```
-
-to build the test binary. Then run the `buck-out/gen/dbtest` to run
-all unit tests. We use google-test. To run partial test, please look
-at
-https://github.com/google/googletest/blob/master/googletest/docs/advanced.md#running-a-subset-of-the-tests
-.
